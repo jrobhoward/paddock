@@ -25,6 +25,7 @@ mod instance;
 mod lifecycle;
 mod message;
 mod pid;
+mod registry;
 mod runtime;
 mod spec;
 mod state;

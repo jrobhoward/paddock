@@ -1,14 +1,33 @@
 //! Per-instance store data: WASI context, resource limits, deadline
 //! accounting and the `paddock:runtime` host functions.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::AbortHandle;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Error, ResourceLimiter, Result};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::bindings::paddock::runtime::{process, types};
+use crate::instance::Message;
+use crate::message::{Envelope, Info};
 use crate::pid::Pid;
+use crate::runtime::RuntimeInner;
+use crate::spec::InstanceSpec;
+
+/// What an instance's host functions reach outside its own Store.
+pub(crate) struct ProcessContext {
+    pub(crate) rt: Arc<RuntimeInner>,
+    /// The instance's own mailbox, for timers. Weak, so it never keeps the
+    /// mailbox open.
+    pub(crate) mailbox: mpsc::WeakSender<Message>,
+    /// Messages dropped because the mailbox was full.
+    pub(crate) dropped: Arc<AtomicU64>,
+}
 
 /// Store data for one instance.
 pub(crate) struct InstanceState {
@@ -17,18 +36,36 @@ pub(crate) struct InstanceState {
     table: ResourceTable,
     pub(crate) limiter: Limiter,
     pub(crate) clock: CallbackClock,
+    ctx: ProcessContext,
+    registered_names: Vec<String>,
+    /// Callers waiting on a reply, by call reference. An entry is added
+    /// before `handle-call` runs, so `process.reply` works during the
+    /// callback as well as after a `noreply`.
+    pub(crate) pending: HashMap<u64, oneshot::Sender<Envelope>>,
+    pub(crate) timers: Timers,
 }
 
 impl InstanceState {
-    pub(crate) fn new(pid: Pid, memory_max: u64, table_max: Option<u32>) -> Self {
+    pub(crate) fn new(pid: Pid, spec: &InstanceSpec, ctx: ProcessContext) -> Self {
         Self {
             pid,
             // No preopens, no environment, no inherited stdio, no sockets.
             wasi: WasiCtx::builder().build(),
             table: ResourceTable::new(),
-            limiter: Limiter::new(memory_max, table_max),
+            limiter: Limiter::new(spec.memory_max, spec.table_max),
             clock: CallbackClock::default(),
+            ctx,
+            registered_names: spec.registered_names.clone(),
+            pending: HashMap::new(),
+            timers: Timers::default(),
         }
+    }
+
+    /// Remember a caller until its reply is sent. Callers that gave up (timed
+    /// out) are pruned so an app that never answers does not leak them.
+    pub(crate) fn await_reply(&mut self, call_ref: u64, reply: oneshot::Sender<Envelope>) {
+        self.pending.retain(|_, waiting| !waiting.is_closed());
+        self.pending.insert(call_ref, reply);
     }
 }
 
@@ -131,21 +168,73 @@ impl CallbackClock {
         self.timed_out
     }
 
-    /// Exclude time spent in a host import from the deadline. Used by the
-    /// blocking `process` imports that land in M3.
-    #[allow(dead_code)]
-    pub(crate) fn add_host_time(&mut self, spent: Duration) {
+    /// Exclude time spent suspended in a host import from the deadline.
+    fn add_host_time(&mut self, spent: Duration) {
         self.host_time += spent;
+    }
+}
+
+/// An instance's pending `send-after` timers. Dropping the set (when the
+/// instance exits) cancels them.
+#[derive(Debug, Default)]
+pub(crate) struct Timers {
+    next: u64,
+    active: HashMap<u64, AbortHandle>,
+}
+
+impl Timers {
+    fn start(
+        &mut self,
+        delay: Duration,
+        msg: Envelope,
+        mailbox: mpsc::WeakSender<Message>,
+        dropped: Arc<AtomicU64>,
+    ) -> u64 {
+        self.next += 1;
+        let reference = self.next;
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let Some(mailbox) = mailbox.upgrade() else {
+                return;
+            };
+            let info = Message::Info(Info::Timer { reference, msg });
+            if let Err(mpsc::error::TrySendError::Full(_)) = mailbox.try_send(info) {
+                dropped.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        self.active.insert(reference, task.abort_handle());
+        reference
+    }
+
+    /// Cancel a timer. A timer that already fired may still be waiting in the
+    /// mailbox and is delivered.
+    fn cancel(&mut self, reference: u64) {
+        if let Some(task) = self.active.remove(&reference) {
+            task.abort();
+        }
+    }
+
+    /// Forget a timer whose message has been delivered.
+    pub(crate) fn fired(&mut self, reference: u64) {
+        self.active.remove(&reference);
+    }
+}
+
+impl Drop for Timers {
+    fn drop(&mut self) {
+        for task in self.active.values() {
+            task.abort();
+        }
     }
 }
 
 impl types::Host for InstanceState {}
 
-/// A `process` function that M3 implements; trapping makes a guest that
+/// A `process` function that M4 implements; trapping makes a guest that
 /// calls it early crash with a clear reason instead of misbehaving.
 fn not_yet<T>(name: &str) -> Result<T> {
     Err(Error::msg(format!(
-        "process.{name} is not implemented yet (Phase 1 milestone M3)"
+        "process.{name} is not implemented yet (Phase 1 milestone M4)"
     )))
 }
 
@@ -154,21 +243,47 @@ impl process::Host for InstanceState {
         Ok(self.pid.into())
     }
 
-    async fn cast(&mut self, _to: types::Pid, _msg: types::Envelope) -> Result<()> {
-        not_yet("cast")
+    async fn cast(&mut self, to: types::Pid, msg: types::Envelope) -> Result<()> {
+        let to = Pid::from(to);
+        // At most once: a cast to a dead pid, or one the target refuses, is
+        // dropped without telling the sender.
+        if let Some(target) = self.ctx.rt.table.lookup(to)
+            && let Err(err) = target.cast(msg.into())
+        {
+            tracing::debug!(%to, error = %err, "cast dropped");
+        }
+        Ok(())
     }
 
     async fn call(
         &mut self,
-        _to: types::Pid,
-        _msg: types::Envelope,
-        _timeout_ms: u32,
+        to: types::Pid,
+        msg: types::Envelope,
+        timeout_ms: u32,
     ) -> Result<std::result::Result<types::Envelope, types::CallError>> {
-        not_yet("call")
+        let to = Pid::from(to);
+        if to == self.pid {
+            // The call would wait on this instance's own mailbox, which it
+            // cannot read until this callback returns.
+            return Err(Error::msg("call to self would deadlock"));
+        }
+        let Some(target) = self.ctx.rt.table.lookup(to) else {
+            return Ok(Err(types::CallError::Noproc));
+        };
+        let started = Instant::now();
+        let result = target
+            .call(msg.into(), Duration::from_millis(timeout_ms.into()))
+            .await;
+        self.clock.add_host_time(started.elapsed());
+        Ok(result.map(Into::into).map_err(|e| (&e).into()))
     }
 
-    async fn reply(&mut self, _to: types::CallRef, _msg: types::Envelope) -> Result<()> {
-        not_yet("reply")
+    async fn reply(&mut self, to: types::CallRef, msg: types::Envelope) -> Result<()> {
+        // An unknown reference is a duplicate reply, or the caller gave up.
+        if let Some(waiting) = self.pending.remove(&to) {
+            let _ = waiting.send(msg.into());
+        }
+        Ok(())
     }
 
     async fn link(&mut self, _other: types::Pid) -> Result<()> {
@@ -193,21 +308,35 @@ impl process::Host for InstanceState {
 
     async fn register(
         &mut self,
-        _name: String,
+        name: String,
     ) -> Result<std::result::Result<(), types::RegisterError>> {
-        not_yet("register")
+        if !self.registered_names.contains(&name) {
+            return Ok(Err(types::RegisterError::AccessDenied));
+        }
+        Ok(self
+            .ctx
+            .rt
+            .registry
+            .register(&name, self.pid)
+            .map_err(|holder| types::RegisterError::Taken(holder.into())))
     }
 
-    async fn whereis(&mut self, _name: String) -> Result<Option<types::Pid>> {
-        not_yet("whereis")
+    async fn whereis(&mut self, name: String) -> Result<Option<types::Pid>> {
+        Ok(self.ctx.rt.registry.whereis(&name).map(Into::into))
     }
 
-    async fn send_after(&mut self, _ms: u32, _msg: types::Envelope) -> Result<u64> {
-        not_yet("send-after")
+    async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
+        Ok(self.timers.start(
+            Duration::from_millis(ms.into()),
+            msg.into(),
+            self.ctx.mailbox.clone(),
+            self.ctx.dropped.clone(),
+        ))
     }
 
-    async fn cancel_timer(&mut self, _timer_ref: u64) -> Result<()> {
-        not_yet("cancel-timer")
+    async fn cancel_timer(&mut self, timer_ref: u64) -> Result<()> {
+        self.timers.cancel(timer_ref);
+        Ok(())
     }
 
     async fn exit(&mut self, _other: types::Pid, _reason: types::ExitReason) -> Result<()> {

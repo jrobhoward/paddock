@@ -87,6 +87,9 @@ pub enum CallError {
     /// The target's mailbox is full.
     #[error("overloaded")]
     Overloaded,
+    /// The message body is larger than the target's `message_max_bytes`.
+    #[error("too large")]
+    TooLarge,
     /// The target's messaging ACL refused the sender.
     #[error("access denied")]
     AccessDenied,
@@ -135,6 +138,51 @@ impl From<Pid> for wit::Pid {
             node: p.node,
             id: p.id,
             incarnation: p.incarnation,
+        }
+    }
+}
+
+impl From<wit::Pid> for Pid {
+    fn from(p: wit::Pid) -> Self {
+        Self {
+            node: p.node,
+            id: p.id,
+            incarnation: p.incarnation,
+        }
+    }
+}
+
+impl From<&CallError> for wit::CallError {
+    fn from(e: &CallError) -> Self {
+        match e {
+            CallError::Noproc => Self::Noproc,
+            CallError::Noconnection => Self::Noconnection,
+            CallError::Timeout => Self::Timeout,
+            CallError::Overloaded => Self::Overloaded,
+            CallError::TooLarge => Self::TooLarge,
+            CallError::AccessDenied => Self::AccessDenied,
+            CallError::Exited(reason) => Self::Exited(reason.into()),
+        }
+    }
+}
+
+/// Something the host delivers to `handle-info`. Links and monitors (M4) add
+/// `exit` and `down`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Info {
+    /// A timer from `send-after` fired.
+    Timer {
+        /// The reference `send-after` returned.
+        reference: u64,
+        /// The message it was given.
+        msg: Envelope,
+    },
+}
+
+impl From<Info> for wit::Info {
+    fn from(info: Info) -> Self {
+        match info {
+            Info::Timer { reference, msg } => Self::Timer((reference, msg.into())),
         }
     }
 }

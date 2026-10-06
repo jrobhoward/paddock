@@ -97,7 +97,7 @@ The contract is the `paddock:runtime@0.1.0` package in [`wit/runtime.wit`](../wi
 - `process` (imported by every app): `self`, `cast`, `call` (returns `result<envelope, call-error>`), `reply`, `link`/`unlink`, `trap-exits`, `monitor`/`demonitor`, `register` (returns `result<_, register-error>`), `whereis`, `send-after`/`cancel-timer`, `exit`.
 - `world app` exports: `init`, `handle-call(caller, msg)`, `handle-cast`, `handle-info`, `terminate`, `save-snapshot`, `load-snapshot(from-version, snapshot)`.
 
-`call-error` and `register-error` both carry an `access-denied` case (messaging ACLs, names missing from the manifest). `crates/paddock/tests/wit_rules.rs` enforces the package's rules: synchronous functions only, no `stream`/`future`, no `wasi:io` types, and an `access-denied` error on every capability function.
+`call-error` and `register-error` both carry an `access-denied` case (messaging ACLs, names missing from the manifest). `call-error` also has `too-large`, for a body over the target's `message_max_bytes`; it is separate from `overloaded` because retrying cannot help. `crates/paddock/tests/wit_rules.rs` enforces the package's rules: synchronous functions only, no `stream`/`future`, no `wasi:io` types, and an `access-denied` error on every capability function.
 
 **Messages are envelopes of bytes.** WIT has no recursive types, so there is no clean Erlang-style "any term". An envelope carries a content type (CBOR by default; JSON and rustbridge binary allowed) and an optional schema id. Bytes are already serialized for the network, and the manifest can publish JSON Schemas the way `.rbp` bundles already do.
 
@@ -206,6 +206,14 @@ This is stronger than BEAM in one way: BEAM cannot stop a NIF stuck in a loop, w
 - Each app gets a root supervisor. Apps that declare the `supervisor` capability can start their own children within manifest limits.
 
 **Calls during failure.** A `call` to a dead or unknown pid returns `noproc` immediately. If the target dies mid-call, the caller gets its exit reason. Otherwise the caller gets `timeout`. A late reply after a timeout is dropped, so callers never see stale replies.
+
+**Messaging details.**
+- A `call` to the caller's own pid traps the caller, as `gen_server:call(self())` exits in OTP: the instance cannot read its mailbox until the callback returns.
+- A `cast` that cannot be delivered (dead pid, full mailbox, too large) is dropped without telling the sender. Casts and timer messages dropped for a full mailbox are counted per instance.
+- `message_max_bytes` is checked where a message enters the target's mailbox, so it applies to calls and casts from guests and from the host alike. Replies and timer messages are not checked.
+- `process.reply` works during `handle-call` as well as after it returns `noreply`; a second reply to the same call is dropped.
+- Timers belong to the instance that started them and are cancelled when it exits. `cancel-timer` on a timer that already fired does not remove its message from the mailbox.
+- An instance may register several of the names its manifest lists. Its names are released before its exit is published, so the next incarnation can register them again in `init`.
 
 ## Hot upgrade and state migration
 

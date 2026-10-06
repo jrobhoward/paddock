@@ -66,6 +66,8 @@ interface types {
     timeout,
     /// The target's mailbox is full.
     overloaded,
+    /// The message body is larger than the target's `message_max_bytes`.
+    too-large,
     /// The target's messaging ACL does not accept calls from this app.
     access-denied,
     /// The target exited before replying.

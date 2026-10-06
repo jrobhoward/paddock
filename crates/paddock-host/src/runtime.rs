@@ -13,7 +13,9 @@ use crate::bindings::{App, AppPre};
 use crate::config::{MemoryProfile, RuntimeConfig};
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
+use crate::message::{CallError, Envelope};
 use crate::pid::Pid;
+use crate::registry::Registry;
 use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
 use crate::table::ProcessTable;
@@ -32,6 +34,7 @@ pub(crate) struct RuntimeInner {
     pub(crate) engine: Engine,
     linker: Linker<InstanceState>,
     pub(crate) table: ProcessTable,
+    pub(crate) registry: Registry,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -81,6 +84,7 @@ impl Runtime {
                 engine,
                 linker,
                 table: ProcessTable::default(),
+                registry: Registry::default(),
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -146,6 +150,43 @@ impl Runtime {
     #[must_use]
     pub fn lookup(&self, pid: Pid) -> Option<InstanceHandle> {
         self.inner.table.lookup(pid)
+    }
+
+    /// The live instance registered under `name`.
+    #[must_use]
+    pub fn whereis(&self, name: &str) -> Option<InstanceHandle> {
+        self.inner
+            .registry
+            .whereis(name)
+            .and_then(|pid| self.lookup(pid))
+    }
+
+    /// Cast to a pid.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Noproc`] for a dead pid or an earlier incarnation, and as
+    /// for [`InstanceHandle::cast`].
+    pub fn cast(&self, to: Pid, msg: Envelope) -> Result<(), CallError> {
+        self.lookup(to).ok_or(CallError::Noproc)?.cast(msg)
+    }
+
+    /// Call a pid.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Noproc`] for a dead pid or an earlier incarnation, and as
+    /// for [`InstanceHandle::call`].
+    pub async fn call(
+        &self,
+        to: Pid,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<Envelope, CallError> {
+        self.lookup(to)
+            .ok_or(CallError::Noproc)?
+            .call(msg, timeout)
+            .await
     }
 
     /// Number of live instances.

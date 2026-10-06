@@ -78,7 +78,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host`: the runtime: engine and epoch ticker, pids and the
   process table, instances and their callback loop.
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
-  fails on request; the host's exit-path tests run against it.
+  fails on request, and drives every implemented `process` function; the
+  host's tests run against it.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
   with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The remaining

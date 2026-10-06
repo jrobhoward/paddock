@@ -10,8 +10,8 @@
 //! Store. A Store whose call was dropped is poisoned, so it is never reused
 //! (spike S1).
 
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
@@ -21,20 +21,21 @@ use wasmtime::{Store, Trap, UpdateDeadline};
 use crate::bindings::{App, CallResult};
 use crate::error::describe;
 use crate::lifecycle::LifecycleState;
-use crate::message::{CallError, Envelope, ExitReason};
+use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
 use crate::runtime::{LoadedApp, RuntimeInner};
 use crate::spec::InstanceSpec;
-use crate::state::InstanceState;
+use crate::state::{InstanceState, ProcessContext};
 
 /// Something waiting in a mailbox.
 #[derive(Debug)]
-enum Message {
+pub(crate) enum Message {
     Call {
         msg: Envelope,
         reply: oneshot::Sender<Envelope>,
     },
     Cast(Envelope),
+    Info(Info),
 }
 
 /// A stop request. A kill overrides a graceful shutdown; nothing overrides a
@@ -59,6 +60,8 @@ struct Shared {
     control: watch::Sender<Control>,
     state: watch::Receiver<LifecycleState>,
     exit: watch::Receiver<Option<ExitReason>>,
+    message_max_bytes: u64,
+    dropped: Arc<AtomicU64>,
 }
 
 impl InstanceHandle {
@@ -86,6 +89,13 @@ impl InstanceHandle {
         self.shared.exit.borrow().clone()
     }
 
+    /// Messages dropped because the mailbox was full: casts and timer
+    /// messages. Calls are refused with `overloaded` instead.
+    #[must_use]
+    pub fn dropped_messages(&self) -> u64 {
+        self.shared.dropped.load(Ordering::Relaxed)
+    }
+
     /// Wait for the instance to exit and return why.
     pub async fn wait(&self) -> ExitReason {
         let mut exit = self.shared.exit.clone();
@@ -96,30 +106,47 @@ impl InstanceHandle {
         }
     }
 
-    /// Queue a cast.
+    /// Queue a cast. Content type and schema id reach the guest untouched.
     ///
     /// # Errors
     ///
-    /// [`CallError::Overloaded`] if the mailbox is full (the cast is
-    /// dropped), [`CallError::Noproc`] if the instance has exited.
+    /// [`CallError::TooLarge`] if the body exceeds the instance's
+    /// `message_max_bytes`, [`CallError::Overloaded`] if the mailbox is full
+    /// (the cast is dropped and counted), [`CallError::Noproc`] if the
+    /// instance has exited.
     pub fn cast(&self, msg: Envelope) -> Result<(), CallError> {
+        self.check_size(&msg)?;
         self.shared
             .mailbox
             .try_send(Message::Cast(msg))
             .map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => CallError::Overloaded,
+                mpsc::error::TrySendError::Full(_) => {
+                    self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+                    CallError::Overloaded
+                }
                 mpsc::error::TrySendError::Closed(_) => CallError::Noproc,
             })
+    }
+
+    fn check_size(&self, msg: &Envelope) -> Result<(), CallError> {
+        let len = u64::try_from(msg.body.len()).unwrap_or(u64::MAX);
+        if len > self.shared.message_max_bytes {
+            return Err(CallError::TooLarge);
+        }
+        Ok(())
     }
 
     /// Send a call and wait up to `timeout` for the reply.
     ///
     /// # Errors
     ///
-    /// [`CallError::Overloaded`] at once if the mailbox is full,
+    /// [`CallError::TooLarge`] at once if the body exceeds the instance's
+    /// `message_max_bytes`, [`CallError::Overloaded`] at once if the mailbox
+    /// is full,
     /// [`CallError::Timeout`] if no reply arrives in time (a late reply is
     /// dropped), and [`CallError::Exited`] if the instance exits first.
     pub async fn call(&self, msg: Envelope, timeout: Duration) -> Result<Envelope, CallError> {
+        self.check_size(&msg)?;
         let (reply, answer) = oneshot::channel();
         let queued = self.shared.mailbox.try_send(Message::Call { msg, reply });
         let waiting = async {
@@ -166,6 +193,8 @@ impl InstanceHandle {
 pub(crate) struct InstanceTask {
     pid: Pid,
     mailbox: mpsc::Receiver<Message>,
+    self_mailbox: mpsc::WeakSender<Message>,
+    dropped: Arc<AtomicU64>,
     control: watch::Receiver<Control>,
     state: watch::Sender<LifecycleState>,
     exit: watch::Sender<Option<ExitReason>>,
@@ -177,6 +206,8 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
     let (control_tx, control_rx) = watch::channel(Control::Run);
     let (state_tx, state_rx) = watch::channel(LifecycleState::Starting);
     let (exit_tx, exit_rx) = watch::channel(None);
+    let dropped = Arc::new(AtomicU64::new(0));
+    let self_mailbox = mailbox_tx.downgrade();
     let handle = InstanceHandle {
         shared: Arc::new(Shared {
             pid,
@@ -184,11 +215,15 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
             control: control_tx,
             state: state_rx,
             exit: exit_rx,
+            message_max_bytes: spec.message_max_bytes,
+            dropped: dropped.clone(),
         }),
     };
     let task = InstanceTask {
         pid,
         mailbox: mailbox_rx,
+        self_mailbox,
+        dropped,
         control: control_rx,
         state: state_tx,
         exit: exit_tx,
@@ -207,10 +242,13 @@ impl InstanceTask {
             node = self.pid.node,
         );
         let reason = self
-            .lifecycle(&rt, &app, &spec)
+            .lifecycle(rt.clone(), &app, &spec)
             .instrument(span.clone())
             .await;
 
+        // Names first, so once the pid is gone from the table its names are
+        // free for the next incarnation.
+        rt.registry.unregister_all(self.pid);
         rt.table.remove(self.pid);
         self.mailbox.close();
         while self.mailbox.try_recv().is_ok() {}
@@ -227,14 +265,17 @@ impl InstanceTask {
 
     async fn lifecycle(
         &mut self,
-        rt: &RuntimeInner,
+        rt: Arc<RuntimeInner>,
         app: &LoadedApp,
         spec: &InstanceSpec,
     ) -> ExitReason {
-        let mut store = Store::new(
-            &rt.engine,
-            InstanceState::new(self.pid, spec.memory_max, spec.table_max),
-        );
+        let engine = rt.engine.clone();
+        let ctx = ProcessContext {
+            rt,
+            mailbox: self.self_mailbox.clone(),
+            dropped: self.dropped.clone(),
+        };
+        let mut store = Store::new(&engine, InstanceState::new(self.pid, spec, ctx));
         store.limiter(|s| &mut s.limiter);
         store.epoch_deadline_callback(|mut ctx| {
             if ctx.data_mut().clock.expired() {
@@ -299,9 +340,6 @@ impl InstanceTask {
         spec: &InstanceSpec,
     ) -> Result<ExitReason, ExitReason> {
         let mut next_ref: u64 = 1;
-        // Callers whose `handle-call` returned `noreply`. `process.reply`
-        // (M3) answers them; until then they time out, or see the exit.
-        let mut pending: HashMap<u64, oneshot::Sender<Envelope>> = HashMap::new();
         loop {
             match self.control.borrow_and_update().clone() {
                 Control::Run => {}
@@ -327,19 +365,21 @@ impl InstanceTask {
                 Message::Call { msg, reply } => {
                     let call_ref = next_ref;
                     next_ref += 1;
+                    store.data_mut().await_reply(call_ref, reply);
                     let msg = msg.into();
                     let call = instance.call_handle_call(&mut *store, call_ref, &msg);
                     match killable(&mut self.control, call).await {
                         None => return Err(ExitReason::Killed),
                         Some(Ok(CallResult::Reply(envelope))) => {
-                            // The caller may have timed out; a late reply is dropped.
-                            let _ = reply.send(envelope.into());
+                            // Already answered with `process.reply`, or the
+                            // caller timed out: the reply is dropped.
+                            if let Some(waiting) = store.data_mut().pending.remove(&call_ref) {
+                                let _ = waiting.send(envelope.into());
+                            }
                             Ok(())
                         }
-                        Some(Ok(CallResult::Noreply)) => {
-                            pending.insert(call_ref, reply);
-                            Ok(())
-                        }
+                        // The caller stays pending until `process.reply`.
+                        Some(Ok(CallResult::Noreply)) => Ok(()),
                         Some(Err(err)) => Err(err),
                     }
                 }
@@ -347,6 +387,16 @@ impl InstanceTask {
                     let msg = msg.into();
                     let cast = instance.call_handle_cast(&mut *store, &msg);
                     match killable(&mut self.control, cast).await {
+                        None => return Err(ExitReason::Killed),
+                        Some(result) => result,
+                    }
+                }
+                Message::Info(info) => {
+                    let Info::Timer { reference, .. } = &info;
+                    store.data_mut().timers.fired(*reference);
+                    let info = info.into();
+                    let handle = instance.call_handle_info(&mut *store, &info);
+                    match killable(&mut self.control, handle).await {
                         None => return Err(ExitReason::Killed),
                         Some(result) => result,
                     }

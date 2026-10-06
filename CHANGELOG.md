@@ -35,3 +35,12 @@ All notable changes are recorded here. The format follows
   `overloaded`.
 - `paddock-fixture-chaos`: a guest that traps, spins, allocates or fails on
   request, for exit-path tests.
+- Messaging: guest `cast`, `call` (with timeout, `noproc` for dead or stale
+  pids, the target's exit reason if it dies mid-call) and `reply` for deferred
+  answers; `send-after` and `cancel-timer` timers delivered to `handle-info`;
+  a node-local registry (`register` limited to the manifest's
+  `registered_names`, `whereis`, names released on exit). `Runtime` gains
+  `whereis`, `call` and `cast`.
+- `message_max_bytes` is enforced; an oversized body fails with the new
+  `too-large` call error. Casts dropped for a full mailbox are counted
+  (`InstanceHandle::dropped_messages`).

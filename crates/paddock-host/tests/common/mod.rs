@@ -74,6 +74,8 @@ pub fn spec(init_args: &str) -> InstanceSpec {
         table_max: None,
         callback_deadline: Duration::from_millis(300),
         mailbox_max: 16,
+        message_max_bytes: 1 << 20,
+        registered_names: Vec::new(),
         init_timeout: Duration::from_millis(500),
         shutdown_timeout: Duration::from_millis(300),
         init_args: init_args.as_bytes().to_vec(),
@@ -89,3 +91,8 @@ pub fn body(envelope: &Envelope) -> String {
 }
 
 pub const LONG: Duration = Duration::from_secs(10);
+
+/// A pid as the chaos fixture writes it: `node.id.incarnation`.
+pub fn pid_text(pid: paddock_host::Pid) -> String {
+    format!("{}.{}.{}", pid.node, pid.id, pid.incarnation)
+}

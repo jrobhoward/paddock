@@ -96,12 +96,12 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Lifecycle states (from rustbridge): Installed, Starting, Active, Upgrading, Stopping, Stopped, Failed, Restarting.
 
 ### M3 Messaging (M)
-- [ ] `cast`, `call` with timeout, `reply` and deferred replies (`noreply`).
-- [ ] `noproc` for dead or unknown pids; caller gets the target's exit reason if it dies mid-call; late replies dropped.
-- [ ] Mailbox limits and `message_max_bytes`; `overloaded` behaviour.
-- [ ] Timers: `send-after`, `cancel-timer`.
-- [ ] Local registry: `register` (only names in `registered_names`), `whereis`, unregistration on exit.
-- [ ] Envelope handling: content type and schema id passed through untouched.
+- [x] `cast`, `call` with timeout, `reply` and deferred replies (`noreply`).
+- [x] `noproc` for dead or unknown pids; caller gets the target's exit reason if it dies mid-call; late replies dropped.
+- [x] Mailbox limits and `message_max_bytes`; `overloaded` behaviour. (Oversized bodies get a new `too-large` call error; dropped casts are counted.)
+- [x] Timers: `send-after`, `cancel-timer`.
+- [x] Local registry: `register` (only names in `registered_names`), `whereis`, unregistration on exit.
+- [x] Envelope handling: content type and schema id passed through untouched.
 
 ### M4 Links, monitors, supervision (L)
 - [ ] Link and monitor tables in the host; `trap-exits`; exit propagation rules matching OTP.
