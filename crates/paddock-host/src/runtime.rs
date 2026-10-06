@@ -1,0 +1,252 @@
+//! The engine, the epoch ticker and instance spawning.
+
+use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
+use wasmtime::component::{Component, HasSelf, Linker};
+use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
+
+use crate::bindings::{App, AppPre};
+use crate::config::{MemoryProfile, RuntimeConfig};
+use crate::error::{HostError, describe};
+use crate::instance::{self, InstanceHandle};
+use crate::pid::Pid;
+use crate::spec::InstanceSpec;
+use crate::state::InstanceState;
+use crate::table::ProcessTable;
+
+/// Hosts instances on one node.
+///
+/// Must be used from a multi-threaded tokio runtime: with `current_thread`,
+/// timers and other tasks starve while a guest yields every epoch tick
+/// (spike S1).
+#[derive(Debug, Clone)]
+pub struct Runtime {
+    inner: Arc<RuntimeInner>,
+}
+
+pub(crate) struct RuntimeInner {
+    pub(crate) engine: Engine,
+    linker: Linker<InstanceState>,
+    pub(crate) table: ProcessTable,
+    next_id: AtomicU64,
+    config: RuntimeConfig,
+    _ticker: Ticker,
+}
+
+impl fmt::Debug for RuntimeInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RuntimeInner")
+            .field("config", &self.config)
+            .field("instances", &self.table.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A compiled component, linked against the host and ready to instantiate.
+#[derive(Clone)]
+pub struct LoadedApp {
+    pub(crate) pre: AppPre<InstanceState>,
+}
+
+impl fmt::Debug for LoadedApp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadedApp").finish_non_exhaustive()
+    }
+}
+
+impl Runtime {
+    /// Create the engine and start the epoch ticker.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Engine`] if wasmtime rejects the configuration (for
+    /// example when the pool cannot reserve its address space) or the epoch
+    /// thread cannot start.
+    pub fn new(config: RuntimeConfig) -> Result<Self, HostError> {
+        let engine =
+            Engine::new(&engine_config(&config)).map_err(|e| HostError::Engine(describe(&e)))?;
+        let mut linker = Linker::new(&engine);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+            .map_err(|e| HostError::Engine(describe(&e)))?;
+        App::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)
+            .map_err(|e| HostError::Engine(describe(&e)))?;
+        let ticker = Ticker::start(engine.clone(), config.epoch_tick)
+            .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
+        Ok(Self {
+            inner: Arc::new(RuntimeInner {
+                engine,
+                linker,
+                table: ProcessTable::default(),
+                next_id: AtomicU64::new(1),
+                config,
+                _ticker: ticker,
+            }),
+        })
+    }
+
+    /// Compile a component and link it against the host.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Load`] if the bytes are not a valid component, or it
+    /// imports something the host does not provide.
+    pub fn load(&self, component: &[u8]) -> Result<LoadedApp, HostError> {
+        let load = |e: wasmtime::Error| HostError::Load(describe(&e));
+        let component = Component::new(&self.inner.engine, component).map_err(load)?;
+        let pre = self
+            .inner
+            .linker
+            .instantiate_pre(&component)
+            .map_err(load)?;
+        Ok(LoadedApp {
+            pre: AppPre::new(pre).map_err(load)?,
+        })
+    }
+
+    /// Start a new instance (incarnation 1). It begins in `Starting`; watch
+    /// [`InstanceHandle::state`] or await [`InstanceHandle::wait`].
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InstanceLimit`] when every slot is in use, and
+    /// [`HostError::MemoryAboveProfile`] when `memory_max` exceeds what the
+    /// node's memory profile reserves.
+    pub fn spawn(&self, app: &LoadedApp, spec: InstanceSpec) -> Result<InstanceHandle, HostError> {
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        self.start(app, spec, id, 1)
+    }
+
+    /// Start the next incarnation of an instance that has exited: same id,
+    /// incarnation one higher.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Runtime::spawn`], and [`HostError::StillRunning`] if an
+    /// instance with that id is still alive.
+    pub fn respawn(
+        &self,
+        app: &LoadedApp,
+        spec: InstanceSpec,
+        previous: Pid,
+    ) -> Result<InstanceHandle, HostError> {
+        self.start(
+            app,
+            spec,
+            previous.id,
+            previous.incarnation.saturating_add(1),
+        )
+    }
+
+    /// The live instance with exactly this pid. `None` for a dead pid or an
+    /// earlier incarnation.
+    #[must_use]
+    pub fn lookup(&self, pid: Pid) -> Option<InstanceHandle> {
+        self.inner.table.lookup(pid)
+    }
+
+    /// Number of live instances.
+    #[must_use]
+    pub fn instance_count(&self) -> usize {
+        self.inner.table.len()
+    }
+
+    fn start(
+        &self,
+        app: &LoadedApp,
+        spec: InstanceSpec,
+        id: u64,
+        incarnation: u32,
+    ) -> Result<InstanceHandle, HostError> {
+        let limit = self.inner.config.memory_profile.memory_max();
+        if spec.memory_max > limit {
+            return Err(HostError::MemoryAboveProfile {
+                requested: spec.memory_max,
+                limit,
+            });
+        }
+        let pid = Pid {
+            node: self.inner.config.node,
+            id,
+            incarnation,
+        };
+        let (handle, task) = instance::prepare(pid, &spec);
+        let capacity = usize::try_from(self.inner.config.max_instances).unwrap_or(usize::MAX);
+        self.inner
+            .table
+            .insert(handle.clone(), capacity)
+            .map_err(|holder| match holder {
+                Some(pid) => HostError::StillRunning(pid),
+                None => HostError::InstanceLimit(self.inner.config.max_instances),
+            })?;
+        tokio::spawn(task.run(self.inner.clone(), app.clone(), spec));
+        Ok(handle)
+    }
+}
+
+fn engine_config(config: &RuntimeConfig) -> Config {
+    let n = config.max_instances;
+    let mut pool = PoolingAllocationConfig::default();
+    // Per-component counts from S2's Rust guests, with headroom.
+    pool.total_component_instances(n)
+        .total_core_instances(n.saturating_mul(4))
+        .total_memories(n.saturating_mul(2))
+        .total_tables(n.saturating_mul(4))
+        .max_core_instances_per_component(8)
+        .max_memories_per_component(4)
+        .max_tables_per_component(8)
+        // Each live Store holds a fiber stack (S2).
+        .total_stacks(n)
+        .max_memory_size(usize::try_from(config.memory_profile.memory_max()).unwrap_or(usize::MAX));
+    let mut wasm = Config::new();
+    wasm.epoch_interruption(true)
+        .allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
+    if config.memory_profile == MemoryProfile::Dense {
+        wasm.memory_reservation(128 << 20)
+            .memory_guard_size(64 << 10)
+            .memory_reservation_for_growth(0);
+    }
+    wasm
+}
+
+/// Advances the engine's epoch on a dedicated OS thread.
+///
+/// Not a tokio task: guests yield only when the epoch advances, so if every
+/// worker were running a spinning guest, a ticker task would never be
+/// scheduled and nothing would yield again.
+#[derive(Debug)]
+struct Ticker {
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Ticker {
+    fn start(engine: Engine, tick: Duration) -> std::io::Result<Self> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("paddock-epoch".into())
+            .spawn(move || {
+                while !flag.load(Ordering::Relaxed) {
+                    std::thread::sleep(tick);
+                    engine.increment_epoch();
+                }
+            })?;
+        Ok(Self {
+            stop,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for Ticker {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}

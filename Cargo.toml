@@ -3,7 +3,9 @@ resolver = "3"
 members = [
     "crates/paddock",
     "crates/paddock-bundle",
+    "crates/paddock-fixture-chaos",
     "crates/paddock-fixture-echo",
+    "crates/paddock-host",
     "crates/paddock-manifest",
 ]
 # Throwaway spike code is its own workspace with its own lock file; the

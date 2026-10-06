@@ -55,14 +55,12 @@ allow = [
     # `foldhash` (via hashbrown) is Zlib-only.
     "Zlib",
 ]
-# Not yet allowed: `bzip2-1.0.6` (libbz2-rs-sys) and `CC0-1.0`/`MIT-0`
-# (ppmd-rust), which the `zip` crate pulls in through its default compression
-# features; rustbridge-bundle depends on zip. Both are permissive, but prefer
-# turning those zip features off (bundles use deflate); add them here with a
-# rationale only if that is not possible.
+# Not allowed, and not needed: `bzip2-1.0.6` (libbz2-rs-sys) and
+# `CC0-1.0`/`MIT-0` (ppmd-rust) come with the `zip` crate's default codecs.
+# rustbridge-bundle builds zip with Deflate only (rustbridge `bundle-1.2`), so
+# neither is in the graph.
 confidence-threshold = 0.93
-# The list is written for the wasmtime graph, which the workspace does not
-# depend on yet.
+# Some entries cover crates only certain targets or features pull in.
 unused-allowed-license = "allow"
 exceptions = []
 

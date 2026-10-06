@@ -50,8 +50,11 @@ cargo +1.96.0 check --workspace --all-targets
 cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release
 wasm-tools component wit target/wasm32-wasip2/release/paddock_fixture_echo.wasm
 
-# Tests that load a built guest fixture are #[ignore]d in the plain test run
-# (the fixture must be built first); CI's guest job runs them.
+# paddock-host's tests build the guest fixtures themselves on first use, into
+# target/fixtures (the running `cargo test` holds the lock on target/), so
+# `cargo test --workspace` needs the wasm32-wasip2 target installed.
+# paddock-bundle's fixture test predates that and is #[ignore]d; CI's guest
+# job runs it.
 cargo test -p paddock-bundle --test fixture_echo -- --ignored
 ```
 
@@ -72,11 +75,15 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   provenance), validation and capability/import classification.
 - `crates/paddock-bundle`: opens and verifies `.rbp` bundles, reads component
   imports, operator policy and the effective grant.
+- `crates/paddock-host`: the runtime: engine and epoch ticker, pids and the
+  process table, instances and their callback loop.
+- `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
+  fails on request; the host's exit-path tests run against it.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
   with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The remaining
-  Phase 1 crates (`paddock-host`, `paddock-node`, `paddock-cli`,
-  `paddock-sdk`) land under `crates/` per the plan's workspace layout.
+  Phase 1 crates (`paddock-node`, `paddock-cli`, `paddock-sdk`) land under
+  `crates/` per the plan's workspace layout.
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
   by `crates/paddock/tests/wit_rules.rs`.
 - `docs/`: design and plan.
@@ -92,7 +99,13 @@ without re-running its spike.
 
 **Host instances on tokio's multi-threaded runtime, never `current_thread` +
 `LocalSet`.** In that configuration timers and the top-level future starve
-while a guest yields every epoch tick (S1).
+while a guest yields every epoch tick (S1). That includes tests: async tests that
+run instances use `#[tokio::test(flavor = "multi_thread")]`, never the
+default.
+
+**The epoch ticker is an OS thread, not a tokio task.** Guests yield only when
+the epoch advances; if every worker ran a spinning guest, a ticker task would
+never be scheduled and nothing would yield again (M2).
 
 **A Store whose call future was dropped, or that trapped, is poisoned.** The
 next entry traps with `cannot enter component instance`. Killing an instance

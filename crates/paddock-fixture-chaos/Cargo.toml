@@ -1,0 +1,19 @@
+[package]
+name = "paddock-fixture-chaos"
+version = "0.0.0"
+description = "Test fixture: an app that traps, spins, allocates or fails on request"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

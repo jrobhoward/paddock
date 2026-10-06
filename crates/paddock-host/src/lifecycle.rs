@@ -1,0 +1,63 @@
+//! Lifecycle states, from rustbridge's plugin lifecycle plus `Upgrading` and
+//! `Restarting`.
+
+/// Where an instance (or app) is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LifecycleState {
+    /// Deployed, not started.
+    #[default]
+    Installed,
+    /// Instantiating and running `init`.
+    Starting,
+    /// Handling messages.
+    Active,
+    /// Swapping to a new version between messages.
+    Upgrading,
+    /// Running `terminate` before a graceful stop.
+    Stopping,
+    /// Stopped normally.
+    Stopped,
+    /// Stopped abnormally (crash, deadline, kill, failed `init`).
+    Failed,
+    /// Waiting for its supervisor to start it again.
+    Restarting,
+}
+
+impl LifecycleState {
+    /// Whether moving from this state to `target` is allowed.
+    #[must_use]
+    pub fn can_transition_to(self, target: Self) -> bool {
+        use LifecycleState::{
+            Active, Failed, Installed, Restarting, Starting, Stopped, Stopping, Upgrading,
+        };
+        matches!(
+            (self, target),
+            (Installed | Stopped | Restarting, Starting)
+                | (Starting | Upgrading, Active)
+                | (Starting | Active, Stopping)
+                | (Active, Upgrading)
+                | (Stopping, Stopped)
+                | (Failed | Stopped, Restarting)
+                | (
+                    Installed | Starting | Active | Upgrading | Stopping | Restarting,
+                    Failed
+                )
+        )
+    }
+
+    /// Whether an instance in this state takes messages from its mailbox.
+    #[must_use]
+    pub fn handles_messages(self) -> bool {
+        self == Self::Active
+    }
+
+    /// Whether this state is final for one incarnation.
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Stopped | Self::Failed)
+    }
+}
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;

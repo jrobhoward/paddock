@@ -32,9 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The host tests build the guest fixtures (into target/fixtures) on
+      # first use, so the test job needs the wasm target too.
       - name: Install toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install stable --profile minimal --component clippy --target wasm32-wasip2
           rustup default stable
           rustc --version
 
@@ -85,17 +87,19 @@ jobs:
           tool: wasm-tools
 
       - name: Build fixtures
-        run: cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release --locked
+        run: cargo build -p paddock-fixture-echo -p paddock-fixture-chaos --target wasm32-wasip2 --release --locked
 
       - name: Check component world
         run: |
-          wasm=target/wasm32-wasip2/release/paddock_fixture_echo.wasm
-          wasm-tools validate --features all "$wasm"
-          wasm-tools component wit "$wasm" | tee wit.txt
-          # A component imports only what its code calls, so echo (which calls
-          # no host function) has no `process` import; check the exports.
-          for f in init handle-call handle-cast handle-info terminate save-snapshot load-snapshot; do
-            grep -q "export $f: func" wit.txt || { echo "missing export $f"; exit 1; }
+          for name in paddock_fixture_echo paddock_fixture_chaos; do
+            wasm=target/wasm32-wasip2/release/$name.wasm
+            wasm-tools validate --features all "$wasm"
+            wasm-tools component wit "$wasm" | tee wit.txt
+            # A component imports only what its code calls (echo has no
+            # `process` import), so check the exports.
+            for f in init handle-call handle-cast handle-info terminate save-snapshot load-snapshot; do
+              grep -q "export $f: func" wit.txt || { echo "$name: missing export $f"; exit 1; }
+            done
           done
 
       # Tests that load a built fixture are ignored in the plain test run.

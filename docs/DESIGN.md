@@ -87,6 +87,8 @@ An app is a WebAssembly component that implements a `gen_server`-style callback 
 
 **Deferred replies.** `handle-call` may return `noreply` and answer later with `reply(ref, msg)`, so an app can serve a call after its own outbound call finishes.
 
+**Start and stop.** `init` receives the manifest's `lifecycle.start_args` encoded as JSON (an empty list when unset) and must finish within `init_timeout_ms`; overrunning it, returning an error or trapping all end the instance with `crashed`. A graceful stop lets the current callback finish, drops messages still queued (their callers get `exited`), then runs `terminate` within `shutdown_timeout_ms`; overrunning that is a kill. A kill abandons the callback in progress and skips `terminate`.
+
 ### WIT contract
 
 The contract is the `paddock:runtime@0.1.0` package in [`wit/runtime.wit`](../wit/runtime.wit), the source of truth; this section summarizes it.

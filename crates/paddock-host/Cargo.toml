@@ -1,0 +1,27 @@
+[package]
+name = "paddock-host"
+version = "0.0.0"
+description = "Paddock host runtime: engine, instances, mailboxes and the callback loop"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+paddock-manifest = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
+tracing = { workspace = true }
+wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator"] }
+wasmtime-wasi = { workspace = true, features = ["p2"] }
+
+[dev-dependencies]
+rstest = { workspace = true }
+semver = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

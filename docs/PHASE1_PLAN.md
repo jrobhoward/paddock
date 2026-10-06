@@ -88,12 +88,12 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Effective-grant computation: imports ∩ manifest ∩ operator policy (operator policy file, Phase 1 format: TOML).
 
 ### M2 Instance runtime (L)
-- [ ] Engine: async, epoch interruption with a ticker task, pooling allocator sized from node config (`max_instances`; `total_stacks = max_instances`; memory reservation is a node setting: large by default, 128 MiB for dense nodes; see S2).
-- [ ] Instance = Store + limits (`StoreLimits`) + bounded mailbox + one tokio task running the callback loop.
-- [ ] Pid allocation `{node, id, incarnation}`; process table; `self`.
-- [ ] Callback loop: `init` with init timeout → loop over mailbox → `handle-call`/`handle-cast`/`handle-info` under the per-callback deadline → `terminate` on shutdown.
-- [ ] Trap, memory and deadline → exit reason mapping; instance teardown.
-- [ ] Lifecycle states (from rustbridge): Installed, Starting, Active, Upgrading, Stopping, Stopped, Failed, Restarting.
+- [x] Engine: async, epoch interruption with a ticker task, pooling allocator sized from node config (`max_instances`; `total_stacks = max_instances`; memory reservation is a node setting: large by default, 128 MiB for dense nodes; see S2).
+- [x] Instance = Store + limits (`StoreLimits`) + bounded mailbox + one tokio task running the callback loop. (A custom `ResourceLimiter` instead of `StoreLimits`, so the exit reason can say which limit was hit; the ticker is an OS thread, see CLAUDE.md.)
+- [x] Pid allocation `{node, id, incarnation}`; process table; `self`.
+- [x] Callback loop: `init` with init timeout → loop over mailbox → `handle-call`/`handle-cast`/`handle-info` under the per-callback deadline → `terminate` on shutdown. (`handle-info` dispatch lands with its first sources: timers in M3, links and monitors in M4.)
+- [x] Trap, memory and deadline → exit reason mapping; instance teardown.
+- [x] Lifecycle states (from rustbridge): Installed, Starting, Active, Upgrading, Stopping, Stopped, Failed, Restarting.
 
 ### M3 Messaging (M)
 - [ ] `cast`, `call` with timeout, `reply` and deferred replies (`noreply`).

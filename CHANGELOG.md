@@ -26,3 +26,12 @@ All notable changes are recorded here. The format follows
   manifest does not declare, or that no host provides, is refused.
 - Operator policy (TOML) and the effective grant: imports ∩ manifest ∩ policy,
   with ungranted capabilities marked for deny stubs.
+- `paddock-host`: the instance runtime. A pooling-allocator engine sized from
+  node config (standard or dense memory profile), an epoch ticker, pids with
+  incarnations, a process table, and instances that run `init`, handle calls
+  and casts one at a time under a per-callback deadline, and run `terminate`
+  on a graceful stop. Traps, memory and table limits, deadlines and kills end
+  an instance with an exit reason; a full mailbox fails casts and calls with
+  `overloaded`.
+- `paddock-fixture-chaos`: a guest that traps, spins, allocates or fails on
+  request, for exit-path tests.
