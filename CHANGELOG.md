@@ -16,3 +16,13 @@ All notable changes are recorded here. The format follows
 - `paddock-fixture-echo`, the smallest app implementing the `app` world.
 - CI: tests on Linux, macOS and Windows, guest component checks, MSRV 1.96.0,
   cargo-deny, fmt and docs, and a weekly run against fresh dependencies.
+- `paddock-manifest`: the full app manifest model (every section, including
+  fields for later phases), with defaults, path-aware parse errors, validation
+  that reports every broken rule, and a list of fields Phase 1 does not enforce.
+- `paddock-bundle`: opens `.rbp` 1.2 bundles, verifies signatures against
+  operator-trusted keys only, checks checksums and the component's world, and
+  reads the `appserver` section.
+- Deploy-time import inspection: a component importing an interface its
+  manifest does not declare, or that no host provides, is refused.
+- Operator policy (TOML) and the effective grant: imports ∩ manifest ∩ policy,
+  with ungranted capabilities marked for deny stubs.

@@ -103,6 +103,8 @@ The contract is the `paddock:runtime@0.1.0` package in [`wit/runtime.wit`](../wi
 
 The manifest describes everything the server needs to place, limit, wire and upgrade an app. The data model is complete now; enforcement ships in phases (column 3). Field names follow `.rbp` style so the manifest can live in a rustbridge bundle as an extra section.
 
+In a bundle, the `appserver` section holds every section below except three that the `.rbp` manifest already carries: `app` comes from `plugin`, `component` from the `wasm32-wasip2` variant, and `provenance` from `build_info`, the SBOM and the operator key that verified the signature. `paddock-manifest` models the section (`AppSpec`) and the combined result (`AppManifest`). Unknown fields are rejected with the path of the field, and a node logs a warning for each field a manifest sets that the current phase does not enforce.
+
 | Section | Fields | Enforced in |
 | --- | --- | --- |
 | `app` | name, version (semver), description, authors, license, repository | Phase 1 |
@@ -134,6 +136,7 @@ The manifest describes everything the server needs to place, limit, wire and upg
 | Config | `wasi:config` | key prefixes |
 | Secrets | `paddock:secrets` | named secret refs |
 | Clocks, random | `wasi:clocks`, `wasi:random` | always granted |
+| WASI plumbing | `wasi:io`, `wasi:cli` | always granted; Rust's standard library imports them. Stdout and stderr become tagged logs, and the environment holds only what the host sets |
 | Term storage | `wasi:keyvalue` | buckets, durability (memory, disk, replicated), quota bytes |
 | Files | `wasi:filesystem` | preopens: guest path → host volume, read-only or read-write, quota |
 | HTTP out | `wasi:http/outgoing-handler` | allowed hosts and ports, methods, max concurrent |
@@ -142,6 +145,8 @@ The manifest describes everything the server needs to place, limit, wire and upg
 | SQL pool | `paddock:sql` | named datasource, max connections |
 | Metrics | `paddock:metrics` | metric name prefix |
 | Admin | `paddock:admin` | read-only or control; for operator tooling apps only |
+
+A capability key covers a whole WIT package (`wasi:keyvalue` covers `store`, `atomics` and `batch`) except where noted by interface: `wasi:http/types` is covered by either HTTP key, and `paddock:runtime/supervisor` is the only `paddock:runtime` interface that needs declaring. An import that no capability covers and that is not always granted fails the deploy. In Phase 1, operator policy grants or withholds whole capabilities; the scope the manifest requests is used as written.
 
 ## Isolation and resource limits
 

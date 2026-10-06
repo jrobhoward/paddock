@@ -49,7 +49,16 @@ cargo +1.96.0 check --workspace --all-targets
 # component exporting the app world (`cargo install wasm-tools` once).
 cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release
 wasm-tools component wit target/wasm32-wasip2/release/paddock_fixture_echo.wasm
+
+# Tests that load a built guest fixture are #[ignore]d in the plain test run
+# (the fixture must be built first); CI's guest job runs them.
+cargo test -p paddock-bundle --test fixture_echo -- --ignored
 ```
+
+**rustbridge is a sibling checkout for now.** `rustbridge-bundle` is a path
+dependency on `../rustbridge` (branch `bundle-1.2`) until bundle format 1.2 is
+published, so CI cannot build the workspace. rustbridge changes are made in that
+checkout, under rustbridge's own `CLAUDE.md`.
 
 Spikes are a separate workspace under `spikes/` with their own lock file. Each
 `spikes/<name>/README.md` has its exact build and run commands.
@@ -58,12 +67,16 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 
 - `crates/paddock`: placeholder crate; its `tests/wit_rules.rs` enforces the
   rules of `wit/runtime.wit`.
+- `crates/paddock-manifest`: the app manifest model (`AppSpec` is the
+  bundle's `appserver` section; `AppManifest` adds identity, component and
+  provenance), validation and capability/import classification.
+- `crates/paddock-bundle`: opens and verifies `.rbp` bundles, reads component
+  imports, operator policy and the effective grant.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
-  with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The Phase 1
-  crates (`paddock-manifest`, `paddock-bundle`, `paddock-host`,
-  `paddock-node`, `paddock-cli`, `paddock-sdk`) land under `crates/` per the
-  plan's workspace layout.
+  with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The remaining
+  Phase 1 crates (`paddock-host`, `paddock-node`, `paddock-cli`,
+  `paddock-sdk`) land under `crates/` per the plan's workspace layout.
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
   by `crates/paddock/tests/wit_rules.rs`.
 - `docs/`: design and plan.
@@ -122,7 +135,13 @@ instance (S2).
 
 **Bundles are verified against operator-trusted keys only.**
 `rustbridge-bundle` defaults to the key inside the bundle, which proves
-integrity, not authorship (S6).
+integrity, not authorship (S6). Use `verify_manifest_signature_trusted` and
+`read_variant_verified`, never `verify_manifest_signature`.
+
+**Import inspection skips type imports.** A world that uses interface types
+(`use types.{envelope}`) imports each type by its plain name (`envelope`); these
+are bound to the interface instance, not linked separately. Counting them as
+imports refuses every real component (M1, found by the echo fixture).
 
 **wasmtime 49 has its own `wasmtime::Error`, not `anyhow::Error`.** Use
 `wasmtime::Result` at the wasmtime boundary and convert into this crate's

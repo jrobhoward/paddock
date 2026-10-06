@@ -81,11 +81,11 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] `wit/runtime.wit`: package `paddock:runtime@0.1.0`, its rules enforced by `crates/paddock/tests/wit_rules.rs`. `crates/paddock-fixture-echo` is the smallest app implementing it.
 
 ### M1 Manifest and bundles (M)
-- [ ] `paddock-manifest`: Rust types for the **entire** manifest data model in DESIGN.md (all sections, including Phase 2/3 fields), serde, defaults, validation errors with paths.
-- [ ] Mark unenforced fields: the node logs a warning when a manifest uses a field Phase 1 doesn't enforce yet.
-- [ ] `paddock-bundle`: open `.rbp`, pick the `wasm32-wasip2` variant, verify checksums and minisign signature against trusted keys.
-- [ ] Import inspection: list component imports and fail deploy if any are missing from `capabilities` (from S4).
-- [ ] Effective-grant computation: imports ∩ manifest ∩ operator policy (operator policy file, Phase 1 format: TOML).
+- [x] `paddock-manifest`: Rust types for the **entire** manifest data model in DESIGN.md (all sections, including Phase 2/3 fields), serde, defaults, validation errors with paths.
+- [x] Mark unenforced fields: the node logs a warning when a manifest uses a field Phase 1 doesn't enforce yet. (`AppSpec::unenforced_fields` lists them; the node logs them once M7 exists.)
+- [x] `paddock-bundle`: open `.rbp`, pick the `wasm32-wasip2` variant, verify checksums and minisign signature against trusted keys.
+- [x] Import inspection: list component imports and fail deploy if any are missing from `capabilities` (from S4). Reads the component with `wasmparser`, without compiling it.
+- [x] Effective-grant computation: imports ∩ manifest ∩ operator policy (operator policy file, Phase 1 format: TOML).
 
 ### M2 Instance runtime (L)
 - [ ] Engine: async, epoch interruption with a ticker task, pooling allocator sized from node config (`max_instances`; `total_stacks = max_instances`; memory reservation is a node setting: large by default, 128 MiB for dense nodes; see S2).
@@ -158,15 +158,16 @@ M5 and M7 can run beside M4 once M2 and M3 are done. The SDK (M8) tracks the WIT
 
 Kept small; the rest waits for later phases:
 
-From S6 (`rustbridge-bundle` 1.0.1 is already a usable library):
-- [ ] `Platform::Wasm32Wasip2` and `#[non_exhaustive]` on `Platform`.
-- [ ] Optional `component: { world }` on a variant.
-- [ ] `#[serde(flatten)]` extensions on `Manifest` so `appserver` round-trips; builder `with_extension`.
-- [ ] Accept `bundle_version` 1.2.
-- [ ] Verify against operator-trusted keys (`verify_with_trusted_keys`); never trust the key inside the bundle.
-- [ ] `read_variant_verified` (in-memory bytes, checksum verified).
-- [ ] `BundleBuilder::add_component`.
-- Until these land, `paddock-bundle` uses S6's workaround behind its own API.
+From S6 (`rustbridge-bundle` 1.0.1 is already a usable library). Done on the rustbridge `bundle-1.2` branch, not yet published; `paddock-bundle` depends on a sibling checkout (`../rustbridge`) until it is, so CI cannot build the workspace in the meantime:
+- [x] `Platform::Wasm32Wasip2` and `#[non_exhaustive]` on `Platform`.
+- [x] Optional `component: { world }` on a variant.
+- [x] `#[serde(flatten)]` extensions on `Manifest` so `appserver` round-trips; builder `with_extension`.
+- [x] Accept `bundle_version` 1.2.
+- [x] Verify against operator-trusted keys (`verify_manifest_signature_trusted`); never trust the key inside the bundle.
+- [x] `read_variant_verified` (in-memory bytes, checksum verified).
+- [x] `BundleBuilder::add_component`.
+- [x] Also: `zip` built with Deflate only, which keeps two non-allow-listed licences (bzip2, ppmd) out of Paddock's graph.
+- [ ] Publish the branch, then switch `paddock-bundle` to a git or crates.io dependency.
 - [ ] Later (Phase 2+): the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait, and the native-process runner.
 
 ## Out of scope for Phase 1

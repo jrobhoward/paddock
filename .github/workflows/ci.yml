@@ -98,6 +98,10 @@ jobs:
             grep -q "export $f: func" wit.txt || { echo "missing export $f"; exit 1; }
           done
 
+      # Tests that load a built fixture are ignored in the plain test run.
+      - name: Fixture tests
+        run: cargo test -p paddock-bundle --test fixture_echo --locked -- --ignored
+
   # Guards `rust-version = "1.96.0"`, wasmtime 49's floor.
   msrv:
     name: msrv 1.96.0
