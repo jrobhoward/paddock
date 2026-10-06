@@ -1,0 +1,13 @@
+[package]
+name = "paddock"
+version = "0.0.0"
+description = "Clustered WebAssembly application server with OTP-style supervision"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

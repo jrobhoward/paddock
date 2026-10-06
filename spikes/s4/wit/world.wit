@@ -1,0 +1,27 @@
+package paddock:spike4@0.1.0;
+
+/// Term storage stand-in. Errors follow the Paddock convention: a variant with
+/// a `permission-denied` case, so a generic deny stub can return it.
+interface kv {
+  variant error { permission-denied, not-found, other(string) }
+  get: func(key: string) -> result<option<string>, error>;
+  set: func(key: string, value: string) -> result<_, error>;
+}
+
+/// HTTP egress stand-in; error is an enum with a `permission-denied` case.
+interface net {
+  enum error { permission-denied, unreachable }
+  fetch: func(url: string) -> result<string, error>;
+}
+
+/// A capability with no error channel: a deny stub can only trap.
+interface audit {
+  record-event: func(msg: string);
+}
+
+world app {
+  import kv;
+  import net;
+  import audit;
+  export run: func(test: string) -> string;
+}

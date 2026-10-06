@@ -1,0 +1,10 @@
+[package]
+name = "s5-host"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+wasmtime = { version = "49", default-features = false, features = ["component-model", "async", "cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }

@@ -1,0 +1,9 @@
+[package]
+name = "s4-host"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+wasmtime = { version = "49", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }

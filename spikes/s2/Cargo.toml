@@ -1,0 +1,14 @@
+[package]
+name = "s2-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "s2-bench"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+wasmtime = { version = "49", default-features = false, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator"] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }

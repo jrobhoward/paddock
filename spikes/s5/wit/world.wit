@@ -1,0 +1,12 @@
+package paddock:spike5@0.1.0;
+
+world app {
+  /// Version string of this component build.
+  export version: func() -> string;
+  export init: func() -> result<_, string>;
+  export handle-call: func(msg: string) -> string;
+  /// Serialize state for an upgrade. Must not change state.
+  export save-snapshot: func() -> list<u8>;
+  /// Restore state saved by `from-version`. An error makes the host revert.
+  export load-snapshot: func(from-version: string, snapshot: list<u8>) -> result<_, string>;
+}

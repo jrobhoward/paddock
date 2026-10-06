@@ -1,0 +1,15 @@
+package paddock:spike@0.1.0;
+
+/// Host services imported by the guest (stand-in for paddock:runtime/process).
+interface host {
+  /// Send `msg` to the instance registered as `target` and wait for its reply.
+  call: func(target: string, msg: string, timeout-ms: u32) -> result<string, string>;
+  /// Suspend this instance for `ms` milliseconds (host-side async sleep).
+  sleep: func(ms: u32);
+  log: func(msg: string);
+}
+
+world app {
+  import host;
+  export handle-call: func(msg: string) -> string;
+}
