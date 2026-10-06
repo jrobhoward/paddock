@@ -1,0 +1,186 @@
+/// The Paddock app contract: an app is a component that implements the `app`
+/// world, a `gen_server`-style set of callbacks the host drives one message at
+/// a time, and imports host services from `process`.
+///
+/// Rules (checked by `crates/paddock/tests/wit_rules.rs`):
+/// - Synchronous functions only, and no `stream` or `future` types: the guest
+///   ABI targets WASI 0.2. A later world version may add async functions.
+/// - No `wasi:io` types (pollables, streams), so a WASI 0.3 world can be added
+///   without changing this one.
+/// - Every function of a capability interface (any interface here other than
+///   `types` and `process`, which every app gets) returns
+///   `result<_, error>` where `error` has an `access-denied` case, so a
+///   capability the operator did not grant is an error value, not a trap.
+package paddock:runtime@0.1.0;
+
+/// Types shared by the host services and the app callbacks.
+interface types {
+  /// Identifies one instance in the cluster. `incarnation` changes on every
+  /// restart, so a pid held from before a restart never reaches the new
+  /// instance.
+  record pid {
+    node: u32,
+    id: u64,
+    incarnation: u32,
+  }
+
+  /// Identifies a call awaiting a reply; passed to `handle-call` and used with
+  /// `process.reply` for deferred replies.
+  type call-ref = u64;
+
+  /// A message. The body is opaque bytes; `content-type` says how to decode it
+  /// (`application/cbor` by default) and `schema` optionally names its schema
+  /// in the app manifest's message catalog.
+  record envelope {
+    content-type: string,
+    schema: option<string>,
+    body: list<u8>,
+  }
+
+  /// Why an instance stopped.
+  variant exit-reason {
+    /// `init` returned, or the instance stopped itself, without error.
+    normal,
+    /// Stopped by its supervisor or an operator, gracefully.
+    shutdown,
+    /// Stopped without running `terminate`.
+    killed,
+    /// The pid does not exist (already exited, never existed, or a previous
+    /// incarnation).
+    noproc,
+    /// The node hosting the pid became unreachable.
+    noconnection,
+    /// A callback exceeded its deadline.
+    timeout,
+    /// The guest trapped or exceeded a limit; the string says which.
+    crashed(string),
+  }
+
+  /// Why a `call` failed.
+  variant call-error {
+    /// No instance has that pid.
+    noproc,
+    /// The target's node became unreachable.
+    noconnection,
+    /// No reply arrived within the timeout. A late reply is dropped.
+    timeout,
+    /// The target's mailbox is full.
+    overloaded,
+    /// The target's messaging ACL does not accept calls from this app.
+    access-denied,
+    /// The target exited before replying.
+    exited(exit-reason),
+  }
+
+  /// Why `register` failed.
+  variant register-error {
+    /// The manifest's `registered_names` does not include the name.
+    access-denied,
+    /// Another instance already holds the name.
+    taken(pid),
+  }
+
+  /// Something the host delivers to `handle-info`.
+  variant info {
+    /// A linked instance exited and this instance traps exits.
+    exit(tuple<pid, exit-reason>),
+    /// A monitored instance exited: monitor reference, pid, reason.
+    down(tuple<u64, pid, exit-reason>),
+    /// A timer from `send-after` fired: timer reference, message.
+    timer(tuple<u64, envelope>),
+  }
+
+  /// What `handle-call` returns.
+  variant call-result {
+    /// Reply now.
+    reply(envelope),
+    /// Reply later with `process.reply`.
+    noreply,
+  }
+}
+
+/// Host services every app gets: messaging, links, monitors, timers and the
+/// local registry.
+interface process {
+  use types.{pid, call-ref, envelope, exit-reason, call-error, register-error};
+
+  /// This instance's pid.
+  self: func() -> pid;
+
+  /// Send without waiting. Delivery is at most once, ordered per
+  /// sender/receiver pair.
+  cast: func(to: pid, msg: envelope);
+
+  /// Send and wait for the reply. Suspends this instance (it handles no other
+  /// message meanwhile) without holding a host thread.
+  call: func(to: pid, msg: envelope, timeout-ms: u32) -> result<envelope, call-error>;
+
+  /// Answer a call that `handle-call` returned `noreply` for.
+  reply: func(to: call-ref, msg: envelope);
+
+  /// Link with another instance: if either exits abnormally, the other exits
+  /// too, unless it traps exits.
+  link: func(other: pid);
+
+  /// Remove a link.
+  unlink: func(other: pid);
+
+  /// When on, linked exits arrive as `info.exit` instead of stopping this
+  /// instance.
+  trap-exits: func(on: bool);
+
+  /// Watch another instance; its exit arrives as `info.down`. Returns the
+  /// monitor reference.
+  monitor: func(other: pid) -> u64;
+
+  /// Stop watching.
+  demonitor: func(monitor-ref: u64);
+
+  /// Register this instance under a node-local name listed in the manifest.
+  register: func(name: string) -> result<_, register-error>;
+
+  /// Look up a registered name.
+  whereis: func(name: string) -> option<pid>;
+
+  /// Deliver `msg` to this instance as `info.timer` after `ms` milliseconds.
+  /// Returns the timer reference.
+  send-after: func(ms: u32, msg: envelope) -> u64;
+
+  /// Cancel a timer that has not fired.
+  cancel-timer: func(timer-ref: u64);
+
+  /// Send an exit signal to another instance.
+  exit: func(other: pid, reason: exit-reason);
+}
+
+/// What an app component implements.
+world app {
+  import process;
+  use types.{call-ref, envelope, exit-reason, info, call-result};
+
+  /// Called once when the instance starts. An error stops the instance and
+  /// counts as a restart for its supervisor.
+  export init: func(args: list<u8>) -> result<_, string>;
+
+  /// Handle a call. Return `reply` to answer now or `noreply` to answer later
+  /// with `process.reply`.
+  export handle-call: func(caller: call-ref, msg: envelope) -> call-result;
+
+  /// Handle a cast.
+  export handle-cast: func(msg: envelope);
+
+  /// Handle a link exit, monitor notification or timer.
+  export handle-info: func(msg: info);
+
+  /// Called before a graceful stop. Not called when the instance is killed or
+  /// traps.
+  export terminate: func(reason: exit-reason);
+
+  /// Serialize state for an upgrade. Must not change state: on a failed
+  /// upgrade this instance keeps running.
+  export save-snapshot: func() -> list<u8>;
+
+  /// Restore state saved by version `from-version` of this app. An error makes
+  /// the host keep the old version running.
+  export load-snapshot: func(from-version: string, snapshot: list<u8>) -> result<_, string>;
+}

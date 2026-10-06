@@ -27,7 +27,7 @@ Each spike answers one question that could change the design. They're small thro
 | S1 | Does the callback model work with wasmtime's async component bindings? Specifically: a guest export (`handle-call`) calls a host import (`call`) that suspends for a long time without blocking a thread, while an epoch deadline can still kill it. | Rust guest + host where A calls B via the host, B sleeps, A's deadline fires and traps cleanly, and the host keeps serving other instances | 2 days | Fall back to a sync `call` that returns a ref plus a deferred `handle-info` reply (more guest-side complexity) |
 | S2 | What does an instance cost? Instantiation time with the pooling allocator, resident memory per idle instance, and per-message host→guest overhead | Numbers recorded for 1, 100, 1,000 and 5,000 instances | 1 day | Revisit the default limits and pool sizing; still fine for the coarse-grained target |
 | S3 | WASI 0.2 or 0.3? Check what the current wasmtime release supports, and what `wit-bindgen` and the Rust guest toolchain need for each | A written decision with the wasmtime version pinned | 0.5 day | Target 0.2 now and design the world so 0.3 async is an additive version |
-| S4 | Can we read a component's imports at deploy time and link ungranted imports to deny stubs? | Host lists a component's imports (via `wit-parser`/`wasmparser`); a component importing `wasi:http` instantiates with a stub that returns an error, or with traps via `define_unknown_imports_as_traps` | 1 day | Refuse deploy for any ungranted import (strict mode) and drop the degrade-gracefully goal |
+| S4 | Can the host read a component's imports at deploy time and link ungranted imports to deny stubs? | Host lists a component's imports (via `wit-parser`/`wasmparser`); a component importing `wasi:http` instantiates with a stub that returns an error, or with traps via `define_unknown_imports_as_traps` | 1 day | Refuse deploy for any ungranted import (strict mode) and drop the degrade-gracefully goal |
 | S5 | Snapshot upgrade end to end: swap a component instance mid-life while keeping the host-side pid, mailbox and links | v1 → v2 swap with state carried, plus a failing v3 that reverts | 1 day | Ship `restart` mode only in Phase 1; snapshot moves to Phase 2 |
 | S6 | Which rustbridge pieces can be used as a library: bundle reading, minisign verification, manifest types? What must change for a `wasm32-wasip2` platform and an `appserver` section? | A list of rustbridge changes (or a small PR) and a Paddock loader reading a 1.2 bundle | 1 day | Paddock reads bundles itself for now; upstream later |
 | S7 | Which WASI host implementations exist off the shelf (`wasmtime-wasi-keyvalue`, `wasmtime-wasi-config`, `wasi:logging`)? Are they on the same WIT versions? | A table of interface → crate → version → gaps | 0.5 day | Implement thin host bindings ourselves from the WIT |
@@ -40,7 +40,7 @@ S1, S3 and S4 matter most: they confirm the guest ABI, which is the hardest thin
 
 | Decision | Recommendation | Why |
 | --- | --- | --- |
-| Project name | **paddock**: crates `paddock-*`, WIT package `paddock:runtime`, CLI `paddock` (all free on crates.io as of 2026-10-05) | Settle it before any public crate, WIT package or repo exists |
+| Project name | **Decided:** paddock: crates `paddock-*`, WIT package `paddock:runtime`, CLI `paddock` (all free on crates.io as of 2026-10-05) | Settle it before any public crate, WIT package or repo exists |
 | Repo layout | One Cargo workspace, new repo `paddock` | rustbridge stays independent |
 | License | MIT OR Apache-2.0 | Matches rustbridge and the Rust ecosystem |
 | Default envelope encoding | CBOR, with JSON allowed | Compact and self-describing; JSON for debugging and rustbridge parity |
@@ -76,9 +76,9 @@ paddock/
 Sizes are relative (S = days, M = about a week, L = more than a week). Each milestone ends with passing tests.
 
 ### M0 Workspace and CI (S)
-- [ ] Cargo workspace, MSRV pinned, lint config, `wasm32-wasip2` target in CI.
-- [ ] CI: fmt, clippy, unit tests, build examples to components, run integration tests.
-- [ ] `wit/` package `paddock:runtime@0.1.0` from the design sketch, with a WIT lint in CI.
+- [x] Cargo workspace, MSRV 1.96.0, workspace lints, `clippy.toml`, `deny.toml`.
+- [x] CI: clippy and tests on Linux, macOS and Windows; guest fixtures built for `wasm32-wasip2` and checked with `wasm-tools`; MSRV; cargo-deny; fmt and docs; weekly fresh-deps.
+- [x] `wit/runtime.wit`: package `paddock:runtime@0.1.0`, its rules enforced by `crates/paddock/tests/wit_rules.rs`. `crates/paddock-fixture-echo` is the smallest app implementing it.
 
 ### M1 Manifest and bundles (M)
 - [ ] `paddock-manifest`: Rust types for the **entire** manifest data model in DESIGN.md (all sections, including Phase 2/3 fields), serde, defaults, validation errors with paths.
@@ -111,9 +111,9 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [ ] Instance pools with round-robin and hash routing (`instances.routing`).
 
 ### M5 Host services (M)
-- [ ] `wasi:logging` → `tracing`, tagged with app, version, pid; level cap and rate limit per app. Our own host from vendored proposal WIT; no wasmtime crate exists (S7).
+- [ ] `wasi:logging` → `tracing`, tagged with app, version, pid; level cap and rate limit per app. Paddock's own host from vendored proposal WIT; no wasmtime crate exists (S7).
 - [ ] `wasi:config` from manifest defaults plus node-level overrides, via `wasmtime-wasi-config` (S7).
-- [ ] `wasi:keyvalue`: `memory` and `disk` (redb) buckets, per-app namespaces, byte quotas, atomics. Our own host on the vendored `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (S7).
+- [ ] `wasi:keyvalue`: `memory` and `disk` (redb) buckets, per-app namespaces, byte quotas, atomics. Paddock's own host on the vendored `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (S7).
 - [ ] `wasi:filesystem`: `/priv` read-only from the bundle, `/data` read-write per app volume.
 - [ ] `wasi:clocks`, `wasi:random`; stdout/stderr captured as tagged logs.
 - [ ] Deny stubs for declared-but-ungranted imports.

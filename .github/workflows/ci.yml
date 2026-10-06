@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Mondays 06:00 UTC: drives `fresh-deps`, and re-runs `deny` so an advisory
+  # published against an unchanged dependency still turns the build red.
+  schedule:
+    - cron: "0 6 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Windows runners default to PowerShell; bash is present on all three and keeps
+# every `run:` block identical across the matrix.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The host will touch per-OS behaviour (sockets, filesystem preopens,
+  # address-space limits), so every OS runs the whole suite.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-cargo-
+
+      # `-- -Dwarnings` applies to workspace members only, never to
+      # dependencies, so a new warning upstream cannot break CI.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -Dwarnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+  # Guest components are what the host runs. Build each fixture for
+  # wasm32-wasip2 and confirm the result is a component exporting the
+  # `paddock:runtime` app world.
+  guests:
+    name: guest components (wasm32-wasip2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-wasip2
+          rustup default stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: guests-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: guests-cargo-
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      - name: Build fixtures
+        run: cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release --locked
+
+      - name: Check component world
+        run: |
+          wasm=target/wasm32-wasip2/release/paddock_fixture_echo.wasm
+          wasm-tools validate --features all "$wasm"
+          wasm-tools component wit "$wasm" | tee wit.txt
+          # A component imports only what its code calls, so echo (which calls
+          # no host function) has no `process` import; check the exports.
+          for f in init handle-call handle-cast handle-info terminate save-snapshot load-snapshot; do
+            grep -q "export $f: func" wit.txt || { echo "missing export $f"; exit 1; }
+          done
+
+  # Guards `rust-version = "1.96.0"`, wasmtime 49's floor.
+  msrv:
+    name: msrv 1.96.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+          rustc --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: msrv-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: msrv-cargo-
+
+      - name: Check
+        run: cargo check --workspace --all-targets --all-features --locked
+
+  # Every other job runs `--locked`, so nothing tests against newer
+  # dependencies. This job resolves fresh in the runner (never committed) and
+  # runs the suite. Scheduled or manual only, so it never blocks a PR; a
+  # failure is a notification that an upstream release broke the build, and the
+  # fix is a deliberate lock-file update. Uncached on purpose.
+  fresh-deps:
+    name: fresh deps
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --target wasm32-wasip2
+          rustup default stable
+
+      # `resolver = "3"` is MSRV-aware, so this won't pull dependencies that
+      # need a newer rustc than `rust-version`.
+      - name: Update dependencies
+        run: cargo update
+
+      - name: Show what moved
+        run: git --no-pager diff --stat -- Cargo.lock
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -Dwarnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build fixtures
+        run: cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release
+
+  # Supply chain, against the committed lock file: advisories and the
+  # permissive-only licence allow-list in `deny.toml`. Runs on every event so a
+  # PR adding a copyleft or vulnerable dependency is blocked at review, and on
+  # the weekly schedule so a new advisory is noticed without a commit.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans sources advisories
+
+  lint:
+    name: fmt + docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # Catches broken intra-doc links, which `cargo build` does not.
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc --workspace --all-features --no-deps --locked

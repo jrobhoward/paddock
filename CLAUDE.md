@@ -11,8 +11,8 @@ connect over QUIC with mutual TLS. Apps are WebAssembly components (WASI 0.2)
 that see only the capabilities their manifest declares and an operator grants.
 Bundles use the rustbridge `.rbp` format.
 
-The project is pre-implementation: the design and the seven Phase 1 spikes
-are done, and the Phase 1 crates have not been written. Read these before
+The design and the seven Phase 1 spikes are done; Phase 1 implementation is
+under way (`docs/PHASE1_PLAN.md` tracks the milestones). Read these before
 changing anything structural:
 
 - `docs/DESIGN.md`: the design, prior art, spike findings and risks.
@@ -45,8 +45,10 @@ cargo deny check licenses bans sources advisories
 cargo +1.96.0 check --workspace --all-targets
 
 # Guest components (examples, test fixtures) build for WASI 0.2. Needs
-# `rustup target add wasm32-wasip2` once.
-cargo build -p <guest-crate> --target wasm32-wasip2 --release
+# `rustup target add wasm32-wasip2` once. CI checks each one is a valid
+# component exporting the app world (`cargo install wasm-tools` once).
+cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release
+wasm-tools component wit target/wasm32-wasip2/release/paddock_fixture_echo.wasm
 ```
 
 Spikes are a separate workspace under `spikes/` with their own lock file. Each
@@ -54,11 +56,16 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 
 ## Repository layout
 
-- `crates/paddock`: placeholder that holds the workspace together. The Phase 1
+- `crates/paddock`: placeholder crate; its `tests/wit_rules.rs` enforces the
+  rules of `wit/runtime.wit`.
+- `crates/paddock-fixture-echo`: the smallest app implementing the `app`
+  world; a guest test fixture. Generated bindings live in a `bindings` module
+  with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The Phase 1
   crates (`paddock-manifest`, `paddock-bundle`, `paddock-host`,
   `paddock-node`, `paddock-cli`, `paddock-sdk`) land under `crates/` per the
   plan's workspace layout.
-- `wit/` (from M0): the `paddock:runtime` WIT package, versioned.
+- `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
+  by `crates/paddock/tests/wit_rules.rs`.
 - `docs/`: design and plan.
 - `spikes/`: throwaway programs that answered design questions. Excluded from
   the main workspace, from the conventions below, and from the Definition of
@@ -83,6 +90,13 @@ means dropping the future and discarding the Store; supervisors rebuild from
 the time they spend and the epoch callback subtracts it, so waiting on another
 instance is not runaway code. The epoch callback yields every tick for
 fairness (S1).
+
+**A component imports only what its code calls.** An app that never calls a
+`process` function has no `process` import, so deploy-time checks treat an
+absent import as unused, not as an error (M0).
+
+**`from` is a WIT keyword.** It can't be a parameter name (`handle-call` takes
+`caller`).
 
 **Guest ABI is synchronous WASI 0.2.** Host imports are async; guests are not.
 `paddock:runtime` never exposes `wasi:io` pollables or streams, so a later
@@ -220,19 +234,6 @@ Before considering any change to the main workspace complete:
   limits), it was checked on that OS, or the fact that it was not is stated
   plainly
 
-### Relaxed during the spike phase
-
-Until the spike phase is declared over (remove this subsection then):
-
-- `spikes/` is exempt from everything above.
-- `CHANGELOG.md` is not required; there is no release yet.
-- The MSRV check is not required until the first crate depends on wasmtime.
-- `docs/` may describe planned behaviour, as long as it says it is planned.
-- `docs/DESIGN.md` and `docs/PHASE1_PLAN.md` predate the writing-style rules
-  below (they use "we"); bring each in line when it is next edited.
-
-The rest of the list applies to `crates/` from the first commit.
-
 ## Docs are part of "done"
 
 Each file has one job; keep changes in the right one rather than restating
@@ -240,11 +241,11 @@ across them:
 
 | File | Holds | Scope |
 |---|---|---|
-| `README.md` (from M0) | What Paddock does, how to run it, caveats that change how it should be used | Link out rather than expand |
+| `README.md` | What Paddock does, how to run it, caveats that change how it should be used | Link out rather than expand |
 | `docs/DESIGN.md` | Design, rationale, prior art, spike findings, risks | Update when a decision changes; not a development log |
 | `docs/PHASE1_PLAN.md` | Phase 1 exit criteria, milestones, spike status | Tick boxes as milestones land; retire when Phase 1 ships |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
-| `CHANGELOG.md` (from first release) | What changed in each release | Keep a Changelog format |
+| `CHANGELOG.md` | What changed, under `Unreleased` until the first release | Keep a Changelog format; one line per change |
 | `CLAUDE.md` | Conventions and constraints a contributor needs before editing | Rules, not narrative |
 
 ## Writing style for `README.md`, `docs/**/*.md` and rustdoc

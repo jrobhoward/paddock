@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/paddock"]
+members = ["crates/paddock", "crates/paddock-fixture-echo"]
 # Throwaway spike code is its own workspace with its own lock file; the
 # conventions and Definition of Done below do not apply to it.
 exclude = ["spikes"]
@@ -20,6 +20,8 @@ wasmtime = { version = "49", default-features = false }
 wasmtime-wasi = { version = "49", default-features = false }
 wasmtime-wasi-config = "49"
 wit-bindgen = "0.62"
+# Same wit-parser line as wit-bindgen 0.62, so the graph carries one copy.
+wit-parser = "0.259"
 tokio = "1"
 thiserror = "2"
 tracing = "0.1"

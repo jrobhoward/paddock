@@ -5,7 +5,7 @@
 
 ## Summary
 
-We will build a clustered application server that hosts sandboxed WebAssembly apps with OTP-style semantics: mailboxes, call/cast, links, monitors, supervisors, and hot upgrade. Nodes connect over QUIC with mutual TLS. Apps are WebAssembly components that see only the capabilities their manifest declares and an operator grants. rustbridge supplies the bundle format, signing, and a native-plugin path.
+Paddock is a clustered application server that hosts sandboxed WebAssembly apps with OTP-style semantics: mailboxes, call/cast, links, monitors, supervisors, and hot upgrade. Nodes connect over QUIC with mutual TLS. Apps are WebAssembly components that see only the capabilities their manifest declares and an operator grants. rustbridge supplies the bundle format, signing, and a native-plugin path.
 
 The model is coarse-grained: tens to a few thousand app instances per node, not millions of processes. That choice removes Wasm's main weakness (per-instance memory and address-space cost) and keeps BEAM's main strength (fault isolation and supervision).
 
@@ -29,9 +29,9 @@ The model is coarse-grained: tens to a few thousand app instances per node, not 
 
 ## Background and prior art
 
-We borrow the failure model from Erlang/OTP, the deployment model from JBoss/WildFly, and the sandbox from WebAssembly. No existing project combines all three. Each one below taught us something we design for.
+Paddock takes the failure model from Erlang/OTP, the deployment model from JBoss/WildFly, and the sandbox from WebAssembly. No existing project combines all three. Each one below shaped part of the design.
 
-| Project | What it got right | What went wrong or is missing | What we take |
+| Project | What it got right | What went wrong or is missing | What Paddock takes |
 | --- | --- | --- | --- |
 | [Erlang/OTP](https://www.erlang.org/doc/system/design_principles.html) | Links, monitors, supervisors; `.app` metadata (deps, registered names, env); appup/relup upgrades with `code_change/3` | One TCP connection per node pair causes head-of-line blocking; cookie auth is weak; `global` struggles in partitions | The failure semantics and the app metadata shape; fix transport and auth |
 | [Lunatic](https://github.com/lunatic-solutions/lunatic) | Wasm instance per process; per-process `ProcessConfig` with max memory, max fuel, and spawn/compile permissions, all denied by default | Custom host ABI from before the Component Model; open issues for node authentication (#128), a global registry (#127), hot reload (#150), and socket access control (#99); maintenance stalled (#232) | Deny-by-default config per process; build on Component Model and WASI instead of a private ABI; design auth, registry and reload in from day one |
@@ -81,60 +81,21 @@ An app is a WebAssembly component that implements a `gen_server`-style callback 
 | Supervisor | Host-side process that owns child specs and restart policy | `supervisor` |
 | Node | One app server process in a cluster | Node |
 
-**Callback, not receive loop.** Lunatic gave each process a blocking `receive()`, which needs async stack switching and makes upgrades hard. We use callbacks: `init`, `handle-call`, `handle-cast`, `handle-info`, `terminate`, and the snapshot pair. The host never interrupts a callback except to kill it.
+**Callback, not receive loop.** Lunatic gave each process a blocking `receive()`, which needs async stack switching and makes upgrades hard. Paddock uses callbacks: `init`, `handle-call`, `handle-cast`, `handle-info`, `terminate`, and the snapshot pair. The host never interrupts a callback except to kill it.
 
 **Concurrency inside an instance.** An instance is single-threaded. While it waits on an outbound `call`, the host suspends it (wasmtime async) without blocking a host thread. It does not process other messages meanwhile, matching `gen_server`. Parallelism comes from running a pool of instances under one supervisor.
 
 **Deferred replies.** `handle-call` may return `noreply` and answer later with `reply(ref, msg)`, so an app can serve a call after its own outbound call finishes.
 
-### WIT contract (sketch)
+### WIT contract
 
-```wit
-package paddock:runtime@0.1.0;
+The contract is the `paddock:runtime@0.1.0` package in [`wit/runtime.wit`](../wit/runtime.wit), the source of truth; this section summarizes it.
 
-interface types {
-  record pid { node: u32, id: u64, incarnation: u32 }
-  type call-ref = u64;
-  variant exit-reason { normal, shutdown, killed, noproc, noconnection, timeout, overloaded, crashed(string) }
-  variant info {
-    exit(tuple<pid, exit-reason>),        // linked process died (when trapping exits)
-    down(tuple<u64, pid, exit-reason>),   // monitor fired
-    timer(tuple<u64, list<u8>>),
-    message(list<u8>),                    // plain send
-  }
-  variant call-result { reply(list<u8>), noreply }
-  record envelope { content-type: string, schema: option<string>, body: list<u8> }
-}
+- `types`: `pid` (`node`, `id`, `incarnation`), `call-ref`, `envelope`, `exit-reason`, `call-error`, `register-error`, `info` (link `exit`, monitor `down`, `timer`) and `call-result` (`reply` or `noreply`).
+- `process` (imported by every app): `self`, `cast`, `call` (returns `result<envelope, call-error>`), `reply`, `link`/`unlink`, `trap-exits`, `monitor`/`demonitor`, `register` (returns `result<_, register-error>`), `whereis`, `send-after`/`cancel-timer`, `exit`.
+- `world app` exports: `init`, `handle-call(caller, msg)`, `handle-cast`, `handle-info`, `terminate`, `save-snapshot`, `load-snapshot(from-version, snapshot)`.
 
-interface process {                        // imported: host services
-  use types.{pid, call-ref, exit-reason, envelope};
-  self: func() -> pid;
-  cast: func(to: pid, msg: envelope);
-  call: func(to: pid, msg: envelope, timeout-ms: u32) -> result<envelope, exit-reason>;
-  reply: func(to: call-ref, msg: envelope);
-  link: func(p: pid);     unlink: func(p: pid);
-  monitor: func(p: pid) -> u64;    demonitor: func(r: u64);
-  trap-exits: func(on: bool);
-  register: func(name: string) -> result<_, string>;
-  whereis: func(name: string) -> option<pid>;
-  send-after: func(ms: u32, msg: envelope) -> u64;
-  cancel-timer: func(r: u64);
-  exit: func(p: pid, reason: exit-reason);
-}
-
-world app {
-  import process;
-  // optional, granted per manifest: wasi:logging, wasi:keyvalue, wasi:config,
-  // wasi:filesystem, wasi:http/outgoing-handler, wasi:sockets, paddock:sql ...
-  export init: func(args: list<u8>) -> result<_, string>;
-  export handle-call: func(from: types.call-ref, msg: types.envelope) -> types.call-result;
-  export handle-cast: func(msg: types.envelope);
-  export handle-info: func(i: types.info);
-  export terminate: func(reason: types.exit-reason);
-  export save-snapshot: func() -> list<u8>;
-  export load-snapshot: func(from-version: string, s: list<u8>) -> result<_, string>;
-}
-```
+`call-error` and `register-error` both carry an `access-denied` case (messaging ACLs, names missing from the manifest). `crates/paddock/tests/wit_rules.rs` enforces the package's rules: synchronous functions only, no `stream`/`future`, no `wasi:io` types, and an `access-denied` error on every capability function.
 
 **Messages are envelopes of bytes.** WIT has no recursive types, so there is no clean Erlang-style "any term". An envelope carries a content type (CBOR by default; JSON and rustbridge binary allowed) and an optional schema id. Bytes are already serialized for the network, and the manifest can publish JSON Schemas the way `.rbp` bundles already do.
 
@@ -285,7 +246,7 @@ Nodes form a full mesh over QUIC (quinn + rustls) with mutual TLS. Delivery is a
 | Liveness | Keepalive and idle timeout built in | Heartbeats built in |
 | Multi-homing | Connection migration | Native multi-homing |
 
-SCTP only wins on telecom networks we control, so it is not worth a second transport.
+SCTP only wins on controlled telecom networks, so it is not worth a second transport.
 
 **Streams and ordering**
 
@@ -310,7 +271,7 @@ SCTP only wins on telecom networks we control, so it is not worth a second trans
 
 Apps should prefer process groups. Erlang's `global` shows that global locks during partitions cause most distribution pain, so unique global names stay opt-in.
 
-**Partitions.** When a partition heals, process groups merge naturally. Global names conflict only if Raft is off; with Raft on, the minority side can't register. We do not attempt automatic split-brain resolution for app state; that is the app's concern.
+**Partitions.** When a partition heals, process groups merge naturally. Global names conflict only if Raft is off; with Raft on, the minority side can't register. Paddock does not attempt automatic split-brain resolution for app state; that is the app's concern.
 
 **Wire format.** A frame carries source pid, destination pid or name, call ref (if any), envelope content type, schema id, and body. Frames are length-prefixed CBOR. Protocol version is negotiated at connect time so nodes can roll.
 
@@ -378,7 +339,7 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mTLS 
 
 ## rustbridge integration
 
-We reuse rustbridge's bundle format, signing, lifecycle and transport, and extend them. A `.rbp` bundle gains a `wasm` platform and an `appserver` manifest section. The same plugin source can then ship as a native library for Java/C#/Python hosts and as a Wasm app for the server.
+Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and extend them. A `.rbp` bundle gains a `wasm` platform and an `appserver` manifest section. The same plugin source can then ship as a native library for Java/C#/Python hosts and as a Wasm app for the server.
 
 **What maps directly**
 
@@ -440,7 +401,7 @@ We reuse rustbridge's bundle format, signing, lifecycle and transport, and exten
 
 - **S1 (callback model): confirmed.** Async host imports with a synchronous guest ABI let a guest wait in `call` without holding a thread. Epoch interruption with a per-tick `Yield` gives fair preemption (1 ms worst probe latency on one worker thread while a guest spins). `callback_deadline_ms` measures guest execution time, excluding time inside host imports. Killing an instance means dropping its call future and discarding the Store; a dropped Store is poisoned and must never be reused. Host instances on tokio's multi-threaded runtime, not `current_thread` + `LocalSet`. Details: `spikes/s1/README.md`.
 - **S3 (WASI target): WASI 0.2.** wasmtime 49 compiles WASI 0.3 in by default but still calls component-model async very incomplete, and Rust has no `wasm32-wasip3` target. `paddock:runtime@0.1.0` stays synchronous on WASI 0.2; a later `@0.2.0` world can add async. Details: `spikes/S3-wasi-target.md`.
-- **S4 (capabilities): confirmed, with our own stubs.** `component_type().imports()` lists every import at deploy time; undeclared `paddock:*` imports are refused. Ungranted capabilities get typed deny stubs built with `func_new` from the function's type. wasmtime's `define_unknown_imports_as_traps` breaks WASI resource types and must not be used. WASI is always linked and narrowed through `WasiCtx` (preopens, socket checks, env). Socket policy needs separate bind and connect rules, because Rust std binds `0.0.0.0:0` before every connect. Details: `spikes/s4/README.md`.
+- **S4 (capabilities): confirmed, with Paddock's own stubs.** `component_type().imports()` lists every import at deploy time; undeclared `paddock:*` imports are refused. Ungranted capabilities get typed deny stubs built with `func_new` from the function's type. wasmtime's `define_unknown_imports_as_traps` breaks WASI resource types and must not be used. WASI is always linked and narrowed through `WasiCtx` (preopens, socket checks, env). Socket policy needs separate bind and connect rules, because Rust std binds `0.0.0.0:0` before every connect. Details: `spikes/s4/README.md`.
 - **S5 (snapshot upgrade): confirmed.** An upgrade is a mailbox message handled between callbacks, so senders keep the same pid and nothing is lost. 4,000 of 4,000 concurrent messages applied exactly once across three upgrades; each swap paused the instance 0.2 to 0.35 ms with pre-compiled components; a failing `load-snapshot` reverted with state intact. Details: `spikes/s5/README.md`.
 - **S2 (instance cost): cheap.** About 35 µs to instantiate (pooling) and 30–40 KiB resident per idle instance; 0.57 µs per host→guest call; 1.1 µs per same-worker actor round trip. The limit is virtual address space: about 4–8 GiB reserved per instance by default (about 15,000 instances per node), about 260 MiB with 128 MiB reservations (20,000 tested). Pooling needs `total_stacks` sized to the instance count, because each live Store holds a fiber stack. Details: `spikes/s2/README.md`.
 - **S6 (bundles): reusable with upstream changes.** `rustbridge-bundle` 1.0.1 works as a library but rejects bundle version 1.2 and the `wasm32-wasip2` platform, and drops unknown sections such as `appserver`. Its signature check defaults to a key carried inside the bundle; Paddock always verifies against operator-trusted keys. Seven rustbridge changes are listed in `spikes/s6/README.md`.
@@ -461,7 +422,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 
 **Rules that keep it cheap**
 
-1. **No 0.2-specific types in `paddock:runtime`.** WASI 0.2 models async I/O with `wasi:io` pollables and stream resources; 0.3 replaces them with native `stream<T>` and `future<T>`. Our world uses only plain values (strings, records, `list<u8>` envelopes) so it never depends on either model.
+1. **No 0.2-specific types in `paddock:runtime`.** WASI 0.2 models async I/O with `wasi:io` pollables and stream resources; 0.3 replaces them with native `stream<T>` and `future<T>`. The world uses only plain values (strings, records, `list<u8>` envelopes) so it never depends on either model.
 2. **Apps use `paddock-sdk`, not raw bindings.** Rust apps go through the `App` trait and `ProcessContext`, so a WASI change is absorbed inside the SDK and most apps migrate by bumping it.
 3. **The host selects its linker per world version** from Phase 1 on, even while only one version exists. Adding the 0.3 linker is then additive.
 4. **CI covers mixed versions** once 0.3 is usable: a 0.2 app and a 0.3 app calling each other, and a 0.2 to 0.3 snapshot upgrade.
@@ -489,9 +450,9 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 
 - [ ] Default envelope encoding: CBOR, or rustbridge JSON for familiarity?
 - [ ] Should supervisors ever be written in Wasm, or always host-native?
-- [ ] Do we need selective receive, or are call refs plus deferred reply enough?
+- [ ] Is selective receive needed, or are call refs plus deferred reply enough?
 - [ ] Messaging ACL by app name, by registered name, or by capability token?
-- [ ] Ship the server as a library (embed in your own binary) as well as a daemon?
+- [ ] Ship the server as a library (embedded in another binary) as well as a daemon?
 - [ ] How far to go with native-process plugins before Phase 3?
 
 ## Roadmap
