@@ -1,0 +1,13 @@
+[package]
+name = "s8-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[features]
+soft = ["s8-kernels/soft"]
+
+[dependencies]
+s8-kernels = { path = "../kernels" }
+paddock-host = { path = "../../../crates/paddock-host" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

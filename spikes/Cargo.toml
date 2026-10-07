@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["s1/host", "s1/guest", "s4/host", "s4/guest", "s5/host", "s5/guest", "s6", "s2"]
+members = ["s1/host", "s1/guest", "s4/host", "s4/guest", "s5/host", "s5/guest", "s6", "s2", "s8/kernels", "s8/guest", "s8/bench"]
 
 [profile.release]
 debug = 1

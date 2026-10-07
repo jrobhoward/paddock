@@ -1073,6 +1073,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "paddock-host"
+version = "0.0.0"
+dependencies = [
+ "paddock-manifest",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "paddock-manifest"
+version = "0.0.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "thiserror",
+]
+
+[[package]]
 name = "pbkdf2"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1377,6 +1401,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "s8-bench"
+version = "0.0.0"
+dependencies = [
+ "paddock-host",
+ "s8-kernels",
+ "tokio",
+]
+
+[[package]]
+name = "s8-guest"
+version = "0.0.0"
+dependencies = [
+ "s8-kernels",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "s8-kernels"
+version = "0.0.0"
+dependencies = [
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "salsa20"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1453,6 +1501,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

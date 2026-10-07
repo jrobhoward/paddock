@@ -1,0 +1,13 @@
+[package]
+name = "s8-kernels"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[features]
+# Software SHA-256 on native too, to compare code generation without the
+# CPU's SHA extensions (wasm has no equivalent).
+soft = ["sha2/force-soft"]
+
+[dependencies]
+sha2 = "0.10"
