@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Bucket, Capability, LogLevel};
+use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Bucket, Capability};
+
+use crate::services::ServiceSpecs;
 
 /// Limits, timeouts and `init` arguments for one instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,15 +40,13 @@ pub struct InstanceSpec {
     pub granted: BTreeSet<Capability>,
     /// Buckets the instance may open, by name.
     pub buckets: BTreeMap<String, Bucket>,
-    /// Records below this level are dropped.
-    pub log_level: LogLevel,
-    /// Most records per second for the whole app; `None` for no limit.
-    pub log_rate_limit: Option<u32>,
     /// What `wasi:config` returns.
     pub config: BTreeMap<String, String>,
     /// Directories visible to the guest, used when `wasi:filesystem` is
     /// granted.
     pub preopens: Vec<Preopen>,
+    /// What the manifest asks of each host service.
+    pub services: ServiceSpecs,
 }
 
 /// A host directory visible to the guest.
@@ -90,7 +90,6 @@ impl InstanceSpec {
     }
 
     fn from_parts(app: String, version: String, spec: &AppSpec) -> Self {
-        let logging = spec.capabilities.logging.as_ref();
         Self {
             app,
             version,
@@ -119,10 +118,9 @@ impl InstanceSpec {
                 .as_ref()
                 .map(|kv| kv.buckets.clone())
                 .unwrap_or_default(),
-            log_level: logging.map_or(spec.observability.log_level, |l| l.max_level),
-            log_rate_limit: logging.and_then(|l| l.rate_limit_per_sec),
             config: spec.config.defaults.clone(),
             preopens: Vec::new(),
+            services: ServiceSpecs::from_manifest(spec),
         }
     }
 

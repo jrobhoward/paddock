@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use paddock_bundle::manifest::{Bucket, Capability, LogLevel};
+use paddock_bundle::manifest::{Bucket, Capability};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 use wasmtime::component::{Resource, ResourceTable};
@@ -16,14 +16,14 @@ use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 use crate::bindings::paddock::runtime::{process, types};
 use crate::bindings::wasi::config::store as config;
 use crate::bindings::wasi::keyvalue::{atomics, batch, store};
-use crate::bindings::wasi::logging::logging;
 use crate::instance::{InstanceHandle, Message};
 use crate::kv::{BucketHandle, Op, Outcome};
-use crate::logs::Admit;
 use crate::message::{Envelope, ExitReason, Info};
 use crate::output::{CapturedOutput, Tags};
 use crate::pid::Pid;
 use crate::runtime::RuntimeInner;
+use crate::services::logging::{self, Logging};
+use crate::services::{HostState, ServiceCtx, States};
 use crate::spec::InstanceSpec;
 
 /// What an instance's host functions reach outside its own Store.
@@ -55,11 +55,8 @@ pub(crate) struct InstanceState {
     pub(crate) timers: Timers,
     granted: BTreeSet<Capability>,
     buckets: BTreeMap<String, Bucket>,
-    log_level: LogLevel,
-    log_rate_limit: Option<u32>,
     config: BTreeMap<String, String>,
-    /// Log records dropped because logging is not granted.
-    denied_logs: u64,
+    services: States,
 }
 
 impl InstanceState {
@@ -87,6 +84,7 @@ impl InstanceState {
                     .map_err(|e| format!("preopen {} -> {}: {e}", p.host.display(), p.guest))?;
             }
         }
+        let services = States::new(&ctx.rt.services, spec);
         Ok(Self {
             pid,
             tags,
@@ -100,10 +98,8 @@ impl InstanceState {
             timers: Timers::default(),
             granted: spec.granted.clone(),
             buckets: spec.buckets.clone(),
-            log_level: spec.log_level,
-            log_rate_limit: spec.log_rate_limit,
             config: spec.config.clone(),
-            denied_logs: 0,
+            services,
         })
     }
 
@@ -146,6 +142,17 @@ impl InstanceState {
     pub(crate) fn await_reply(&mut self, call_ref: u64, reply: oneshot::Sender<Envelope>) {
         self.pending.retain(|_, waiting| !waiting.is_closed());
         self.pending.insert(call_ref, reply);
+    }
+}
+
+impl HostState<Logging> for InstanceState {
+    fn service(&mut self) -> ServiceCtx<'_, logging::Instance> {
+        ServiceCtx::new(
+            &mut self.services.logging,
+            &self.tags,
+            &mut self.table,
+            &mut self.clock,
+        )
     }
 }
 
@@ -249,7 +256,7 @@ impl CallbackClock {
     }
 
     /// Exclude time spent suspended in a host import from the deadline.
-    fn add_host_time(&mut self, spent: Duration) {
+    pub(crate) fn add_host_time(&mut self, spent: Duration) {
         self.host_time += spent;
     }
 }
@@ -464,66 +471,6 @@ impl process::Host for InstanceState {
             }
         } else if let Some(target) = self.ctx.rt.table.lookup(other) {
             target.exit_signal(self.pid, reason, untrappable);
-        }
-        Ok(())
-    }
-}
-
-fn level_of(level: logging::Level) -> LogLevel {
-    match level {
-        logging::Level::Trace => LogLevel::Trace,
-        logging::Level::Debug => LogLevel::Debug,
-        logging::Level::Info => LogLevel::Info,
-        logging::Level::Warn => LogLevel::Warn,
-        logging::Level::Error => LogLevel::Error,
-        logging::Level::Critical => LogLevel::Critical,
-    }
-}
-
-impl logging::Host for InstanceState {
-    async fn log(&mut self, level: logging::Level, context: String, message: String) -> Result<()> {
-        if !self.granted(Capability::Logging) {
-            self.denied_logs += 1;
-            return Ok(());
-        }
-        let level = level_of(level);
-        let cap = self
-            .ctx
-            .rt
-            .log_level_override(&self.tags.app)
-            .unwrap_or(self.log_level);
-        if level < cap {
-            return Ok(());
-        }
-        let t = &self.tags;
-        match self.ctx.rt.log_limits.admit(&t.app, self.log_rate_limit) {
-            Admit::Drop => return Ok(()),
-            Admit::Emit { dropped: 0 } => {}
-            Admit::Emit { dropped } => {
-                tracing::warn!(target: "paddock::guest", app = %t.app, version = %t.version, pid = %t.pid, dropped, "log records dropped by the rate limit");
-            }
-        }
-        let pid = t.pid.to_string();
-        let (app, version) = (t.app.as_str(), t.version.as_str());
-        match level {
-            LogLevel::Trace => {
-                tracing::trace!(target: "paddock::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Debug => {
-                tracing::debug!(target: "paddock::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Info => {
-                tracing::info!(target: "paddock::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Warn => {
-                tracing::warn!(target: "paddock::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Error => {
-                tracing::error!(target: "paddock::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Critical => {
-                tracing::error!(target: "paddock::guest", app, version, pid, context, critical = true, "{message}")
-            }
         }
         Ok(())
     }

@@ -21,8 +21,8 @@ use wasmtime::component::types::{ComponentFunc, ComponentItem};
 use wasmtime::component::{Component, Linker, ResourceType, Type, Val};
 use wasmtime::{Engine, Error, Result};
 
-/// Interfaces the host links itself: `(package, interfaces)`, `None` for the
-/// whole package.
+/// Interfaces the host links itself outside [`crate::services`]:
+/// `(package, interfaces)`, `None` for the whole package.
 const PROVIDED: &[(&str, Option<&[&str]>)] = &[
     ("wasi:cli", None),
     ("wasi:io", None),
@@ -31,7 +31,6 @@ const PROVIDED: &[(&str, Option<&[&str]>)] = &[
     ("wasi:filesystem", None),
     ("wasi:sockets", None),
     ("paddock:runtime", Some(&["types", "process"])),
-    ("wasi:logging", Some(&["logging"])),
     ("wasi:config", Some(&["store"])),
     ("wasi:keyvalue", Some(&["store", "atomics", "batch"])),
 ];
@@ -52,10 +51,18 @@ fn provided(name: &str) -> bool {
     let Some(parsed) = InterfaceName::parse(name) else {
         return false;
     };
-    PROVIDED.iter().any(|(package, interfaces)| {
+    let core = PROVIDED.iter().any(|(package, interfaces)| {
         parsed.package == *package
             && interfaces.is_none_or(|list| parsed.interface.is_some_and(|i| list.contains(&i)))
-    })
+    });
+    core || crate::services::INTERFACES
+        .iter()
+        .flat_map(|s| s.iter())
+        .any(|full| {
+            full.split_once('/').is_some_and(|(package, interface)| {
+                parsed.package == package && parsed.interface == Some(interface)
+            })
+        })
 }
 
 /// Link deny stubs for every interface `component` imports that the host

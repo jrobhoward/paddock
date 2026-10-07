@@ -161,7 +161,7 @@ async fn log____below_max_level____dropped() {
     capture();
     let (rt, app) = shared();
     let mut s = spec("log-level", &[Capability::Logging]);
-    s.log_level = LogLevel::Warn;
+    s.services.logging.level = LogLevel::Warn;
     let h = up(rt, app, s).await;
 
     ask(&h, "log:info:chatter").await;
@@ -193,7 +193,7 @@ async fn log____rate_limited____excess_dropped_and_count_reported_later() {
     capture();
     let (rt, app) = shared();
     let mut s = spec("log-rate", &[Capability::Logging]);
-    s.log_rate_limit = Some(2);
+    s.services.logging.rate_limit = Some(2);
     let h = up(rt, app, s).await;
 
     for i in 0..5 {

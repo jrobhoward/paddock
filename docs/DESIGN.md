@@ -360,6 +360,18 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 - `wasi:filesystem` sees no preopens.
 - An imported interface no host implements (`wasi:http` and `paddock:*` services before their phase, or anything unknown) gets deny stubs: functions return their error type's `access-denied` case (or `permission-denied`, `access`, `HTTP-request-denied`), or trap when they have no error channel.
 
+**Host service pattern.** Each guest-facing service other than `process` is a module under `paddock-host`'s `services`, with the same shape:
+- A capability and the WIT interfaces it links. Imports of those interfaces are never deny-stubbed.
+- A `Spec`: what the manifest asks of the service for one app, in `InstanceSpec::services`.
+- `Shared` state, one per runtime (pools, limits, operator overrides), and `Instance` state, one per instance.
+- Its own `bindgen!` world, linked with the per-interface `add_to_linker` and a getter that hands each host function a `ServiceCtx`: the service's own instance state plus the facilities every service shares (app, version and pid tags; the callback clock; the resource table). A service never sees the rest of the instance.
+
+Linking happens once per engine, so a host call is a direct call on the service's state, with no dynamic dispatch. A registry in `services/mod.rs` lists the services; adding one is a module plus a line in each registry, with no change to the process core or orchestration. Every service follows these rules:
+- An ungranted capability fails softly, as an `access-denied` error value where the interface has one, never a trap.
+- Time spent waiting in host I/O is host time and does not count against the callback deadline.
+- Named resources (buckets, datasources) are declared in the manifest and bound in node configuration.
+- Usage is limited per app (rate limits, quotas, connection caps), and each operation is a probe point once B1 exists.
+
 **Host service details (Phase 1).**
 - Log records and captured stdout (info) and stderr (warn) go to the `paddock::guest` target, each tagged with app, version and pid. Records below the app's level are dropped. A token bucket per app, shared by its instances, enforces `rate_limit_per_sec` and reports how many records it dropped.
 - Keyvalue counters (`increment`) are decimal strings, as in wasmtime's host. Each batch call is one transaction and passes or fails its quota check as a whole. `list-keys` pages 256 keys at a time.

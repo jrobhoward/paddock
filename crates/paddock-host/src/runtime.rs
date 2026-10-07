@@ -18,11 +18,11 @@ use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
 use crate::kv::KvStore;
 use crate::links::LinkTable;
-use crate::logs::LogLimits;
 use crate::message::{CallError, Envelope};
 use crate::pid::Pid;
 use crate::pool::Pool;
 use crate::registry::Registry;
+use crate::services;
 use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
@@ -46,23 +46,13 @@ pub(crate) struct RuntimeInner {
     pub(crate) links: LinkTable,
     pools: RwLock<HashMap<String, Arc<Pool>>>,
     pub(crate) kv: KvStore,
-    pub(crate) log_limits: LogLimits,
-    log_levels: RwLock<HashMap<String, LogLevel>>,
+    pub(crate) services: services::Shared,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
 }
 
 impl RuntimeInner {
-    /// The operator's log level for `app`, if one is set.
-    pub(crate) fn log_level_override(&self, app: &str) -> Option<LogLevel> {
-        self.log_levels
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(app)
-            .copied()
-    }
-
     /// An instance of the running app called `name`, round-robin.
     pub(crate) fn pool_member(&self, name: &str) -> Option<InstanceHandle> {
         let pool = self
@@ -121,6 +111,7 @@ impl Runtime {
         // Fail now, not at the first load, if the host interfaces cannot link.
         base_linker(&engine).map_err(|e| HostError::Engine(describe(&e)))?;
         let kv = KvStore::open(config.data_dir.as_deref()).map_err(HostError::Storage)?;
+        let services = services::Shared::new(&config)?;
         let ticker = Ticker::start(engine.clone(), config.epoch_tick)
             .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
         Ok(Self {
@@ -131,8 +122,7 @@ impl Runtime {
                 links: LinkTable::default(),
                 pools: RwLock::default(),
                 kv,
-                log_limits: LogLimits::default(),
-                log_levels: RwLock::default(),
+                services,
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -243,21 +233,13 @@ impl Runtime {
     /// Override the log level of every instance of `app` from now on, or
     /// return to each instance's own level with `None`.
     pub fn set_log_level(&self, app: &str, level: Option<LogLevel>) {
-        let mut levels = self
-            .inner
-            .log_levels
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        match level {
-            Some(level) => levels.insert(app.to_string(), level),
-            None => levels.remove(app),
-        };
+        self.inner.services.logging.set_override(app, level);
     }
 
     /// The log level override for `app`, if one is set.
     #[must_use]
     pub fn log_level(&self, app: &str) -> Option<LogLevel> {
-        self.inner.log_level_override(app)
+        self.inner.services.logging.override_for(app)
     }
 
     pub(crate) fn add_pool(&self, name: &str, pool: Arc<Pool>) {
@@ -361,6 +343,7 @@ fn base_linker(engine: &Engine) -> wasmtime::Result<Linker<InstanceState>> {
     let mut linker = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     PaddockApp::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)?;
+    services::link(&mut linker)?;
     Ok(linker)
 }
 

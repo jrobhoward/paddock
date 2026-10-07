@@ -90,7 +90,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   component imports, operator policy and the effective grant.
 - `crates/paddock-host`: the runtime: engine and epoch ticker, pids and the
   process table, instances and their callback loop, links and monitors,
-  supervisors, and app sets with pools.
+  supervisors, and app sets with pools. `src/services/`: host services, one
+  module each on the `Service` pattern (DESIGN.md, "Host service pattern");
+  a new service goes there, not into `state.rs` or `runtime.rs`.
 - `crates/paddock-sdk`, `crates/paddock-sdk-macros`: the Rust guest SDK and
   its `Snapshot` derive. The SDK owns the wit-bindgen bindings (with
   `default_bindings_module`), so app crates have no WIT.

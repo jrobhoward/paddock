@@ -60,5 +60,5 @@ impl LogLimits {
 }
 
 #[cfg(test)]
-#[path = "logs_tests.rs"]
-mod logs_tests;
+#[path = "limits_tests.rs"]
+mod limits_tests;
