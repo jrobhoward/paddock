@@ -97,7 +97,28 @@ The harness prints more combinations than shown here.
 - **Tail latency under oversubscription is uneven.** The mean matches Little's law (clients ÷ throughput: 256 ÷ 324,000/s ≈ 790 µs), but most calls finish near the p50 and a few wait about 10 ms.
   - Cause: an instance with a full mailbox runs callbacks back to back. It gives its worker back only when tokio's cooperative budget runs out (128 mailbox receives) or the 10 ms epoch tick yields it. Meanwhile, clients and instances queued on that worker wait.
   - Tried and not adopted: a `yield_now` after every callback. p99 fell to about 5 ms, but throughput fell too, to 143,000 calls/s with 16 workers, pool 16 and 64 clients (from 314,000), and to 486,000 casts/s in `baseline` (from 787,000).
-  - Recorded as roadmap item 0.5.
+  - Recorded as roadmap item 0.5, and fixed there by a 2 ms tick (next section).
+
+## 2026-10-07: 2 ms epoch tick (roadmap 0.5)
+
+Same machine. The default epoch tick changed from 10 ms to 2 ms; the sections above ran at 10 ms. `pool_load` takes the tick in µs as its second argument, so both can be rerun.
+
+The tail above follows the tick, not the gaps between messages. With 16 workers, a pool of 16 and 256 clients doing work (two runs each):
+
+| Tick | Calls/s | Mean µs | p50 µs | p99 µs |
+| --- | --- | --- | --- | --- |
+| 10 ms | 316,700–317,500 | 801–803 | 51–52 | 10,442–11,349 |
+| 2 ms | 326,000–331,300 | 771–783 | 539–567 | 3,406–3,943 |
+| 1 ms | 318,000–318,500 | 801–803 | 715–732 | 3,063–3,559 |
+
+- At 2 ms the latency is spread evenly: p50 is close to the mean, as queueing predicts, and p99 is a third of what it was.
+- The cost falls on a single overloaded instance, which now gives its worker up five times as often: one instance with 64 clients handled 24,800–26,400 calls/s at 10 ms, 21,900–27,400 at 2 ms and 20,700–21,300 at 1 ms. 2 ms keeps most of the fairness of 1 ms at less of this cost.
+- `baseline` at 2 ms matches the 2026-10-06 figures within run-to-run variation (1 worker: 2.38 µs empty call p50, 755,000 casts/s, 76.6 µs to instantiate).
+- Configurations with fewer workers than busy instances still queue (4 workers, pool 16, 256 clients: mean 2.75 ms); that is waiting for a core, not unfairness.
+- Tried and not adopted:
+  - A `yield_now` after every callback (previous section).
+  - Yielding after 1 ms of back-to-back callbacks, at the 10 ms tick: p99 stayed at 9–11 ms. The tail tracks the tick instead, so the waiting comes from preemption inside callbacks at the tick, not from gaps between messages.
+- Epoch-check overhead (`epoch_cost`) is the same at 2 ms: the checks cost the same whatever the tick, and a yield every 2 ms is negligible.
 
 ## Not measured yet
 

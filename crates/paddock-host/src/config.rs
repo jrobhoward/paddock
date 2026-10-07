@@ -41,7 +41,9 @@ pub struct RuntimeConfig {
     /// Address-space reservation per linear memory.
     pub memory_profile: MemoryProfile,
     /// Epoch tick: the granularity of deadlines and of preemption between
-    /// instances.
+    /// instances. A busy instance can keep its tokio worker for up to one
+    /// tick, so the tick also bounds how long other tasks on that worker
+    /// wait (`docs/BASELINE.md`, 2026-10-07).
     pub epoch_tick: Duration,
     /// Where node state lives (`disk` keyvalue buckets). `None` disables
     /// disk buckets.
@@ -54,7 +56,7 @@ impl Default for RuntimeConfig {
             node: 0,
             max_instances: 1_000,
             memory_profile: MemoryProfile::Standard,
-            epoch_tick: Duration::from_millis(10),
+            epoch_tick: Duration::from_millis(2),
             data_dir: None,
         }
     }

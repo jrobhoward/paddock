@@ -2,7 +2,8 @@
 //!
 //! Runs three WebAssembly kernels on two wasmtime engines that differ only in
 //! `epoch_interruption`. The epoch engine is driven as `paddock-host` drives
-//! it: a ticker thread advances the epoch every 10 ms, and each tick makes
+//! it: a ticker thread advances the epoch every default tick
+//! (`RuntimeConfig::epoch_tick`), and each tick makes
 //! the guest yield to tokio (`UpdateDeadline::Yield(1)`). Both engines call
 //! through `call_async`, so the fiber cost is the same on both sides.
 //!
@@ -21,6 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use paddock_host::RuntimeConfig;
 use wasmtime::{Config, Engine, Instance, Module, Store, UpdateDeadline, WasmParams, WasmResults};
 
 const KERNELS: &str = r#"
@@ -73,7 +75,6 @@ const KERNELS: &str = r#"
 "#;
 
 const SAMPLES: usize = 7;
-const TICK: Duration = Duration::from_millis(10);
 
 struct Side {
     engine: Engine,
@@ -153,6 +154,7 @@ where
 }
 
 fn main() {
+    let tick = RuntimeConfig::default().epoch_tick;
     let off = Side::new(false);
     let on = Side::new(true);
     let stop = Arc::new(AtomicBool::new(false));
@@ -160,7 +162,7 @@ fn main() {
         let (engine, stop) = (on.engine.clone(), stop.clone());
         std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
-                std::thread::sleep(TICK);
+                std::thread::sleep(tick);
                 engine.increment_epoch();
             }
         })
@@ -173,7 +175,7 @@ fn main() {
         .block_on(async {
             println!(
                 "median of {SAMPLES} runs; epoch tick {} ms, yield per tick",
-                TICK.as_millis()
+                tick.as_millis()
             );
             compare::<i64, i64>(&off, &on, "lcg", "tight loop, 500M rounds", 500_000_000).await;
             compare::<i32, i32>(&off, &on, "fib", "recursion, fib(35)", 35).await;

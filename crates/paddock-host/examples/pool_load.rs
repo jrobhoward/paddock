@@ -10,7 +10,7 @@
 //! ```sh
 //! cargo build --release --target wasm32-wasip2 -p paddock-fixture-chaos \
 //!     --target-dir target/fixtures
-//! cargo run --release -p paddock-host --example pool_load -- [workers]
+//! cargo run --release -p paddock-host --example pool_load -- [workers] [epoch_tick_us]
 //! ```
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
@@ -26,9 +26,13 @@ const LONG: Duration = Duration::from_secs(10);
 const WORK: [(&str, &str); 2] = [("empty", "echo:x"), ("busy:20000", "busy:20000")];
 
 fn main() {
-    let workers: usize = std::env::args()
-        .nth(1)
-        .map_or(1, |a| a.parse().expect("workers"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let workers: usize = args.first().map_or(1, |a| a.parse().expect("workers"));
+    let tick = args
+        .get(1)
+        .map_or(RuntimeConfig::default().epoch_tick, |a| {
+            Duration::from_micros(a.parse().expect("epoch_tick_us"))
+        });
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/fixtures/wasm32-wasip2/release/paddock_fixture_chaos.wasm"
@@ -39,7 +43,7 @@ fn main() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async move { tokio::spawn(run(workers, component)).await })
+        .block_on(async move { tokio::spawn(run(workers, tick, component)).await })
         .unwrap();
 }
 
@@ -88,14 +92,19 @@ fn us(d: Duration) -> String {
     format!("{:.1}", d.as_secs_f64() * 1e6)
 }
 
-async fn run(workers: usize, component: Vec<u8>) {
+async fn run(workers: usize, tick: Duration, component: Vec<u8>) {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 64,
+        epoch_tick: tick,
         ..RuntimeConfig::default()
     })
     .unwrap();
     let app = rt.load(&component).unwrap();
-    println!("tokio workers: {workers}; {} s per row", RUN.as_secs());
+    println!(
+        "tokio workers: {workers}; epoch tick {} µs; {} s per row",
+        tick.as_micros(),
+        RUN.as_secs()
+    );
     println!("work        pool  clients  calls/s   mean µs  p50 µs  p99 µs  p99.9 µs");
     let mut configs = Vec::new();
     for pool in [1, 4, 16] {

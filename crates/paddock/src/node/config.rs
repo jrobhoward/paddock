@@ -76,7 +76,7 @@ fn default_max_instances() -> u32 {
 }
 
 fn default_tick() -> u64 {
-    10
+    2
 }
 
 impl NodeConfig {

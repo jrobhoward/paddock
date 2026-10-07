@@ -157,7 +157,7 @@ Every instance gets its own wasmtime `Store`, linear memory and limits, and sees
 | Resource | Mechanism | Notes |
 | --- | --- | --- |
 | Memory | `ResourceLimiter` / `StoreLimits` per Store: memory_max, table_max | Growth past the cap fails or traps. Use the pooling allocator for fast instantiation. |
-| CPU, wall clock | Epoch interruption: a deadline per callback (callback_deadline_ms) | Cheap, a few percent. A blown deadline kills the instance with reason `timeout`. |
+| CPU, wall clock | Epoch interruption: a deadline per callback (callback_deadline_ms), 2 ms tick | About 2% on S8's Rust kernels; up to about 20% on short store-bound loops (BASELINE.md). The tick also bounds how long a busy instance holds a worker. A blown deadline kills the instance with reason `timeout`. |
 | CPU, deterministic | Fuel per message (optional) | Costs more. Use for untrusted tenants or metering. |
 | Threads | Host-owned tokio pool; instances are single-threaded | Wasm threads support in WASI is unsettled, so don't depend on it. Scale with instance pools. |
 | Mailbox | mailbox_max per instance; message_max_bytes | When full: cast is dropped and counted, call fails fast with `overloaded`. |

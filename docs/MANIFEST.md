@@ -198,7 +198,7 @@ trusted_keys = ["RWQ..."]              # minisign public keys whose bundles are 
 policy = "/etc/paddock/policy.toml"    # without one, only the always-available interfaces are granted
 max_instances = 1000
 memory_profile = "standard"            # or "dense": 128 MiB cap per instance, many more instances
-epoch_tick_ms = 10                     # granularity of callback deadlines
+epoch_tick_ms = 2                      # granularity of callback deadlines and preemption
 
 [volumes]
 orders-data = "/srv/paddock/orders"    # backs manifest preopens with volume = "orders-data"

@@ -144,6 +144,15 @@ the time they spend and the epoch callback subtracts it, so waiting on another
 instance is not runaway code. The epoch callback yields every tick for
 fairness (S1).
 
+**The epoch tick bounds how long a busy instance holds a worker.** Receiving
+from a non-empty mailbox never suspends, so an instance draining a full
+mailbox gives up its tokio worker only at an epoch tick (or when tokio's
+cooperative budget runs out). Tasks queued on that worker wait up to a tick:
+at 10 ms, p99 under oversubscription was 10.7 ms; at the 2 ms default it is
+3.4 ms with the same throughput. A `yield_now` per callback instead costs
+over half the throughput. Rerun `pool_load` and `baseline` before changing
+the tick or the instance loop (0.5, `docs/BASELINE.md`).
+
 **A component imports only what its code calls.** An app that never calls a
 `process` function has no `process` import, so deploy-time checks treat an
 absent import as unused, not as an error (M0).

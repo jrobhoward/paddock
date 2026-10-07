@@ -130,6 +130,11 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- The default epoch tick is 2 ms (was 10 ms), in `RuntimeConfig` and the
+  node's `epoch_tick_ms`. A busy instance holds its worker for at most a
+  tick, so p99 latency under oversubscription falls from about 10.7 ms to
+  3.4 ms at the same throughput (`docs/BASELINE.md`).
+- `pool_load` takes the epoch tick as an optional second argument.
 - Manifest: `placement.mode` (`any`, `singleton`, `all-nodes`,
   `hot-standby`) replaces `placement.singleton`, which is now rejected as an
   unknown field. A `singleton` whose `instances` asks for more than one is
