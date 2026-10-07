@@ -1,0 +1,26 @@
+package paddock:fixture;
+
+/// An interface no host implements, so the host links deny stubs for it.
+interface denied {
+  variant error {
+    access-denied,
+    other(string),
+  }
+
+  /// Has an error channel: a deny stub returns `access-denied`.
+  ping: func() -> result<string, error>;
+
+  /// Has no error channel: a deny stub traps.
+  boom: func();
+}
+
+/// The app world plus every host service Phase 1 provides.
+world services {
+  include paddock:runtime/app@0.1.0;
+  import wasi:logging/logging@0.1.0-draft;
+  import wasi:config/store@0.2.0-rc.1;
+  import wasi:keyvalue/store@0.2.0-draft;
+  import wasi:keyvalue/atomics@0.2.0-draft;
+  import wasi:keyvalue/batch@0.2.0-draft;
+  import denied;
+}

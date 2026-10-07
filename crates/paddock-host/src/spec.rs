@@ -1,8 +1,10 @@
 //! What one instance runs with.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use paddock_manifest::AppManifest;
+use paddock_manifest::{AccessMode, AppManifest, AppSpec, Bucket, Capability, LogLevel};
 
 /// Limits, timeouts and `init` arguments for one instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,19 +31,69 @@ pub struct InstanceSpec {
     pub shutdown_timeout: Duration,
     /// Passed to `init`.
     pub init_args: Vec<u8>,
+    /// Capabilities the host serves. A declared capability missing here is
+    /// denied: `wasi:logging` drops records, `wasi:config` and
+    /// `wasi:keyvalue` return `access-denied`, `wasi:filesystem` gets no
+    /// preopens.
+    pub granted: BTreeSet<Capability>,
+    /// Buckets the instance may open, by name.
+    pub buckets: BTreeMap<String, Bucket>,
+    /// Records below this level are dropped.
+    pub log_level: LogLevel,
+    /// Most records per second for the whole app; `None` for no limit.
+    pub log_rate_limit: Option<u32>,
+    /// What `wasi:config` returns.
+    pub config: BTreeMap<String, String>,
+    /// Directories visible to the guest, used when `wasi:filesystem` is
+    /// granted.
+    pub preopens: Vec<Preopen>,
 }
 
+/// A host directory visible to the guest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Preopen {
+    /// The directory on the host.
+    pub host: PathBuf,
+    /// Where the guest sees it (`/data`).
+    pub guest: String,
+    /// Read-write if `true`, read-only otherwise.
+    pub writable: bool,
+}
+
+/// The guest path of the bundle's read-only files.
+pub const PRIV_PATH: &str = "/priv";
+
 impl InstanceSpec {
-    /// The spec a verified manifest describes. `lifecycle.start_args` is
-    /// passed to `init` as JSON; absent args are an empty list. Every name in
-    /// `registered_names` may be registered on this node; global scope is not
-    /// enforced until Phase 2.
+    /// A spec with the manifest defaults (64 MiB, 5 s deadlines, a
+    /// 10,000-message mailbox) and no capabilities granted.
+    #[must_use]
+    pub fn new(app: impl Into<String>, version: impl Into<String>) -> Self {
+        let mut spec = Self::from_parts(app.into(), version.into(), &AppSpec::default());
+        spec.granted.clear();
+        spec
+    }
+
+    /// The spec a verified manifest describes, with every declared
+    /// capability granted (narrow it with [`InstanceSpec::with_granted`]).
+    /// `lifecycle.start_args` is passed to `init` as JSON; absent args are an
+    /// empty list. Every name in `registered_names` may be registered on this
+    /// node; global scope is not enforced until Phase 2. `wasi:config`
+    /// returns the manifest's `config.defaults`. Preopens need
+    /// [`InstanceSpec::resolve_preopens`].
     #[must_use]
     pub fn from_manifest(manifest: &AppManifest) -> Self {
-        let spec = &manifest.spec;
+        Self::from_parts(
+            manifest.app.name.clone(),
+            manifest.app.version.to_string(),
+            &manifest.spec,
+        )
+    }
+
+    fn from_parts(app: String, version: String, spec: &AppSpec) -> Self {
+        let logging = spec.capabilities.logging.as_ref();
         Self {
-            app: manifest.app.name.clone(),
-            version: manifest.app.version.to_string(),
+            app,
+            version,
             memory_max: spec.limits.memory_max.bytes(),
             table_max: spec.limits.table_max,
             callback_deadline: Duration::from_millis(spec.limits.callback_deadline_ms),
@@ -60,6 +112,69 @@ impl InstanceSpec {
                 .as_ref()
                 .map(|v| v.to_string().into_bytes())
                 .unwrap_or_default(),
+            granted: spec.capabilities.declared().into_iter().collect(),
+            buckets: spec
+                .capabilities
+                .keyvalue
+                .as_ref()
+                .map(|kv| kv.buckets.clone())
+                .unwrap_or_default(),
+            log_level: logging.map_or(spec.observability.log_level, |l| l.max_level),
+            log_rate_limit: logging.and_then(|l| l.rate_limit_per_sec),
+            config: spec.config.defaults.clone(),
+            preopens: Vec::new(),
         }
+    }
+
+    /// Keep only the capabilities in `granted` (the operator's effective
+    /// grant).
+    #[must_use]
+    pub fn with_granted(mut self, granted: &BTreeSet<Capability>) -> Self {
+        self.granted.retain(|c| granted.contains(c));
+        self
+    }
+
+    /// Set the preopens a manifest's `wasi:filesystem` scope asks for:
+    /// `priv_dir` (the bundle's files) read-only at `/priv`, and each
+    /// declared preopen backed by the host directory `volume` resolves its
+    /// volume name to.
+    ///
+    /// # Errors
+    ///
+    /// A message for a volume `volume` cannot resolve, or a preopen at the
+    /// reserved `/priv`.
+    pub fn resolve_preopens(
+        &mut self,
+        manifest: &AppManifest,
+        volume: impl Fn(&str) -> Option<PathBuf>,
+        priv_dir: Option<&Path>,
+    ) -> Result<(), String> {
+        let Some(fs) = &manifest.spec.capabilities.filesystem else {
+            self.preopens.clear();
+            return Ok(());
+        };
+        let mut preopens = Vec::new();
+        if let Some(dir) = priv_dir {
+            preopens.push(Preopen {
+                host: dir.to_path_buf(),
+                guest: PRIV_PATH.to_string(),
+                writable: false,
+            });
+        }
+        for (guest, preopen) in &fs.preopens {
+            if guest == PRIV_PATH {
+                return Err(format!("{PRIV_PATH} is reserved for the bundle's files"));
+            }
+            let host = volume(&preopen.volume).ok_or_else(|| {
+                format!("volume '{}' is not configured on this node", preopen.volume)
+            })?;
+            preopens.push(Preopen {
+                host,
+                guest: guest.clone(),
+                writable: preopen.mode == AccessMode::Rw,
+            });
+        }
+        self.preopens = preopens;
+        Ok(())
     }
 }

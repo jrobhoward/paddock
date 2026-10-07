@@ -81,13 +81,18 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.
+- `crates/paddock-fixture-services`: a guest that drives logging, config,
+  keyvalue, the filesystem and stdout, and imports an interface no host
+  implements (for deny stubs).
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
   with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The remaining
   Phase 1 crates (`paddock-node`, `paddock-cli`, `paddock-sdk`) land under
   `crates/` per the plan's workspace layout.
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
-  by `crates/paddock/tests/wit_rules.rs`.
+  by `crates/paddock/tests/wit_rules.rs`. `wit/vendor/` holds unmodified
+  copies of the draft WASI interfaces Paddock hosts itself (keyvalue, config,
+  logging); bindings name each package path explicitly.
 - `docs/`: design and plan.
 - `spikes/`: throwaway programs that answered design questions. Excluded from
   the main workspace, from the conventions below, and from the Definition of

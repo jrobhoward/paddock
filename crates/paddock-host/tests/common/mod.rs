@@ -35,6 +35,8 @@ pub fn fixture(name: &str) -> Vec<u8> {
                 "paddock-fixture-chaos",
                 "-p",
                 "paddock-fixture-echo",
+                "-p",
+                "paddock-fixture-services",
                 "--target-dir",
             ])
             .arg(&target_dir)
@@ -68,17 +70,14 @@ pub fn shared() -> &'static (Runtime, LoadedApp) {
 /// A spec with short timeouts, so failure tests finish quickly.
 pub fn spec(init_args: &str) -> InstanceSpec {
     InstanceSpec {
-        app: "chaos".into(),
-        version: "0.1.0".into(),
         memory_max: 32 << 20,
-        table_max: None,
         callback_deadline: Duration::from_millis(300),
         mailbox_max: 16,
         message_max_bytes: 1 << 20,
-        registered_names: Vec::new(),
         init_timeout: Duration::from_millis(500),
         shutdown_timeout: Duration::from_millis(300),
         init_args: init_args.as_bytes().to_vec(),
+        ..InstanceSpec::new("chaos", "0.1.0")
     }
 }
 

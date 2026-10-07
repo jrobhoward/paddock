@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::Instrument;
 use wasmtime::{Store, Trap, UpdateDeadline};
 
-use crate::bindings::{App, CallResult};
+use crate::bindings::{CallResult, PaddockApp};
 use crate::error::describe;
 use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason, Info};
@@ -336,7 +336,11 @@ impl InstanceTask {
             mailbox: self.self_mailbox.clone(),
             dropped: self.dropped.clone(),
         };
-        let mut store = Store::new(&engine, InstanceState::new(self.pid, spec, ctx));
+        let state = match InstanceState::new(self.pid, spec, ctx) {
+            Ok(state) => state,
+            Err(why) => return ExitReason::Crashed(why),
+        };
+        let mut store = Store::new(&engine, state);
         store.limiter(|s| &mut s.limiter);
         store.epoch_deadline_callback(|mut ctx| {
             if ctx.data_mut().clock.expired() {
@@ -371,7 +375,7 @@ impl InstanceTask {
         store: &mut Store<InstanceState>,
         app: &LoadedApp,
         spec: &InstanceSpec,
-    ) -> Result<App, ExitReason> {
+    ) -> Result<PaddockApp, ExitReason> {
         store.data_mut().clock.start(spec.init_timeout);
         let init = tokio::time::timeout(spec.init_timeout, async {
             let instance = app.pre.instantiate_async(&mut *store).await?;
@@ -397,7 +401,7 @@ impl InstanceTask {
     async fn serve(
         &mut self,
         store: &mut Store<InstanceState>,
-        instance: &App,
+        instance: &PaddockApp,
         spec: &InstanceSpec,
     ) -> Result<ExitReason, ExitReason> {
         let mut next_ref: u64 = 1;
@@ -469,7 +473,7 @@ impl InstanceTask {
     async fn stop(
         &mut self,
         store: &mut Store<InstanceState>,
-        instance: &App,
+        instance: &PaddockApp,
         spec: &InstanceSpec,
         reason: ExitReason,
     ) -> ExitReason {

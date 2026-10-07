@@ -56,3 +56,12 @@ All notable changes are recorded here. The format follows
   status (`running`, `failed` with the escalation reason, `stopped`), stop in
   reverse order, and instance pools with round-robin and JSON/CBOR hash
   routing. `whereis` on an app's name returns a pool member.
+- Host services: `wasi:logging` (level cap, per-app rate limit, tagged
+  records), stdout/stderr captured as tagged logs, `wasi:config`,
+  `wasi:keyvalue` (memory and redb disk buckets, per-app namespaces, byte
+  quotas, `increment`, batch calls) and `wasi:filesystem` preopens (`/priv`
+  read-only, volumes read-write). Ungranted capabilities are denied per
+  instance; interfaces no host implements get typed deny stubs. Vendored WIT
+  for the draft interfaces lives in `wit/vendor`.
+- `RuntimeConfig::data_dir` enables disk buckets. `InstanceSpec::new`,
+  `with_granted` and `resolve_preopens`.

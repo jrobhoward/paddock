@@ -331,6 +331,18 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 
 **Logging notes.** Apps never write to stdout as a log channel. The host captures stdout and stderr anyway and tags them, so legacy code still produces useful output. Rate limits per app stop one noisy app from flooding the node.
 
+**Denial by capability.** A declared capability the operator does not grant is still linked, and fails softly:
+- `wasi:logging` drops records.
+- `wasi:config` returns `io("access-denied")`; that interface has no denial case.
+- `wasi:keyvalue` returns `access-denied`, as does opening a bucket the manifest does not list.
+- `wasi:filesystem` sees no preopens.
+- An imported interface no host implements (`wasi:http` and `paddock:*` services before their phase, or anything unknown) gets deny stubs: functions return their error type's `access-denied` case (or `permission-denied`, `access`, `HTTP-request-denied`), or trap when they have no error channel.
+
+**Host service details (Phase 1).**
+- Log records and captured stdout (info) and stderr (warn) go to the `paddock::guest` target, each tagged with app, version and pid. Records below the app's level are dropped. A token bucket per app, shared by its instances, enforces `rate_limit_per_sec` and reports how many records it dropped.
+- Keyvalue counters (`increment`) are decimal strings, as in wasmtime's host. Each batch call is one transaction and passes or fails its quota check as a whole. `list-keys` pages 256 keys at a time.
+- Disk buckets share one redb file under the node's data directory. Operations run on tokio's blocking pool, and the time counts as host time, not against the callback deadline.
+
 ## Security model
 
 Security rests on three hard boundaries: the Wasm sandbox around each app, mTLS between nodes, and signatures on every bundle. Policy narrows what crosses those boundaries; it never substitutes for them.
@@ -429,7 +441,7 @@ Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and
 - **S5 (snapshot upgrade): confirmed.** An upgrade is a mailbox message handled between callbacks, so senders keep the same pid and nothing is lost. 4,000 of 4,000 concurrent messages applied exactly once across three upgrades; each swap paused the instance 0.2 to 0.35 ms with pre-compiled components; a failing `load-snapshot` reverted with state intact. Details: `spikes/s5/README.md`.
 - **S2 (instance cost): cheap.** About 35 µs to instantiate (pooling) and 30–40 KiB resident per idle instance; 0.57 µs per host→guest call; 1.1 µs per same-worker actor round trip. The limit is virtual address space: about 4–8 GiB reserved per instance by default (about 15,000 instances per node), about 260 MiB with 128 MiB reservations (20,000 tested). Pooling needs `total_stacks` sized to the instance count, because each live Store holds a fiber stack. Details: `spikes/s2/README.md`.
 - **S6 (bundles): reusable with upstream changes.** `rustbridge-bundle` 1.0.1 works as a library but rejects bundle version 1.2 and the `wasm32-wasip2` platform, and drops unknown sections such as `appserver`. Its signature check defaults to a key carried inside the bundle; Paddock always verifies against operator-trusted keys. Seven rustbridge changes are listed in `spikes/s6/README.md`.
-- **S7 (WASI hosts):** use wasmtime's crates for core WASI, `wasi:config` and `wasi:http`. `wasmtime-wasi-keyvalue` is a demo (writes don't persist past a bucket handle), and there is no `wasi:logging` host, so Paddock writes both. Details: `spikes/S7-wasi-host-crates.md`.
+- **S7 (WASI hosts):** use wasmtime's crates for core WASI, `wasi:config` and `wasi:http`. `wasmtime-wasi-keyvalue` is a demo (writes don't persist past a bucket handle), and there is no `wasi:logging` host, so Paddock writes both. Details: `spikes/S7-wasi-host-crates.md`. (M5 also writes its own `wasi:config` host, two functions, because the crate's host cannot deny access.)
 - **S8 (guest versus native speed): 1.0x to 2.4x for compute; about 2 µs per call.** Measured through `paddock-host` with identical source compiled both ways. Plain integer code matches native (software SHA-256 at 1.02x, fannkuch-redux 1.56x). The gaps come from CPU features wasm lacks: native SHA-256 with SHA extensions is about 6.8x faster, and n-body runs at 2.35x scalar and 1.82x with wasm `simd128`. A call into an instance costs 2 µs on the same worker and 4.8 µs across threads, so Paddock suits messages carrying more than tens of microseconds of work. Message bodies are copied in and out through the canonical ABI at about one `memcpy` each (about 28 µs per MiB). Against languageshootout.com's figures, guest compute sits between the JVM and Node and is 5–15x faster than BEAM; the methods differ, so that comparison is rough. Details: `spikes/s8/README.md`.
 - **Interface rule (from S4, S7):** every `paddock:*` capability function returns `result<T, error>` where `error` has an `access-denied` case (the name `wasi:keyvalue` and `wasi:sockets` use), so a denied capability is an error value, not a trap. The generic deny stub also accepts `permission-denied` and `access`.
 

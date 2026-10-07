@@ -5,6 +5,7 @@ members = [
     "crates/paddock-bundle",
     "crates/paddock-fixture-chaos",
     "crates/paddock-fixture-echo",
+    "crates/paddock-fixture-services",
     "crates/paddock-host",
     "crates/paddock-manifest",
 ]
@@ -39,6 +40,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
 ciborium = "0.2"
+redb = "3"
 semver = { version = "1", features = ["serde"] }
 toml = "0.9"
 
@@ -51,6 +53,7 @@ rustbridge-bundle = { path = "../rustbridge/crates/rustbridge-bundle" }
 
 # Test-only
 minisign = "0.9"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 proptest = "1"
 rstest = "0.26"
 tempfile = "3"

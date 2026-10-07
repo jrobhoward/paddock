@@ -21,11 +21,15 @@
 mod apps;
 mod bindings;
 mod config;
+mod deny;
 mod error;
 mod instance;
+mod kv;
 mod lifecycle;
 mod links;
+mod logs;
 mod message;
+mod output;
 mod pid;
 mod pool;
 mod registry;
@@ -44,7 +48,7 @@ pub use message::{CallError, Envelope, ExitReason};
 pub use paddock_manifest::{RestartType, Strategy};
 pub use pid::Pid;
 pub use runtime::{LoadedApp, Runtime};
-pub use spec::InstanceSpec;
+pub use spec::{InstanceSpec, PRIV_PATH, Preopen};
 pub use supervisor::{
     Backoff, Child, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
 };

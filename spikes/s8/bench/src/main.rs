@@ -194,17 +194,13 @@ async fn run(wasm: &str) {
         .spawn(
             &app,
             InstanceSpec {
-                app: "s8".into(),
-                version: "0.0.0".into(),
                 memory_max: 256 << 20,
-                table_max: None,
                 callback_deadline: Duration::from_secs(600),
                 mailbox_max: 16,
                 message_max_bytes: 64 << 20,
-                registered_names: vec![],
                 init_timeout: Duration::from_secs(10),
                 shutdown_timeout: Duration::from_secs(1),
-                init_args: vec![],
+                ..InstanceSpec::new("s8", "0.0.0")
             },
         )
         .unwrap();

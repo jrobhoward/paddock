@@ -11,11 +11,14 @@ use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
 
 use crate::apps::{self, AppDeployment, Apps};
-use crate::bindings::{App, AppPre};
+use crate::bindings::{PaddockApp, PaddockAppPre};
 use crate::config::{MemoryProfile, RuntimeConfig};
+use crate::deny;
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
+use crate::kv::KvStore;
 use crate::links::LinkTable;
+use crate::logs::LogLimits;
 use crate::message::{CallError, Envelope};
 use crate::pid::Pid;
 use crate::pool::Pool;
@@ -37,11 +40,12 @@ pub struct Runtime {
 
 pub(crate) struct RuntimeInner {
     pub(crate) engine: Engine,
-    linker: Linker<InstanceState>,
     pub(crate) table: ProcessTable,
     pub(crate) registry: Registry,
     pub(crate) links: LinkTable,
     pools: RwLock<HashMap<String, Arc<Pool>>>,
+    pub(crate) kv: KvStore,
+    pub(crate) log_limits: LogLimits,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -72,12 +76,23 @@ impl fmt::Debug for RuntimeInner {
 /// A compiled component, linked against the host and ready to instantiate.
 #[derive(Clone)]
 pub struct LoadedApp {
-    pub(crate) pre: AppPre<InstanceState>,
+    pub(crate) pre: PaddockAppPre<InstanceState>,
+    stubbed: Arc<Vec<String>>,
+}
+
+impl LoadedApp {
+    /// Imported interfaces no host here provides, linked to deny stubs.
+    #[must_use]
+    pub fn stubbed_imports(&self) -> &[String] {
+        &self.stubbed
+    }
 }
 
 impl fmt::Debug for LoadedApp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LoadedApp").finish_non_exhaustive()
+        f.debug_struct("LoadedApp")
+            .field("stubbed", &self.stubbed)
+            .finish_non_exhaustive()
     }
 }
 
@@ -92,21 +107,20 @@ impl Runtime {
     pub fn new(config: RuntimeConfig) -> Result<Self, HostError> {
         let engine =
             Engine::new(&engine_config(&config)).map_err(|e| HostError::Engine(describe(&e)))?;
-        let mut linker = Linker::new(&engine);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-            .map_err(|e| HostError::Engine(describe(&e)))?;
-        App::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)
-            .map_err(|e| HostError::Engine(describe(&e)))?;
+        // Fail now, not at the first load, if the host interfaces cannot link.
+        base_linker(&engine).map_err(|e| HostError::Engine(describe(&e)))?;
+        let kv = KvStore::open(config.data_dir.as_deref()).map_err(HostError::Storage)?;
         let ticker = Ticker::start(engine.clone(), config.epoch_tick)
             .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
         Ok(Self {
             inner: Arc::new(RuntimeInner {
                 engine,
-                linker,
                 table: ProcessTable::default(),
                 registry: Registry::default(),
                 links: LinkTable::default(),
                 pools: RwLock::default(),
+                kv,
+                log_limits: LogLimits::default(),
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -114,22 +128,25 @@ impl Runtime {
         })
     }
 
-    /// Compile a component and link it against the host.
+    /// Compile a component and link it against the host. Imported
+    /// interfaces the host does not provide are linked to deny stubs (see
+    /// [`LoadedApp::stubbed_imports`]).
     ///
     /// # Errors
     ///
-    /// [`HostError::Load`] if the bytes are not a valid component, or it
-    /// imports something the host does not provide.
+    /// [`HostError::Load`] if the bytes are not a valid component or it
+    /// cannot link, for example a provided interface at an incompatible
+    /// version.
     pub fn load(&self, component: &[u8]) -> Result<LoadedApp, HostError> {
         let load = |e: wasmtime::Error| HostError::Load(describe(&e));
-        let component = Component::new(&self.inner.engine, component).map_err(load)?;
-        let pre = self
-            .inner
-            .linker
-            .instantiate_pre(&component)
-            .map_err(load)?;
+        let engine = &self.inner.engine;
+        let component = Component::new(engine, component).map_err(load)?;
+        let mut linker = base_linker(engine).map_err(load)?;
+        let stubbed = deny::link_stubs(&mut linker, engine, &component).map_err(load)?;
+        let pre = linker.instantiate_pre(&component).map_err(load)?;
         Ok(LoadedApp {
-            pre: AppPre::new(pre).map_err(load)?,
+            pre: PaddockAppPre::new(pre).map_err(load)?,
+            stubbed: Arc::new(stubbed),
         })
     }
 
@@ -268,6 +285,13 @@ impl Runtime {
         id: u64,
         incarnation: u32,
     ) -> Result<InstanceHandle, HostError> {
+        if let Some(p) = spec.preopens.iter().find(|p| !p.host.is_dir()) {
+            return Err(HostError::Preopen(format!(
+                "{} (for {}) is not a directory",
+                p.host.display(),
+                p.guest
+            )));
+        }
         let limit = self.inner.config.memory_profile.memory_max();
         if spec.memory_max > limit {
             return Err(HostError::MemoryAboveProfile {
@@ -292,6 +316,14 @@ impl Runtime {
         tokio::spawn(task.run(self.inner.clone(), app.clone(), spec));
         Ok(handle)
     }
+}
+
+/// The host interfaces every app is linked against.
+fn base_linker(engine: &Engine) -> wasmtime::Result<Linker<InstanceState>> {
+    let mut linker = Linker::new(engine);
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    PaddockApp::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)?;
+    Ok(linker)
 }
 
 fn engine_config(config: &RuntimeConfig) -> Config {

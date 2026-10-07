@@ -111,12 +111,12 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Instance pools with round-robin and hash routing (`instances.routing`). (Hash routing reads JSON and CBOR bodies, host-side; guests get round-robin through `whereis`.)
 
 ### M5 Host services (M)
-- [ ] `wasi:logging` → `tracing`, tagged with app, version, pid; level cap and rate limit per app. Paddock's own host from vendored proposal WIT; no wasmtime crate exists (S7).
-- [ ] `wasi:config` from manifest defaults plus node-level overrides, via `wasmtime-wasi-config` (S7).
-- [ ] `wasi:keyvalue`: `memory` and `disk` (redb) buckets, per-app namespaces, byte quotas, atomics. Paddock's own host on the vendored `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (S7).
-- [ ] `wasi:filesystem`: `/priv` read-only from the bundle, `/data` read-write per app volume.
-- [ ] `wasi:clocks`, `wasi:random`; stdout/stderr captured as tagged logs.
-- [ ] Deny stubs for declared-but-ungranted imports.
+- [x] `wasi:logging` → `tracing`, tagged with app, version, pid; level cap and rate limit per app. Paddock's own host from vendored proposal WIT; no wasmtime crate exists (S7).
+- [x] `wasi:config` from manifest defaults plus node-level overrides. (Paddock's own two-function host instead of `wasmtime-wasi-config`, which cannot deny; the node merges overrides into `InstanceSpec::config` in M7.)
+- [x] `wasi:keyvalue`: `memory` and `disk` (redb) buckets, per-app namespaces, byte quotas, atomics. Paddock's own host on the vendored `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (S7). (The draft's atomics offer `increment` only; no compare-and-swap.)
+- [x] `wasi:filesystem`: `/priv` read-only from the bundle, `/data` read-write per app volume. (Host side: `InstanceSpec::resolve_preopens`. Extracting `/priv` from a bundle lands with the deploy store in M7.)
+- [x] `wasi:clocks`, `wasi:random`; stdout/stderr captured as tagged logs.
+- [x] Deny stubs for declared-but-ungranted imports. (Generic typed stubs for interfaces no host provides; the logging, config, keyvalue and filesystem hosts deny per instance.)
 
 ### M6 Hot upgrade (M)
 - [ ] `snapshot` mode: pause delivery → `save-snapshot` → instantiate v2 → `load-snapshot` → resume; revert on any failure.
@@ -126,7 +126,7 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [ ] `rollback` to the previous version.
 
 ### M7 Node daemon and CLI (M)
-- [ ] `paddock-node`: node config (TOML), deploy store on disk, restore deployed apps on restart.
+- [ ] `paddock-node`: node config (TOML), deploy store on disk, restore deployed apps on restart. The deploy store extracts each bundle's `priv/` files for `/priv`; rustbridge checksums only libraries and schemas, so those files need checksums (in the `appserver` section or a rustbridge change) before they count as verified.
 - [ ] Admin API on a Unix socket: deploy, list, status, stop, start, kill, upgrade, rollback, remove, logs, ps.
 - [ ] `paddock` CLI wrapping the API, with human and `--json` output.
 - [ ] Audit log of deploys, upgrades, grants and denials.

@@ -1,20 +1,27 @@
 //! Per-instance store data: WASI context, resource limits, deadline
 //! accounting and the `paddock:runtime` host functions.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use paddock_manifest::{Bucket, Capability, LogLevel};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
-use wasmtime::component::ResourceTable;
+use wasmtime::component::{Resource, ResourceTable};
 use wasmtime::{Error, ResourceLimiter, Result};
-use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
+use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 
 use crate::bindings::paddock::runtime::{process, types};
+use crate::bindings::wasi::config::store as config;
+use crate::bindings::wasi::keyvalue::{atomics, batch, store};
+use crate::bindings::wasi::logging::logging;
 use crate::instance::{InstanceHandle, Message};
+use crate::kv::{BucketHandle, Op, Outcome};
+use crate::logs::Admit;
 use crate::message::{Envelope, ExitReason, Info};
+use crate::output::{CapturedOutput, Tags};
 use crate::pid::Pid;
 use crate::runtime::RuntimeInner;
 use crate::spec::InstanceSpec;
@@ -34,6 +41,7 @@ pub(crate) struct ProcessContext {
 /// Store data for one instance.
 pub(crate) struct InstanceState {
     pub(crate) pid: Pid,
+    tags: Arc<Tags>,
     wasi: WasiCtx,
     table: ResourceTable,
     pub(crate) limiter: Limiter,
@@ -45,14 +53,44 @@ pub(crate) struct InstanceState {
     /// callback as well as after a `noreply`.
     pub(crate) pending: HashMap<u64, oneshot::Sender<Envelope>>,
     pub(crate) timers: Timers,
+    granted: BTreeSet<Capability>,
+    buckets: BTreeMap<String, Bucket>,
+    log_level: LogLevel,
+    log_rate_limit: Option<u32>,
+    config: BTreeMap<String, String>,
+    /// Log records dropped because logging is not granted.
+    denied_logs: u64,
 }
 
 impl InstanceState {
-    pub(crate) fn new(pid: Pid, spec: &InstanceSpec, ctx: ProcessContext) -> Self {
-        Self {
+    /// # Errors
+    ///
+    /// A message if a preopened directory cannot be opened.
+    pub(crate) fn new(pid: Pid, spec: &InstanceSpec, ctx: ProcessContext) -> Result<Self, String> {
+        let tags = Arc::new(Tags {
+            app: spec.app.clone(),
+            version: spec.version.clone(),
             pid,
-            // No preopens, no environment, no inherited stdio, no sockets.
-            wasi: WasiCtx::builder().build(),
+        });
+        // No environment and no sockets; stdout and stderr become logs.
+        let mut wasi = WasiCtx::builder();
+        wasi.stdout(CapturedOutput::new(tags.clone(), "stdout"))
+            .stderr(CapturedOutput::new(tags.clone(), "stderr"));
+        if spec.granted.contains(&Capability::Filesystem) {
+            for p in &spec.preopens {
+                let perms = if p.writable {
+                    FsPerms::ReadWrite
+                } else {
+                    FsPerms::ReadOnly
+                };
+                wasi.preopened_dir(&p.host, &p.guest, perms)
+                    .map_err(|e| format!("preopen {} -> {}: {e}", p.host.display(), p.guest))?;
+            }
+        }
+        Ok(Self {
+            pid,
+            tags,
+            wasi: wasi.build(),
             table: ResourceTable::new(),
             limiter: Limiter::new(spec.memory_max, spec.table_max),
             clock: CallbackClock::default(),
@@ -60,7 +98,30 @@ impl InstanceState {
             registered_names: spec.registered_names.clone(),
             pending: HashMap::new(),
             timers: Timers::default(),
-        }
+            granted: spec.granted.clone(),
+            buckets: spec.buckets.clone(),
+            log_level: spec.log_level,
+            log_rate_limit: spec.log_rate_limit,
+            config: spec.config.clone(),
+            denied_logs: 0,
+        })
+    }
+
+    fn granted(&self, capability: Capability) -> bool {
+        self.granted.contains(&capability)
+    }
+
+    /// Run one storage operation, counting the time as host time.
+    async fn kv(
+        &mut self,
+        bucket: &Resource<BucketHandle>,
+        op: Op,
+    ) -> Result<std::result::Result<Outcome, store::Error>> {
+        let handle = self.table.get(bucket)?.clone();
+        let started = Instant::now();
+        let outcome = self.ctx.rt.kv.run(&handle, op).await;
+        self.clock.add_host_time(started.elapsed());
+        Ok(outcome.map_err(store::Error::Other))
     }
 
     /// Remember a caller until its reply is sent. Callers that gave up (timed
@@ -388,5 +449,225 @@ impl process::Host for InstanceState {
             target.exit_signal(self.pid, reason, untrappable);
         }
         Ok(())
+    }
+}
+
+fn level_of(level: logging::Level) -> LogLevel {
+    match level {
+        logging::Level::Trace => LogLevel::Trace,
+        logging::Level::Debug => LogLevel::Debug,
+        logging::Level::Info => LogLevel::Info,
+        logging::Level::Warn => LogLevel::Warn,
+        logging::Level::Error => LogLevel::Error,
+        logging::Level::Critical => LogLevel::Critical,
+    }
+}
+
+impl logging::Host for InstanceState {
+    async fn log(&mut self, level: logging::Level, context: String, message: String) -> Result<()> {
+        if !self.granted(Capability::Logging) {
+            self.denied_logs += 1;
+            return Ok(());
+        }
+        let level = level_of(level);
+        if level < self.log_level {
+            return Ok(());
+        }
+        let t = &self.tags;
+        match self.ctx.rt.log_limits.admit(&t.app, self.log_rate_limit) {
+            Admit::Drop => return Ok(()),
+            Admit::Emit { dropped: 0 } => {}
+            Admit::Emit { dropped } => {
+                tracing::warn!(target: "paddock::guest", app = %t.app, version = %t.version, pid = %t.pid, dropped, "log records dropped by the rate limit");
+            }
+        }
+        let pid = t.pid.to_string();
+        let (app, version) = (t.app.as_str(), t.version.as_str());
+        match level {
+            LogLevel::Trace => {
+                tracing::trace!(target: "paddock::guest", app, version, pid, context, "{message}")
+            }
+            LogLevel::Debug => {
+                tracing::debug!(target: "paddock::guest", app, version, pid, context, "{message}")
+            }
+            LogLevel::Info => {
+                tracing::info!(target: "paddock::guest", app, version, pid, context, "{message}")
+            }
+            LogLevel::Warn => {
+                tracing::warn!(target: "paddock::guest", app, version, pid, context, "{message}")
+            }
+            LogLevel::Error => {
+                tracing::error!(target: "paddock::guest", app, version, pid, context, "{message}")
+            }
+            LogLevel::Critical => {
+                tracing::error!(target: "paddock::guest", app, version, pid, context, critical = true, "{message}")
+            }
+        }
+        Ok(())
+    }
+}
+
+const CONFIG_DENIED: &str = "access-denied";
+
+impl config::Host for InstanceState {
+    async fn get(
+        &mut self,
+        key: String,
+    ) -> Result<std::result::Result<Option<String>, config::Error>> {
+        if !self.granted(Capability::Config) {
+            return Ok(Err(config::Error::Io(CONFIG_DENIED.into())));
+        }
+        Ok(Ok(self.config.get(&key).cloned()))
+    }
+
+    async fn get_all(
+        &mut self,
+    ) -> Result<std::result::Result<Vec<(String, String)>, config::Error>> {
+        if !self.granted(Capability::Config) {
+            return Ok(Err(config::Error::Io(CONFIG_DENIED.into())));
+        }
+        Ok(Ok(self
+            .config
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()))
+    }
+}
+
+impl store::Host for InstanceState {
+    async fn open(
+        &mut self,
+        identifier: String,
+    ) -> Result<std::result::Result<Resource<BucketHandle>, store::Error>> {
+        if !self.granted(Capability::KeyValue) {
+            return Ok(Err(store::Error::AccessDenied));
+        }
+        // Only buckets the manifest lists.
+        let Some(bucket) = self.buckets.get(&identifier) else {
+            return Ok(Err(store::Error::AccessDenied));
+        };
+        let handle = BucketHandle {
+            app: self.tags.app.clone(),
+            name: identifier,
+            durability: bucket.durability,
+            quota: bucket.quota.map(|q| q.bytes()),
+        };
+        Ok(Ok(self.table.push(handle)?))
+    }
+}
+
+fn unexpected(outcome: &Outcome) -> store::Error {
+    store::Error::Other(format!("unexpected storage outcome {outcome:?}"))
+}
+
+impl store::HostBucket for InstanceState {
+    async fn get(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        key: String,
+    ) -> Result<std::result::Result<Option<Vec<u8>>, store::Error>> {
+        Ok(self.kv(&bucket, Op::Get(key)).await?.and_then(|o| match o {
+            Outcome::Value(v) => Ok(v),
+            other => Err(unexpected(&other)),
+        }))
+    }
+
+    async fn set(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<std::result::Result<(), store::Error>> {
+        Ok(self.kv(&bucket, Op::Set(key, value)).await?.map(|_| ()))
+    }
+
+    async fn delete(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        key: String,
+    ) -> Result<std::result::Result<(), store::Error>> {
+        Ok(self.kv(&bucket, Op::Delete(key)).await?.map(|_| ()))
+    }
+
+    async fn exists(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        key: String,
+    ) -> Result<std::result::Result<bool, store::Error>> {
+        Ok(self
+            .kv(&bucket, Op::Exists(key))
+            .await?
+            .and_then(|o| match o {
+                Outcome::Exists(e) => Ok(e),
+                other => Err(unexpected(&other)),
+            }))
+    }
+
+    async fn list_keys(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        cursor: Option<u64>,
+    ) -> Result<std::result::Result<store::KeyResponse, store::Error>> {
+        Ok(self
+            .kv(&bucket, Op::Keys(cursor))
+            .await?
+            .and_then(|o| match o {
+                Outcome::Keys(keys, cursor) => Ok(store::KeyResponse { keys, cursor }),
+                other => Err(unexpected(&other)),
+            }))
+    }
+
+    async fn drop(&mut self, bucket: Resource<BucketHandle>) -> Result<()> {
+        self.table.delete(bucket)?;
+        Ok(())
+    }
+}
+
+impl atomics::Host for InstanceState {
+    async fn increment(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        key: String,
+        delta: u64,
+    ) -> Result<std::result::Result<u64, store::Error>> {
+        Ok(self
+            .kv(&bucket, Op::Increment(key, delta))
+            .await?
+            .and_then(|o| match o {
+                Outcome::Count(n) => Ok(n),
+                other => Err(unexpected(&other)),
+            }))
+    }
+}
+
+impl batch::Host for InstanceState {
+    async fn get_many(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        keys: Vec<String>,
+    ) -> Result<std::result::Result<Vec<Option<(String, Vec<u8>)>>, store::Error>> {
+        Ok(self
+            .kv(&bucket, Op::GetMany(keys))
+            .await?
+            .and_then(|o| match o {
+                Outcome::Values(v) => Ok(v),
+                other => Err(unexpected(&other)),
+            }))
+    }
+
+    async fn set_many(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        key_values: Vec<(String, Vec<u8>)>,
+    ) -> Result<std::result::Result<(), store::Error>> {
+        Ok(self.kv(&bucket, Op::SetMany(key_values)).await?.map(|_| ()))
+    }
+
+    async fn delete_many(
+        &mut self,
+        bucket: Resource<BucketHandle>,
+        keys: Vec<String>,
+    ) -> Result<std::result::Result<(), store::Error>> {
+        Ok(self.kv(&bucket, Op::DeleteMany(keys)).await?.map(|_| ()))
     }
 }
