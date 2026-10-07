@@ -132,9 +132,10 @@ All notable changes are recorded here. The format follows
 
 - `paddock-host` host services follow one pattern (`paddock_host::services`):
   each has its own WIT world, spec, shared and per-instance state, and
-  linking. `wasi:logging` is the first; `InstanceSpec::log_level` and
-  `log_rate_limit` are now `InstanceSpec::services.logging.level` and
-  `.rate_limit`.
+  linking. `wasi:logging`, `wasi:config` and `wasi:keyvalue` use it.
+  `InstanceSpec` fields moved under `InstanceSpec::services`: `log_level` and
+  `log_rate_limit` to `logging.level` and `logging.rate_limit`, `config` to
+  `config.values`, `buckets` to `keyvalue.buckets`.
 - The default epoch tick is 2 ms (was 10 ms), in `RuntimeConfig` and the
   node's `epoch_tick_ms`. A busy instance holds its worker for at most a
   tick, so p99 latency under oversubscription falls from about 10.7 ms to

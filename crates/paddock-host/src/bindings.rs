@@ -1,5 +1,5 @@
-//! Host bindings for the `paddock:runtime` app world and the host services
-//! Paddock implements (vendored WIT under `wit/vendor`).
+//! Host bindings for the `paddock:runtime` app world: the callbacks and
+//! `process`. Each host service has its own bindings (`src/services`).
 
 // Generated code carries no doc comments.
 #![allow(missing_docs)]
@@ -15,7 +15,4 @@ wasmtime::component::bindgen!({
     world: "paddock:host/paddock-app",
     imports: { default: async | trappable },
     exports: { default: async },
-    with: {
-        "wasi:keyvalue/store.bucket": crate::kv::BucketHandle,
-    },
 });

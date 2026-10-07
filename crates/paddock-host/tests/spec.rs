@@ -91,10 +91,13 @@ fn from_manifest____capabilities____granted_buckets_logging_and_config() {
             Capability::KeyValue
         ]
     );
-    assert_eq!(spec.buckets["orders"].durability, Durability::Disk);
+    assert_eq!(
+        spec.services.keyvalue.buckets["orders"].durability,
+        Durability::Disk
+    );
     assert_eq!(spec.services.logging.level, LogLevel::Warn);
     assert_eq!(spec.services.logging.rate_limit, Some(50));
-    assert_eq!(spec.config["mode"], "fast");
+    assert_eq!(spec.services.config.values["mode"], "fast");
 }
 
 #[test]

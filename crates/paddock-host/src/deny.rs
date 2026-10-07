@@ -31,8 +31,6 @@ const PROVIDED: &[(&str, Option<&[&str]>)] = &[
     ("wasi:filesystem", None),
     ("wasi:sockets", None),
     ("paddock:runtime", Some(&["types", "process"])),
-    ("wasi:config", Some(&["store"])),
-    ("wasi:keyvalue", Some(&["store", "atomics", "batch"])),
 ];
 
 /// Error case names a stub may return, in order of preference.

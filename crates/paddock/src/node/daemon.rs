@@ -283,7 +283,7 @@ impl Node {
             .map_err(|e| NodeError::Refused(e.to_string()))?;
         let mut spec = InstanceSpec::from_manifest(&manifest).with_granted(&grant.granted);
         if let Some(overrides) = self.config.config.get(&name) {
-            spec.config.extend(overrides.clone());
+            spec.services.config.values.extend(overrides.clone());
         }
         let priv_dir = self.store.priv_dir(&name, &version);
         spec.resolve_preopens(

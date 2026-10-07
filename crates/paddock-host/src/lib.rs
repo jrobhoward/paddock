@@ -24,7 +24,6 @@ mod config;
 mod deny;
 mod error;
 mod instance;
-mod kv;
 mod lifecycle;
 mod links;
 mod message;

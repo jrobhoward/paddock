@@ -34,6 +34,8 @@
 //! registries below ([`ServiceSpecs`], `Shared`, `States`, `link`,
 //! `INTERFACES`); the process core and orchestration do not change.
 
+pub mod config;
+pub mod keyvalue;
 pub mod logging;
 
 use std::sync::Arc;
@@ -92,7 +94,6 @@ pub(crate) struct ServiceCtx<'a, I> {
     /// Who the instance is, for log records and errors.
     pub(crate) tags: &'a Tags,
     /// Resources handed to the guest.
-    #[allow(dead_code)] // First used by keyvalue when it moves here (A2).
     pub(crate) table: &'a mut ResourceTable,
     clock: &'a mut CallbackClock,
 }
@@ -113,7 +114,6 @@ impl<'a, I> ServiceCtx<'a, I> {
     }
 
     /// Exclude time spent waiting in the host from the callback deadline.
-    #[allow(dead_code)] // First used by keyvalue when it moves here (A2).
     pub(crate) fn add_host_time(&mut self, spent: Duration) {
         self.clock.add_host_time(spent);
     }
@@ -136,6 +136,10 @@ impl<S: Service> HasData for Ctx<S> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct ServiceSpecs {
+    /// `wasi:config`.
+    pub config: config::ConfigSpec,
+    /// `wasi:keyvalue`.
+    pub keyvalue: keyvalue::KeyValueSpec,
     /// `wasi:logging`.
     pub logging: logging::LoggingSpec,
 }
@@ -143,6 +147,8 @@ pub struct ServiceSpecs {
 impl ServiceSpecs {
     pub(crate) fn from_manifest(manifest: &AppSpec) -> Self {
         Self {
+            config: config::Config::spec(manifest),
+            keyvalue: keyvalue::KeyValue::spec(manifest),
             logging: logging::Logging::spec(manifest),
         }
     }
@@ -150,12 +156,16 @@ impl ServiceSpecs {
 
 /// Every service's node-wide state.
 pub(crate) struct Shared {
+    config: Arc<()>,
+    keyvalue: Arc<<keyvalue::KeyValue as Service>::Shared>,
     pub(crate) logging: Arc<logging::Shared>,
 }
 
 impl Shared {
     pub(crate) fn new(config: &RuntimeConfig) -> Result<Self, HostError> {
         Ok(Self {
+            config: Arc::new(config::Config::shared(config)?),
+            keyvalue: Arc::new(keyvalue::KeyValue::shared(config)?),
             logging: Arc::new(logging::Logging::shared(config)?),
         })
     }
@@ -163,12 +173,20 @@ impl Shared {
 
 /// Every service's state for one instance.
 pub(crate) struct States {
+    pub(crate) config: config::Instance,
+    pub(crate) keyvalue: keyvalue::Instance,
     pub(crate) logging: logging::Instance,
 }
 
 impl States {
     pub(crate) fn new(shared: &Shared, spec: &InstanceSpec) -> Self {
         Self {
+            config: instance::<config::Config>(&shared.config, &spec.services.config, spec),
+            keyvalue: instance::<keyvalue::KeyValue>(
+                &shared.keyvalue,
+                &spec.services.keyvalue,
+                spec,
+            ),
             logging: instance::<logging::Logging>(&shared.logging, &spec.services.logging, spec),
         }
     }
@@ -185,11 +203,17 @@ fn instance<S: Service>(
 /// Link every service.
 pub(crate) fn link<T>(linker: &mut Linker<T>) -> wasmtime::Result<()>
 where
-    T: HostState<logging::Logging>,
+    T: HostState<config::Config> + HostState<keyvalue::KeyValue> + HostState<logging::Logging>,
 {
+    config::Config::link(linker)?;
+    keyvalue::KeyValue::link(linker)?;
     logging::Logging::link(linker)?;
     Ok(())
 }
 
 /// The interfaces the services link, `package/interface`.
-pub(crate) const INTERFACES: &[&[&str]] = &[logging::Logging::INTERFACES];
+pub(crate) const INTERFACES: &[&[&str]] = &[
+    config::Config::INTERFACES,
+    keyvalue::KeyValue::INTERFACES,
+    logging::Logging::INTERFACES,
+];

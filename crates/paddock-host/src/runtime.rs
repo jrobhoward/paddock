@@ -16,7 +16,6 @@ use crate::config::{MemoryProfile, RuntimeConfig};
 use crate::deny;
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
-use crate::kv::KvStore;
 use crate::links::LinkTable;
 use crate::message::{CallError, Envelope};
 use crate::pid::Pid;
@@ -45,7 +44,6 @@ pub(crate) struct RuntimeInner {
     pub(crate) registry: Registry,
     pub(crate) links: LinkTable,
     pools: RwLock<HashMap<String, Arc<Pool>>>,
-    pub(crate) kv: KvStore,
     pub(crate) services: services::Shared,
     next_id: AtomicU64,
     config: RuntimeConfig,
@@ -110,7 +108,6 @@ impl Runtime {
             Engine::new(&engine_config(&config)).map_err(|e| HostError::Engine(describe(&e)))?;
         // Fail now, not at the first load, if the host interfaces cannot link.
         base_linker(&engine).map_err(|e| HostError::Engine(describe(&e)))?;
-        let kv = KvStore::open(config.data_dir.as_deref()).map_err(HostError::Storage)?;
         let services = services::Shared::new(&config)?;
         let ticker = Ticker::start(engine.clone(), config.epoch_tick)
             .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
@@ -121,7 +118,6 @@ impl Runtime {
                 registry: Registry::default(),
                 links: LinkTable::default(),
                 pools: RwLock::default(),
-                kv,
                 services,
                 next_id: AtomicU64::new(1),
                 config,

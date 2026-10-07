@@ -1,16 +1,24 @@
 package paddock:host;
 
-/// The app world and the host services Paddock has not yet moved to their
-/// own world (`src/services`). A component may import any subset.
+/// The app world: callbacks and `process`. Host services link their own
+/// worlds below (`src/services`). A component may import any subset.
 world paddock-app {
   include paddock:runtime/app@0.1.0;
-  import wasi:config/store@0.2.0-rc.1;
-  import wasi:keyvalue/store@0.2.0-draft;
-  import wasi:keyvalue/atomics@0.2.0-draft;
-  import wasi:keyvalue/batch@0.2.0-draft;
 }
 
 /// The logging service's interfaces (`src/services/logging`).
 world logging {
   import wasi:logging/logging@0.1.0-draft;
+}
+
+/// The config service's interfaces (`src/services/config`).
+world config {
+  import wasi:config/store@0.2.0-rc.1;
+}
+
+/// The keyvalue service's interfaces (`src/services/keyvalue`).
+world keyvalue {
+  import wasi:keyvalue/store@0.2.0-draft;
+  import wasi:keyvalue/atomics@0.2.0-draft;
+  import wasi:keyvalue/batch@0.2.0-draft;
 }

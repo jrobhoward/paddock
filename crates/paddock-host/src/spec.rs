@@ -1,10 +1,10 @@
 //! What one instance runs with.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Bucket, Capability};
+use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Capability};
 
 use crate::services::ServiceSpecs;
 
@@ -38,10 +38,6 @@ pub struct InstanceSpec {
     /// `wasi:keyvalue` return `access-denied`, `wasi:filesystem` gets no
     /// preopens.
     pub granted: BTreeSet<Capability>,
-    /// Buckets the instance may open, by name.
-    pub buckets: BTreeMap<String, Bucket>,
-    /// What `wasi:config` returns.
-    pub config: BTreeMap<String, String>,
     /// Directories visible to the guest, used when `wasi:filesystem` is
     /// granted.
     pub preopens: Vec<Preopen>,
@@ -78,7 +74,8 @@ impl InstanceSpec {
     /// `lifecycle.start_args` is passed to `init` as JSON; absent args are an
     /// empty list. Every name in `registered_names` may be registered on this
     /// node; global scope is not enforced until Phase 2. `wasi:config`
-    /// returns the manifest's `config.defaults`. Preopens need
+    /// returns the manifest's `config.defaults` (merge node overrides into
+    /// `services.config.values`). Preopens need
     /// [`InstanceSpec::resolve_preopens`].
     #[must_use]
     pub fn from_manifest(manifest: &AppManifest) -> Self {
@@ -112,13 +109,6 @@ impl InstanceSpec {
                 .map(|v| v.to_string().into_bytes())
                 .unwrap_or_default(),
             granted: spec.capabilities.declared().into_iter().collect(),
-            buckets: spec
-                .capabilities
-                .keyvalue
-                .as_ref()
-                .map(|kv| kv.buckets.clone())
-                .unwrap_or_default(),
-            config: spec.config.defaults.clone(),
             preopens: Vec::new(),
             services: ServiceSpecs::from_manifest(spec),
         }

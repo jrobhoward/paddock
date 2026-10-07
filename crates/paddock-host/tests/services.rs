@@ -122,7 +122,7 @@ fn bucket(durability: Durability, quota: Option<u64>) -> Bucket {
 }
 
 fn with_buckets(mut s: InstanceSpec, buckets: &[(&str, Bucket)]) -> InstanceSpec {
-    s.buckets = buckets
+    s.services.keyvalue.buckets = buckets
         .iter()
         .map(|(n, b)| ((*n).to_string(), b.clone()))
         .collect();
@@ -242,7 +242,7 @@ async fn stdout_and_stderr____captured_as_tagged_records() {
 async fn config____granted____returns_values() {
     let (rt, app) = shared();
     let mut s = spec("cfg", &[Capability::Config]);
-    s.config = BTreeMap::from([
+    s.services.config.values = BTreeMap::from([
         ("db.host".into(), "pg.internal".into()),
         ("mode".into(), "fast".into()),
     ]);
@@ -262,7 +262,7 @@ async fn config____granted____returns_values() {
 async fn config____not_granted____access_denied() {
     let (rt, app) = shared();
     let mut s = spec("cfg-denied", &[]);
-    s.config = BTreeMap::from([("k".into(), "v".into())]);
+    s.services.config.values = BTreeMap::from([("k".into(), "v".into())]);
     let h = rt.spawn(app, s).unwrap();
 
     let reply = ask(&h, "config:k").await;

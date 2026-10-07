@@ -440,5 +440,5 @@ impl Txn for DiskWrite<'_> {
 }
 
 #[cfg(test)]
-#[path = "kv_tests.rs"]
-mod kv_tests;
+#[path = "storage_tests.rs"]
+mod storage_tests;
