@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 
+use crate::manifest::lifecycle::Instances;
 use crate::manifest::validate::Validator;
 
 /// Log severity, matching `wasi:logging` levels.
@@ -206,11 +207,41 @@ pub struct Placement {
     /// Node labels preferred when choosing a node.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub preferred_labels: BTreeMap<String, String>,
-    /// Run at most one instance across the cluster.
-    pub singleton: bool,
+    /// Where instances run across the cluster.
+    pub mode: PlacementMode,
     /// Spread instances across distinct values of this node label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spread: Option<String>,
+}
+
+impl Placement {
+    pub(crate) fn validate(&self, instances: &Instances, v: &mut Validator) {
+        let more_than_one = instances.initial() > 1 || instances.max.is_some_and(|m| m > 1);
+        if self.mode == PlacementMode::Singleton && more_than_one {
+            v.error_at(
+                "mode",
+                "a singleton runs one instance; instances asks for more",
+            );
+        }
+    }
+}
+
+/// Where an app's instances run across the cluster. Not enforced until
+/// Phase 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlacementMode {
+    /// As many instances as `instances` asks for, on any eligible nodes.
+    #[default]
+    Any,
+    /// One instance across the cluster, moved to another node when its node
+    /// fails.
+    Singleton,
+    /// One instance on every eligible node.
+    AllNodes,
+    /// One instance on every eligible node, one of which leads. Each
+    /// instance learns whether it leads through a `host-event`.
+    HotStandby,
 }
 
 /// The `health` section: an optional `health` export polled by the host. Not

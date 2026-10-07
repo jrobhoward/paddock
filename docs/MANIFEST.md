@@ -182,7 +182,7 @@ An upgrade that adds capabilities needs `paddock upgrade --approve`. `--batch`, 
 | `api.messages` | The app's message catalog (`name`, `pattern` = `call` or `cast`, `content_type`, `request_schema`, `response_schema`, `description`). Documentation; messages are not checked against it. |
 | `messaging_acl` | `accept_from`, `may_call`; *not enforced* (Phase 2). |
 | `health` | `interval_ms`, `failure_threshold`; *not enforced* (Phase 2). |
-| `placement` | `required_labels`, `preferred_labels`, `singleton`, `spread`; *not enforced* (Phase 3). |
+| `placement` | `required_labels`, `preferred_labels`, `spread` (a node label to spread instances across), and `mode`: `any` (default; as many instances as `instances` asks for, on any eligible nodes), `singleton` (one instance across the cluster, moved when its node fails; `instances` may not ask for more than one), `all-nodes` (one on every eligible node), or `hot-standby` (one on every eligible node, one of which leads and each told its role through a `host-event`). *Not enforced* (Phase 3). |
 
 ## Operator side
 

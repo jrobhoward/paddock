@@ -49,7 +49,7 @@ pub use lifecycle::{
 pub use limits::{Limits, WASM32_MEMORY_MAX};
 pub use sections::{
     Api, ConfigSpec, Dependency, Health, LogLevel, MessagePattern, MessageSpec, MessagingAcl,
-    NameScope, Observability, Placement, RegisteredName,
+    NameScope, Observability, Placement, PlacementMode, RegisteredName,
 };
 pub use unenforced::{Phase, UnenforcedField};
 pub use validate::{MAX_NAME_LEN, is_valid_name};
@@ -167,6 +167,9 @@ impl AppSpec {
         v.at("capabilities", |v| self.capabilities.validate(v));
         v.at("config", |v| self.config.validate(v));
         v.at("upgrade", |v| self.upgrade.validate(v));
+        if let Some(placement) = &self.placement {
+            v.at("placement", |v| placement.validate(&self.instances, v));
+        }
         if let Some(health) = &self.health {
             v.at("health", |v| health.validate(v));
         }

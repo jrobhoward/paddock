@@ -126,6 +126,10 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Manifest: `placement.mode` (`any`, `singleton`, `all-nodes`,
+  `hot-standby`) replaces `placement.singleton`, which is now rejected as an
+  unknown field. A `singleton` whose `instances` asks for more than one is
+  invalid. Still not enforced (Phase 3).
 - Crates consolidated from nine to five publishable ones. `paddock-manifest`
   is now the `manifest` module of `paddock-bundle`. `paddock-node`,
   `paddock-api` and `paddock-cli` are now the `paddock` crate: the node runs

@@ -102,6 +102,24 @@ fn AppSpec____empty_object____uses_defaults() {
     assert!(spec.capabilities.declared().is_empty());
 }
 
+#[rstest]
+#[case("any", PlacementMode::Any)]
+#[case("singleton", PlacementMode::Singleton)]
+#[case("all-nodes", PlacementMode::AllNodes)]
+#[case("hot-standby", PlacementMode::HotStandby)]
+fn Placement____each_mode____parses(#[case] name: &str, #[case] mode: PlacementMode) {
+    let spec = AppSpec::from_json_value(&json!({ "placement": { "mode": name } })).unwrap();
+
+    assert_eq!(spec.placement.map(|p| p.mode), Some(mode));
+}
+
+#[test]
+fn Placement____mode_omitted____any() {
+    let spec = AppSpec::from_json_value(&json!({ "placement": { "spread": "zone" } })).unwrap();
+
+    assert_eq!(spec.placement.map(|p| p.mode), Some(PlacementMode::Any));
+}
+
 #[test]
 fn AppSpec____json_round_trip____is_lossless() {
     let spec = AppSpec::from_json_str(DESIGN_EXAMPLE).unwrap();
@@ -138,6 +156,16 @@ fn AppSpec____json_round_trip____is_lossless() {
     r#"{ "instances": { "routing": "random" } }"#,
     "instances.routing",
     "invalid routing"
+)]
+#[case(
+    r#"{ "placement": { "singleton": true } }"#,
+    "placement.singleton",
+    "unknown field `singleton`"
+)]
+#[case(
+    r#"{ "placement": { "mode": "everywhere" } }"#,
+    "placement.mode",
+    "unknown variant `everywhere`"
 )]
 #[case(
     r#"{ "dependencies": [{ "app": "b", "version": "two" }] }"#,
@@ -189,6 +217,8 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "capabilities": { "wasi:logging": { "rate_limit_per_sec": 0 } } }), "capabilities.wasi:logging.rate_limit_per_sec")]
 #[case(json!({ "api": { "messages": [{ "name": "ping", "pattern": "cast", "response_schema": "s.json" }] } }), "api.messages[0].response_schema")]
 #[case(json!({ "api": { "messages": [{ "name": "a", "pattern": "call" }, { "name": "a", "pattern": "cast" }] } }), "api.messages[1].name")]
+#[case(json!({ "placement": { "mode": "singleton" }, "instances": { "count": 2 } }), "placement.mode")]
+#[case(json!({ "placement": { "mode": "singleton" }, "instances": { "min": 1, "max": 3 } }), "placement.mode")]
 #[case(json!({ "health": { "interval_ms": 0 } }), "health.interval_ms")]
 #[case(json!({ "observability": { "trace_sampling": 1.5 } }), "observability.trace_sampling")]
 fn AppSpec____rule_broken____invalid_at_path(#[case] value: serde_json::Value, #[case] path: &str) {
@@ -288,7 +318,7 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             "wasi:keyvalue": { "buckets": { "r": { "durability": "replicated" } } }
         },
         "upgrade": { "mode": "blue-green" },
-        "placement": { "singleton": true },
+        "placement": { "mode": "hot-standby" },
         "health": {},
         "observability": { "metrics": true, "trace_sampling": 0.1 }
     }))

@@ -123,7 +123,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | `messaging_acl` | which apps or names may call/cast this app, and which it may call | Phase 2 |
 | `config` | schema for config keys, defaults, secret references (never secret values) | Phase 1 |
 | `upgrade` | snapshot format version, supported from-versions, upgrade mode (snapshot or restart) | Phase 1 |
-| `placement` | node labels required or preferred, singleton, spread | Phase 3 |
+| `placement` | node labels required or preferred, spread label, mode (`any`, `singleton`, `all-nodes`, `hot-standby`) | Phase 3 |
 | `health` | optional `health` export, interval, failure threshold | Phase 2 |
 | `observability` | log level default, metrics enabled, trace sampling | Phase 1 level only |
 | `provenance` | inherited from `.rbp`: build info, git commit, SBOM, signature, signer key | Phase 1 verify signature |
