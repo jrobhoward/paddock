@@ -41,6 +41,10 @@ pub struct Spec {
     pub world: &'static str,
     pub appserver: Option<serde_json::Value>,
     pub signer: Option<KeyPair>,
+    /// Files added with a checksum in the manifest.
+    pub files: Vec<(&'static str, Vec<u8>)>,
+    /// Files added without one.
+    pub raw_files: Vec<(&'static str, Vec<u8>)>,
 }
 
 impl Default for Spec {
@@ -52,6 +56,8 @@ impl Default for Spec {
             world: WORLD,
             appserver: Some(appserver()),
             signer: Some(KeyPair::generate_unencrypted_keypair().unwrap()),
+            files: Vec::new(),
+            raw_files: Vec::new(),
         }
     }
 }
@@ -70,6 +76,12 @@ impl Spec {
             .unwrap();
         if let Some(section) = &self.appserver {
             builder = builder.with_extension("appserver", section.clone());
+        }
+        for (path, bytes) in &self.files {
+            builder = builder.add_checksummed_bytes(path, bytes.clone());
+        }
+        for (path, bytes) in &self.raw_files {
+            builder = builder.add_bytes(path, bytes.clone());
         }
         if let Some(keypair) = &self.signer {
             builder = builder.with_signing_key(keypair.pk.to_base64(), keypair.sk.clone());

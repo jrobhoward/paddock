@@ -17,8 +17,8 @@ use serde_json::json;
 
 fn deployment(name: &str, version: &str, appserver: serde_json::Value) -> AppDeployment {
     let (_, app) = shared();
-    AppDeployment {
-        manifest: AppManifest {
+    AppDeployment::new(
+        AppManifest {
             app: AppInfo {
                 name: name.into(),
                 version: version.parse().unwrap(),
@@ -39,8 +39,8 @@ fn deployment(name: &str, version: &str, appserver: serde_json::Value) -> AppDep
             },
             spec: AppSpec::from_json_value(&appserver).unwrap(),
         },
-        app: app.clone(),
-    }
+        app.clone(),
+    )
 }
 
 fn fast(mut extra: serde_json::Value) -> serde_json::Value {
@@ -384,4 +384,99 @@ async fn simple_one_for_one_app____instances_count____starts_that_many_from_temp
     assert_eq!(app.instances().len(), 3);
     assert_eq!(app.status(), AppStatus::Running);
     apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add____dependency_running____starts_and_joins_the_set() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![deployment("add-base", "1.0.0", fast(json!({})))])
+        .await
+        .unwrap();
+
+    let added = apps
+        .add(deployment(
+            "add-top",
+            "1.0.0",
+            fast(json!({ "dependencies": [{ "app": "add-base", "version": "^1" }] })),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(added.status(), AppStatus::Running);
+    assert_eq!(apps.names(), ["add-base", "add-top"]);
+    let instance = added.instances()[0].clone();
+    assert_eq!(instance.app(), "add-top");
+    assert_eq!(instance.version(), "1.0.0");
+    assert!(rt.instances().iter().any(|h| h.pid() == instance.pid()));
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add____duplicate_or_missing_dependency____refused() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![deployment("dup-a", "1.0.0", fast(json!({})))])
+        .await
+        .unwrap();
+
+    let duplicate = apps
+        .add(deployment("dup-a", "2.0.0", fast(json!({}))))
+        .await;
+    let missing = apps
+        .add(deployment(
+            "dup-b",
+            "1.0.0",
+            json!({ "dependencies": [{ "app": "nowhere", "version": "*" }] }),
+        ))
+        .await;
+    let mismatch = apps
+        .add(deployment(
+            "dup-c",
+            "1.0.0",
+            json!({ "dependencies": [{ "app": "dup-a", "version": "^2" }] }),
+        ))
+        .await;
+
+    assert!(
+        matches!(duplicate, Err(HostError::InvalidApps(_))),
+        "{duplicate:?}"
+    );
+    assert!(
+        matches!(missing, Err(HostError::InvalidApps(_))),
+        "{missing:?}"
+    );
+    assert!(
+        matches!(mismatch, Err(HostError::InvalidApps(_))),
+        "{mismatch:?}"
+    );
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove____needed_by_a_running_app____refused_then_allowed_after_dependent() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![
+            deployment("rm-base", "1.0.0", fast(json!({}))),
+            deployment(
+                "rm-top",
+                "1.0.0",
+                fast(json!({ "dependencies": [{ "app": "rm-base", "version": "*" }] })),
+            ),
+        ])
+        .await
+        .unwrap();
+    let base_instance = apps.app("rm-base").unwrap().instances()[0].clone();
+
+    let refused = apps.remove("rm-base").await;
+    apps.remove("rm-top").await.unwrap();
+    apps.remove("rm-base").await.unwrap();
+
+    assert!(
+        matches!(&refused, Err(HostError::InvalidApps(why)) if why.contains("needed by rm-top")),
+        "{refused:?}"
+    );
+    assert!(apps.names().is_empty());
+    assert_eq!(base_instance.exit_reason(), Some(ExitReason::Shutdown));
 }

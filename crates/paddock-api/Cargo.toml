@@ -1,0 +1,23 @@
+[package]
+name = "paddock-api"
+version = "0.0.0"
+description = "Paddock admin API: request and response types, and a client over the node's Unix socket"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "rt"] }
+
+[lints]
+workspace = true

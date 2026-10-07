@@ -126,10 +126,10 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] `rollback` to the previous version.
 
 ### M7 Node daemon and CLI (M)
-- [ ] `paddock-node`: node config (TOML), deploy store on disk, restore deployed apps on restart. The deploy store extracts each bundle's `priv/` files for `/priv`; rustbridge checksums only libraries and schemas, so those files need checksums (in the `appserver` section or a rustbridge change) before they count as verified.
-- [ ] Admin API on a Unix socket: deploy, list, status, stop, start, kill, upgrade, rollback, remove, logs, ps.
-- [ ] `paddock` CLI wrapping the API, with human and `--json` output.
-- [ ] Audit log of deploys, upgrades, grants and denials.
+- [x] `paddock-node`: node config (TOML), deploy store on disk, restore deployed apps on restart. The deploy store extracts each bundle's `priv/` files for `/priv`, each verified against the signed manifest's new `files` checksums (rustbridge `bundle-1.2`); an unlisted or altered file refuses the deploy.
+- [x] Admin API on a Unix socket: deploy, list, status, stop, start, kill, upgrade, rollback, remove, logs, ps. (Also `call`, which sends a message to an app; Unix only in Phase 1.)
+- [x] `paddock` CLI wrapping the API, with human and `--json` output.
+- [x] Audit log of deploys, upgrades, grants and denials.
 
 ### M8 Guest SDK and examples (M)
 - [ ] `paddock-sdk`: an `App` trait (init, handle_call, handle_cast, handle_info, terminate), `ProcessContext` (call, cast, link, monitor, timers, registry), typed envelopes with serde + CBOR.
@@ -167,6 +167,7 @@ From S6 (`rustbridge-bundle` 1.0.1 is already a usable library). Done on the rus
 - [x] `read_variant_verified` (in-memory bytes, checksum verified).
 - [x] `BundleBuilder::add_component`.
 - [x] Also: `zip` built with Deflate only, which keeps two non-allow-listed licences (bzip2, ppmd) out of Paddock's graph.
+- [x] Also: a signed `files` checksum map (`add_checksummed_bytes`, `read_file_verified`), so a bundle's `priv/` files are verified (M7).
 - [ ] Publish the branch, then switch `paddock-bundle` to a git or crates.io dependency.
 - [ ] Later (Phase 2+): the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait, and the native-process runner.
 
@@ -175,3 +176,20 @@ From S6 (`rustbridge-bundle` 1.0.1 is already a usable library). Done on the rus
 Distribution and QUIC, process groups and global names, messaging ACLs, HTTP ingress and egress, sockets, secrets, metrics export, health exports, placement, native-process plugins, blue-green upgrades, guest SDKs other than Rust, and fuel metering.
 
 **Noted for later: external databases (PostgreSQL).** Feasible, and already in the design as `paddock:sql` (Phase 3). The host owns a connection pool per named datasource, configured per node, and the manifest requests a datasource and a connection cap. Because datasources live in node configuration, an app restarted on another node (Phase 2 failover, Phase 3 placement) connects to the same external database. A second route needs no new interface: an app ships its own driver and connects over `wasi:sockets` with a connect rule for the database host (Phase 3 sockets), at the cost of per-instance connections and app-managed credentials. Nothing in Phase 1 blocks either; the host-side pool would use a permissive-licensed driver such as `tokio-postgres`.
+
+
+**Noted for later: runtime probes with anyprobe.** Feasible and cheap. anyprobe (MIT OR Apache-2.0) emits each platform's native probe format: SystemTap SDT on Linux (bpftrace, perf), DTrace USDT on macOS and FreeBSD, and ETW on Windows. A tracer attaches to a running node with no restart; with none attached, a probe costs one enabled check and its arguments are not computed. Probes belong in `paddock-host`, where every message already passes:
+- `call__start` / `call__done` and `cast`: sender pid, target pid, body size, content type, outcome.
+- `callback__start` / `callback__done`: pid and callback kind, with the guest execution time.
+- `instance__exit`: pid and reason. Also `supervisor__restart`, `upgrade__start` / `upgrade__done`, and `mailbox__drop`.
+
+Probes see what the host sees (pids, sizes, content types, timings), not guest internals or message bodies unless a probe encodes them. This covers most of the "message trace" planned for the Phase 2 introspection API, without that API. It suits late Phase 1 (beside M9's benchmarks) or Phase 2 observability. anyprobe is pre-release, so like rustbridge it can start as a sibling-checkout path dependency.
+
+**Proposed spike S9: debugging guests.** Two routes exist in wasmtime 49:
+- **Native debugger (works today).** `Config::debug_info(true)` plus wasmtime's `debug-builtins` feature registers JIT code with GDB and LLDB. Breakpoints and stepping then work in guest Rust source, if the guest was built with debug info. It is best-effort: some locals are unrecoverable. Attaching pauses the whole node, so it suits a development node only.
+- **Guest-level debug API (experimental).** `Config::guest_debug(true)` instruments compiled code so `Store::debug_exit_frames`, `FrameHandle` locals and stack, `edit_breakpoints` and `single_step` reach the Wasm VM state precisely. `Store::set_debug_handler` takes an async `DebugHandler`, so a breakpoint can park one instance's fiber while every other instance keeps running. That fits Paddock's one-task-per-instance model: an admin-API or Debug Adapter Protocol endpoint could debug a single instance on a live node.
+  - Mapping file and line to Wasm PCs needs the guest's DWARF (`gimli`).
+  - Time parked at a breakpoint must count as host time, so the callback deadline does not kill a paused instance.
+  - `guest_debug` is an Engine-wide setting and slows compiled code, so debuggable apps would run on a separate debug Engine.
+
+S9 would establish whether `guest_debug` breakpoints and stepping work in wasmtime 49 (its doc comment still calls them unfinished), measure the slowdown, and try one DAP session from VS Code against a parked instance. Time-box: 2 days. If the guest-level API is not ready, document the native-debugger route for development nodes and revisit with a later wasmtime.

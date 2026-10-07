@@ -37,6 +37,8 @@ pub fn fixture(name: &str) -> Vec<u8> {
                 "paddock-fixture-echo",
                 "-p",
                 "paddock-fixture-services",
+                "--features",
+                "paddock-fixture-services/denied",
                 "--target-dir",
             ])
             .arg(&target_dir)

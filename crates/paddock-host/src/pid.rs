@@ -22,3 +22,29 @@ impl fmt::Display for Pid {
         write!(f, "<{}.{}.{}>", self.node, self.id, self.incarnation)
     }
 }
+
+impl std::str::FromStr for Pid {
+    type Err = String;
+
+    /// Parse `node.id.incarnation`, with or without the angle brackets
+    /// [`Pid`]'s `Display` adds.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bare = s.trim().trim_start_matches('<').trim_end_matches('>');
+        let mut parts = bare.split('.');
+        let err = || format!("'{s}' is not a pid (expected node.id.incarnation)");
+        let (Some(node), Some(id), Some(incarnation), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(err());
+        };
+        Ok(Self {
+            node: node.parse().map_err(|_| err())?,
+            id: id.parse().map_err(|_| err())?,
+            incarnation: incarnation.parse().map_err(|_| err())?,
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "pid_tests.rs"]
+mod pid_tests;

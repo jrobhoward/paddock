@@ -19,8 +19,11 @@ components, with Erlang/OTP-style semantics:
 
 ## Status
 
-Pre-release. The design and the Phase 1 spikes are done, and milestone M0
-(workspace, CI, the WIT contract) is in place. There is no runnable server yet.
+Pre-release. A single node runs: `paddock-node` deploys signed bundles and
+supervises their instances, and the `paddock` CLI manages it. Phase 1
+milestones M0 to M7 are done; the guest SDK (M8) and the exit test suite (M9)
+remain. Until rustbridge's bundle format 1.2 is published, the workspace builds
+only next to a rustbridge checkout on its `bundle-1.2` branch, so CI is red.
 
 - [`docs/DESIGN.md`](docs/DESIGN.md): architecture, app model, manifest and
   capability model, failure handling, upgrades, distribution, security, risks.
@@ -40,6 +43,44 @@ cargo test --workspace
 rustup target add wasm32-wasip2
 cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release
 ```
+
+## Running a node
+
+Linux or macOS: the admin API is a Unix socket, and Windows support is not in
+Phase 1. A minimal `node.toml`:
+
+```toml
+data_dir = "/var/lib/paddock"
+trusted_keys = ["RWQ..."]              # minisign public keys of bundle signers
+policy = "/etc/paddock/policy.toml"    # which capabilities apps are granted
+
+[volumes]
+orders-data = "/srv/paddock/orders"    # host directories behind manifest volumes
+```
+
+```sh
+paddock-node --config node.toml        # admin socket: <data_dir>/admin.sock
+
+export PADDOCK_SOCKET=/var/lib/paddock/admin.sock
+paddock deploy orders-1.0.0.rbp
+paddock list
+paddock status orders
+paddock call orders 'ping'
+paddock upgrade orders orders-2.0.0.rbp --approve
+paddock rollback orders
+paddock ps
+paddock kill 0.12.1
+paddock logs orders -n 50
+paddock stop orders && paddock start orders
+paddock remove orders
+```
+
+Every command takes `--json`. The API is JSON over HTTP, so `curl
+--unix-socket /var/lib/paddock/admin.sock http://paddock/v1/apps` works too;
+`paddock-api` documents the routes. Deploys, upgrades and refusals are recorded
+in `<data_dir>/audit.log`. Unix socket paths are limited to about 107 bytes;
+set `admin_socket` if `data_dir` is long. Producing bundles is M8's job; until
+then they are built with rustbridge's `BundleBuilder`.
 
 ## License
 

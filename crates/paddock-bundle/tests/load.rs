@@ -358,3 +358,64 @@ fn open____checksum_recorded____matches_component_bytes() {
         format!("sha256:{}", compute_sha256(&spec.component))
     );
 }
+
+#[test]
+fn open____checksummed_priv_files____read_and_extracted() {
+    let dir = TempDir::new().unwrap();
+    let spec = Spec {
+        files: vec![
+            ("priv/config/defaults.toml", b"x = 1".to_vec()),
+            ("priv/README", b"hi".to_vec()),
+        ],
+        ..Spec::default()
+    };
+    let bundle = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap();
+    let out = dir.path().join("extracted");
+
+    bundle.extract_priv(&out).unwrap();
+
+    let names: Vec<&str> = bundle.priv_files.iter().map(|(p, _)| p.as_str()).collect();
+    assert_eq!(names, vec!["README", "config/defaults.toml"]);
+    assert_eq!(
+        std::fs::read_to_string(out.join("config/defaults.toml")).unwrap(),
+        "x = 1"
+    );
+}
+
+#[test]
+fn open____priv_file_without_checksum____refused_untrusted() {
+    let dir = TempDir::new().unwrap();
+    let spec = Spec {
+        raw_files: vec![("priv/sneaky.txt", b"x".to_vec())],
+        ..Spec::default()
+    };
+
+    let err = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap_err();
+
+    assert!(
+        matches!(&err, BundleError::Untrusted(why) if why.contains("priv/sneaky.txt")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn open____priv_file_changed_after_signing____refused_corrupt() {
+    let dir = TempDir::new().unwrap();
+    let spec = Spec {
+        files: vec![("priv/data.txt", b"original".to_vec())],
+        ..Spec::default()
+    };
+    let path = spec.write(&dir);
+    let tampered = dir.path().join("tampered.rbp");
+    rewrite(&path, &tampered, |name, contents| {
+        if name == "priv/data.txt" {
+            b"changed".to_vec()
+        } else {
+            contents
+        }
+    });
+
+    let result = VerifiedBundle::open(&tampered, &[spec.public_key()]);
+
+    assert!(matches!(result, Err(BundleError::Corrupt(_))), "{result:?}");
+}

@@ -75,3 +75,15 @@ All notable changes are recorded here. The format follows
   change, versions outside `from_versions`, and unapproved new capabilities.
 - Supervisors can replace a child's spec, with or without restarting it
   (`replace_child`, `replace_template`), and count their restarts.
+- `paddock-node`: the node daemon. TOML node config (trusted keys, policy,
+  volumes, per-app config overrides), a deploy store with bundles, `priv/`
+  files and desired state, restore on restart, an audit log, and the admin API
+  (JSON over HTTP on a 0600 Unix socket): deploy, list, status, stop, start,
+  remove, kill, upgrade, rollback, logs, ps and call.
+- `paddock` CLI over the admin API, with text and `--json` output.
+- `paddock-api`: the admin API's request and response types and a client.
+- Bundles' `priv/` files are verified against the signed manifest's checksums
+  and extracted for `/priv`; an unlisted or altered file refuses the deploy.
+- `AppDeployment` carries its `InstanceSpec`; `Apps::add` and `Apps::remove`
+  change a running set; instances report app, version and queue depth;
+  `Runtime::instances`; `Pid` parses from text.

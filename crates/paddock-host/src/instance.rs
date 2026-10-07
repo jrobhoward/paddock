@@ -69,6 +69,8 @@ pub struct InstanceHandle {
 #[derive(Debug)]
 struct Shared {
     pid: Pid,
+    app: String,
+    version: std::sync::Mutex<String>,
     mailbox: mpsc::Sender<Message>,
     control: watch::Sender<Control>,
     state: watch::Receiver<LifecycleState>,
@@ -87,6 +89,29 @@ impl InstanceHandle {
     #[must_use]
     pub fn pid(&self) -> Pid {
         self.shared.pid
+    }
+
+    /// The app this instance runs.
+    #[must_use]
+    pub fn app(&self) -> &str {
+        &self.shared.app
+    }
+
+    /// The version it runs (changes on upgrade).
+    #[must_use]
+    pub fn version(&self) -> String {
+        self.shared
+            .version
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Messages waiting in the mailbox.
+    #[must_use]
+    pub fn queued(&self) -> usize {
+        let m = &self.shared.mailbox;
+        m.max_capacity().saturating_sub(m.capacity())
     }
 
     /// The current lifecycle state.
@@ -314,6 +339,8 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
     let handle = InstanceHandle {
         shared: Arc::new(Shared {
             pid,
+            app: spec.app.clone(),
+            version: std::sync::Mutex::new(spec.version.clone()),
             mailbox: mailbox_tx,
             control: control_tx,
             state: state_rx,
@@ -591,6 +618,12 @@ impl InstanceTask {
                     .message_max_bytes
                     .store(next.message_max_bytes, Ordering::Relaxed);
                 *spec = next;
+                *self
+                    .me
+                    .shared
+                    .version
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = spec.version.clone();
                 self.set_state(LifecycleState::Active);
                 let pause = started.elapsed();
                 tracing::info!(version = %spec.version, pause_us = pause.as_micros(), "upgraded");

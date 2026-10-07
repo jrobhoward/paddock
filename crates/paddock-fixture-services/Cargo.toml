@@ -12,6 +12,12 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+# `denied`: import and call `paddock:fixture/denied`, an interface no host
+# implements, for deny-stub tests. Without it the component does not import
+# that interface, so a node accepts it.
+[features]
+denied = []
+
 [dependencies]
 wit-bindgen = { workspace = true }
 

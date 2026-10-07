@@ -272,6 +272,12 @@ impl Runtime {
             .await
     }
 
+    /// Every live instance, ordered by pid.
+    #[must_use]
+    pub fn instances(&self) -> Vec<InstanceHandle> {
+        self.inner.table.all()
+    }
+
     /// Number of live instances.
     #[must_use]
     pub fn instance_count(&self) -> usize {

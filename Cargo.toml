@@ -2,6 +2,8 @@
 resolver = "3"
 members = [
     "crates/paddock",
+    "crates/paddock-api",
+    "crates/paddock-cli",
     "crates/paddock-bundle",
     "crates/paddock-fixture-chaos",
     "crates/paddock-fixture-counter",
@@ -9,6 +11,7 @@ members = [
     "crates/paddock-fixture-services",
     "crates/paddock-host",
     "crates/paddock-manifest",
+    "crates/paddock-node",
 ]
 # Throwaway spike code is its own workspace with its own lock file; the
 # conventions and Definition of Done below do not apply to it.
@@ -42,10 +45,20 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 ciborium = "0.2"
 redb = "3"
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
 semver = { version = "1", features = ["serde"] }
 toml = "0.9"
 
 paddock-manifest = { path = "crates/paddock-manifest" }
+paddock-api = { path = "crates/paddock-api" }
+paddock-bundle = { path = "crates/paddock-bundle" }
+paddock-host = { path = "crates/paddock-host" }
+paddock-node = { path = "crates/paddock-node" }
 # TEMPORARY: a sibling checkout of rustbridge on its `bundle-1.2` branch, which
 # adds bundle format 1.2 (wasm32-wasip2 components, manifest extensions,
 # trusted-key verification). Swap for a git or crates.io dependency once that
@@ -54,7 +67,7 @@ rustbridge-bundle = { path = "../rustbridge/crates/rustbridge-bundle" }
 
 # Test-only
 minisign = "0.9"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi"] }
 proptest = "1"
 rstest = "0.26"
 tempfile = "3"

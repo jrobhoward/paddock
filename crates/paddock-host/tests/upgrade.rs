@@ -214,8 +214,8 @@ fn deployment(name: &str, version: u8, appserver: serde_json::Value) -> AppDeplo
             s.entry(k).or_insert(v);
         }
     }
-    AppDeployment {
-        manifest: AppManifest {
+    AppDeployment::new(
+        AppManifest {
             app: AppInfo {
                 name: name.into(),
                 version: format!("{version}.0.0").parse().unwrap(),
@@ -236,8 +236,8 @@ fn deployment(name: &str, version: u8, appserver: serde_json::Value) -> AppDeplo
             },
             spec: AppSpec::from_json_value(&spec).unwrap(),
         },
-        app: counter_app(version).clone(),
-    }
+        counter_app(version).clone(),
+    )
 }
 
 fn snapshot_mode(from: &str) -> serde_json::Value {

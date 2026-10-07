@@ -20,6 +20,9 @@ pub const SUPPORTED_WORLDS: &[&str] = &["paddock:runtime/app@0.1.0"];
 /// The variant Phase 1 deploys.
 const VARIANT: &str = "release";
 
+/// The archive directory whose files an app sees read-only at `/priv`.
+pub const PRIV_DIR: &str = "priv/";
+
 /// A bundle whose signature, checksums and manifest have been checked.
 #[derive(Debug, Clone)]
 pub struct VerifiedBundle {
@@ -27,6 +30,9 @@ pub struct VerifiedBundle {
     pub manifest: AppManifest,
     /// The component bytes, checksum- and signature-verified.
     pub component: Vec<u8>,
+    /// The files under `priv/`, by path relative to it, each checked against
+    /// the signed manifest's `files` checksums.
+    pub priv_files: Vec<(String, Vec<u8>)>,
 }
 
 impl VerifiedBundle {
@@ -52,6 +58,18 @@ impl VerifiedBundle {
             .get_variant(Platform::Wasm32Wasip2, Some(VARIANT))
             .ok_or(BundleError::NoComponent)?;
         let component = loader.read_variant_verified(Platform::Wasm32Wasip2, VARIANT, &keys)?;
+        let mut priv_files = Vec::new();
+        for path in loader.list_files() {
+            let Some(relative) = path.strip_prefix(PRIV_DIR) else {
+                continue;
+            };
+            if relative.is_empty() || path.ends_with('/') {
+                continue; // a directory entry
+            }
+            let bytes = loader.read_file_verified(&path)?;
+            priv_files.push((relative.to_string(), bytes));
+        }
+        priv_files.sort();
 
         let world = variant
             .component
@@ -110,7 +128,27 @@ impl VerifiedBundle {
         Ok(Self {
             manifest,
             component,
+            priv_files,
         })
+    }
+
+    /// Write the `priv/` files under `dir`, creating directories as needed.
+    ///
+    /// # Errors
+    ///
+    /// [`BundleError::Unreadable`] wrapping the I/O error.
+    pub fn extract_priv(&self, dir: &Path) -> Result<(), BundleError> {
+        let io = |e: std::io::Error| BundleError::Unreadable(rustbridge_bundle::BundleError::Io(e));
+        std::fs::create_dir_all(dir).map_err(io)?;
+        for (relative, bytes) in &self.priv_files {
+            // rustbridge refuses absolute paths and `..` in the files map.
+            let target = dir.join(relative);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(io)?;
+            }
+            std::fs::write(&target, bytes).map_err(io)?;
+        }
+        Ok(())
     }
 
     /// The component's top-level imports.

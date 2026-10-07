@@ -78,20 +78,25 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host`: the runtime: engine and epoch ticker, pids and the
   process table, instances and their callback loop, links and monitors,
   supervisors, and app sets with pools.
+- `crates/paddock-api`: the admin API's types and Unix-socket client.
+- `crates/paddock-node`: the node daemon (library and `paddock-node` binary):
+  config, deploy store, admin server, audit log, log ring.
+- `crates/paddock-cli`: the `paddock` command.
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.
 - `crates/paddock-fixture-services`: a guest that drives logging, config,
-  keyvalue, the filesystem and stdout, and imports an interface no host
-  implements (for deny stubs).
+  keyvalue, the filesystem and stdout. Its `denied` feature adds an import no
+  host implements, for deny-stub tests; nodes refuse that build, so node tests
+  build it without the feature into `target/fixtures/services-plain`.
 - `crates/paddock-fixture-counter`: a stateful counter built three ways by
   feature (v1, v2, a broken v3) for upgrade tests; each version builds into
   its own target directory.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
   with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The remaining
-  Phase 1 crates (`paddock-node`, `paddock-cli`, `paddock-sdk`) land under
-  `crates/` per the plan's workspace layout.
+  Phase 1 crate (`paddock-sdk`) lands under `crates/` per the plan's workspace
+  layout.
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
   by `crates/paddock/tests/wit_rules.rs`. `wit/vendor/` holds unmodified
   copies of the draft WASI interfaces Paddock hosts itself (keyvalue, config,
@@ -165,6 +170,15 @@ integrity, not authorship (S6). Use `verify_manifest_signature_trusted` and
 (`use types.{envelope}`) imports each type by its plain name (`envelope`); these
 are bound to the interface instance, not linked separately. Counting them as
 imports refuses every real component (M1, found by the echo fixture).
+
+**Unix-only code compiles cleanly on Windows.** The admin API and its client
+are `cfg(unix)`; code reachable only from them must not warn on Windows, where
+CI runs clippy with `-Dwarnings`. Scope Unix-only imports inside the function,
+or allow dead code for the module with a comment (M7).
+
+**Unix socket paths are short.** About 107 bytes on Linux and 103 on macOS;
+the node refuses a longer `admin_socket` with a message saying so, and tests
+keep data directories short (M7).
 
 **wasmtime 49 has its own `wasmtime::Error`, not `anyhow::Error`.** Use
 `wasmtime::Result` at the wasmtime boundary and convert into this crate's

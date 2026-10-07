@@ -85,6 +85,9 @@ impl From<rustbridge_bundle::BundleError> for BundleError {
             Rb::SignatureVerificationFailed(msg) => Self::Untrusted(msg),
             Rb::NoPublicKey => Self::Untrusted("no trusted keys are configured".to_string()),
             Rb::ChecksumMismatch { .. } => Self::Corrupt(err.to_string()),
+            Rb::Unverified(path) => {
+                Self::Untrusted(format!("{path} is not covered by the signed manifest"))
+            }
             other => Self::Unreadable(other),
         }
     }

@@ -46,6 +46,14 @@ impl ProcessTable {
         }
     }
 
+    /// Every live instance, by id.
+    pub(crate) fn all(&self) -> Vec<InstanceHandle> {
+        let entries = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let mut all: Vec<InstanceHandle> = entries.values().cloned().collect();
+        all.sort_by_key(InstanceHandle::pid);
+        all
+    }
+
     /// Number of live instances.
     pub(crate) fn len(&self) -> usize {
         self.entries

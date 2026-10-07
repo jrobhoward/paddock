@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 use paddock_manifest::{AppManifest, Capability, Strategy, UpgradeMode};
@@ -22,13 +22,32 @@ use crate::supervisor::{
 };
 use crate::upgrade::{UpgradeError, validate_upgrade};
 
-/// An app ready to run: its verified manifest and compiled component.
+/// An app ready to run: its verified manifest, compiled component, and the
+/// spec its instances run with.
 #[derive(Debug, Clone)]
 pub struct AppDeployment {
     /// The manifest.
     pub manifest: AppManifest,
     /// The compiled component.
     pub app: LoadedApp,
+    /// Limits, grants, buckets, config and preopens for each instance. The
+    /// node narrows grants to the operator's and resolves preopens and
+    /// config overrides here.
+    pub spec: InstanceSpec,
+}
+
+impl AppDeployment {
+    /// A deployment with the spec the manifest describes
+    /// ([`InstanceSpec::from_manifest`]).
+    #[must_use]
+    pub fn new(manifest: AppManifest, app: LoadedApp) -> Self {
+        let spec = InstanceSpec::from_manifest(&manifest);
+        Self {
+            manifest,
+            app,
+            spec,
+        }
+    }
 }
 
 /// Where an app is.
@@ -45,12 +64,17 @@ pub enum AppStatus {
     Stopped,
 }
 
-/// A started set of apps.
+/// A running set of apps. Cheap to clone; clones share the set.
 #[derive(Debug, Clone)]
 pub struct Apps {
+    inner: Arc<RwLock<AppSet>>,
+    rt: Runtime,
+}
+
+#[derive(Debug, Default)]
+struct AppSet {
     order: Vec<String>,
     apps: HashMap<String, AppHandle>,
-    rt: Runtime,
 }
 
 /// One running app. Cheap to clone.
@@ -144,6 +168,18 @@ impl AppHandle {
         self.versions().current.manifest.app.version.clone()
     }
 
+    /// Set the version a rollback returns to, as when a node restores its
+    /// deploy store after a restart.
+    pub fn set_previous(&self, previous: Option<AppDeployment>) {
+        self.versions().previous = previous;
+    }
+
+    /// The running deployment.
+    #[must_use]
+    pub fn deployment(&self) -> AppDeployment {
+        self.versions().current.clone()
+    }
+
     /// The version a rollback would return to.
     #[must_use]
     pub fn previous_version(&self) -> Option<semver::Version> {
@@ -205,22 +241,123 @@ impl AppHandle {
 }
 
 impl Apps {
+    fn set(&self) -> std::sync::RwLockReadGuard<'_, AppSet> {
+        self.inner.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// App names in start order.
     #[must_use]
-    pub fn names(&self) -> &[String] {
-        &self.order
+    pub fn names(&self) -> Vec<String> {
+        self.set().order.clone()
     }
 
     /// The app called `name`.
     #[must_use]
-    pub fn app(&self, name: &str) -> Option<&AppHandle> {
-        self.apps.get(name)
+    pub fn app(&self, name: &str) -> Option<AppHandle> {
+        self.set().apps.get(name).cloned()
     }
 
     /// The status of the app called `name`.
     #[must_use]
     pub fn status(&self, name: &str) -> Option<AppStatus> {
-        self.apps.get(name).map(AppHandle::status)
+        self.app(name).map(|a| a.status())
+    }
+
+    /// Start one more app in this set. Its dependencies must be in the set
+    /// and running, at matching versions.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidApps`] for a name already in the set, a missing,
+    /// stopped or mismatched dependency, or a supervision child naming an app
+    /// that is not in the set. An app that starts but then fails is returned
+    /// with [`AppStatus::Failed`], not as an error.
+    pub async fn add(&self, deployment: AppDeployment) -> Result<AppHandle, HostError> {
+        let name = deployment.manifest.app.name.clone();
+        let spec = {
+            let set = self.set();
+            if set.apps.contains_key(&name) {
+                return Err(HostError::InvalidApps(format!(
+                    "{name} is already deployed"
+                )));
+            }
+            for dep in &deployment.manifest.spec.dependencies {
+                let Some(found) = set.apps.get(&dep.app) else {
+                    return Err(HostError::InvalidApps(format!(
+                        "{name} depends on {}, which is not deployed",
+                        dep.app
+                    )));
+                };
+                let version = found.version();
+                if !dep.version.matches(&version) {
+                    return Err(HostError::InvalidApps(format!(
+                        "{name} needs {} {}, but {version} is deployed",
+                        dep.app, dep.version
+                    )));
+                }
+                if found.status() != AppStatus::Running {
+                    return Err(HostError::InvalidApps(format!(
+                        "dependency {} is not running",
+                        dep.app
+                    )));
+                }
+            }
+            let others: Vec<AppDeployment> = set.apps.values().map(AppHandle::deployment).collect();
+            let mut by_name: HashMap<&str, &AppDeployment> = others
+                .iter()
+                .map(|d| (d.manifest.app.name.as_str(), d))
+                .collect();
+            by_name.insert(name.as_str(), &deployment);
+            root_spec(&deployment, &by_name).map_err(HostError::InvalidApps)?
+        };
+        let handle = start_app(&self.rt, &deployment, spec).await;
+        let mut set = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        set.order.push(name.clone());
+        set.apps.insert(name, handle.clone());
+        Ok(handle)
+    }
+
+    /// Stop an app and take it out of the set.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidApps`] for an app not in the set, or one that
+    /// running apps depend on.
+    pub async fn remove(&self, name: &str) -> Result<(), HostError> {
+        let app = {
+            let set = self.set();
+            let app = set
+                .apps
+                .get(name)
+                .cloned()
+                .ok_or_else(|| HostError::InvalidApps(format!("{name} is not deployed")))?;
+            let dependents: Vec<&str> = set
+                .apps
+                .values()
+                .filter(|a| a.status() == AppStatus::Running)
+                .filter(|a| {
+                    a.deployment()
+                        .manifest
+                        .spec
+                        .dependencies
+                        .iter()
+                        .any(|d| d.app == name)
+                })
+                .map(AppHandle::name)
+                .collect();
+            if !dependents.is_empty() {
+                return Err(HostError::InvalidApps(format!(
+                    "{name} is needed by {}",
+                    dependents.join(", ")
+                )));
+            }
+            app
+        };
+        stop_app(&self.rt, &app).await;
+        let mut set = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        set.order.retain(|n| n != name);
+        set.apps.remove(name);
+        Ok(())
     }
 
     /// Move a running app to `new`, as its manifest's `upgrade.mode` says:
@@ -243,13 +380,12 @@ impl Apps {
         options: &UpgradeOptions,
     ) -> Result<UpgradeReport, UpgradeError> {
         let app = self
-            .apps
-            .get(name)
+            .app(name)
             .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
         let old = app.versions().current.clone();
         let approved = validate_upgrade(&old.manifest, &new.manifest, options.approve)?;
         let mode = new.manifest.spec.upgrade.mode;
-        let mut report = move_app(app, &old, &new, mode, options).await?;
+        let mut report = move_app(&app, &old, &new, mode, options).await?;
         report.approved = approved;
         let mut versions = app.versions();
         versions.previous = Some(std::mem::replace(&mut versions.current, new));
@@ -270,8 +406,7 @@ impl Apps {
         options: &UpgradeOptions,
     ) -> Result<UpgradeReport, UpgradeError> {
         let app = self
-            .apps
-            .get(name)
+            .app(name)
             .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
         let (current, previous) = {
             let v = app.versions();
@@ -292,7 +427,7 @@ impl Apps {
         } else {
             UpgradeMode::Restart
         };
-        let report = move_app(app, &current, &previous, mode, options).await?;
+        let report = move_app(&app, &current, &previous, mode, options).await?;
         let mut versions = app.versions();
         let back = std::mem::replace(&mut versions.current, previous);
         versions.previous = Some(back);
@@ -302,21 +437,28 @@ impl Apps {
     /// Stop every app, in reverse start order, waiting for each root
     /// supervisor to stop its instances.
     pub async fn stop(&self) {
-        for name in self.order.iter().rev() {
-            let Some(app) = self.apps.get(name) else {
-                continue;
-            };
-            app.shared.stopping.store(true, Ordering::Relaxed);
-            if let Some(supervisor) = &app.shared.supervisor {
-                supervisor.shutdown();
-                supervisor.wait().await;
-            }
-            self.rt.remove_pool(name);
-            let failed = matches!(app.status(), AppStatus::Failed(_));
-            if !failed {
-                app.shared.status.send_replace(AppStatus::Stopped);
+        let (order, apps) = {
+            let set = self.set();
+            (set.order.clone(), set.apps.clone())
+        };
+        for name in order.iter().rev() {
+            if let Some(app) = apps.get(name) {
+                stop_app(&self.rt, app).await;
             }
         }
+    }
+}
+
+/// Stop an app's root supervisor and mark it stopped (unless it failed).
+async fn stop_app(rt: &Runtime, app: &AppHandle) {
+    app.shared.stopping.store(true, Ordering::Relaxed);
+    if let Some(supervisor) = &app.shared.supervisor {
+        supervisor.shutdown();
+        supervisor.wait().await;
+    }
+    rt.remove_pool(app.name());
+    if !matches!(app.status(), AppStatus::Failed(_)) {
+        app.shared.status.send_replace(AppStatus::Stopped);
     }
 }
 
@@ -338,11 +480,7 @@ pub(crate) async fn start(
         specs.push(root_spec(&deployments[i], &by_name).map_err(HostError::InvalidApps)?);
     }
 
-    let mut apps = Apps {
-        order: Vec::new(),
-        apps: HashMap::new(),
-        rt: rt.clone(),
-    };
+    let mut set = AppSet::default();
     for (&i, spec) in order.iter().zip(specs) {
         let deployment = &deployments[i];
         let name = deployment.manifest.app.name.clone();
@@ -351,15 +489,18 @@ pub(crate) async fn start(
             .spec
             .dependencies
             .iter()
-            .find(|d| apps.status(&d.app) != Some(AppStatus::Running));
+            .find(|d| set.apps.get(&d.app).map(AppHandle::status) != Some(AppStatus::Running));
         let handle = match blocked {
             Some(dep) => failed(deployment, format!("dependency {} is not running", dep.app)),
             None => start_app(rt, deployment, spec).await,
         };
-        apps.order.push(name.clone());
-        apps.apps.insert(name, handle);
+        set.order.push(name.clone());
+        set.apps.insert(name, handle);
     }
-    Ok(apps)
+    Ok(Apps {
+        inner: Arc::new(RwLock::new(set)),
+        rt: rt.clone(),
+    })
 }
 
 fn failed(deployment: &AppDeployment, why: String) -> AppHandle {
@@ -571,7 +712,7 @@ impl<'a> Rollout<'a> {
         let d = if forward { self.to } else { self.from };
         ChildStart::Instance {
             app: d.app.clone(),
-            spec: InstanceSpec::from_manifest(&d.manifest),
+            spec: d.spec.clone(),
         }
     }
 
@@ -603,7 +744,7 @@ impl<'a> Rollout<'a> {
                 let pause = instance
                     .upgrade(
                         &target.app,
-                        InstanceSpec::from_manifest(&target.manifest),
+                        target.spec.clone(),
                         &source.manifest.app.version.to_string(),
                     )
                     .await?;
@@ -702,7 +843,7 @@ fn root_spec(
                 restart: manifest.spec.lifecycle.restart,
                 start: ChildStart::Instance {
                     app: deployment.app.clone(),
-                    spec: InstanceSpec::from_manifest(manifest),
+                    spec: deployment.spec.clone(),
                 },
             });
         }
@@ -714,7 +855,7 @@ fn root_spec(
                 manifest.app.name, child.id, child.app
             )
         })?;
-        let mut spec = InstanceSpec::from_manifest(&target.manifest);
+        let mut spec = target.spec.clone();
         if let Some(ms) = child.shutdown_timeout_ms {
             spec.shutdown_timeout = Duration::from_millis(ms);
         }

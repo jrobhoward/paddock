@@ -14,7 +14,8 @@
 //! - `kv-fill:<bucket>:<count>`: set `k0`..`k<count-1>` to one byte each.
 //! - `read:<path>`, `write:<path>:<text>`: `std::fs`; reply contents / `ok`
 //!   or `err:<io error kind>`.
-//! - `denied-ping`, `denied-boom`: call the unimplemented `denied` interface.
+//! - `denied-ping`, `denied-boom`: call the unimplemented `denied` interface
+//!   (with the `denied` feature only).
 //! - `trap`: panic.
 //!
 //! Built for `wasm32-wasip2`.
@@ -35,6 +36,7 @@ mod bindings {
     });
 }
 
+#[cfg(feature = "denied")]
 use bindings::paddock::fixture::denied;
 use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::{atomics, batch, store};
@@ -187,11 +189,13 @@ fn run(command: &str) -> String {
             let (path, text) = arg.split_once(':').unwrap_or((arg, ""));
             std::fs::write(path, text).map_or_else(io_err, |()| "ok".into())
         }
+        #[cfg(feature = "denied")]
         "denied-ping" => match denied::ping() {
             Ok(s) => s,
             Err(denied::Error::AccessDenied) => "err:access-denied".into(),
             Err(denied::Error::Other(why)) => format!("err:other:{why}"),
         },
+        #[cfg(feature = "denied")]
         "denied-boom" => {
             denied::boom();
             "returned".into()

@@ -37,5 +37,5 @@ mod policy;
 pub use error::BundleError;
 pub use grant::{EffectiveGrant, ImportLink, effective_grant};
 pub use imports::component_imports;
-pub use load::{SUPPORTED_WORLDS, VerifiedBundle};
+pub use load::{PRIV_DIR, SUPPORTED_WORLDS, VerifiedBundle};
 pub use policy::{Grants, OperatorPolicy, SignerGrants};
