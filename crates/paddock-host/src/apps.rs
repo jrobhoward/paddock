@@ -113,6 +113,11 @@ pub struct UpgradeOptions {
     /// Most supervisor restarts tolerated during the rollout; one more stops
     /// it and reverts.
     pub max_restarts: u64,
+    /// Move every instance in `restart` mode, whatever the target manifest's
+    /// `upgrade.mode` says: stop it gracefully and start the other version
+    /// from `init`, discarding in-memory state. For a rollback whose
+    /// previous version cannot read the running version's snapshot.
+    pub restart: bool,
 }
 
 impl Default for UpgradeOptions {
@@ -122,6 +127,7 @@ impl Default for UpgradeOptions {
             batch_size: 1,
             observe: Duration::ZERO,
             max_restarts: 0,
+            restart: false,
         }
     }
 }
@@ -187,6 +193,15 @@ impl AppHandle {
             .previous
             .as_ref()
             .map(|d| d.manifest.app.version.clone())
+    }
+
+    /// How a rollback without [`UpgradeOptions::restart`] would move the
+    /// instances; `None` without a previous version.
+    #[must_use]
+    pub fn rollback_mode(&self) -> Option<UpgradeMode> {
+        let v = self.versions();
+        let previous = v.previous.as_ref()?;
+        Some(rollback_mode(&v.current, previous))
     }
 
     fn versions(&self) -> std::sync::MutexGuard<'_, Versions> {
@@ -360,7 +375,8 @@ impl Apps {
         Ok(())
     }
 
-    /// Move a running app to `new`, as its manifest's `upgrade.mode` says:
+    /// Move a running app to `new`, as its manifest's `upgrade.mode` says
+    /// (or in `restart` mode with [`UpgradeOptions::restart`]):
     /// `snapshot` carries each instance's state across (same pids), `restart`
     /// stops each instance and starts the new version from `init` (same ids,
     /// next incarnation). Instances move in batches; a failed instance, or
@@ -384,7 +400,11 @@ impl Apps {
             .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
         let old = app.versions().current.clone();
         let approved = validate_upgrade(&old.manifest, &new.manifest, options.approve)?;
-        let mode = new.manifest.spec.upgrade.mode;
+        let mode = if options.restart {
+            UpgradeMode::Restart
+        } else {
+            new.manifest.spec.upgrade.mode
+        };
         let mut report = move_app(&app, &old, &new, mode, options).await?;
         report.approved = approved;
         let mut versions = app.versions();
@@ -394,8 +414,10 @@ impl Apps {
 
     /// Return a running app to its previous version. Uses `snapshot` mode if
     /// the previous version's manifest asks for it and accepts snapshots
-    /// from the running version, otherwise `restart`. Capabilities are not
-    /// re-approved: the previous version ran before.
+    /// from the running version, otherwise `restart`
+    /// ([`AppHandle::rollback_mode`]); [`UpgradeOptions::restart`] forces
+    /// `restart`. Capabilities are not re-approved: the previous version ran
+    /// before.
     ///
     /// # Errors
     ///
@@ -416,16 +438,10 @@ impl Apps {
                 .ok_or_else(|| UpgradeError::NoPrevious(name.into()))?;
             (v.current.clone(), previous)
         };
-        let upgrade = &previous.manifest.spec.upgrade;
-        let accepts = upgrade.from_versions.is_empty()
-            || upgrade
-                .from_versions
-                .iter()
-                .any(|r| r.matches(&current.manifest.app.version));
-        let mode = if upgrade.mode == UpgradeMode::Snapshot && accepts {
-            UpgradeMode::Snapshot
-        } else {
+        let mode = if options.restart {
             UpgradeMode::Restart
+        } else {
+            rollback_mode(&current, &previous)
         };
         let report = move_app(&app, &current, &previous, mode, options).await?;
         let mut versions = app.versions();
@@ -446,6 +462,23 @@ impl Apps {
                 stop_app(&self.rt, app).await;
             }
         }
+    }
+}
+
+/// How a rollback from `current` to `previous` moves instances: `snapshot`
+/// if `previous` asks for it and accepts the running version, else
+/// `restart`.
+fn rollback_mode(current: &AppDeployment, previous: &AppDeployment) -> UpgradeMode {
+    let upgrade = &previous.manifest.spec.upgrade;
+    let accepts = upgrade.from_versions.is_empty()
+        || upgrade
+            .from_versions
+            .iter()
+            .any(|r| r.matches(&current.manifest.app.version));
+    if upgrade.mode == UpgradeMode::Snapshot && accepts {
+        UpgradeMode::Snapshot
+    } else {
+        UpgradeMode::Restart
     }
 }
 

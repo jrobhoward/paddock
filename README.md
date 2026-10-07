@@ -73,7 +73,7 @@ paddock list
 paddock status orders
 paddock call orders 'ping'
 paddock upgrade orders orders-2.0.0.rbp --approve
-paddock rollback orders
+paddock rollback orders                # --restart: from init, state discarded
 paddock ps
 paddock state 0.12.1                   # an instance's state, via save-snapshot
 paddock kill 0.12.1

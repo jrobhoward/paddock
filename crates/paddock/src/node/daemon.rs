@@ -10,6 +10,7 @@ use crate::api::{
     AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, RolloutParams,
     StateResponse, UpgradeResponse,
 };
+use paddock_bundle::manifest::UpgradeMode;
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, InstanceHandle, InstanceSpec,
@@ -89,6 +90,17 @@ fn upgrade_error(e: UpgradeError) -> NodeError {
     }
 }
 
+/// [`upgrade_error`], with a pointer to `restart` when a snapshot-mode
+/// rollout reverted and a restart-mode one might not.
+fn rollout_error(e: UpgradeError, snapshot: bool, params: &RolloutParams) -> NodeError {
+    if snapshot && !params.restart && matches!(e, UpgradeError::Reverted(_)) {
+        return NodeError::Refused(format!(
+            "{e}; --restart (API: restart=true) moves the instances by restart instead, discarding their in-memory state"
+        ));
+    }
+    upgrade_error(e)
+}
+
 fn status_text(status: &AppStatus) -> (String, Option<String>) {
     match status {
         AppStatus::Starting => ("starting".into(), None),
@@ -139,6 +151,7 @@ fn options(params: &RolloutParams) -> UpgradeOptions {
         batch_size: params.batch.unwrap_or(1),
         observe: Duration::from_millis(params.observe_ms.unwrap_or(0)),
         max_restarts: params.max_restarts.unwrap_or(0),
+        restart: params.restart,
     }
 }
 
@@ -414,7 +427,7 @@ impl Node {
         match &result {
             Ok(r) => self.audit.record(
                 "upgrade",
-                json!({ "app": name, "from": r.from, "to": r.to, "mode": r.mode, "approved": r.approved, "granted": st.info.get(name).map(|i| i.granted.clone()) }),
+                json!({ "app": name, "from": r.from, "to": r.to, "mode": r.mode, "restart_requested": params.restart, "approved": r.approved, "granted": st.info.get(name).map(|i| i.granted.clone()) }),
             ),
             Err(e) => self.audit.record("upgrade_refused", json!({ "app": name, "kind": e.kind(), "reason": e.to_string() })),
         }
@@ -458,6 +471,7 @@ impl Node {
             .map_err(internal)?;
         self.store.keep_upload(upload, name, &version)?;
         let info = built.info.clone();
+        let snapshot = built.deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
         match self
             .apps
             .upgrade(name, built.deployment, &options(params))
@@ -483,7 +497,7 @@ impl Node {
                 if current.previous.as_deref() != Some(version.as_str()) {
                     self.store.remove_version(name, &version);
                 }
-                Err(upgrade_error(e))
+                Err(rollout_error(e, snapshot, params))
             }
         }
     }
@@ -503,11 +517,13 @@ impl Node {
         if !st.desired.apps.contains_key(name) {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
         }
+        let snapshot =
+            self.apps.app(name).and_then(|a| a.rollback_mode()) == Some(UpgradeMode::Snapshot);
         let result = self
             .apps
             .rollback(name, &options(params))
             .await
-            .map_err(upgrade_error);
+            .map_err(|e| rollout_error(e, snapshot, params));
         match &result {
             Ok(r) => {
                 if let Some(entry) = st.desired.apps.get_mut(name)
@@ -525,7 +541,7 @@ impl Node {
                 }
                 self.audit.record(
                     "rollback",
-                    json!({ "app": name, "from": r.from, "to": r.to, "mode": r.mode }),
+                    json!({ "app": name, "from": r.from, "to": r.to, "mode": r.mode, "restart_requested": params.restart }),
                 );
             }
             Err(e) => self.audit.record(

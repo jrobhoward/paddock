@@ -467,6 +467,42 @@ async fn rollback____after_snapshot_upgrade____previous_version_with_state() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upgrade_and_rollback____restart_option____restart_mode_over_manifest_snapshot() {
+    let (rt, _) = shared();
+    let name = "up-forced";
+    let v1 = json!({ "upgrade": { "mode": "snapshot", "snapshot_version": 1 } });
+    let apps = rt.start_apps(vec![deployment(name, 1, v1)]).await.unwrap();
+    let app = apps.app(name).unwrap().clone();
+    let first = app.instances()[0].pid();
+    incs(&app.instances()[0], 3).await;
+    let restart = UpgradeOptions {
+        restart: true,
+        ..UpgradeOptions::default()
+    };
+
+    let up = apps
+        .upgrade(
+            name,
+            deployment(name, 2, json!({ "upgrade": snapshot_mode("^1") })),
+            &restart,
+        )
+        .await
+        .unwrap();
+    let upgraded = ask(&app.instances()[0], "get").await;
+    let would = app.rollback_mode();
+    let back = apps.rollback(name, &restart).await.unwrap();
+    let rolled_back = ask(&app.instances()[0], "get").await;
+
+    assert_eq!(up.mode, UpgradeMode::Restart);
+    assert_ne!(up.instances[0], first);
+    assert_eq!(upgraded, "2.0.0 count=0 history=");
+    assert_eq!(would, Some(UpgradeMode::Snapshot));
+    assert_eq!(back.mode, UpgradeMode::Restart);
+    assert_eq!(rolled_back, "1.0.0 count=0");
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rollback____nothing_to_return_to____no_previous() {
     let (rt, _) = shared();
     let apps = rt

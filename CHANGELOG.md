@@ -119,6 +119,10 @@ All notable changes are recorded here. The format follows
 - `docs/GETTING_STARTED.md`, `docs/WRITING_APPS.md` and `docs/MANIFEST.md`.
 - `docs/ROADMAP.md`, the single plan for remaining work, replacing
   `docs/PHASE1_PLAN.md`.
+- `paddock rollback --restart` and `paddock upgrade --restart` (API:
+  `restart=true`): move instances by restart whatever the manifest's upgrade
+  mode, discarding in-memory state. A refused snapshot rollout suggests the
+  flag, and the audit log records `restart_requested`.
 
 ### Changed
 

@@ -170,6 +170,7 @@ fn rollout(q: &[(String, String)]) -> Result<RolloutParams, NodeError> {
         batch: param(q, "batch")?,
         observe_ms: param(q, "observe_ms")?,
         max_restarts: param(q, "max_restarts")?,
+        restart: param::<bool>(q, "restart")?.unwrap_or(false),
     })
 }
 

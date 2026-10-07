@@ -123,6 +123,7 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
     let debug = paddock(&socket, &["log-level", "demo", "debug"]).await;
     let bogus = paddock(&socket, &["log-level", "demo", "loud"]).await;
     let reset = paddock(&socket, &["log-level", "demo", "reset"]).await;
+    let no_previous = paddock(&socket, &["rollback", "demo", "--restart"]).await;
     let kill = paddock(&socket, &["kill", &ps[0].pid]).await;
     let stopped_app = paddock(&socket, &["stop", "demo"]).await;
     let started = paddock(&socket, &["start", "demo"]).await;
@@ -171,6 +172,11 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
         bogus.stderr
     );
     assert_eq!(reset.stdout.trim(), "demo logs at its manifest level");
+    assert!(
+        !no_previous.ok && no_previous.stderr.contains("demo has no previous version"),
+        "{}",
+        no_previous.stderr
+    );
     assert!(
         kill.ok && kill.stdout.starts_with("killed <"),
         "{}",

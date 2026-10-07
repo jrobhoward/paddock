@@ -102,11 +102,15 @@ The node paused the instance's mailbox, called `save-snapshot` on version 1, loa
 ```sh
 paddock rollback counter
 # Error: rollout stopped and reverted: instance-1: load-snapshot failed:
-#   cannot read snapshot format 2 (this version writes format 1) (refused)
+#   cannot read snapshot format 2 (this version writes format 1); --restart
+#   (API: restart=true) moves the instances by restart instead, discarding
+#   their in-memory state (refused)
 paddock call counter get           # still 2.0.0: the refused rollback changed nothing
+paddock rollback counter --restart
+paddock call counter get           # 1.0.0 count=0: back on v1, state discarded
 ```
 
-A rollback is an upgrade to the previous version, in that version's own upgrade mode. In `snapshot` mode it therefore needs the older release to read the newer snapshot format, the downgrade half of OTP's `code_change`. The counter's v1 cannot read format 2, so the node refuses the rollback and keeps v2 running. An app whose upgrade mode is `restart` always rolls back, starting fresh from `init`.
+A rollback is an upgrade to the previous version, in that version's own upgrade mode. In `snapshot` mode it therefore needs the older release to read the newer snapshot format, the downgrade half of OTP's `code_change`. The counter's v1 cannot read format 2, so the node refuses the rollback and keeps v2 running. `--restart` rolls back anyway: each instance stops gracefully and v1 starts from `init`, so in-memory state is lost, and the audit log records the rollback with `"restart_requested": true`. An app whose upgrade mode is `restart` always rolls back this way. `paddock upgrade --restart` makes the same choice for an upgrade.
 
 ## 7. Look around
 

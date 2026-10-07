@@ -11,8 +11,8 @@
 //! | `GET /v1/apps/{app}` | | [`AppDetail`] |
 //! | `DELETE /v1/apps/{app}` | | [`Done`] |
 //! | `POST /v1/apps/{app}/stop`, `/start` | | [`Done`] |
-//! | `POST /v1/apps/{app}/upgrade?approve&batch=N&observe_ms=N&max_restarts=N` | `.rbp` bytes | [`UpgradeResponse`] |
-//! | `POST /v1/apps/{app}/rollback?batch=N&observe_ms=N&max_restarts=N` | | [`UpgradeResponse`] |
+//! | `POST /v1/apps/{app}/upgrade?approve=true&batch=N&observe_ms=N&max_restarts=N&restart=true` | `.rbp` bytes | [`UpgradeResponse`] |
+//! | `POST /v1/apps/{app}/rollback?batch=N&observe_ms=N&max_restarts=N&restart=true` | | [`UpgradeResponse`] |
 //! | `POST /v1/apps/{app}/call?timeout_ms=N` | message body, with its `Content-Type` | reply body |
 //! | `GET /v1/apps/{app}/logs?lines=N` | | `Vec<LogLine>` |
 //! | `POST /v1/apps/{app}/cast` | message body, with its `Content-Type` | [`Done`] |
@@ -152,6 +152,11 @@ pub struct RolloutParams {
     pub observe_ms: Option<u64>,
     /// Restarts tolerated during the rollout (default 0).
     pub max_restarts: Option<u64>,
+    /// Move instances by restart, whatever the manifest's upgrade mode:
+    /// each starts the other version from `init`, and in-memory state is
+    /// lost.
+    #[serde(default)]
+    pub restart: bool,
 }
 
 impl RolloutParams {
@@ -170,6 +175,9 @@ impl RolloutParams {
         }
         if let Some(m) = self.max_restarts {
             parts.push(format!("max_restarts={m}"));
+        }
+        if self.restart {
+            parts.push("restart=true".to_string());
         }
         if parts.is_empty() {
             String::new()

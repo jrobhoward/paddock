@@ -44,6 +44,10 @@ struct Rollout {
     /// Restarts tolerated during the rollout.
     #[arg(long)]
     max_restarts: Option<u64>,
+    /// Move instances by restart, whatever the manifest's upgrade mode: each
+    /// starts the other version from init, and in-memory state is lost.
+    #[arg(long)]
+    restart: bool,
 }
 
 impl Rollout {
@@ -53,6 +57,7 @@ impl Rollout {
             batch: self.batch,
             observe_ms: self.observe_ms,
             max_restarts: self.max_restarts,
+            restart: self.restart,
         }
     }
 }

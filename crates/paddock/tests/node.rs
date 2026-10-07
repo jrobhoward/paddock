@@ -253,6 +253,86 @@ async fn upgrade_and_rollback____through_the_api____state_kept_and_audited() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rollback____previous_cannot_read_snapshot____refused_then_restart_discards_state() {
+    // v3's load-snapshot always fails, so a snapshot rollback from v2 to v3
+    // is refused.
+    let mut n = TestNode::start("").await;
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "rb",
+            "3.0.0",
+            &counter(3),
+            counter_manifest(None),
+            &[],
+        ))
+        .await
+        .unwrap();
+    n.client
+        .upgrade(
+            "rb",
+            bundle(
+                &n.key,
+                "rb",
+                "2.0.0",
+                &counter(2),
+                counter_manifest(Some("^3")),
+                &[],
+            ),
+            &RolloutParams::default(),
+        )
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        call(&n, "rb", "inc").await;
+    }
+
+    let refused = n
+        .client
+        .rollback("rb", &RolloutParams::default())
+        .await
+        .unwrap_err();
+    let still = call(&n, "rb", "get").await;
+    let back = n
+        .client
+        .rollback(
+            "rb",
+            &RolloutParams {
+                restart: true,
+                ..RolloutParams::default()
+            },
+        )
+        .await
+        .unwrap();
+    let after = call(&n, "rb", "get").await;
+    let list = n.client.list().await.unwrap();
+
+    assert_eq!(kind(&refused), "refused");
+    assert!(refused.to_string().contains("--restart"), "{refused}");
+    assert_eq!(still, "2.0.0 count=2 history=1,2");
+    assert_eq!(
+        (back.from.as_str(), back.to.as_str(), back.mode.as_str()),
+        ("2.0.0", "3.0.0", "restart")
+    );
+    assert_eq!(after, "3.0.0 count=0 history=");
+    assert_eq!(
+        (list[0].version.as_str(), list[0].previous.as_deref()),
+        ("3.0.0", Some("2.0.0"))
+    );
+    let audit = n.audit();
+    let last = audit.last().unwrap();
+    assert_eq!(
+        (&last["event"], &last["mode"], &last["restart_requested"]),
+        (&json!("rollback"), &json!("restart"), &json!(true))
+    );
+    assert_eq!(
+        n.events(),
+        ["deploy", "upgrade", "rollback_refused", "rollback"]
+    );
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restart____node_comes_back____running_apps_restored_stopped_ones_not() {
     let mut n = TestNode::start("").await;
     n.client
