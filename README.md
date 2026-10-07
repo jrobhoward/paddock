@@ -33,8 +33,8 @@ milestones M0 to M9 are done. rustbridge's bundle format 1.2 comes from its
 - [`docs/BASELINE.md`](docs/BASELINE.md): baseline performance numbers.
 - [`docs/DESIGN.md`](docs/DESIGN.md): architecture, app model, manifest and
   capability model, failure handling, upgrades, distribution, security, risks.
-- [`docs/PHASE1_PLAN.md`](docs/PHASE1_PLAN.md): Phase 1 exit criteria and
-  milestones.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md): status, remaining work and its
+  order.
 - [`wit/runtime.wit`](wit/runtime.wit): the app contract,
   `paddock:runtime@0.1.0`.
 - [`spikes/`](spikes/): the experiments behind the design, each with its

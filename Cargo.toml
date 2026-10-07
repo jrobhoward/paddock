@@ -30,7 +30,7 @@ license = "MIT OR Apache-2.0"
 authors = ["James Howard <jrobhoward@gmail.com>"]
 repository = "https://github.com/jrobhoward/paddock"
 
-# Versions pinned by spike S3 (docs/PHASE1_PLAN.md). The wasmtime crates are
+# Versions pinned by spike S3 (spikes/S3-wasi-target.md). The wasmtime crates are
 # released together and move as a group.
 [workspace.dependencies]
 wasmtime = { version = "49", default-features = false }

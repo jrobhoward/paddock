@@ -261,7 +261,7 @@ An upgrade swaps an instance's component between messages, carrying state throug
 - A trap in `save-snapshot` poisons the old Store, so that instance exits and its supervisor restarts it as the old version: the supervisor's child spec changes only after an instance has moved.
 - Validation: same app, a different version, the same WIT world, the old version inside the new manifest's `upgrade.from_versions`, and new capabilities only with approval. The node verifies the new bundle's signature when it opens it, as for any deploy.
 - An app rolls out in batches. A failed instance, or more supervisor restarts than allowed during the rollout (counted after each batch's watch window), stops the rollout. Every instance already moved goes back by snapshot, or, if the old version cannot read the new snapshot, by restart from `init`.
-- Rollback returns to the previous version by snapshot when that version's manifest asks for it and accepts the running version, otherwise by restart.
+- Rollback returns to the previous version by snapshot when that version's manifest asks for it and accepts the running version, otherwise by restart. If the previous version's `load-snapshot` refuses the newer snapshot, the rollback is refused and the running version stays. A planned `rollback --restart` makes the state-discarding path explicit (ROADMAP.md, item 0.2).
 
 **SDK support.** `paddock-sdk` (Rust) wraps the app world:
 - An app implements the `App` trait. Only `init` and `handle_call` are required; `handle_cast`, `handle_info` and `terminate` default to doing nothing, and the snapshot pair defaults to refusing snapshot upgrades, so `restart` mode works with no extra code. `paddock_sdk::app!(Type)` exports it.
@@ -516,8 +516,10 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 
 ## Roadmap
 
+The phases in outline; [ROADMAP.md](ROADMAP.md) is the plan, with tracks, order and status.
+
 1. **Phase 1: single node.** Deploy `.rbp` with a Wasm component; instances, mailboxes, call/cast, timers; links, monitors, host supervisors; memory, deadline and mailbox limits; logging, config, keyvalue (memory and disk), preopened files; snapshot upgrade with revert; admin CLI. *Exit: two sample apps survive kill, crash-loop and upgrade tests.*
-2. **Phase 2: cluster.** QUIC mesh with mTLS, static seeds; remote pids, links, monitors and `noconnection`; process groups; messaging ACLs; HTTP ingress and egress; metrics and tracing; introspection. *Exit: three-node cluster passes partition and node-loss tests.*
+2. **Phase 2a: platform on one node.** Host-service pattern, HTTP ingress and egress, secrets, metrics and tracing, introspection. **Phase 2b: cluster.** QUIC mesh with mTLS, static seeds; remote pids, links, monitors and `noconnection`; process groups; messaging ACLs. *Exit: three-node cluster passes partition and node-loss tests.*
 3. **Phase 3: application server.** Placement and failover, opt-in global names (Raft), replicated storage, SQL pools, sockets, native-process plugins, blue-green upgrades, more guest SDKs. *Exit: one real workload runs a full release cycle with zero downtime.*
 
 ## Sources

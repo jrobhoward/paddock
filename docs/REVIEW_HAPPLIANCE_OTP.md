@@ -1,7 +1,7 @@
 # Review: HAppliance and Erlang/OTP against Paddock
 
 2026-10-06 · For evaluation; nothing here is adopted until it moves into
-[DESIGN.md](DESIGN.md) or [PHASE1_PLAN.md](PHASE1_PLAN.md).
+[DESIGN.md](DESIGN.md) or [ROADMAP.md](ROADMAP.md) (which replaced PHASE1_PLAN.md).
 
 ## Scope
 
@@ -326,7 +326,7 @@ Notes; each is small and can be decided separately.
 - **`erlang:system_monitor`**: events for long schedules, large heaps and
   busy distribution links. The host sees all of these (callback time, memory
   growth, mailbox depth); they fit the anyprobe probes already noted in
-  PHASE1_PLAN.md.
+  PHASE1_PLAN.md (now ROADMAP.md, B1 and B2).
 - **Backpressure between nodes**: OTP has `busy_dist_port` and
   `send_nosuspend`. DESIGN.md defines what a sender sees when the target's
   mailbox is full, but not when the link to the remote node is congested.
@@ -398,7 +398,7 @@ Note, no phase.
 
 ## Proposed spikes
 
-Numbered after S9, which PHASE1_PLAN.md already proposes.
+Numbered after S9, which PHASE1_PLAN.md (now ROADMAP.md) already proposed.
 
 | # | Question | Done when | Time-box | If the answer is bad |
 | --- | --- | --- | --- | --- |

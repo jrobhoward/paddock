@@ -11,12 +11,14 @@ connect over QUIC with mutual TLS. Apps are WebAssembly components (WASI 0.2)
 that see only the capabilities their manifest declares and an operator grants.
 Bundles use the rustbridge `.rbp` format.
 
-The design and the seven Phase 1 spikes are done; Phase 1 implementation is
-under way (`docs/PHASE1_PLAN.md` tracks the milestones). Read these before
-changing anything structural:
+Phase 1 (single node) is complete. `docs/ROADMAP.md` is the single plan for
+remaining work: tracks, their order, and the code areas each owns. Read these
+before changing anything structural:
 
 - `docs/DESIGN.md`: the design, prior art, spike findings and risks.
-- `docs/PHASE1_PLAN.md`: exit criteria, milestones M0 to M9, spike status.
+- `docs/ROADMAP.md`: status, tracks and items, code areas, crate plan, spike
+  status. Keep work inside the current track's areas; record anything outside
+  them in the roadmap instead of widening the change.
 - `spikes/*/README.md`: what each spike measured and what it changed.
 
 ## Commands
@@ -105,8 +107,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   its own target directory.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
-  with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. Every crate in the
-  plan's workspace layout now exists.
+  with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. 
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
   by `crates/paddock/tests/wit_rules.rs`. `wit/vendor/` holds unmodified
   copies of the draft WASI interfaces Paddock hosts itself (keyvalue, config,
@@ -314,7 +315,7 @@ across them:
 |---|---|---|
 | `README.md` | What Paddock does, how to run it, caveats that change how it should be used | Link out rather than expand |
 | `docs/DESIGN.md` | Design, rationale, prior art, spike findings, risks | Update when a decision changes; not a development log |
-| `docs/PHASE1_PLAN.md` | Phase 1 exit criteria, milestones, spike status | Tick boxes as milestones land; retire when Phase 1 ships |
+| `docs/ROADMAP.md` | The single plan: status, tracks, code areas, crate plan, parked ideas, spike status | Tick items as they land; add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
 | `CHANGELOG.md` | What changed, under `Unreleased` until the first release | Keep a Changelog format; one line per change |
 | `CLAUDE.md` | Conventions and constraints a contributor needs before editing | Rules, not narrative |

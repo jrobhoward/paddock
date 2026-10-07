@@ -117,6 +117,8 @@ All notable changes are recorded here. The format follows
   parsers, hash-routing keys and sequences of process operations on live
   instances, run nightly in CI.
 - `docs/GETTING_STARTED.md`, `docs/WRITING_APPS.md` and `docs/MANIFEST.md`.
+- `docs/ROADMAP.md`, the single plan for remaining work, replacing
+  `docs/PHASE1_PLAN.md`.
 
 ### Changed
 
