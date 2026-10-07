@@ -18,6 +18,8 @@
 //! - `trap`: panic.
 //! - `spin`: loop forever.
 //! - `alloc:<mib>`: allocate and touch `<mib>` MiB, keep it, reply `ok`.
+//! - `busy:<n>`: run `<n>` rounds of integer work, reply the result (for
+//!   benchmarks that need work per call).
 //! - `noreply`: return `noreply` and never answer.
 //! - `defer`: return `noreply` and remember the caller.
 //! - `answer:<text>`: reply `<text>` to every remembered caller.
@@ -173,6 +175,17 @@ fn run(caller: Option<CallRef>, msg: &Envelope) -> Outcome {
             let block = vec![1u8; mib << 20];
             STATE.with_borrow_mut(|s| s.hoard.push(std::hint::black_box(block)));
             reply("ok".into())
+        }
+        "busy" => {
+            let rounds: u64 = arg.parse().unwrap_or(0);
+            let mut x: u64 = 1;
+            for _ in 0..rounds {
+                x = std::hint::black_box(
+                    x.wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407),
+                );
+            }
+            reply(x.to_string())
         }
         "noreply" => Outcome::NoReply,
         "defer" => {

@@ -123,6 +123,10 @@ All notable changes are recorded here. The format follows
   `restart=true`): move instances by restart whatever the manifest's upgrade
   mode, discarding in-memory state. A refused snapshot rollout suggests the
   flag, and the audit log records `restart_requested`.
+- Baseline harnesses `epoch_cost` (epoch-interruption overhead on guest
+  compute) and `pool_load` (concurrent clients against a pool), with results
+  in `docs/BASELINE.md`. The chaos fixture's `busy:<n>` command gives a call
+  a fixed amount of guest work.
 
 ### Changed
 
