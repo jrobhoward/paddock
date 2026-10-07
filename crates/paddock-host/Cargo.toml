@@ -10,6 +10,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+ciborium = { workspace = true }
 paddock-manifest = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

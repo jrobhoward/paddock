@@ -1,23 +1,28 @@
 //! The engine, the epoch ticker and instance spawning.
 
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
 
+use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{App, AppPre};
 use crate::config::{MemoryProfile, RuntimeConfig};
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
+use crate::links::LinkTable;
 use crate::message::{CallError, Envelope};
 use crate::pid::Pid;
+use crate::pool::Pool;
 use crate::registry::Registry;
 use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
+use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
 
 /// Hosts instances on one node.
@@ -35,9 +40,24 @@ pub(crate) struct RuntimeInner {
     linker: Linker<InstanceState>,
     pub(crate) table: ProcessTable,
     pub(crate) registry: Registry,
+    pub(crate) links: LinkTable,
+    pools: RwLock<HashMap<String, Arc<Pool>>>,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
+}
+
+impl RuntimeInner {
+    /// An instance of the running app called `name`, round-robin.
+    pub(crate) fn pool_member(&self, name: &str) -> Option<InstanceHandle> {
+        let pool = self
+            .pools
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .cloned()?;
+        pool.pick(None)
+    }
 }
 
 impl fmt::Debug for RuntimeInner {
@@ -85,6 +105,8 @@ impl Runtime {
                 linker,
                 table: ProcessTable::default(),
                 registry: Registry::default(),
+                links: LinkTable::default(),
+                pools: RwLock::default(),
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -145,6 +167,19 @@ impl Runtime {
         )
     }
 
+    /// Start a supervisor and its children (none yet for
+    /// `simple_one_for_one`; add them with
+    /// [`SupervisorHandle::start_child`]).
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidSupervisor`] for an invalid spec, and the errors
+    /// of [`Runtime::spawn`] if a child cannot start; children already
+    /// started are then killed.
+    pub fn start_supervisor(&self, spec: SupervisorSpec) -> Result<SupervisorHandle, HostError> {
+        supervisor::start(self, spec)
+    }
+
     /// The live instance with exactly this pid. `None` for a dead pid or an
     /// earlier incarnation.
     #[must_use]
@@ -152,13 +187,44 @@ impl Runtime {
         self.inner.table.lookup(pid)
     }
 
-    /// The live instance registered under `name`.
+    /// The live instance registered under `name`. A name no instance holds
+    /// but that names a running app resolves to one of the app's instances,
+    /// round-robin.
     #[must_use]
     pub fn whereis(&self, name: &str) -> Option<InstanceHandle> {
+        match self.inner.registry.whereis(name) {
+            Some(pid) => self.lookup(pid),
+            None => self.inner.pool_member(name),
+        }
+    }
+
+    /// Start a set of apps in dependency order, each under its own root
+    /// supervisor. An app that cannot start, or whose dependency is not
+    /// running, is marked failed and the rest still start.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidApps`] before anything starts, for a missing or
+    /// mismatched dependency, a cycle, a duplicate name, or a supervision
+    /// child naming an app that is not deployed.
+    pub async fn start_apps(&self, deployments: Vec<AppDeployment>) -> Result<Apps, HostError> {
+        apps::start(self, deployments).await
+    }
+
+    pub(crate) fn add_pool(&self, name: &str, pool: Arc<Pool>) {
         self.inner
-            .registry
-            .whereis(name)
-            .and_then(|pid| self.lookup(pid))
+            .pools
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name.to_string(), pool);
+    }
+
+    pub(crate) fn remove_pool(&self, name: &str) {
+        self.inner
+            .pools
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(name);
     }
 
     /// Cast to a pid.

@@ -166,10 +166,26 @@ impl From<&CallError> for wit::CallError {
     }
 }
 
-/// Something the host delivers to `handle-info`. Links and monitors (M4) add
-/// `exit` and `down`.
+/// Something the host delivers to `handle-info`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Info {
+    /// A linked instance exited, and this one traps exits; or another
+    /// instance sent an exit signal.
+    Exit {
+        /// Who exited or sent the signal.
+        from: Pid,
+        /// Why.
+        reason: ExitReason,
+    },
+    /// A monitored instance exited.
+    Down {
+        /// The reference `monitor` returned.
+        reference: u64,
+        /// The instance that exited.
+        pid: Pid,
+        /// Why.
+        reason: ExitReason,
+    },
     /// A timer from `send-after` fired.
     Timer {
         /// The reference `send-after` returned.
@@ -182,7 +198,27 @@ pub(crate) enum Info {
 impl From<Info> for wit::Info {
     fn from(info: Info) -> Self {
         match info {
+            Info::Exit { from, reason } => Self::Exit((from.into(), (&reason).into())),
+            Info::Down {
+                reference,
+                pid,
+                reason,
+            } => Self::Down((reference, pid.into(), (&reason).into())),
             Info::Timer { reference, msg } => Self::Timer((reference, msg.into())),
+        }
+    }
+}
+
+impl From<wit::ExitReason> for ExitReason {
+    fn from(r: wit::ExitReason) -> Self {
+        match r {
+            wit::ExitReason::Normal => Self::Normal,
+            wit::ExitReason::Shutdown => Self::Shutdown,
+            wit::ExitReason::Killed => Self::Killed,
+            wit::ExitReason::Noproc => Self::Noproc,
+            wit::ExitReason::Noconnection => Self::Noconnection,
+            wit::ExitReason::Timeout => Self::Timeout,
+            wit::ExitReason::Crashed(why) => Self::Crashed(why),
         }
     }
 }

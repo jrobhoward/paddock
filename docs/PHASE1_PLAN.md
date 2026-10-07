@@ -104,11 +104,11 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Envelope handling: content type and schema id passed through untouched.
 
 ### M4 Links, monitors, supervision (L)
-- [ ] Link and monitor tables in the host; `trap-exits`; exit propagation rules matching OTP.
-- [ ] Host-native supervisors: `one_for_one`, `one_for_all`, `rest_for_one`, `simple_one_for_one` pools.
-- [ ] Restart types (`permanent`, `transient`, `temporary`), intensity/period, escalation, backoff with jitter.
-- [ ] Root supervisor per app; app start order from `dependencies`; reverse order on stop.
-- [ ] Instance pools with round-robin and hash routing (`instances.routing`).
+- [x] Link and monitor tables in the host; `trap-exits`; exit propagation rules matching OTP.
+- [x] Host-native supervisors: `one_for_one`, `one_for_all`, `rest_for_one`, `simple_one_for_one` pools.
+- [x] Restart types (`permanent`, `transient`, `temporary`), intensity/period, escalation, backoff with jitter.
+- [x] Root supervisor per app; app start order from `dependencies`; reverse order on stop. (Exit criteria 1 and 2 pass as `paddock-host` tests; M9 repeats them against a running node.)
+- [x] Instance pools with round-robin and hash routing (`instances.routing`). (Hash routing reads JSON and CBOR bodies, host-side; guests get round-robin through `whereis`.)
 
 ### M5 Host services (M)
 - [ ] `wasi:logging` → `tracing`, tagged with app, version, pid; level cap and rate limit per app. Paddock's own host from vendored proposal WIT; no wasmtime crate exists (S7).

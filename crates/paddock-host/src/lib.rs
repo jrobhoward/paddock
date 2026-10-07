@@ -18,24 +18,33 @@
 //! # Ok(()) }
 //! ```
 
+mod apps;
 mod bindings;
 mod config;
 mod error;
 mod instance;
 mod lifecycle;
+mod links;
 mod message;
 mod pid;
+mod pool;
 mod registry;
 mod runtime;
 mod spec;
 mod state;
+mod supervisor;
 mod table;
 
+pub use apps::{AppDeployment, AppHandle, AppStatus, Apps};
 pub use config::{MemoryProfile, RuntimeConfig};
 pub use error::HostError;
 pub use instance::InstanceHandle;
 pub use lifecycle::LifecycleState;
 pub use message::{CallError, Envelope, ExitReason};
+pub use paddock_manifest::{RestartType, Strategy};
 pub use pid::Pid;
 pub use runtime::{LoadedApp, Runtime};
 pub use spec::InstanceSpec;
+pub use supervisor::{
+    Backoff, Child, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
+};

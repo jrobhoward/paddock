@@ -1,12 +1,14 @@
 //! Test fixture: an app that misbehaves on request, and drives every
 //! `process` function, for testing the host.
 //!
-//! `init` arguments are UTF-8 words separated by spaces:
+//! `init` arguments are UTF-8 words separated by spaces, optionally inside a
+//! JSON string (as manifest `start_args` arrive):
 //! - `fail`: `init` returns an error.
 //! - `trap`: `init` panics.
 //! - `spin`: `init` loops forever.
 //! - `terminate-spin`: `terminate` loops forever.
 //! - `register:<name>`: register `<name>` during `init`.
+//! - `trap-exits`: trap exits from `init` on.
 //!
 //! Message bodies (calls and casts) are UTF-8 commands. Pids are written
 //! `node.id.incarnation`.
@@ -31,6 +33,14 @@
 //! - `timer:<ms>:<text>`: start a timer; reply its reference.
 //! - `cancel:<ref>`: cancel a timer; reply `cancelled`.
 //! - `timers`: reply the texts of the timers that fired, comma-separated.
+//! - `link:<pid>` / `unlink:<pid>`: reply `ok`.
+//! - `trap-exits:<on|off>`: reply `ok`.
+//! - `monitor:<pid>`: reply the monitor reference.
+//! - `demonitor:<ref>`: reply `ok`.
+//! - `exit:<pid>:<reason>`: send an exit signal; reasons are `normal`,
+//!   `shutdown`, `killed` or `crashed-<text>`. Reply `ok`.
+//! - `infos`: reply the exit and down notifications received, as
+//!   `exit:<pid>:<reason>` and `down:<ref>:<pid>:<reason>`, joined by `;`.
 //!
 //! Built for `wasm32-wasip2`; the host build only checks that the bindings
 //! compile.
@@ -59,6 +69,7 @@ struct State {
     hoard: Vec<Vec<u8>>,
     deferred: Vec<CallRef>,
     fired: Vec<String>,
+    infos: Vec<String>,
 }
 
 thread_local! {
@@ -118,6 +129,15 @@ fn show_call_error(err: &CallError) -> String {
         CallError::TooLarge => "too-large".into(),
         CallError::AccessDenied => "access-denied".into(),
         CallError::Exited(reason) => format!("exited:{}", show_exit(reason)),
+    }
+}
+
+fn parse_exit(s: &str) -> ExitReason {
+    match s {
+        "normal" => ExitReason::Normal,
+        "shutdown" => ExitReason::Shutdown,
+        "killed" => ExitReason::Killed,
+        other => ExitReason::Crashed(other.strip_prefix("crashed-").unwrap_or(other).to_string()),
     }
 }
 
@@ -205,6 +225,29 @@ fn run(caller: Option<CallRef>, msg: &Envelope) -> Outcome {
             reply("cancelled".into())
         }
         "timers" => reply(STATE.with_borrow(|s| s.fired.join(","))),
+        "link" => {
+            process::link(parse_pid(arg));
+            reply("ok".into())
+        }
+        "unlink" => {
+            process::unlink(parse_pid(arg));
+            reply("ok".into())
+        }
+        "trap-exits" => {
+            process::trap_exits(arg == "on");
+            reply("ok".into())
+        }
+        "monitor" => reply(process::monitor(parse_pid(arg)).to_string()),
+        "demonitor" => {
+            process::demonitor(arg.parse().unwrap_or(0));
+            reply("ok".into())
+        }
+        "exit" => {
+            let (pid, reason) = arg.split_once(':').unwrap_or((arg, "normal"));
+            process::exit(parse_pid(pid), &parse_exit(reason));
+            reply("ok".into())
+        }
+        "infos" => reply(STATE.with_borrow(|s| s.infos.join(";"))),
         _ => reply(format!("unknown command '{command}'")),
     }
 }
@@ -212,6 +255,8 @@ fn run(caller: Option<CallRef>, msg: &Envelope) -> Outcome {
 impl Guest for Chaos {
     fn init(args: Vec<u8>) -> Result<(), String> {
         let args = String::from_utf8_lossy(&args).into_owned();
+        // Manifest `start_args` arrive as JSON; accept a JSON string too.
+        let args = args.trim().trim_matches('"');
         for word in args.split_whitespace() {
             match word.split_once(':') {
                 Some(("register", name)) => {
@@ -225,6 +270,7 @@ impl Guest for Chaos {
                     "trap" => panic!("asked to trap in init"),
                     "spin" => spin(),
                     "terminate-spin" => STATE.with_borrow_mut(|s| s.terminate_spin = true),
+                    "trap-exits" => process::trap_exits(true),
                     _ => {}
                 },
             }
@@ -244,9 +290,19 @@ impl Guest for Chaos {
     }
 
     fn handle_info(msg: Info) {
-        if let Info::Timer((_, envelope)) = msg {
-            let body = String::from_utf8_lossy(&envelope.body).into_owned();
-            STATE.with_borrow_mut(|s| s.fired.push(body));
+        match msg {
+            Info::Timer((_, envelope)) => {
+                let body = String::from_utf8_lossy(&envelope.body).into_owned();
+                STATE.with_borrow_mut(|s| s.fired.push(body));
+            }
+            Info::Exit((pid, reason)) => {
+                let line = format!("exit:{}:{}", show_pid(pid), show_exit(&reason));
+                STATE.with_borrow_mut(|s| s.infos.push(line));
+            }
+            Info::Down((reference, pid, reason)) => {
+                let line = format!("down:{reference}:{}:{}", show_pid(pid), show_exit(&reason));
+                STATE.with_borrow_mut(|s| s.infos.push(line));
+            }
         }
     }
 

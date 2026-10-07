@@ -13,8 +13,8 @@ use wasmtime::{Error, ResourceLimiter, Result};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::bindings::paddock::runtime::{process, types};
-use crate::instance::Message;
-use crate::message::{Envelope, Info};
+use crate::instance::{InstanceHandle, Message};
+use crate::message::{Envelope, ExitReason, Info};
 use crate::pid::Pid;
 use crate::runtime::RuntimeInner;
 use crate::spec::InstanceSpec;
@@ -22,6 +22,8 @@ use crate::spec::InstanceSpec;
 /// What an instance's host functions reach outside its own Store.
 pub(crate) struct ProcessContext {
     pub(crate) rt: Arc<RuntimeInner>,
+    /// This instance's own handle, for its trap-exits flag and signals.
+    pub(crate) me: InstanceHandle,
     /// The instance's own mailbox, for timers. Weak, so it never keeps the
     /// mailbox open.
     pub(crate) mailbox: mpsc::WeakSender<Message>,
@@ -230,14 +232,6 @@ impl Drop for Timers {
 
 impl types::Host for InstanceState {}
 
-/// A `process` function that M4 implements; trapping makes a guest that
-/// calls it early crash with a clear reason instead of misbehaving.
-fn not_yet<T>(name: &str) -> Result<T> {
-    Err(Error::msg(format!(
-        "process.{name} is not implemented yet (Phase 1 milestone M4)"
-    )))
-}
-
 impl process::Host for InstanceState {
     async fn self_(&mut self) -> Result<types::Pid> {
         Ok(self.pid.into())
@@ -286,24 +280,55 @@ impl process::Host for InstanceState {
         Ok(())
     }
 
-    async fn link(&mut self, _other: types::Pid) -> Result<()> {
-        not_yet("link")
+    async fn link(&mut self, other: types::Pid) -> Result<()> {
+        let other = Pid::from(other);
+        if other == self.pid {
+            return Ok(());
+        }
+        let table = &self.ctx.rt.table;
+        if !self
+            .ctx
+            .rt
+            .links
+            .link(self.pid, other, |p| table.lookup(p).is_some())
+        {
+            // Linking to a dead pid is an immediate `noproc` exit signal.
+            self.ctx.me.exit_signal(other, ExitReason::Noproc, false);
+        }
+        Ok(())
     }
 
-    async fn unlink(&mut self, _other: types::Pid) -> Result<()> {
-        not_yet("unlink")
+    async fn unlink(&mut self, other: types::Pid) -> Result<()> {
+        self.ctx.rt.links.unlink(self.pid, other.into());
+        Ok(())
     }
 
-    async fn trap_exits(&mut self, _on: bool) -> Result<()> {
-        not_yet("trap-exits")
+    async fn trap_exits(&mut self, on: bool) -> Result<()> {
+        self.ctx.me.set_trap_exits(on);
+        Ok(())
     }
 
-    async fn monitor(&mut self, _other: types::Pid) -> Result<u64> {
-        not_yet("monitor")
+    async fn monitor(&mut self, other: types::Pid) -> Result<u64> {
+        let other = Pid::from(other);
+        let table = &self.ctx.rt.table;
+        let (reference, alive) = self
+            .ctx
+            .rt
+            .links
+            .monitor(self.pid, other, |p| table.lookup(p).is_some());
+        if !alive {
+            self.ctx.me.signal(Info::Down {
+                reference,
+                pid: other,
+                reason: ExitReason::Noproc,
+            });
+        }
+        Ok(reference)
     }
 
-    async fn demonitor(&mut self, _monitor_ref: u64) -> Result<()> {
-        not_yet("demonitor")
+    async fn demonitor(&mut self, monitor_ref: u64) -> Result<()> {
+        self.ctx.rt.links.demonitor(self.pid, monitor_ref);
+        Ok(())
     }
 
     async fn register(
@@ -322,7 +347,12 @@ impl process::Host for InstanceState {
     }
 
     async fn whereis(&mut self, name: String) -> Result<Option<types::Pid>> {
-        Ok(self.ctx.rt.registry.whereis(&name).map(Into::into))
+        let rt = &self.ctx.rt;
+        let found = rt
+            .registry
+            .whereis(&name)
+            .or_else(|| rt.pool_member(&name).map(|h| h.pid()));
+        Ok(found.map(Into::into))
     }
 
     async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
@@ -339,7 +369,24 @@ impl process::Host for InstanceState {
         Ok(())
     }
 
-    async fn exit(&mut self, _other: types::Pid, _reason: types::ExitReason) -> Result<()> {
-        not_yet("exit")
+    async fn exit(&mut self, other: types::Pid, reason: types::ExitReason) -> Result<()> {
+        let other = Pid::from(other);
+        let reason = ExitReason::from(reason);
+        let untrappable = reason == ExitReason::Killed;
+        if other == self.pid {
+            // As in OTP, an exit signal to oneself stops a non-trapping
+            // instance even with reason `normal`.
+            if untrappable || !self.ctx.me.traps_exits() {
+                self.ctx.me.exit_self(reason);
+            } else {
+                self.ctx.me.signal(Info::Exit {
+                    from: self.pid,
+                    reason,
+                });
+            }
+        } else if let Some(target) = self.ctx.rt.table.lookup(other) {
+            target.exit_signal(self.pid, reason, untrappable);
+        }
+        Ok(())
     }
 }

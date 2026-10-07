@@ -19,6 +19,17 @@ impl Guest for Bench {
     }
 
     fn handle_call(_caller: CallRef, msg: Envelope) -> CallResult {
+        // Transfer tests: the body is a command prefix plus payload bytes.
+        if msg.body.starts_with(b"len:") {
+            return CallResult::Reply(Envelope {
+                content_type: "text/plain".into(),
+                schema: None,
+                body: (msg.body.len() - 4).to_string().into_bytes(),
+            });
+        }
+        if msg.body.starts_with(b"mirror:") {
+            return CallResult::Reply(msg);
+        }
         let command = String::from_utf8_lossy(&msg.body);
         CallResult::Reply(Envelope {
             content_type: "text/plain".into(),

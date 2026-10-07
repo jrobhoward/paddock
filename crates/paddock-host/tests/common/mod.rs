@@ -96,3 +96,24 @@ pub const LONG: Duration = Duration::from_secs(10);
 pub fn pid_text(pid: paddock_host::Pid) -> String {
     format!("{}.{}.{}", pid.node, pid.id, pid.incarnation)
 }
+
+/// Ask the instance `command` and return the reply body.
+pub async fn ask(instance: &paddock_host::InstanceHandle, command: &str) -> String {
+    body(&instance.call(text(command), LONG).await.unwrap())
+}
+
+/// Ask `command` until the reply satisfies `done`, for up to 2 seconds.
+pub async fn ask_until(
+    instance: &paddock_host::InstanceHandle,
+    command: &str,
+    done: impl Fn(&str) -> bool,
+) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let reply = ask(instance, command).await;
+        if done(&reply) || std::time::Instant::now() > deadline {
+            return reply;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}

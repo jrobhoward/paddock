@@ -102,6 +102,87 @@ async fn compare(instance: &InstanceHandle, label: &str, command: &str, per: u32
     );
 }
 
+/// Median time of `f`, repeated until a sample takes at least `SAMPLE`.
+async fn timed<F, Fut>(mut f: F) -> Duration
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let mut reps = 1u32;
+    loop {
+        let t = Instant::now();
+        for _ in 0..reps {
+            f().await;
+        }
+        if t.elapsed() >= SAMPLE {
+            break;
+        }
+        reps *= 2;
+    }
+    let mut times = Vec::new();
+    for _ in 0..RUNS {
+        let t = Instant::now();
+        for _ in 0..reps {
+            f().await;
+        }
+        times.push(t.elapsed() / reps);
+    }
+    median(times)
+}
+
+/// Cost of moving bytes into and out of an instance.
+async fn transfer(instance: &InstanceHandle) {
+    println!("| Payload | Host copy (native) | In only (len) | In and out (mirror) | In: GB/s | In+out: GB/s |");
+    println!("| --- | --- | --- | --- | --- | --- |");
+    let base_len = timed(|| async {
+        instance.call(Envelope::new("t", b"len:".to_vec()), Duration::from_secs(60)).await.unwrap();
+    })
+    .await;
+    let base_mirror = timed(|| async {
+        instance.call(Envelope::new("t", b"mirror:".to_vec()), Duration::from_secs(60)).await.unwrap();
+    })
+    .await;
+    for size in [1usize << 10, 64 << 10, 1 << 20, 16 << 20] {
+        let mut len_body = b"len:".to_vec();
+        len_body.resize(4 + size, 7);
+        let mut mirror_body = b"mirror:".to_vec();
+        mirror_body.resize(7 + size, 7);
+        // The bench clones the payload into each envelope; measure that alone.
+        let clone = timed(|| async {
+            black_box(len_body.clone());
+        })
+        .await;
+        let len = timed(|| async {
+            let r = instance
+                .call(Envelope::new("t", len_body.clone()), Duration::from_secs(60))
+                .await
+                .unwrap();
+            assert_eq!(r.body, size.to_string().into_bytes());
+        })
+        .await;
+        let mirror = timed(|| async {
+            let r = instance
+                .call(Envelope::new("t", mirror_body.clone()), Duration::from_secs(60))
+                .await
+                .unwrap();
+            assert_eq!(r.body.len(), size + 7);
+        })
+        .await;
+        let gbps = |d: Duration, bytes: usize| bytes as f64 / d.as_secs_f64() / 1e9;
+        let in_only = len.saturating_sub(base_len).saturating_sub(clone);
+        let both = mirror.saturating_sub(base_mirror).saturating_sub(clone);
+        println!(
+            "| {} KiB | {} | {} | {} | {:.1} | {:.1} |",
+            size >> 10,
+            fmt(clone),
+            fmt(len),
+            fmt(mirror),
+            gbps(in_only, size),
+            gbps(both, size)
+        );
+    }
+}
+
 async fn run(wasm: &str) {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 8,
@@ -115,11 +196,11 @@ async fn run(wasm: &str) {
             InstanceSpec {
                 app: "s8".into(),
                 version: "0.0.0".into(),
-                memory_max: 64 << 20,
+                memory_max: 256 << 20,
                 table_max: None,
                 callback_deadline: Duration::from_secs(600),
                 mailbox_max: 16,
-                message_max_bytes: 1 << 20,
+                message_max_bytes: 64 << 20,
                 registered_names: vec![],
                 init_timeout: Duration::from_secs(10),
                 shutdown_timeout: Duration::from_secs(1),
@@ -144,6 +225,8 @@ async fn run(wasm: &str) {
     }
     let native_call = t.elapsed() / n;
     println!("Empty call: native {} / Paddock call {}", fmt(native_call), fmt(call));
+    println!();
+    transfer(&instance).await;
     println!();
     println!("| Workload | Native | In Paddock | Ratio |");
     println!("| --- | --- | --- | --- |");

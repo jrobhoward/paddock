@@ -44,3 +44,15 @@ All notable changes are recorded here. The format follows
 - `message_max_bytes` is enforced; an oversized body fails with the new
   `too-large` call error. Casts dropped for a full mailbox are counted
   (`InstanceHandle::dropped_messages`).
+- Links, monitors and exit signals: `link`, `unlink`, `trap-exits`,
+  `monitor`, `demonitor` and `exit` follow OTP's propagation rules. Exit and
+  down notifications never drop.
+- Host-native supervisors (`Runtime::start_supervisor`): `one_for_one`,
+  `one_for_all`, `rest_for_one` and `simple_one_for_one`; permanent,
+  transient and temporary children; restart intensity with escalation;
+  backoff with jitter; nested supervisors.
+- Apps (`Runtime::start_apps`): dependency order (with version checks and
+  cycle detection), a root supervisor per app built from its manifest,
+  status (`running`, `failed` with the escalation reason, `stopped`), stop in
+  reverse order, and instance pools with round-robin and JSON/CBOR hash
+  routing. `whereis` on an app's name returns a pool member.

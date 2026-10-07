@@ -29,6 +29,14 @@ pub enum HostError {
         limit: u64,
     },
 
+    /// A supervisor spec is invalid, or the supervisor has exited.
+    #[error("invalid supervisor: {0}")]
+    InvalidSupervisor(String),
+
+    /// A set of apps cannot be started as given.
+    #[error("cannot start apps: {0}")]
+    InvalidApps(String),
+
     /// A respawn named an instance id that is still alive.
     #[error("instance {0} is still running")]
     StillRunning(crate::Pid),
