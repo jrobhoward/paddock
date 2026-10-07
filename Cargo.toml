@@ -2,16 +2,12 @@
 resolver = "3"
 members = [
     "crates/paddock",
-    "crates/paddock-api",
-    "crates/paddock-cli",
     "crates/paddock-bundle",
     "crates/paddock-fixture-chaos",
     "crates/paddock-fixture-counter",
     "crates/paddock-fixture-echo",
     "crates/paddock-fixture-services",
     "crates/paddock-host",
-    "crates/paddock-manifest",
-    "crates/paddock-node",
     "crates/paddock-sdk",
     "crates/paddock-sdk-macros",
     "examples/counter",
@@ -62,11 +58,8 @@ proc-macro2 = "1"
 semver = { version = "1", features = ["serde"] }
 toml = "0.9"
 
-paddock-manifest = { path = "crates/paddock-manifest" }
-paddock-api = { path = "crates/paddock-api" }
 paddock-bundle = { path = "crates/paddock-bundle" }
 paddock-host = { path = "crates/paddock-host" }
-paddock-node = { path = "crates/paddock-node" }
 paddock-sdk = { path = "crates/paddock-sdk" }
 paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
 # rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2

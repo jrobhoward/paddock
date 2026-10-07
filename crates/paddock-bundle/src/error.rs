@@ -1,6 +1,6 @@
 //! Errors from loading and checking a bundle.
 
-use paddock_manifest::ManifestError;
+use crate::manifest::ManifestError;
 use thiserror::Error;
 
 /// Why a bundle was refused.
@@ -38,7 +38,7 @@ pub enum BundleError {
     UnsupportedKind(String),
 
     /// The bundle has no `appserver` section.
-    #[error("bundle manifest has no '{}' section", paddock_manifest::SECTION)]
+    #[error("bundle manifest has no '{}' section", crate::manifest::SECTION)]
     NoAppSection,
 
     /// The app manifest is malformed or invalid.

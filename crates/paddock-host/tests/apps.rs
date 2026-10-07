@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use common::{LONG, ask, ask_until, body, pid_text, shared, spec, text};
+use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
 use paddock_host::{AppDeployment, AppStatus, CallError, Envelope, ExitReason, HostError, Pid};
-use paddock_manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
 use serde_json::json;
 
 fn deployment(name: &str, version: &str, appserver: serde_json::Value) -> AppDeployment {

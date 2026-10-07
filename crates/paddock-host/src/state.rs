@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use paddock_manifest::{Bucket, Capability, LogLevel};
+use paddock_bundle::manifest::{Bucket, Capability, LogLevel};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 use wasmtime::component::{Resource, ResourceTable};

@@ -1277,21 +1277,28 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "paddock"
 version = "0.0.0"
 dependencies = [
- "wit-parser 0.259.0",
-]
-
-[[package]]
-name = "paddock-api"
-version = "0.0.0"
-dependencies = [
+ "anyhow",
  "bytes",
+ "ciborium",
+ "clap",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "minisign",
+ "paddock-bundle",
+ "paddock-host",
+ "rustbridge-bundle",
+ "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "wat",
+ "wit-parser 0.259.0",
 ]
 
 [[package]]
@@ -1299,39 +1306,19 @@ name = "paddock-bundle"
 version = "0.0.0"
 dependencies = [
  "minisign",
- "paddock-manifest",
+ "proptest",
  "rstest",
  "rustbridge-bundle",
  "semver",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "tempfile",
  "thiserror",
  "toml",
  "wasmparser 0.259.0",
  "wat",
  "zip",
-]
-
-[[package]]
-name = "paddock-cli"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "minisign",
- "paddock-api",
- "paddock-bundle",
- "paddock-manifest",
- "paddock-node",
- "rustbridge-bundle",
- "semver",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "wat",
 ]
 
 [[package]]
@@ -1367,7 +1354,7 @@ name = "paddock-host"
 version = "0.0.0"
 dependencies = [
  "ciborium",
- "paddock-manifest",
+ "paddock-bundle",
  "redb",
  "rstest",
  "semver",
@@ -1379,47 +1366,6 @@ dependencies = [
  "tracing-subscriber",
  "wasmtime",
  "wasmtime-wasi",
-]
-
-[[package]]
-name = "paddock-manifest"
-version = "0.0.0"
-dependencies = [
- "proptest",
- "rstest",
- "semver",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "thiserror",
-]
-
-[[package]]
-name = "paddock-node"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bytes",
- "ciborium",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-util",
- "minisign",
- "paddock-api",
- "paddock-bundle",
- "paddock-host",
- "paddock-manifest",
- "rustbridge-bundle",
- "semver",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

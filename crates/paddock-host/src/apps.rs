@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
-use paddock_manifest::{AppManifest, Capability, Strategy, UpgradeMode};
+use paddock_bundle::manifest::{AppManifest, Capability, Strategy, UpgradeMode};
 use tokio::sync::watch;
 
 use crate::error::HostError;

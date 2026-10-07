@@ -19,8 +19,8 @@ components, with Erlang/OTP-style semantics:
 
 ## Status
 
-Pre-release. A single node runs: `paddock-node` deploys signed bundles and
-supervises their instances, and the `paddock` CLI manages it. Phase 1
+Pre-release. A single node runs: `paddock node` deploys signed bundles and
+supervises their instances, and the rest of the `paddock` CLI manages it. Phase 1
 milestones M0 to M9 are done. rustbridge's bundle format 1.2 comes from its
 `experiment/wasm` branch on GitHub until it is released.
 
@@ -65,7 +65,7 @@ orders-data = "/srv/paddock/orders"    # host directories behind manifest volume
 ```
 
 ```sh
-paddock-node --config node.toml        # admin socket: <data_dir>/admin.sock
+paddock node --config node.toml        # admin socket: <data_dir>/admin.sock
 
 export PADDOCK_SOCKET=/var/lib/paddock/admin.sock
 paddock deploy orders-1.0.0.rbp
@@ -85,7 +85,7 @@ paddock remove orders
 
 Every command takes `--json`. The API is JSON over HTTP, so `curl
 --unix-socket /var/lib/paddock/admin.sock http://paddock/v1/apps` works too;
-`paddock-api` documents the routes. Deploys, upgrades and refusals are recorded
+the `paddock::api` module documents the routes. Deploys, upgrades and refusals are recorded
 in `<data_dir>/audit.log`. Unix socket paths are limited to about 107 bytes;
 set `admin_socket` if `data_dir` is long. 
 

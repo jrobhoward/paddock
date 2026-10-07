@@ -25,7 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use paddock_manifest::Capability;
+use crate::manifest::Capability;
 use serde::Deserialize;
 
 use crate::error::BundleError;

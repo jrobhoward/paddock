@@ -27,7 +27,7 @@ use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
-use paddock_manifest::LogLevel;
+use paddock_bundle::manifest::LogLevel;
 
 /// Hosts instances on one node.
 ///

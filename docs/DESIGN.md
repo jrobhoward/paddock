@@ -105,7 +105,7 @@ The contract is the `paddock:runtime@0.1.0` package in [`wit/runtime.wit`](../wi
 
 The manifest describes everything the server needs to place, limit, wire and upgrade an app. The data model is complete now; enforcement ships in phases (column 3). Field names follow `.rbp` style so the manifest can live in a rustbridge bundle as an extra section.
 
-In a bundle, the `appserver` section holds every section below except three that the `.rbp` manifest already carries: `app` comes from `plugin`, `component` from the `wasm32-wasip2` variant, and `provenance` from `build_info`, the SBOM and the operator key that verified the signature. `paddock-manifest` models the section (`AppSpec`) and the combined result (`AppManifest`). Unknown fields are rejected with the path of the field, and a node logs a warning for each field a manifest sets that the current phase does not enforce.
+In a bundle, the `appserver` section holds every section below except three that the `.rbp` manifest already carries: `app` comes from `plugin`, `component` from the `wasm32-wasip2` variant, and `provenance` from `build_info`, the SBOM and the operator key that verified the signature. `paddock_bundle::manifest` models the section (`AppSpec`) and the combined result (`AppManifest`). Unknown fields are rejected with the path of the field, and a node logs a warning for each field a manifest sets that the current phase does not enforce.
 
 | Section | Fields | Enforced in |
 | --- | --- | --- |
@@ -343,7 +343,7 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 | Distributed transactions | Not provided | — | JTA | Never |
 
 **Node and admin API (Phase 1).**
-- `paddock-node` keeps a deploy store under its data directory: each app's signed bundles by version (the current one and one previous, for rollback), extracted `priv/` files, a desired-state file, the keyvalue database, and an append-only JSON-lines audit log.
+- The node (`paddock node`) keeps a deploy store under its data directory: each app's signed bundles by version (the current one and one previous, for rollback), extracted `priv/` files, a desired-state file, the keyvalue database, and an append-only JSON-lines audit log.
 - On restart the node verifies every bundle again against its current trusted keys and policy, then starts the apps that were running, in deploy order. An app that no longer verifies is reported as failed.
 - The admin API is JSON over HTTP/1.1 on a Unix socket created with mode 0600. Access to the socket is the authorization; there is no other authentication in Phase 1. Routes are under `/v1`.
 - Besides the planned operations, the API has `call`, which sends a message to an app through its pool's routing, for operators and integration tests. Windows has no Unix sockets, so its admin API (a named pipe) is deferred.

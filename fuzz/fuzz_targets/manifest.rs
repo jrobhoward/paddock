@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use paddock_manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
+use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
 
 fuzz_target!(|text: &str| {
     let Ok(spec) = AppSpec::from_json_str(text) else {

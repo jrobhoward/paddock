@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use paddock_manifest::Durability;
+use paddock_bundle::manifest::Durability;
 use redb::{ReadableDatabase, ReadableTable, TableDefinition};
 
 /// Keys per `list-keys` page.

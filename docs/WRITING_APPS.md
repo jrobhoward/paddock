@@ -195,7 +195,7 @@ Always available without a declaration: clocks, random, stdout and stderr (captu
 ## Testing
 
 - **Unit-test the logic natively.** Keep message handling in plain functions, and leave the `App` impl as a thin shell around them.
-- **Integration-test against a node.** `paddock-node`'s tests start a node in a temporary directory and drive it through `paddock-api`'s `Client`. [`crates/paddock-node/tests/exit_criteria.rs`](../crates/paddock-node/tests/exit_criteria.rs) shows the pattern.
+- **Integration-test against a node.** The `paddock` crate's tests start a node in a temporary directory and drive it through `paddock::api::Client`. [`crates/paddock/tests/exit_criteria.rs`](../crates/paddock/tests/exit_criteria.rs) shows the pattern.
 - **Read state while debugging:** `paddock state <pid>`. Note that an instance whose `save_snapshot` traps is restarted.
 
 ## Limits to design around

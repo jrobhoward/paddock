@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use paddock_manifest::{RestartType, Strategy};
+use paddock_bundle::manifest::{RestartType, Strategy};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::error::HostError;
@@ -79,8 +79,8 @@ impl Backoff {
     }
 }
 
-impl From<&paddock_manifest::Backoff> for Backoff {
-    fn from(b: &paddock_manifest::Backoff) -> Self {
+impl From<&paddock_bundle::manifest::Backoff> for Backoff {
+    fn from(b: &paddock_bundle::manifest::Backoff) -> Self {
         Self {
             initial: Duration::from_millis(b.initial_ms),
             max: Duration::from_millis(b.max_ms),

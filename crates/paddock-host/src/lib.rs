@@ -46,7 +46,7 @@ pub use error::HostError;
 pub use instance::{InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;
 pub use message::{CallError, Envelope, ExitReason};
-pub use paddock_manifest::{RestartType, Strategy};
+pub use paddock_bundle::manifest::{RestartType, Strategy};
 pub use pid::Pid;
 /// Hash routing's key reader, for the fuzz targets in `fuzz/` only.
 #[cfg(fuzzing)]

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use paddock_manifest::{
+use crate::manifest::{
     AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Kind, ManifestError, Provenance,
     SECTION,
 };
@@ -204,6 +204,5 @@ fn prefix_section(err: ManifestError) -> ManifestError {
                 })
                 .collect(),
         ),
-        other => other,
     }
 }

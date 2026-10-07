@@ -1,5 +1,9 @@
-//! Loading Paddock bundles: rustbridge `.rbp` files (format 1.2) carrying a
-//! `wasm32-wasip2` component and an `appserver` section.
+//! Paddock bundles: the app manifest model ([`manifest`]) and loading
+//! rustbridge `.rbp` files (format 1.2) carrying a `wasm32-wasip2` component
+//! and an `appserver` section.
+//!
+//! This crate has no wasmtime dependency, so bundle tooling can use it
+//! without the runtime.
 //!
 //! Deploy-time checks, in order:
 //!
@@ -32,6 +36,7 @@ mod error;
 mod grant;
 mod imports;
 mod load;
+pub mod manifest;
 mod policy;
 
 pub use error::BundleError;

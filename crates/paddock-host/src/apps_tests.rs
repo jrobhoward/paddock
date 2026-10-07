@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use paddock_manifest::{AppInfo, AppSpec, ComponentRef, Provenance};
+use paddock_bundle::manifest::{AppInfo, AppSpec, ComponentRef, Provenance};
 
 use super::*;
 

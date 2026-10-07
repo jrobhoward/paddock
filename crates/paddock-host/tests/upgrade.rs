@@ -12,12 +12,12 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use common::{LONG, ask, ask_until, counter, pid_text, shared, spec, text};
+use paddock_bundle::manifest::{
+    AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Provenance, UpgradeMode,
+};
 use paddock_host::{
     AppDeployment, CallError, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, UpgradeError,
     UpgradeOptions,
-};
-use paddock_manifest::{
-    AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Provenance, UpgradeMode,
 };
 use serde_json::json;
 

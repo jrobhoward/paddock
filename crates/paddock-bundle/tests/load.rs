@@ -8,8 +8,8 @@ mod common;
 
 use common::{Spec, WORLD, rewrite};
 use minisign::KeyPair;
+use paddock_bundle::manifest::{Capability, ManifestError};
 use paddock_bundle::{BundleError, ImportLink, OperatorPolicy, VerifiedBundle};
-use paddock_manifest::{Capability, ManifestError};
 use rustbridge_bundle::{BundleBuilder, Manifest, Platform, builder::compute_sha256};
 use serde_json::json;
 use tempfile::TempDir;

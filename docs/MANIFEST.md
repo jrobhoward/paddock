@@ -146,9 +146,9 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
 | `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. | enforced |
 | `wasi:filesystem` | `preopens."<guest path>" = { volume, mode, quota }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`; `quota` is *not enforced*. `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
-| `paddock:secrets`, `wasi:http/outgoing-handler`, `wasi:http/incoming-handler`, `paddock:metrics` | as documented in `paddock-manifest` | *not enforced* (Phase 2) |
-| `wasi:sockets`, `paddock:sql` | as documented in `paddock-manifest` | *not enforced* (Phase 3) |
-| `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock-manifest` | *not enforced* (later) |
+| `paddock:secrets`, `wasi:http/outgoing-handler`, `wasi:http/incoming-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
+| `wasi:sockets`, `paddock:sql` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
+| `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
 
 ### `config`
 
@@ -188,7 +188,7 @@ An upgrade that adds capabilities needs `paddock upgrade --approve`. `--batch`, 
 
 Two files on the node decide what an app actually gets.
 
-The node configuration (`paddock-node --config node.toml`):
+The node configuration (`paddock node --config node.toml`):
 
 ```toml
 node = 0                               # node id, carried in every pid

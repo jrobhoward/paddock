@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use paddock_manifest::{AppManifest, Capability, UpgradeMode};
+use paddock_bundle::manifest::{AppManifest, Capability, UpgradeMode};
 
 use crate::message::ExitReason;
 

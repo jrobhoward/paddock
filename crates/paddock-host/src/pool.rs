@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use paddock_manifest::Routing;
+use paddock_bundle::manifest::Routing;
 
 use crate::instance::InstanceHandle;
 use crate::message::Envelope;

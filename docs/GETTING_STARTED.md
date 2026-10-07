@@ -10,8 +10,8 @@ Rust 1.96 or newer, plus the WebAssembly target that apps compile to:
 
 ```sh
 rustup target add wasm32-wasip2
-cargo build --release -p paddock-node -p paddock-cli
-export PATH="$PWD/target/release:$PATH"     # paddock-node and paddock
+cargo build --release -p paddock
+export PATH="$PWD/target/release:$PATH"     # paddock
 ```
 
 ## 2. Make a signing key
@@ -35,7 +35,7 @@ trusted_keys = ["RWQ..."]          # the public key keygen printed (also in sign
 ```
 
 ```sh
-paddock-node --config node.toml
+paddock node --config node.toml
 ```
 
 The node keeps running in the foreground; use a second terminal for the rest. Its admin socket is `<data_dir>/admin.sock`, and the CLI finds it through `PADDOCK_SOCKET` or `--socket`:
@@ -120,7 +120,7 @@ paddock stop counter && paddock start counter
 paddock remove counter
 ```
 
-The API is JSON over HTTP on the socket, so `curl --unix-socket ~/paddock-demo/data/admin.sock http://paddock/v1/apps` works too. The `paddock-api` crate documents every route.
+The API is JSON over HTTP on the socket, so `curl --unix-socket ~/paddock-demo/data/admin.sock http://paddock/v1/apps` works too. The `paddock::api` module documents every route.
 
 ## Next
 

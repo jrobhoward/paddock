@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use paddock_manifest::{AccessMode, AppManifest, AppSpec, Bucket, Capability, LogLevel};
+use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Bucket, Capability, LogLevel};
 
 /// Limits, timeouts and `init` arguments for one instance.
 #[derive(Debug, Clone, PartialEq, Eq)]

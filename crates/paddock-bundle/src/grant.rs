@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use paddock_manifest::{AppSpec, Capability, ImportClass, classify_import};
+use crate::manifest::{AppSpec, Capability, ImportClass, classify_import};
 use serde::Serialize;
 
 use crate::error::BundleError;

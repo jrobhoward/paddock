@@ -122,5 +122,11 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Crates consolidated from nine to five publishable ones. `paddock-manifest`
+  is now the `manifest` module of `paddock-bundle`. `paddock-node`,
+  `paddock-api` and `paddock-cli` are now the `paddock` crate: the node runs
+  as `paddock node --config node.toml` (was `paddock-node`), and the admin
+  API is `paddock::api`. Building `paddock` without its default `node`
+  feature gives the CLI and bundle tooling without wasmtime.
 - `rustbridge-bundle` is a git dependency on rustbridge's `experiment/wasm`
   branch instead of a sibling checkout, so CI can build the workspace.

@@ -19,7 +19,6 @@ arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
 paddock-bundle = { path = "../crates/paddock-bundle" }
 paddock-host = { path = "../crates/paddock-host" }
-paddock-manifest = { path = "../crates/paddock-manifest" }
 semver = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }

@@ -55,6 +55,17 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -Dwarnings
 
+      # `paddock` without its `node` feature is the CLI and bundle tooling
+      # only; it must build, and must not pull in wasmtime.
+      - name: CLI without the node
+        shell: bash
+        run: |
+          cargo clippy -p paddock --no-default-features --all-targets --locked -- -Dwarnings
+          if cargo tree -p paddock --no-default-features -e normal --locked | grep -q wasmtime; then
+            echo "paddock --no-default-features depends on wasmtime" >&2
+            exit 1
+          fi
+
       - name: Test
         run: cargo test --workspace --locked
 

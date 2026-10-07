@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use paddock_host::{InstanceSpec, Preopen};
-use paddock_manifest::{
+use paddock_bundle::manifest::{
     AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Durability, LogLevel, Provenance,
 };
+use paddock_host::{InstanceSpec, Preopen};
 
 fn manifest(spec: serde_json::Value) -> AppManifest {
     AppManifest {

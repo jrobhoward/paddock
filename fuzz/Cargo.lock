@@ -983,11 +983,11 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "paddock-bundle"
 version = "0.0.0"
 dependencies = [
- "paddock-manifest",
  "rustbridge-bundle",
  "semver",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "thiserror",
  "toml",
  "wasmparser 0.259.0",
@@ -1001,7 +1001,6 @@ dependencies = [
  "libfuzzer-sys",
  "paddock-bundle",
  "paddock-host",
- "paddock-manifest",
  "semver",
  "tempfile",
  "tokio",
@@ -1012,7 +1011,7 @@ name = "paddock-host"
 version = "0.0.0"
 dependencies = [
  "ciborium",
- "paddock-manifest",
+ "paddock-bundle",
  "redb",
  "semver",
  "serde_json",
@@ -1021,17 +1020,6 @@ dependencies = [
  "tracing",
  "wasmtime",
  "wasmtime-wasi",
-]
-
-[[package]]
-name = "paddock-manifest"
-version = "0.0.0"
-dependencies = [
- "semver",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "thiserror",
 ]
 
 [[package]]

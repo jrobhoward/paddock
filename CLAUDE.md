@@ -76,25 +76,26 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 
 ## Repository layout
 
-- `crates/paddock`: placeholder crate; its `tests/wit_rules.rs` enforces the
-  rules of `wit/runtime.wit`.
-- `crates/paddock-manifest`: the app manifest model (`AppSpec` is the
-  bundle's `appserver` section; `AppManifest` adds identity, component and
-  provenance), validation and capability/import classification.
-- `crates/paddock-bundle`: opens and verifies `.rbp` bundles, reads component
-  imports, operator policy and the effective grant.
+- `crates/paddock`: the `paddock` binary and its library. `api`: the admin
+  API's types and Unix-socket client. `node` (default `node` feature): the
+  node daemon (config, deploy store, admin server, audit log, log ring), run
+  by `paddock node`. `src/cli/`: the binary's own subcommands (bundle
+  building, output formatting, the node runner). Without the `node` feature
+  the crate does not build wasmtime. `tests/wit_rules.rs` enforces the rules
+  of `wit/runtime.wit`; the node and CLI tests require the `node` feature.
+- `crates/paddock-bundle`: no wasmtime. `manifest`: the app manifest model
+  (`AppSpec` is the bundle's `appserver` section; `AppManifest` adds
+  identity, component and provenance), validation and capability/import
+  classification. The rest opens and verifies `.rbp` bundles, reads
+  component imports, operator policy and the effective grant.
 - `crates/paddock-host`: the runtime: engine and epoch ticker, pids and the
   process table, instances and their callback loop, links and monitors,
   supervisors, and app sets with pools.
-- `crates/paddock-api`: the admin API's types and Unix-socket client.
-- `crates/paddock-node`: the node daemon (library and `paddock-node` binary):
-  config, deploy store, admin server, audit log, log ring.
-- `crates/paddock-cli`: the `paddock` command.
 - `crates/paddock-sdk`, `crates/paddock-sdk-macros`: the Rust guest SDK and
   its `Snapshot` derive. The SDK owns the wit-bindgen bindings (with
   `default_bindings_module`), so app crates have no WIT.
 - `examples/`: apps written with the SDK, each with a `paddock.toml`.
-  `paddock-cli`'s `tests/examples.rs` builds, bundles, deploys and drives them.
+  `paddock`'s `tests/examples.rs` builds, bundles, deploys and drives them.
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.

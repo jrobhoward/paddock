@@ -16,7 +16,7 @@
 //! wasmtime's `define_unknown_imports_as_traps` is not used: next to the WASI
 //! linker it breaks re-exported resource types (S4).
 
-use paddock_manifest::InterfaceName;
+use paddock_bundle::manifest::InterfaceName;
 use wasmtime::component::types::{ComponentFunc, ComponentItem};
 use wasmtime::component::{Component, Linker, ResourceType, Type, Val};
 use wasmtime::{Engine, Error, Result};

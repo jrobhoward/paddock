@@ -14,11 +14,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use common::{LONG, ask, fixture, text};
+use paddock_bundle::manifest::{Bucket, ByteSize, Capability, Durability, LogLevel};
 use paddock_host::{
     CallError, ExitReason, HostError, InstanceHandle, InstanceSpec, LoadedApp, Preopen, Runtime,
     RuntimeConfig,
 };
-use paddock_manifest::{Bucket, ByteSize, Capability, Durability, LogLevel};
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 

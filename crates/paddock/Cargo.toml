@@ -1,7 +1,7 @@
 [package]
 name = "paddock"
 version = "0.0.0"
-description = "Clustered WebAssembly application server with OTP-style supervision"
+description = "Clustered WebAssembly application server with OTP-style supervision: the paddock command, node daemon and admin API"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,8 +9,70 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[[bin]]
+name = "paddock"
+path = "src/main.rs"
+# Same output path as the library's docs (cargo#6313); the command's
+# documentation is its --help.
+doc = false
+
+[features]
+default = ["node"]
+# The node daemon (`paddock node`) and everything it runs on, wasmtime
+# included. Without it, the CLI and bundle tooling only.
+node = [
+    "dep:ciborium",
+    "dep:paddock-host",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "tokio/rt-multi-thread",
+    "tokio/signal",
+    "tokio/sync",
+    "tokio/time",
+]
+
+[dependencies]
+anyhow = { workspace = true }
+bytes = { workspace = true }
+ciborium = { workspace = true, optional = true }
+clap = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+minisign = { workspace = true }
+paddock-bundle = { workspace = true }
+paddock-host = { workspace = true, optional = true }
+rustbridge-bundle = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "net", "fs"] }
+toml = { workspace = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
 [dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
+wat = { workspace = true }
 wit-parser = { workspace = true }
+
+[[test]]
+name = "cli"
+required-features = ["node"]
+
+[[test]]
+name = "examples"
+required-features = ["node"]
+
+[[test]]
+name = "exit_criteria"
+required-features = ["node"]
+
+[[test]]
+name = "node"
+required-features = ["node"]
 
 [lints]
 workspace = true

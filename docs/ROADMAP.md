@@ -13,7 +13,7 @@ The single plan for remaining work. It replaces `docs/PHASE1_PLAN.md`, which tra
 
 ## Status
 
-Phase 1 (single node) is complete as of 2026-10-06. All nine exit criteria pass in CI on Linux, through a running node's admin API (`crates/paddock-node/tests/exit_criteria.rs`) and at the runtime level (`crates/paddock-host/tests/`):
+Phase 1 (single node) is complete as of 2026-10-06. All nine exit criteria pass in CI on Linux, through a running node's admin API (`crates/paddock/tests/exit_criteria.rs`) and at the runtime level (`crates/paddock-host/tests/`):
 
 1. Kill and restart: new incarnation, `exit` to links, `down` to monitors, `noproc` for stale pids.
 2. Crash loop: restart intensity exceeded, escalation, app marked `failed`.
@@ -75,7 +75,7 @@ Apart from that, fewer crates are preferred: modules and visibility keep areas a
 | --- | --- | --- | --- |
 | `paddock-sdk` | Guest SDK | `paddock-sdk-macros` | App developers |
 | `paddock-sdk-macros` | `#[derive(Snapshot)]` (a proc-macro must be its own crate) | none | App developers |
-| `paddock-bundle` | Manifest model, `.rbp` loading and verification, operator policy, effective grant (today's `paddock-manifest` and `paddock-bundle`) | rustbridge-bundle, wasmparser; no wasmtime | Host, binary |
+| `paddock-bundle` | Manifest model (`manifest`), `.rbp` loading and verification, operator policy, effective grant | rustbridge-bundle, wasmparser; no wasmtime | Host, binary |
 | `paddock-host` | Runtime, built-in services, the service trait | `paddock-bundle`, wasmtime | Edge-service developers, binary |
 | `paddock` | The `paddock` binary: node daemon (`paddock node`), admin API types and client, CLI; also a library to run a node with extra services (A5) | all of the above | Operators |
 
@@ -85,7 +85,7 @@ The `paddock` crate has a default `node` feature. Without it, the binary has the
 
 Small items left from Phase 1, done before the structural work.
 
-- [ ] **0.1 Crate consolidation.** Merge `paddock-manifest` into `paddock-bundle` (as a `manifest` module). Merge `paddock-node`, `paddock-api` and `paddock-cli` into `paddock`: one binary with a `node` subcommand in place of `paddock-node`, the API types and client as a module, and a default `node` feature. The WIT rules tests stay in `paddock`. No behavior change: every test passes unchanged, apart from paths and the node's command line. Update README, GETTING_STARTED, CLAUDE.md and CI.
+- [x] **0.1 Crate consolidation.** Merge `paddock-manifest` into `paddock-bundle` (as a `manifest` module). Merge `paddock-node`, `paddock-api` and `paddock-cli` into `paddock`: one binary with a `node` subcommand in place of `paddock-node`, the API types and client as a module, and a default `node` feature. The WIT rules tests stay in `paddock`. No behavior change: every test passes unchanged, apart from paths and the node's command line. Update README, GETTING_STARTED, CLAUDE.md and CI.
 - [ ] **0.2 `paddock rollback --restart`.** Found in M9. A rollback is an upgrade to the previous version in that version's mode. In `snapshot` mode it runs the older release's `load-snapshot` on the newer release's snapshot. If that fails (the counter example's v1 cannot read v2's format 2), the rollback is refused and the newer version keeps running, so an operator cannot return to a known-good release. Fix: `--restart` (API: `restart=true`) stops the current version gracefully and starts the previous one from `init`, discarding in-memory state. It is audited as a restart rollback and refused without the flag, so losing state is always explicit. Also `paddock upgrade --restart` for the same choice on upgrades, and a refusal message that suggests the flag. Reuses `restart` mode's rollout path.
 - [ ] **0.3 `placement.mode`** in place of `placement.singleton: bool` (review action A2), still unenforced, with its warning.
 - [ ] **0.4 Missing baselines.** The cost of epoch interruption against a store without it; many concurrent clients against a pool. Added as a dated section of BASELINE.md. (Admin-API latency is B5; log-record cost is A3.)
