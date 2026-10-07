@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use paddock_api::{
     AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, RolloutParams,
-    UpgradeResponse,
+    StateResponse, UpgradeResponse,
 };
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
 use paddock_host::{
@@ -106,6 +106,7 @@ fn instance_info(h: &InstanceHandle) -> InstanceInfo {
         version: h.version(),
         state: format!("{:?}", h.state()).to_lowercase(),
         queued: h.queued(),
+        dropped: h.dropped_messages(),
     }
 }
 
@@ -149,6 +150,7 @@ impl Node {
     /// # Errors
     ///
     /// [`NodeError::Invalid`] for an unreadable policy file;
+    /// [`NodeError::Conflict`] if another node has `data_dir` open;
     /// [`NodeError::Internal`] if the store or runtime cannot start.
     pub async fn open(config: NodeConfig, logs: Arc<LogRing>) -> Result<Self, NodeError> {
         let store = Store::open(&config.data_dir)?;
@@ -740,6 +742,83 @@ impl Node {
             CallError::TooLarge => NodeError::Invalid(e.to_string()),
             other => NodeError::Conflict(format!("call to {name} failed: {other}")),
         })
+    }
+
+    /// Cast to an app, routed to one of its instances.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] for an app that is not running,
+    /// [`NodeError::Invalid`] for a body over its `message_max_bytes`, and
+    /// [`NodeError::Conflict`] for a full mailbox (the cast is dropped and
+    /// counted).
+    pub fn cast(&self, name: &str, msg: Envelope) -> Result<Done, NodeError> {
+        let app = self
+            .apps
+            .app(name)
+            .ok_or_else(|| NodeError::NotFound(format!("{name} is not running")))?;
+        app.cast(msg).map_err(|e| match e {
+            CallError::Noproc => NodeError::NotFound(format!("{name} has no running instance")),
+            CallError::TooLarge => NodeError::Invalid(e.to_string()),
+            other => NodeError::Conflict(format!("cast to {name} failed: {other}")),
+        })?;
+        Ok(Done {
+            message: format!("cast to {name}"),
+        })
+    }
+
+    /// An instance's state through `save-snapshot`.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Invalid`] for a malformed pid, [`NodeError::NotFound`]
+    /// for no live instance, and [`NodeError::Conflict`] if `save-snapshot`
+    /// fails (the instance then restarts).
+    pub async fn state(&self, pid: &str) -> Result<StateResponse, NodeError> {
+        let pid: Pid = pid.parse().map_err(NodeError::Invalid)?;
+        let handle = self
+            .rt
+            .lookup(pid)
+            .ok_or_else(|| NodeError::NotFound(format!("no instance {pid}")))?;
+        let bytes = handle
+            .snapshot()
+            .await
+            .map_err(|e| NodeError::Conflict(format!("{pid}: {e}")))?;
+        let shown = format!("{}.{}.{}", pid.node, pid.id, pid.incarnation);
+        Ok(crate::state_view::describe(&shown, &bytes))
+    }
+
+    /// Set every instance of an app to log at `level` (`trace` to
+    /// `critical`), or with `reset`, at its own level again.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] for an app not deployed, [`NodeError::Invalid`]
+    /// for an unknown level.
+    pub async fn set_log_level(&self, name: &str, level: &str) -> Result<Done, NodeError> {
+        if !self.state.lock().await.desired.apps.contains_key(name) {
+            return Err(NodeError::NotFound(format!("{name} is not deployed")));
+        }
+        let parsed = if level == "reset" {
+            None
+        } else {
+            Some(
+                serde_json::from_value::<paddock_manifest::LogLevel>(json!(level)).map_err(|_| {
+                    NodeError::Invalid(format!(
+                        "unknown log level '{level}' (trace, debug, info, warn, error, critical, reset)"
+                    ))
+                })?,
+            )
+        };
+        self.rt.set_log_level(name, parsed);
+        self.audit
+            .record("log_level", json!({ "app": name, "level": level }));
+        let message = if parsed.is_some() {
+            format!("{name} logs at {level}")
+        } else {
+            format!("{name} logs at its manifest level")
+        };
+        Ok(Done { message })
     }
 
     /// Stop every app, in reverse start order.

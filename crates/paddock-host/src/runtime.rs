@@ -27,6 +27,7 @@ use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
+use paddock_manifest::LogLevel;
 
 /// Hosts instances on one node.
 ///
@@ -46,12 +47,22 @@ pub(crate) struct RuntimeInner {
     pools: RwLock<HashMap<String, Arc<Pool>>>,
     pub(crate) kv: KvStore,
     pub(crate) log_limits: LogLimits,
+    log_levels: RwLock<HashMap<String, LogLevel>>,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
 }
 
 impl RuntimeInner {
+    /// The operator's log level for `app`, if one is set.
+    pub(crate) fn log_level_override(&self, app: &str) -> Option<LogLevel> {
+        self.log_levels
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(app)
+            .copied()
+    }
+
     /// An instance of the running app called `name`, round-robin.
     pub(crate) fn pool_member(&self, name: &str) -> Option<InstanceHandle> {
         let pool = self
@@ -121,6 +132,7 @@ impl Runtime {
                 pools: RwLock::default(),
                 kv,
                 log_limits: LogLimits::default(),
+                log_levels: RwLock::default(),
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -226,6 +238,26 @@ impl Runtime {
     /// child naming an app that is not deployed.
     pub async fn start_apps(&self, deployments: Vec<AppDeployment>) -> Result<Apps, HostError> {
         apps::start(self, deployments).await
+    }
+
+    /// Override the log level of every instance of `app` from now on, or
+    /// return to each instance's own level with `None`.
+    pub fn set_log_level(&self, app: &str, level: Option<LogLevel>) {
+        let mut levels = self
+            .inner
+            .log_levels
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        match level {
+            Some(level) => levels.insert(app.to_string(), level),
+            None => levels.remove(app),
+        };
+    }
+
+    /// The log level override for `app`, if one is set.
+    #[must_use]
+    pub fn log_level(&self, app: &str) -> Option<LogLevel> {
+        self.inner.log_level_override(app)
     }
 
     pub(crate) fn add_pool(&self, name: &str, pool: Arc<Pool>) {

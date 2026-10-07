@@ -9,9 +9,10 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
 use minisign::KeyPair;
-use paddock_api::Client;
+use paddock_api::{Client, ClientError};
 use paddock_node::{LogRing, Node, NodeConfig, RingLayer};
 use rustbridge_bundle::{BundleBuilder, Manifest, Platform};
+use serde_json::json;
 use tempfile::TempDir;
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -239,4 +240,61 @@ impl TestNode {
             let _ = server.await;
         }
     }
+}
+
+/// `extra` with fast supervision backoff and short lifecycle timeouts.
+pub fn fast(mut extra: serde_json::Value) -> serde_json::Value {
+    let base = json!({
+        "supervision": { "intensity": 3, "backoff": { "initial_ms": 10, "max_ms": 20 } },
+        "lifecycle": { "init_timeout_ms": 2000, "shutdown_timeout_ms": 300 }
+    });
+    if let (Some(e), serde_json::Value::Object(b)) = (extra.as_object_mut(), base) {
+        for (k, v) in b {
+            e.entry(k).or_insert(v);
+        }
+    }
+    extra
+}
+
+/// An API error's kind, or the error text for transport failures.
+pub fn kind(err: &ClientError) -> String {
+    match err {
+        ClientError::Api(e) => e.kind.clone(),
+        other => format!("{other}"),
+    }
+}
+
+/// Call `app` with a text body and return the text reply.
+pub async fn call(node: &TestNode, app: &str, body: &str) -> String {
+    let (_, reply) = node
+        .client
+        .call(app, "text/plain", body.as_bytes().to_vec(), 5_000)
+        .await
+        .unwrap();
+    String::from_utf8(reply).unwrap()
+}
+
+/// The services fixture's manifest: logging, config, a disk bucket and
+/// a `/data` volume named `scratch`.
+pub fn services_manifest() -> serde_json::Value {
+    fast(json!({
+        "capabilities": {
+            "wasi:logging": {},
+            "wasi:config": {},
+            "wasi:keyvalue": { "buckets": { "data": { "durability": "disk" } } },
+            "wasi:filesystem": { "preopens": { "/data": { "volume": "scratch", "mode": "rw" } } }
+        },
+        "config": { "defaults": { "greeting": "hello", "mode": "default" } }
+    }))
+}
+
+/// The counter fixture's manifest, snapshot upgrades from `from`.
+pub fn counter_manifest(from: Option<&str>) -> serde_json::Value {
+    let mut m = fast(json!({}));
+    if let Some(f) = from {
+        m["upgrade"] = json!({ "mode": "snapshot", "snapshot_version": 1, "from_versions": [f] });
+    } else {
+        m["upgrade"] = json!({ "mode": "snapshot", "snapshot_version": 1 });
+    }
+    m
 }

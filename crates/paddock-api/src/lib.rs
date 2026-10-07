@@ -15,7 +15,10 @@
 //! | `POST /v1/apps/{app}/rollback?batch=N&observe_ms=N&max_restarts=N` | | [`UpgradeResponse`] |
 //! | `POST /v1/apps/{app}/call?timeout_ms=N` | message body, with its `Content-Type` | reply body |
 //! | `GET /v1/apps/{app}/logs?lines=N` | | `Vec<LogLine>` |
+//! | `POST /v1/apps/{app}/cast` | message body, with its `Content-Type` | [`Done`] |
+//! | `POST /v1/apps/{app}/log-level?level=debug` (or `reset`) | | [`Done`] |
 //! | `GET /v1/instances` | | `Vec<InstanceInfo>` |
+//! | `GET /v1/instances/{pid}/state` | | [`StateResponse`] |
 //! | `POST /v1/instances/{pid}/kill` | | [`Done`] |
 //!
 //! ```sh
@@ -82,6 +85,30 @@ pub struct InstanceInfo {
     pub state: String,
     /// Messages waiting in its mailbox.
     pub queued: usize,
+    /// Casts and timer messages dropped because its mailbox was full.
+    #[serde(default)]
+    pub dropped: u64,
+}
+
+/// An instance's state, from its `save-snapshot`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateResponse {
+    /// `node.id.incarnation`.
+    pub pid: String,
+    /// Snapshot size in bytes.
+    pub bytes: usize,
+    /// How it was read: `paddock-sdk` (a `[format_version, state]` CBOR
+    /// pair), `json`, `text`, `cbor`, `raw` or `empty`.
+    pub format: String,
+    /// The SDK snapshot's format version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_version: Option<u64>,
+    /// The decoded state, for every format but `raw`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+    /// The bytes in hex, for `raw`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hex: Option<String>,
 }
 
 /// What a deploy did.

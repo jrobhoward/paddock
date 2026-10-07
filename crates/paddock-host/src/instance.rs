@@ -48,6 +48,22 @@ enum Op {
         from_version: String,
         reply: oneshot::Sender<Result<Duration, UpgradeError>>,
     },
+    Snapshot {
+        reply: oneshot::Sender<Result<Vec<u8>, SnapshotError>>,
+    },
+}
+
+/// Why reading an instance's state failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SnapshotError {
+    /// The instance had exited.
+    #[error("instance is not running")]
+    NotRunning,
+    /// `save-snapshot` failed. The Store cannot continue after a trap, so the
+    /// instance exited with this reason and its supervisor restarts it.
+    #[error("save-snapshot failed: {0}")]
+    Failed(ExitReason),
 }
 
 /// A stop request. A kill overrides a graceful shutdown; nothing overrides a
@@ -256,6 +272,24 @@ impl InstanceHandle {
         answer.await.unwrap_or(Err(UpgradeError::NotRunning))
     }
 
+    /// The instance's state as its `save-snapshot` writes it, taken between
+    /// callbacks (OTP's `sys:get_state`). `save-snapshot` must not change
+    /// state, so the instance carries on. If it traps, the instance exits and
+    /// its supervisor restarts it, as after a failed upgrade.
+    ///
+    /// # Errors
+    ///
+    /// [`SnapshotError::NotRunning`] if it has exited, and
+    /// [`SnapshotError::Failed`] if `save-snapshot` fails.
+    pub async fn snapshot(&self) -> Result<Vec<u8>, SnapshotError> {
+        let (reply, answer) = oneshot::channel();
+        self.shared
+            .ops
+            .send(Op::Snapshot { reply })
+            .map_err(|_| SnapshotError::NotRunning)?;
+        answer.await.unwrap_or(Err(SnapshotError::NotRunning))
+    }
+
     /// Stop now with reason `killed`, without `terminate`. A callback in
     /// progress is abandoned.
     pub fn kill(&self) {
@@ -391,8 +425,15 @@ impl InstanceTask {
         self.signals.close();
         // Fail any upgrade still queued.
         self.ops.close();
-        while let Ok(Op::Upgrade { reply, .. }) = self.ops.try_recv() {
-            let _ = reply.send(Err(UpgradeError::NotRunning));
+        while let Ok(op) = self.ops.try_recv() {
+            match op {
+                Op::Upgrade { reply, .. } => {
+                    let _ = reply.send(Err(UpgradeError::NotRunning));
+                }
+                Op::Snapshot { reply } => {
+                    let _ = reply.send(Err(SnapshotError::NotRunning));
+                }
+            }
         }
         notify_exit(&rt, self.pid, &reason);
         let _enter = span.enter();
@@ -494,14 +535,7 @@ impl InstanceTask {
                     continue;
                 }
                 Some(op) = self.ops.recv() => {
-                    let Op::Upgrade { app, spec: next, from_version, reply } = op;
-                    let result = self.upgrade(store, instance, spec, &app, *next, &from_version).await;
-                    let exit = match &result {
-                        Err(UpgradeError::SaveFailed(reason)) => Some(reason.clone()),
-                        _ => None,
-                    };
-                    let _ = reply.send(result);
-                    if let Some(reason) = exit {
+                    if let Some(reason) = self.operate(store, instance, spec, op).await {
                         return Err(reason);
                     }
                     continue;
@@ -552,6 +586,50 @@ impl InstanceTask {
             if let Err(err) = outcome {
                 tracing::debug!(error = %describe(&err), "callback failed");
                 return Err(classify(&err, store.data()));
+            }
+        }
+    }
+
+    /// Run a host operation between callbacks. Returns the exit reason if
+    /// the instance cannot continue.
+    async fn operate(
+        &mut self,
+        store: &mut Store<InstanceState>,
+        instance: &mut PaddockApp,
+        spec: &mut InstanceSpec,
+        op: Op,
+    ) -> Option<ExitReason> {
+        match op {
+            Op::Upgrade {
+                app,
+                spec: next,
+                from_version,
+                reply,
+            } => {
+                let result = self
+                    .upgrade(store, instance, spec, &app, *next, &from_version)
+                    .await;
+                let exit = match &result {
+                    Err(UpgradeError::SaveFailed(reason)) => Some(reason.clone()),
+                    _ => None,
+                };
+                let _ = reply.send(result);
+                exit
+            }
+            Op::Snapshot { reply } => {
+                store.data_mut().clock.start(spec.callback_deadline);
+                let saved =
+                    killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await;
+                let (result, exit) = match saved {
+                    Ok(Ok(bytes)) => (Ok(bytes), None),
+                    Ok(Err(err)) => {
+                        let reason = classify(&err, store.data());
+                        (Err(SnapshotError::Failed(reason.clone())), Some(reason))
+                    }
+                    Err(killed) => (Err(SnapshotError::Failed(killed.clone())), Some(killed)),
+                };
+                let _ = reply.send(result);
+                exit
             }
         }
     }

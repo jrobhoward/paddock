@@ -1,6 +1,6 @@
 //! A node end to end through its admin API: deploy, status, kill, upgrade,
 //! rollback, stop/start/remove, restart restore, refusals, logs and the
-//! audit log. Covers Phase 1 exit criteria 7 and 9 through a node.
+//! audit log. The Phase 1 exit criteria are in `exit_criteria.rs`.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -11,39 +11,11 @@ mod common;
 
 use std::time::Duration;
 
-use common::{TestNode, bundle, counter, fixture};
-use minisign::KeyPair;
-use paddock_api::{ClientError, RolloutParams};
+use common::{
+    TestNode, bundle, call, counter, counter_manifest, fast, fixture, kind, services_manifest,
+};
+use paddock_api::RolloutParams;
 use serde_json::json;
-
-fn fast(mut extra: serde_json::Value) -> serde_json::Value {
-    let base = json!({
-        "supervision": { "intensity": 3, "backoff": { "initial_ms": 10, "max_ms": 20 } },
-        "lifecycle": { "init_timeout_ms": 2000, "shutdown_timeout_ms": 300 }
-    });
-    if let (Some(e), serde_json::Value::Object(b)) = (extra.as_object_mut(), base) {
-        for (k, v) in b {
-            e.entry(k).or_insert(v);
-        }
-    }
-    extra
-}
-
-fn kind(err: &ClientError) -> String {
-    match err {
-        ClientError::Api(e) => e.kind.clone(),
-        other => format!("{other}"),
-    }
-}
-
-async fn call(node: &TestNode, app: &str, body: &str) -> String {
-    let (_, reply) = node
-        .client
-        .call(app, "text/plain", body.as_bytes().to_vec(), 5_000)
-        .await
-        .unwrap();
-    String::from_utf8(reply).unwrap()
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deploy____signed_bundle____running_listed_and_callable() {
@@ -123,116 +95,6 @@ async fn kill____instance____restarted_with_next_incarnation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exit_criterion_9____tampered_or_untrusted_bundle____refused_and_audited() {
-    let mut n = TestNode::start("").await;
-    let stranger = KeyPair::generate_unencrypted_keypair().unwrap();
-    let untrusted = bundle(
-        &stranger,
-        "x",
-        "1.0.0",
-        &fixture("paddock_fixture_chaos"),
-        json!({}),
-        &[],
-    );
-    let mut tampered = bundle(
-        &n.key,
-        "x",
-        "1.0.0",
-        &fixture("paddock_fixture_chaos"),
-        json!({}),
-        &[],
-    );
-    let at = tampered.len() / 2;
-    tampered[at] ^= 0xff;
-
-    let e1 = n.client.deploy(untrusted).await.unwrap_err();
-    let e2 = n.client.deploy(tampered).await.unwrap_err();
-
-    assert_eq!(kind(&e1), "refused");
-    assert!(e1.to_string().contains("not trusted"), "{e1}");
-    assert!(matches!(kind(&e2).as_str(), "refused" | "internal"), "{e2}");
-    assert!(n.client.list().await.unwrap().is_empty());
-    assert_eq!(n.events(), ["deploy_refused", "deploy_refused"]);
-    n.shutdown().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exit_criterion_7____undeclared_import____refused_at_deploy() {
-    let mut n = TestNode::start("").await;
-    let b = bundle(
-        &n.key,
-        "sneaky",
-        "1.0.0",
-        &fixture("paddock_fixture_services"),
-        json!({}),
-        &[],
-    );
-
-    let err = n.client.deploy(b).await.unwrap_err();
-
-    assert_eq!(kind(&err), "refused");
-    assert!(
-        err.to_string()
-            .contains("imports not declared under capabilities"),
-        "{err}"
-    );
-    assert!(err.to_string().contains("wasi:keyvalue/store"), "{err}");
-    n.shutdown().await;
-}
-
-fn services_manifest() -> serde_json::Value {
-    fast(json!({
-        "capabilities": {
-            "wasi:logging": {},
-            "wasi:config": {},
-            "wasi:keyvalue": { "buckets": { "data": { "durability": "disk" } } },
-            "wasi:filesystem": { "preopens": { "/data": { "volume": "scratch", "mode": "rw" } } }
-        },
-        "config": { "defaults": { "greeting": "hello", "mode": "default" } }
-    }))
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exit_criterion_7____declared_but_ungranted____denied_at_call_time() {
-    let scratch = tempfile::tempdir().unwrap();
-    let policy_dir = tempfile::tempdir().unwrap();
-    let policy = policy_dir.path().join("policy.toml");
-    std::fs::write(
-        &policy,
-        "[defaults]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:filesystem\"]\n",
-    )
-    .unwrap();
-    let mut n = TestNode::start(&format!(
-        "policy = {:?}\n[volumes]\nscratch = {:?}\n",
-        policy,
-        scratch.path()
-    ))
-    .await;
-    let b = bundle(
-        &n.key,
-        "svc",
-        "1.0.0",
-        &fixture("paddock_fixture_services"),
-        services_manifest(),
-        &[("priv/motd.txt", b"from the bundle")],
-    );
-
-    let deployed = n.client.deploy(b).await.unwrap();
-    let kv = call(&n, "svc", "kv-get:data:k").await;
-    let priv_file = call(&n, "svc", "read:/priv/motd.txt").await;
-    let status = n.client.status("svc").await.unwrap();
-
-    assert_eq!(deployed.denied, vec!["wasi:keyvalue"]);
-    assert_eq!(kv, "err:access-denied");
-    assert_eq!(priv_file, "from the bundle");
-    assert_eq!(
-        status.granted,
-        vec!["wasi:logging", "wasi:config", "wasi:filesystem"]
-    );
-    n.shutdown().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn config_overrides_and_logs____node_values_win_and_records_are_kept() {
     let scratch = tempfile::tempdir().unwrap();
     let policy_dir = tempfile::tempdir().unwrap();
@@ -278,17 +140,33 @@ async fn config_overrides_and_logs____node_values_win_and_records_are_kept() {
         vec![("fixture", "disk almost full"), ("stdout", "to stdout")]
     );
     assert_eq!(lines[0].level, "WARN");
-    n.shutdown().await;
-}
 
-fn counter_manifest(from: Option<&str>) -> serde_json::Value {
-    let mut m = fast(json!({}));
-    if let Some(f) = from {
-        m["upgrade"] = json!({ "mode": "snapshot", "snapshot_version": 1, "from_versions": [f] });
-    } else {
-        m["upgrade"] = json!({ "mode": "snapshot", "snapshot_version": 1 });
+    n.client
+        .set_log_level("svclog", Some("error"))
+        .await
+        .unwrap();
+    call(&n, "svclog", "log:warn:hidden while capped").await;
+    n.client.set_log_level("svclog", None).await.unwrap();
+    call(&n, "svclog", "log:warn:shown after reset").await;
+    let mut after = Vec::new();
+    for _ in 0..100 {
+        after = n.client.logs("svclog", 10).await.unwrap();
+        if after.iter().any(|l| l.message == "shown after reset") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    m
+    let unknown = n
+        .client
+        .set_log_level("nobody", Some("debug"))
+        .await
+        .unwrap_err();
+
+    assert!(!after.iter().any(|l| l.message == "hidden while capped"));
+    assert!(after.iter().any(|l| l.message == "shown after reset"));
+    assert_eq!(kind(&unknown), "not_found");
+    assert_eq!(n.events().iter().filter(|e| *e == "log_level").count(), 2);
+    n.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -523,5 +401,24 @@ async fn admin_socket____created_owner_only() {
         & 0o777;
 
     assert_eq!(mode, 0o600);
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn open____data_dir_held_by_another_node____refused() {
+    let mut n = TestNode::start("").await;
+    let toml = format!("data_dir = {:?}\n", n.data());
+
+    let second = paddock_node::Node::open(
+        paddock_node::NodeConfig::from_toml_str(&toml).unwrap(),
+        common::ring(),
+    )
+    .await;
+
+    let Err(err) = second else {
+        panic!("a second node opened the same data directory");
+    };
+    assert!(matches!(err, paddock_node::NodeError::Conflict(_)), "{err}");
+    assert!(err.to_string().contains("in use by another node"), "{err}");
     n.shutdown().await;
 }

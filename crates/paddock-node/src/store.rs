@@ -7,6 +7,7 @@
 //! ├── priv/<app>/<version>/...   files the app sees at /priv
 //! ├── kv/                        keyvalue disk buckets
 //! ├── tmp/                       uploads being verified
+//! ├── node.lock                  held while a node has the directory open
 //! └── audit.log                  one JSON object per line
 //! ```
 
@@ -40,6 +41,8 @@ pub(crate) struct AppState {
 pub(crate) struct Store {
     root: PathBuf,
     uploads: AtomicU64,
+    /// An exclusive lock on `node.lock`, released when the store drops.
+    _lock: std::fs::File,
 }
 
 impl Store {
@@ -48,9 +51,25 @@ impl Store {
             std::fs::create_dir_all(root.join(dir))
                 .map_err(|e| NodeError::Internal(format!("{}: {e}", root.join(dir).display())))?;
         }
+        let path = root.join("node.lock");
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| NodeError::Internal(format!("{}: {e}", path.display())))?;
+        lock.try_lock().map_err(|e| match e {
+            std::fs::TryLockError::WouldBlock => {
+                NodeError::Conflict(format!("{} is in use by another node", root.display()))
+            }
+            std::fs::TryLockError::Error(e) => {
+                NodeError::Internal(format!("{}: {e}", path.display()))
+            }
+        })?;
         Ok(Self {
             root: root.to_path_buf(),
             uploads: AtomicU64::new(0),
+            _lock: lock,
         })
     }
 

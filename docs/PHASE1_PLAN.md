@@ -139,11 +139,16 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Bundle tooling: `paddock bundle` or the rustbridge CLI producing a 1.2 `.rbp` from a component and manifest (per S6). (`paddock bundle` reads a `paddock.toml`, refuses undeclared imports, adds `--priv` files with checksums, signs, and verifies the result; `paddock keygen` makes minisign keys.)
 
 ### M9 Exit test suite and baseline numbers (M)
-- [ ] From the HAppliance/OTP review: admin `state <pid>` through `save-snapshot` (A3), a test that a second node on the same data directory is refused (A5), and optionally runtime `log-level` (A7).
-- [ ] Integration tests for every exit criterion above.
-- [ ] Baseline benchmarks: call latency (p50/p99), cast throughput, instantiate time, idle memory per instance. Recorded in the repo, not gated.
-- [ ] Fuzz the host functions of `process` with arbitrary envelopes and pids (cargo-fuzz), run nightly.
-- [ ] Docs: getting started, writing an app, manifest reference.
+- [x] From the HAppliance/OTP review: admin `state <pid>` through `save-snapshot` (A3), a test that a second node on the same data directory is refused (A5), and optionally runtime `log-level` (A7). (All three. The node now holds an exclusive `node.lock`; before, the refusal was a side effect of redb's lock. Also `paddock cast` and a `DROPPED` count in `ps`, which criterion 5 needs.)
+- [x] Integration tests for every exit criterion above. (`crates/paddock-node/tests/exit_criteria.rs`, through a node's admin API; the chaos, counter and services fixtures stand in for the examples.)
+- [x] Baseline benchmarks: call latency (p50/p99), cast throughput, instantiate time, idle memory per instance. Recorded in the repo, not gated. ([docs/BASELINE.md](BASELINE.md): about 2.3 µs per call, 0.79 M casts/s, 77 µs to instantiate, 56 KiB per idle instance.)
+- [x] Fuzz the host functions of `process` with arbitrary envelopes and pids (cargo-fuzz), run nightly. (`fuzz/`: five targets, `process_ops` among them; no crashes in local runs.)
+- [x] Docs: getting started, writing an app, manifest reference.
+
+Follow-ups found during M9, not scheduled:
+- A snapshot-mode rollback runs the older release's `load-snapshot`, so it is refused unless that release reads the newer format (the counter example's v1 cannot read v2's). Consider `paddock rollback --restart` to roll back without state.
+- SDK wrappers for `wasi:config` and `wasi:keyvalue`. Today an app generates its own bindings, and combining them with the SDK is untested.
+- Epoch-interruption overhead, admin-API call latency and concurrent-client load are not yet measured ([docs/BASELINE.md](BASELINE.md)).
 
 ## Order and parallelism
 
@@ -160,7 +165,7 @@ M5 and M7 can run beside M4 once M2 and M3 are done. The SDK (M8) tracks the WIT
 
 Kept small; the rest waits for later phases:
 
-From S6 (`rustbridge-bundle` 1.0.1 is already a usable library). Done on the rustbridge `bundle-1.2` branch, not yet published; `paddock-bundle` depends on a sibling checkout (`../rustbridge`) until it is, so CI cannot build the workspace in the meantime:
+From S6 (`rustbridge-bundle` 1.0.1 is already a usable library). Done on rustbridge's `experiment/wasm` branch (pushed to GitHub 2026-10-06); `rustbridge-bundle` is a git dependency on it, pinned by `Cargo.lock`:
 - [x] `Platform::Wasm32Wasip2` and `#[non_exhaustive]` on `Platform`.
 - [x] Optional `component: { world }` on a variant.
 - [x] `#[serde(flatten)]` extensions on `Manifest` so `appserver` round-trips; builder `with_extension`.
@@ -170,7 +175,8 @@ From S6 (`rustbridge-bundle` 1.0.1 is already a usable library). Done on the rus
 - [x] `BundleBuilder::add_component`.
 - [x] Also: `zip` built with Deflate only, which keeps two non-allow-listed licences (bzip2, ppmd) out of Paddock's graph.
 - [x] Also: a signed `files` checksum map (`add_checksummed_bytes`, `read_file_verified`), so a bundle's `priv/` files are verified (M7).
-- [ ] Publish the branch, then switch `paddock-bundle` to a git or crates.io dependency.
+- [x] Publish the branch, then switch `paddock-bundle` to a git dependency (`experiment/wasm`).
+- [ ] Switch to a crates.io release once one includes bundle format 1.2.
 - [ ] Later (Phase 2+): the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait, and the native-process runner.
 
 ## Out of scope for Phase 1

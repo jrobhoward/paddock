@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     ApiError, AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, RolloutParams,
-    UpgradeResponse,
+    StateResponse, UpgradeResponse,
 };
 
 /// Why a request failed.
@@ -163,6 +163,52 @@ impl Client {
     pub async fn kill(&self, pid: &str) -> Result<Done, ClientError> {
         self.json(Method::POST, &format!("/v1/instances/{pid}/kill"), None)
             .await
+    }
+
+    /// An instance's state, from its `save-snapshot`. If `save-snapshot`
+    /// traps, the instance exits and its supervisor restarts it.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn state(&self, pid: &str) -> Result<StateResponse, ClientError> {
+        self.json(Method::GET, &format!("/v1/instances/{pid}/state"), None)
+            .await
+    }
+
+    /// Set an app's log level (`trace` to `critical`), or `None` to return
+    /// to each instance's own level.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn set_log_level(&self, app: &str, level: Option<&str>) -> Result<Done, ClientError> {
+        let level = level.unwrap_or("reset");
+        self.json(
+            Method::POST,
+            &format!("/v1/apps/{app}/log-level?level={level}"),
+            None,
+        )
+        .await
+    }
+
+    /// Cast to an app (routed to one of its instances).
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn cast(
+        &self,
+        app: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<Done, ClientError> {
+        self.json(
+            Method::POST,
+            &format!("/v1/apps/{app}/cast"),
+            Some((content_type, body)),
+        )
+        .await
     }
 
     /// Every running instance.

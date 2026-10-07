@@ -206,6 +206,19 @@ async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
         },
         (&Method::POST, ["v1", "apps", app, "upgrade"]) => upgrade(node, app, &q, req).await,
         (&Method::POST, ["v1", "apps", app, "call"]) => call(node, app, &q, req).await,
+        (&Method::POST, ["v1", "apps", app, "cast"]) => match body(req).await {
+            Ok((content_type, bytes)) => {
+                respond(node.cast(app, Envelope::new(content_type, bytes)))
+            }
+            Err(e) => error(&e),
+        },
+        (&Method::POST, ["v1", "apps", app, "log-level"]) => {
+            match q.iter().find(|(k, _)| k == "level") {
+                Some((_, level)) => respond(node.set_log_level(app, level).await),
+                None => error(&NodeError::Invalid("level is required".into())),
+            }
+        }
+        (&Method::GET, ["v1", "instances", pid, "state"]) => respond(node.state(pid).await),
         (&Method::GET, ["v1", "apps", app, "logs"]) => match param::<usize>(&q, "lines") {
             Ok(lines) => respond(node.logs(app, lines.unwrap_or(100)).await),
             Err(e) => error(&e),

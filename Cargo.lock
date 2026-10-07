@@ -1400,6 +1400,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "ciborium",
  "clap",
  "http-body-util",
  "hyper",
@@ -1757,6 +1758,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-bundle"
 version = "1.0.1"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
 dependencies = [
  "hex",
  "minisign",

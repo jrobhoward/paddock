@@ -14,6 +14,7 @@ mod error;
 mod logring;
 mod node;
 mod server;
+mod state_view;
 mod store;
 
 pub use config::{MemoryProfile, NodeConfig};

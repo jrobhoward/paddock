@@ -136,6 +136,30 @@ enum Command {
     },
     /// List running instances.
     Ps,
+    /// Show an instance's state (through its save-snapshot; an instance that
+    /// traps there restarts).
+    State {
+        /// `node.id.incarnation`.
+        pid: String,
+    },
+    /// Set an app's log level (trace, debug, info, warn, error, critical), or
+    /// `reset` to its manifest's level.
+    LogLevel {
+        /// App name.
+        app: String,
+        /// Level, or `reset`.
+        level: String,
+    },
+    /// Cast to an app.
+    Cast {
+        /// App name.
+        app: String,
+        /// The message body.
+        body: String,
+        /// The message content type.
+        #[arg(long, default_value = "text/plain")]
+        content_type: String,
+    },
     /// Show an app's recent log records.
     Logs {
         /// App name.
@@ -266,6 +290,22 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
         Command::Remove { app } => print(json, &client.remove(&app).await?, |d| d.message.clone()),
         Command::Kill { pid } => print(json, &client.kill(&pid).await?, |d| d.message.clone()),
         Command::Ps => print(json, &client.ps().await?, |i| format::instances(i)),
+        Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
+        Command::LogLevel { app, level } => {
+            let level = (level != "reset").then_some(level.as_str());
+            print(json, &client.set_log_level(&app, level).await?, |d| {
+                d.message.clone()
+            })
+        }
+        Command::Cast {
+            app,
+            body,
+            content_type,
+        } => print(
+            json,
+            &client.cast(&app, &content_type, body.into_bytes()).await?,
+            |d| d.message.clone(),
+        ),
         Command::Logs { app, lines } => {
             print(json, &client.logs(&app, lines).await?, |l| format::logs(l))
         }

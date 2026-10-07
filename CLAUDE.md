@@ -58,10 +58,16 @@ wasm-tools component wit target/wasm32-wasip2/release/paddock_fixture_echo.wasm
 cargo test -p paddock-bundle --test fixture_echo -- --ignored
 ```
 
-**rustbridge is a sibling checkout for now.** `rustbridge-bundle` is a path
-dependency on `../rustbridge` (branch `bundle-1.2`) until bundle format 1.2 is
-published, so CI cannot build the workspace. rustbridge changes are made in that
-checkout, under rustbridge's own `CLAUDE.md`.
+**rustbridge comes from GitHub.** `rustbridge-bundle` is a git dependency on
+rustbridge's `experiment/wasm` branch (bundle format 1.2), pinned by
+`Cargo.lock`; `cargo update -p rustbridge-bundle` picks up new commits. For
+changes to rustbridge itself, work in a checkout of that branch under
+rustbridge's own `CLAUDE.md`, push it, then update the lock. A temporary
+`[patch."https://github.com/jrobhoward/rustbridge"]` pointing at the local
+checkout lets both repos be iterated together; don't commit it.
+
+Fuzz targets are a separate workspace under `fuzz/` (cargo-fuzz, nightly);
+`fuzz/README.md` has the commands.
 
 Spikes are a separate workspace under `spikes/` with their own lock file. Each
 `spikes/<name>/README.md` has its exact build and run commands.

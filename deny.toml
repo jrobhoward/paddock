@@ -78,3 +78,6 @@ deny = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# rustbridge's bundle format 1.2 is on its `experiment/wasm` branch until a
+# crates.io release includes it (Cargo.lock pins the commit).
+allow-git = ["https://github.com/jrobhoward/rustbridge"]

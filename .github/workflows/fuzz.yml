@@ -1,0 +1,49 @@
+name: Fuzz
+
+# Nightly, plus on demand. Each target runs for five minutes, starting from
+# the corpus the previous run left in the cache.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [bundle_open, manifest, parse, routing_key, process_ops]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchains
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32-wasip2
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-fuzz --locked
+
+      # process_ops runs the chaos fixture.
+      - name: Build guest fixture
+        if: matrix.target == 'process_ops'
+        run: cargo +stable build --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures --locked
+
+      - uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Fuzz
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=300 -timeout=30 -rss_limit_mb=8192
+
+      - name: Keep crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}

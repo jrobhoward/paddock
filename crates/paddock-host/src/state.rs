@@ -487,7 +487,12 @@ impl logging::Host for InstanceState {
             return Ok(());
         }
         let level = level_of(level);
-        if level < self.log_level {
+        let cap = self
+            .ctx
+            .rt
+            .log_level_override(&self.tags.app)
+            .unwrap_or(self.log_level);
+        if level < cap {
             return Ok(());
         }
         let t = &self.tags;

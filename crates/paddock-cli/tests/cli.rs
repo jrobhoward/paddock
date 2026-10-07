@@ -114,8 +114,15 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
     let list_json = paddock(&socket, &["--json", "list"]).await;
     let status = paddock(&socket, &["status", "demo"]).await;
     let called = paddock(&socket, &["call", "demo", "echo:hi there"]).await;
+    let cast = paddock(&socket, &["cast", "demo", "count"]).await;
+    let counted = paddock(&socket, &["call", "demo", "count"]).await;
+    let ps_table = paddock(&socket, &["ps"]).await;
     let ps_json = paddock(&socket, &["--json", "ps"]).await;
     let ps: Vec<paddock_api::InstanceInfo> = serde_json::from_str(&ps_json.stdout).unwrap();
+    let state = paddock(&socket, &["state", &ps[0].pid]).await;
+    let debug = paddock(&socket, &["log-level", "demo", "debug"]).await;
+    let bogus = paddock(&socket, &["log-level", "demo", "loud"]).await;
+    let reset = paddock(&socket, &["log-level", "demo", "reset"]).await;
     let kill = paddock(&socket, &["kill", &ps[0].pid]).await;
     let stopped_app = paddock(&socket, &["stop", "demo"]).await;
     let started = paddock(&socket, &["start", "demo"]).await;
@@ -141,6 +148,29 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
         status.stdout
     );
     assert_eq!(called.stdout.trim(), "hi there");
+    assert_eq!(cast.stdout.trim(), "cast to demo");
+    assert_eq!(counted.stdout.trim(), "2");
+    assert!(
+        ps_table
+            .stdout
+            .lines()
+            .next()
+            .unwrap()
+            .ends_with("QUEUED  DROPPED"),
+        "{}",
+        ps_table.stdout
+    );
+    assert_eq!(
+        state.stdout,
+        format!("{} (raw, 8 bytes)\n0200000000000000\n", ps[0].pid)
+    );
+    assert_eq!(debug.stdout.trim(), "demo logs at debug");
+    assert!(
+        !bogus.ok && bogus.stderr.contains("unknown log level 'loud'"),
+        "{}",
+        bogus.stderr
+    );
+    assert_eq!(reset.stdout.trim(), "demo logs at its manifest level");
     assert!(
         kill.ok && kill.stdout.starts_with("killed <"),
         "{}",

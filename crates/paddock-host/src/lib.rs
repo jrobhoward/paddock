@@ -43,11 +43,15 @@ mod upgrade;
 pub use apps::{AppDeployment, AppHandle, AppStatus, Apps, UpgradeOptions, UpgradeReport};
 pub use config::{MemoryProfile, RuntimeConfig};
 pub use error::HostError;
-pub use instance::InstanceHandle;
+pub use instance::{InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;
 pub use message::{CallError, Envelope, ExitReason};
 pub use paddock_manifest::{RestartType, Strategy};
 pub use pid::Pid;
+/// Hash routing's key reader, for the fuzz targets in `fuzz/` only.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub use pool::routing_key;
 pub use runtime::{LoadedApp, Runtime};
 pub use spec::{InstanceSpec, PRIV_PATH, Preopen};
 pub use supervisor::{

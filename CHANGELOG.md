@@ -99,3 +99,26 @@ All notable changes are recorded here. The format follows
 - `paddock bundle` builds a signed `.rbp` from a component and `paddock.toml`
   (refusing undeclared imports, adding `--priv` files), and `paddock keygen`
   creates minisign keys.
+- `paddock state <pid>` (`GET /v1/instances/{pid}/state`): an instance's
+  state through `save-snapshot`, shown as JSON for SDK snapshots, JSON or text
+  bodies, or hex (`InstanceHandle::snapshot` in `paddock-host`).
+- `paddock log-level <app> <level|reset>` (`POST /v1/apps/{app}/log-level`):
+  change an app's log level at run time, audited (`Runtime::set_log_level`).
+- `paddock cast <app> <body>` (`POST /v1/apps/{app}/cast`), and a `DROPPED`
+  column in `paddock ps` (`InstanceInfo::dropped`): casts lost to a full
+  mailbox.
+- A node holds an exclusive lock on `<data_dir>/node.lock`; a second node on
+  the same data directory is refused.
+- `crates/paddock-node/tests/exit_criteria.rs`: every Phase 1 exit criterion
+  as a test against a running node.
+- `docs/BASELINE.md` and `paddock-host`'s `baseline` example: call latency,
+  cast throughput, instantiate time and idle memory per instance.
+- `fuzz/`: cargo-fuzz targets for bundle opening, manifest parsing, small
+  parsers, hash-routing keys and sequences of process operations on live
+  instances, run nightly in CI.
+- `docs/GETTING_STARTED.md`, `docs/WRITING_APPS.md` and `docs/MANIFEST.md`.
+
+### Changed
+
+- `rustbridge-bundle` is a git dependency on rustbridge's `experiment/wasm`
+  branch instead of a sibling checkout, so CI can build the workspace.

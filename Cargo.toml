@@ -20,7 +20,7 @@ members = [
 ]
 # Throwaway spike code is its own workspace with its own lock file; the
 # conventions and Definition of Done below do not apply to it.
-exclude = ["spikes"]
+exclude = ["spikes", "fuzz"]
 
 [workspace.package]
 edition = "2024"
@@ -69,11 +69,11 @@ paddock-host = { path = "crates/paddock-host" }
 paddock-node = { path = "crates/paddock-node" }
 paddock-sdk = { path = "crates/paddock-sdk" }
 paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
-# TEMPORARY: a sibling checkout of rustbridge on its `bundle-1.2` branch, which
-# adds bundle format 1.2 (wasm32-wasip2 components, manifest extensions,
-# trusted-key verification). Swap for a git or crates.io dependency once that
-# branch is published; until then CI cannot build this workspace.
-rustbridge-bundle = { path = "../rustbridge/crates/rustbridge-bundle" }
+# rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2
+# components, manifest extensions, trusted-key verification, signed file
+# checksums). Cargo.lock pins the commit. Move to a crates.io release once one
+# includes format 1.2.
+rustbridge-bundle = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
 
 # Test-only
 minisign = "0.9"
@@ -89,6 +89,8 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 unsafe_op_in_unsafe_fn = "forbid"
 missing_docs = "warn"
 missing_debug_implementations = "warn"
+# cargo-fuzz builds with `--cfg fuzzing`; see fuzz/.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [workspace.lints.clippy]
 cognitive_complexity = "warn"

@@ -21,10 +21,16 @@ components, with Erlang/OTP-style semantics:
 
 Pre-release. A single node runs: `paddock-node` deploys signed bundles and
 supervises their instances, and the `paddock` CLI manages it. Phase 1
-milestones M0 to M8 are done; the exit test suite and baseline numbers (M9)
-remain. Until rustbridge's bundle format 1.2 is published, the workspace builds
-only next to a rustbridge checkout on its `bundle-1.2` branch, so CI is red.
+milestones M0 to M9 are done. rustbridge's bundle format 1.2 comes from its
+`experiment/wasm` branch on GitHub until it is released.
 
+- [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md): run a node and
+  deploy, upgrade and roll back an app.
+- [`docs/WRITING_APPS.md`](docs/WRITING_APPS.md): write an app with
+  `paddock-sdk`.
+- [`docs/MANIFEST.md`](docs/MANIFEST.md): every manifest field, capabilities,
+  node configuration and operator policy.
+- [`docs/BASELINE.md`](docs/BASELINE.md): baseline performance numbers.
 - [`docs/DESIGN.md`](docs/DESIGN.md): architecture, app model, manifest and
   capability model, failure handling, upgrades, distribution, security, risks.
 - [`docs/PHASE1_PLAN.md`](docs/PHASE1_PLAN.md): Phase 1 exit criteria and
@@ -69,8 +75,10 @@ paddock call orders 'ping'
 paddock upgrade orders orders-2.0.0.rbp --approve
 paddock rollback orders
 paddock ps
+paddock state 0.12.1                   # an instance's state, via save-snapshot
 paddock kill 0.12.1
 paddock logs orders -n 50
+paddock log-level orders debug         # until `paddock log-level orders reset`
 paddock stop orders && paddock start orders
 paddock remove orders
 ```

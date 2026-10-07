@@ -570,3 +570,25 @@ async fn deny_stubs____no_error_channel____traps_naming_the_function() {
     };
     assert!(why.contains("paddock:fixture/denied#boom"), "{why}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn log_level____operator_override____applies_at_once_and_resets() {
+    capture();
+    let (rt, app) = shared();
+    let h = up(rt, app, spec("log-override", &[Capability::Logging])).await;
+
+    rt.set_log_level("log-override", Some(LogLevel::Error));
+    ask(&h, "log:warn:hidden").await;
+    rt.set_log_level("log-override", Some(LogLevel::Debug));
+    ask(&h, "log:debug:shown").await;
+    rt.set_log_level("log-override", None);
+    ask(&h, "log:debug:hidden-again").await;
+    ask(&h, "log:info:back-to-info").await;
+    let found = records("log-override", 2).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let messages: Vec<&str> = found.iter().map(|r| r.fields["message"].as_str()).collect();
+    assert_eq!(messages, vec!["shown", "back-to-info"]);
+    assert_eq!(rt.log_level("log-override"), None);
+    h.kill();
+}

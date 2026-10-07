@@ -504,3 +504,29 @@ async fn stale_pid_after_restart_mode_upgrade____noproc() {
     assert_eq!(result, Err(CallError::Noproc));
     apps.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn snapshot____running_instance____returns_state_and_keeps_running() {
+    let (rt, _) = shared();
+    let h = rt.spawn(counter_app(1), counter_spec("", &[])).unwrap();
+    incs(&h, 4).await;
+
+    let bytes = h.snapshot().await.unwrap();
+    let after = ask(&h, "inc").await;
+
+    assert_eq!(bytes, b"4");
+    assert_eq!(after, "5");
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn snapshot____after_exit____not_running() {
+    let (rt, _) = shared();
+    let h = rt.spawn(counter_app(1), counter_spec("", &[])).unwrap();
+    h.kill();
+    h.wait().await;
+
+    let result = h.snapshot().await;
+
+    assert_eq!(result, Err(paddock_host::SnapshotError::NotRunning));
+}

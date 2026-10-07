@@ -1,6 +1,6 @@
 //! Human-readable output.
 
-use paddock_api::{AppDetail, AppSummary, InstanceInfo, LogLine, UpgradeResponse};
+use paddock_api::{AppDetail, AppSummary, InstanceInfo, LogLine, StateResponse, UpgradeResponse};
 
 /// Render rows as left-aligned columns under a header.
 pub fn table(header: &[&str], rows: &[Vec<String>]) -> String {
@@ -67,10 +67,14 @@ pub fn instances(list: &[InstanceInfo]) -> String {
                 i.version.clone(),
                 i.state.clone(),
                 i.queued.to_string(),
+                i.dropped.to_string(),
             ]
         })
         .collect();
-    table(&["PID", "APP", "VERSION", "STATE", "QUEUED"], &rows)
+    table(
+        &["PID", "APP", "VERSION", "STATE", "QUEUED", "DROPPED"],
+        &rows,
+    )
 }
 
 /// `paddock status <app>`.
@@ -130,6 +134,25 @@ pub fn upgrade(u: &UpgradeResponse) -> String {
         out.push_str(&format!("\napproved: {}", u.approved.join(", ")));
     }
     out
+}
+
+/// `paddock state <pid>`.
+pub fn state(s: &StateResponse) -> String {
+    let mut head = format!("{} ({}, {} bytes", s.pid, s.format, s.bytes);
+    if let Some(v) = s.format_version {
+        head.push_str(&format!(", format {v}"));
+    }
+    head.push(')');
+    let body = match (&s.value, &s.hex) {
+        (Some(v), _) => serde_json::to_string_pretty(v).unwrap_or_default(),
+        (None, Some(h)) => h.clone(),
+        (None, None) => String::new(),
+    };
+    if body.is_empty() {
+        head
+    } else {
+        format!("{head}\n{body}")
+    }
 }
 
 /// `paddock logs <app>`.

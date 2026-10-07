@@ -76,7 +76,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// as bytes. Strings give their UTF-8, integers their decimal digits, byte
 /// strings their bytes, so the same key routes the same way in either
 /// encoding. `None` for other content types, other shapes or a missing field.
-pub(crate) fn routing_key(msg: &Envelope, field: &str) -> Option<Vec<u8>> {
+pub fn routing_key(msg: &Envelope, field: &str) -> Option<Vec<u8>> {
     let media = msg.content_type.split(';').next().unwrap_or("").trim();
     match media {
         "application/json" => {

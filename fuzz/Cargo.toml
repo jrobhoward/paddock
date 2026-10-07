@@ -1,0 +1,60 @@
+[package]
+name = "paddock-fuzz"
+version = "0.0.0"
+description = "Fuzz targets for Paddock (cargo-fuzz)"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Its own workspace: libfuzzer-sys needs nightly and sanitizer flags that the
+# main workspace must not see.
+[workspace]
+members = ["."]
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+paddock-bundle = { path = "../crates/paddock-bundle" }
+paddock-host = { path = "../crates/paddock-host" }
+paddock-manifest = { path = "../crates/paddock-manifest" }
+semver = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+
+[[bin]]
+name = "bundle_open"
+path = "fuzz_targets/bundle_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "routing_key"
+path = "fuzz_targets/routing_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "process_ops"
+path = "fuzz_targets/process_ops.rs"
+test = false
+doc = false
+bench = false

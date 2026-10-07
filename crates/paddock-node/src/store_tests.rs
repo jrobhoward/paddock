@@ -20,6 +20,7 @@ fn Store____state____saved_and_loaded() {
     );
 
     store.save_state(&state).unwrap();
+    drop(store);
     let loaded = Store::open(dir.path()).unwrap().load_state().unwrap();
 
     assert_eq!(loaded, state);
@@ -49,4 +50,17 @@ fn Store____upload_kept_then_version_removed____files_follow() {
     assert!(!upload.exists());
     assert!(!store.bundle_path("a", "1.0.0").exists());
     assert!(!store.priv_dir("a", "1.0.0").exists());
+}
+
+#[test]
+fn Store____opened_twice____second_refused_until_first_drops() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = Store::open(dir.path()).unwrap();
+
+    let second = Store::open(dir.path());
+    drop(first);
+    let third = Store::open(dir.path());
+
+    assert!(matches!(second, Err(NodeError::Conflict(_))), "{second:?}");
+    assert!(third.is_ok());
 }
