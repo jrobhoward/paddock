@@ -1123,6 +1123,7 @@ dependencies = [
  "ciborium",
  "paddock-manifest",
  "redb",
+ "semver",
  "serde_json",
  "thiserror",
  "tokio",
@@ -1397,6 +1398,15 @@ dependencies = [
 
 [[package]]
 name = "s1-host"
+version = "0.0.0"
+dependencies = [
+ "tokio",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "s10-host"
 version = "0.0.0"
 dependencies = [
  "tokio",

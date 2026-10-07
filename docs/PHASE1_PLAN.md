@@ -132,12 +132,14 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Audit log of deploys, upgrades, grants and denials.
 
 ### M8 Guest SDK and examples (M)
+- [ ] First: add `host-event(tuple<string, envelope>)` to `info` in `wit/runtime.wit`, so later host events reach `@0.1.0` guests (spike S10 showed any new case otherwise refuses old guests; review action A1).
 - [ ] `paddock-sdk`: an `App` trait (init, handle_call, handle_cast, handle_info, terminate), `ProcessContext` (call, cast, link, monitor, timers, registry), typed envelopes with serde + CBOR.
 - [ ] `#[derive(Snapshot)]` for versioned state with a `migrate(from_version, old)` hook.
 - [ ] Examples: `counter` (v1, v2 and broken v3), `ping-pong`, `chaos`.
 - [ ] Bundle tooling: `paddock bundle` or the rustbridge CLI producing a 1.2 `.rbp` from a component and manifest (per S6).
 
 ### M9 Exit test suite and baseline numbers (M)
+- [ ] From the HAppliance/OTP review: admin `state <pid>` through `save-snapshot` (A3), a test that a second node on the same data directory is refused (A5), and optionally runtime `log-level` (A7).
 - [ ] Integration tests for every exit criterion above.
 - [ ] Baseline benchmarks: call latency (p50/p99), cast throughput, instantiate time, idle memory per instance. Recorded in the repo, not gated.
 - [ ] Fuzz the host functions of `process` with arbitrary envelopes and pids (cargo-fuzz), run nightly.
@@ -184,6 +186,8 @@ Distribution and QUIC, process groups and global names, messaging ACLs, HTTP ing
 - `instance__exit`: pid and reason. Also `supervisor__restart`, `upgrade__start` / `upgrade__done`, and `mailbox__drop`.
 
 Probes see what the host sees (pids, sizes, content types, timings), not guest internals or message bodies unless a probe encodes them. This covers most of the "message trace" planned for the Phase 2 introspection API, without that API. It suits late Phase 1 (beside M9's benchmarks) or Phase 2 observability. anyprobe is pre-release, so like rustbridge it can start as a sibling-checkout path dependency.
+
+**From the HAppliance and Erlang/OTP review** ([REVIEW_HAPPLIANCE_OTP.md](REVIEW_HAPPLIANCE_OTP.md)). S10 has run (see M8's first item). Proposed for later: S11 passivation through the snapshot pair (Phase 2, address-space headroom), S12 a TLA+ model of remote links, monitors and `noconnection` (before Phase 2 implementation), S13 host-owned TCP listeners (Phase 3). `placement.mode` in place of `placement.singleton` (A2) can land at any point; a node watchdog (A4) suits late Phase 1 or Phase 2. The other findings are Phase 2 and 3 design input.
 
 **Proposed spike S9: debugging guests.** Two routes exist in wasmtime 49:
 - **Native debugger (works today).** `Config::debug_info(true)` plus wasmtime's `debug-builtins` feature registers JIT code with GDB and LLDB. Breakpoints and stepping then work in guest Rust source, if the guest was built with debug info. It is best-effort: some locals are unrecoverable. Attaching pauses the whole node, so it suits a development node only.

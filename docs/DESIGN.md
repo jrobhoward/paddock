@@ -24,7 +24,7 @@ The model is coarse-grained: tens to a few thousand app instances per node, not 
 - Millions of lightweight processes per node.
 - Running unmodified Erlang or BEAM bytecode.
 - Shared memory between apps, or threads shared across app boundaries.
-- Strong consistency or exactly-once delivery by default. Delivery is at most once, ordered per sender/receiver pair, as in Erlang.
+- Strong consistency or exactly-once delivery by default. Delivery is at most once, ordered per sender/receiver pair, as in Erlang. Durable delivery, when it comes, is an opt-in capability (a persisted queue, or keyvalue plus a watch), never a change to `process` (see `docs/REVIEW_HAPPLIANCE_OTP.md`, F3).
 - Distributed transactions (JTA-style).
 
 ## Background and prior art
@@ -207,6 +207,7 @@ This is stronger than BEAM in one way: BEAM cannot stop a NIF stuck in a loop, w
 - Intensity and period, for example 5 restarts in 10 s. Past it, the supervisor gives up and escalates to its parent. At the top, the app is marked `failed` and an alert fires.
 - Restart backoff with jitter is an addition beyond OTP, to avoid hot crash loops against a failing dependency.
 - Each app gets a root supervisor. Apps that declare the `supervisor` capability can start their own children within manifest limits.
+- Unlike an OTP permanent application, a Paddock app whose root supervisor gives up does not stop the node: the app is marked `failed`, its dependents are not started, and other apps keep running. A node-level watchdog (OTP's `heart`) is a separate concern (review F7).
 - The root supervisor runs `instances.count` instances of the app, then any `supervision.children` (instances of other deployed apps, with optional restart, shutdown and start-argument overrides). Under `simple_one_for_one`, `supervision.children[0]` is the pool template and `instances.count` copies start from it.
 - A restarted instance keeps its id with the next incarnation. Siblings stopped by a group restart stop gracefully in reverse start order and start again in start order.
 - Escalation exits with `crashed`, naming the supervisor, the intensity and the last child exit, so `paddock status` shows why an app failed.
