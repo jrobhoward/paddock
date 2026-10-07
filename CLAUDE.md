@@ -84,6 +84,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-fixture-services`: a guest that drives logging, config,
   keyvalue, the filesystem and stdout, and imports an interface no host
   implements (for deny stubs).
+- `crates/paddock-fixture-counter`: a stateful counter built three ways by
+  feature (v1, v2, a broken v3) for upgrade tests; each version builds into
+  its own target directory.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
   with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The remaining

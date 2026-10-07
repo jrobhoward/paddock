@@ -65,3 +65,13 @@ All notable changes are recorded here. The format follows
   for the draft interfaces lives in `wit/vendor`.
 - `RuntimeConfig::data_dir` enables disk buckets. `InstanceSpec::new`,
   `with_granted` and `resolve_preopens`.
+- Hot upgrade: `InstanceHandle::upgrade` swaps an instance's component
+  between callbacks through `save-snapshot`/`load-snapshot`, keeping its pid,
+  links, monitors, names, timers and waiting callers; any failure after the
+  snapshot keeps the old version. `Apps::upgrade` rolls an app out in
+  `snapshot` or `restart` mode, in batches, stopping and reverting on a failed
+  instance or too many restarts; `Apps::rollback` returns to the previous
+  version. `validate_upgrade` refuses other apps, the same version, a world
+  change, versions outside `from_versions`, and unapproved new capabilities.
+- Supervisors can replace a child's spec, with or without restarting it
+  (`replace_child`, `replace_template`), and count their restarts.

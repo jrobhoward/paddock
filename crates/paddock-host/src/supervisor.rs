@@ -22,6 +22,7 @@
 use std::collections::VecDeque;
 use std::hash::BuildHasher;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use paddock_manifest::{RestartType, Strategy};
@@ -217,6 +218,8 @@ pub struct SupervisorHandle {
 #[derive(Debug)]
 struct Shared {
     name: String,
+    strategy: Strategy,
+    restarts: Arc<AtomicU64>,
     commands: mpsc::UnboundedSender<Command>,
     children: watch::Receiver<Vec<Child>>,
     exit: watch::Receiver<Option<ExitReason>>,
@@ -227,6 +230,13 @@ enum Command {
     Shutdown,
     Kill,
     StartChild(oneshot::Sender<Result<Child, HostError>>),
+    Replace {
+        /// `None` for the `simple_one_for_one` template.
+        id: Option<String>,
+        start: Box<ChildStart>,
+        restart: bool,
+        reply: oneshot::Sender<Result<Option<Child>, HostError>>,
+    },
 }
 
 impl SupervisorHandle {
@@ -265,6 +275,73 @@ impl SupervisorHandle {
         answer.await.map_err(|_| gone())?
     }
 
+    /// The restart strategy.
+    #[must_use]
+    pub fn strategy(&self) -> Strategy {
+        self.shared.strategy
+    }
+
+    /// Restarts this supervisor has made after child exits since it started.
+    /// Restarts asked for with [`SupervisorHandle::replace_child`] are not
+    /// counted.
+    #[must_use]
+    pub fn restart_count(&self) -> u64 {
+        self.shared.restarts.load(Ordering::Relaxed)
+    }
+
+    /// Replace what child `id` runs. Later restarts use `start`. With
+    /// `restart`, the child is also stopped gracefully and started again
+    /// now from `start` (an instance keeps its id with the next
+    /// incarnation); this does not count toward the restart intensity.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidSupervisor`] for an unknown child or a supervisor
+    /// that has exited, and the errors of [`Runtime::spawn`] for a restart.
+    pub async fn replace_child(
+        &self,
+        id: &str,
+        start: ChildStart,
+        restart: bool,
+    ) -> Result<Child, HostError> {
+        self.replace(Some(id.to_string()), start, restart)
+            .await?
+            .ok_or_else(|| {
+                HostError::InvalidSupervisor(format!("{}: no child {id}", self.shared.name))
+            })
+    }
+
+    /// Replace the template of a `simple_one_for_one` supervisor. Running
+    /// children keep their own spec; see [`SupervisorHandle::replace_child`].
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidSupervisor`] for another strategy or a supervisor
+    /// that has exited.
+    pub async fn replace_template(&self, start: ChildStart) -> Result<(), HostError> {
+        self.replace(None, start, false).await.map(|_| ())
+    }
+
+    async fn replace(
+        &self,
+        id: Option<String>,
+        start: ChildStart,
+        restart: bool,
+    ) -> Result<Option<Child>, HostError> {
+        let gone = || HostError::InvalidSupervisor(format!("{} has exited", self.shared.name));
+        let (reply, answer) = oneshot::channel();
+        self.shared
+            .commands
+            .send(Command::Replace {
+                id,
+                start: Box::new(start),
+                restart,
+                reply,
+            })
+            .map_err(|_| gone())?;
+        answer.await.map_err(|_| gone())?
+    }
+
     /// Stop every child gracefully, in reverse start order, then exit with
     /// `shutdown`.
     pub fn shutdown(&self) {
@@ -299,6 +376,7 @@ pub(crate) fn start(rt: &Runtime, spec: SupervisorSpec) -> Result<SupervisorHand
     let (events_tx, events_rx) = mpsc::unbounded_channel();
     let (children_tx, children_rx) = watch::channel(Vec::new());
     let (exit_tx, exit_rx) = watch::channel(None);
+    let restarts = Arc::new(AtomicU64::new(0));
     let template = (spec.strategy == Strategy::SimpleOneForOne)
         .then(|| spec.children.first().cloned())
         .flatten();
@@ -320,6 +398,7 @@ pub(crate) fn start(rt: &Runtime, spec: SupervisorSpec) -> Result<SupervisorHand
         children: children_tx,
         exit: exit_tx,
         jitter_seq: 0,
+        restart_total: restarts.clone(),
     };
     if task.template.is_none() {
         for child in spec.children {
@@ -341,6 +420,8 @@ pub(crate) fn start(rt: &Runtime, spec: SupervisorSpec) -> Result<SupervisorHand
     Ok(SupervisorHandle {
         shared: Arc::new(Shared {
             name: spec.name,
+            strategy: spec.strategy,
+            restarts,
             commands: commands_tx,
             children: children_rx,
             exit: exit_rx,
@@ -404,6 +485,7 @@ struct Task {
     children: watch::Sender<Vec<Child>>,
     exit: watch::Sender<Option<ExitReason>>,
     jitter_seq: u64,
+    restart_total: Arc<AtomicU64>,
 }
 
 impl Task {
@@ -457,7 +539,46 @@ impl Task {
                 let _ = reply.send(self.start_dynamic());
                 Ok(())
             }
+            Some(Command::Replace {
+                id,
+                start,
+                restart,
+                reply,
+            }) => {
+                let _ = reply.send(self.replace(id, *start, restart).await);
+                Ok(())
+            }
         }
+    }
+
+    async fn replace(
+        &mut self,
+        id: Option<String>,
+        start: ChildStart,
+        restart: bool,
+    ) -> Result<Option<Child>, HostError> {
+        let Some(id) = id else {
+            let template = self.template.as_mut().ok_or_else(|| {
+                HostError::InvalidSupervisor(format!(
+                    "{}: no template; not simple_one_for_one",
+                    self.name
+                ))
+            })?;
+            template.start = start;
+            return Ok(None);
+        };
+        let index =
+            self.slots.iter().position(|s| s.id == id).ok_or_else(|| {
+                HostError::InvalidSupervisor(format!("{}: no child {id}", self.name))
+            })?;
+        self.slots[index].spec.start = start;
+        if restart {
+            self.slots[index].restarting = true;
+            self.terminate_slot(index).await;
+            self.start_slot(index)?;
+            self.publish();
+        }
+        Ok(Some(self.child_view(&self.slots[index])))
     }
 
     fn start_dynamic(&mut self) -> Result<Child, HostError> {
@@ -539,6 +660,7 @@ impl Task {
             return Ok(());
         }
         slot.restarting = true;
+        self.restart_total.fetch_add(1, Ordering::Relaxed);
         self.publish();
 
         let now = Instant::now();

@@ -116,3 +116,35 @@ pub async fn ask_until(
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
+
+/// The counter fixture at `version` (1, 2 or 3), each built with its own
+/// feature into its own target directory, since features unify within one
+/// build.
+pub fn counter(version: u8) -> Vec<u8> {
+    static BUILT: [OnceLock<()>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let root = workspace_root();
+    let target_dir = root.join(format!("target/fixtures/counter-v{version}"));
+    BUILT[usize::from(version - 1)].get_or_init(|| {
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let mut cmd = Command::new(cargo);
+        cmd.current_dir(&root).args([
+            "build",
+            "--release",
+            "--target",
+            "wasm32-wasip2",
+            "-p",
+            "paddock-fixture-counter",
+            "--target-dir",
+        ]);
+        cmd.arg(&target_dir);
+        if version > 1 {
+            cmd.args(["--features", &format!("v{version}")]);
+        }
+        let status = cmd
+            .status()
+            .expect("run cargo to build the counter fixture");
+        assert!(status.success(), "building counter v{version} failed");
+    });
+    let path = target_dir.join("wasm32-wasip2/release/paddock_fixture_counter.wasm");
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}

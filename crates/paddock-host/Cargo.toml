@@ -13,6 +13,7 @@ publish = false
 ciborium = { workspace = true }
 paddock-manifest = { workspace = true }
 redb = { workspace = true }
+semver = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util"] }

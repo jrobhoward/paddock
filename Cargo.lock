@@ -1069,6 +1069,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "paddock-fixture-counter"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
 name = "paddock-fixture-echo"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,25 @@
+[package]
+name = "paddock-fixture-counter"
+version = "0.0.0"
+description = "Test fixture: a stateful counter in three versions, for upgrade tests"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# Exactly one of v1 (default), v2 or v3.
+[features]
+default = []
+v2 = []
+v3 = []
+
+[dependencies]
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

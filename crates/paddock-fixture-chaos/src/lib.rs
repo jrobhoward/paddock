@@ -312,15 +312,33 @@ impl Guest for Chaos {
         }
     }
 
+    /// The snapshot is the count, then each remembered caller, as 8-byte
+    /// little-endian numbers, so a new version can answer deferred calls.
     fn save_snapshot() -> Vec<u8> {
-        STATE.with_borrow(|s| s.count.to_le_bytes().to_vec())
+        STATE.with_borrow(|s| {
+            let mut out = s.count.to_le_bytes().to_vec();
+            for caller in &s.deferred {
+                out.extend_from_slice(&caller.to_le_bytes());
+            }
+            out
+        })
     }
 
     fn load_snapshot(_from_version: String, snapshot: Vec<u8>) -> Result<(), String> {
-        let bytes: [u8; 8] = snapshot
-            .try_into()
-            .map_err(|_| "snapshot must be 8 bytes".to_string())?;
-        STATE.with_borrow_mut(|s| s.count = u64::from_le_bytes(bytes));
+        if snapshot.len() < 8 || !snapshot.len().is_multiple_of(8) {
+            return Err("snapshot must be whole 8-byte numbers".to_string());
+        }
+        let mut numbers = snapshot
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| u64::from_le_bytes(*c));
+        let count = numbers.next().unwrap_or(0);
+        let deferred: Vec<CallRef> = numbers.collect();
+        STATE.with_borrow_mut(|s| {
+            s.count = count;
+            s.deferred = deferred;
+        });
         Ok(())
     }
 }

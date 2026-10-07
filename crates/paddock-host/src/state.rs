@@ -107,6 +107,23 @@ impl InstanceState {
         })
     }
 
+    /// A context for a new Store of the same instance (an upgrade).
+    pub(crate) fn context(&self) -> ProcessContext {
+        ProcessContext {
+            rt: self.ctx.rt.clone(),
+            me: self.ctx.me.clone(),
+            mailbox: self.ctx.mailbox.clone(),
+            dropped: self.ctx.dropped.clone(),
+        }
+    }
+
+    /// Move what belongs to the instance rather than to one Store (callers
+    /// awaiting deferred replies, pending timers) into `to`.
+    pub(crate) fn hand_over(&mut self, to: &mut Self) {
+        to.pending = std::mem::take(&mut self.pending);
+        to.timers = std::mem::take(&mut self.timers);
+    }
+
     fn granted(&self, capability: Capability) -> bool {
         self.granted.contains(&capability)
     }

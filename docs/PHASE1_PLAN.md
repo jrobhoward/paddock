@@ -119,11 +119,11 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Deny stubs for declared-but-ungranted imports. (Generic typed stubs for interfaces no host provides; the logging, config, keyvalue and filesystem hosts deny per instance.)
 
 ### M6 Hot upgrade (M)
-- [ ] `snapshot` mode: pause delivery → `save-snapshot` → instantiate v2 → `load-snapshot` → resume; revert on any failure.
-- [ ] `restart` mode.
-- [ ] Upgrade validation: signature, world compatibility, capability diff (new capabilities need `--approve`).
-- [ ] Batch rollout across a pool, with stop-and-revert on restart threshold.
-- [ ] `rollback` to the previous version.
+- [x] `snapshot` mode: pause delivery → `save-snapshot` → instantiate v2 → `load-snapshot` → resume; revert on any failure. (Exit criterion 6 passes as a `paddock-host` test.)
+- [x] `restart` mode.
+- [x] Upgrade validation: signature, world compatibility, capability diff (new capabilities need `--approve`). (`validate_upgrade` checks app, version, world, `from_versions` and capabilities; the signature is checked when the node opens the bundle, M7.)
+- [x] Batch rollout across a pool, with stop-and-revert on restart threshold.
+- [x] `rollback` to the previous version.
 
 ### M7 Node daemon and CLI (M)
 - [ ] `paddock-node`: node config (TOML), deploy store on disk, restore deployed apps on restart. The deploy store extracts each bundle's `priv/` files for `/priv`; rustbridge checksums only libraries and schemas, so those files need checksums (in the `appserver` section or a rustbridge change) before they count as verified.

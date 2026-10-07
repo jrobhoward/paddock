@@ -252,6 +252,16 @@ An upgrade swaps an instance's component between messages, carrying state throug
 | `restart` | Terminate v1 gracefully, start v2 from `init` | Stateless apps, or state lives in term storage |
 | `blue-green` | Start v2 instances beside v1, move the registered name, drain v1 | Apps serving HTTP or long calls |
 
+**Phase 1 details.**
+- An instance upgrade runs `save-snapshot` on the old Store, then instantiates the new component in a fresh Store and calls `load-snapshot`; `init` does not run.
+- What belongs to the instance rather than the Store moves across: callers awaiting deferred replies and pending timers. The pid, links, monitors and registered names never change.
+- Guest-held resources (open buckets) do not move; the new version reopens them. Deferred call references survive only if the app puts them in its snapshot.
+- The new version's limits and capabilities apply from the swap. Mailbox capacity stays as created.
+- A trap in `save-snapshot` poisons the old Store, so that instance exits and its supervisor restarts it as the old version: the supervisor's child spec changes only after an instance has moved.
+- Validation: same app, a different version, the same WIT world, the old version inside the new manifest's `upgrade.from_versions`, and new capabilities only with approval. The node verifies the new bundle's signature when it opens it, as for any deploy.
+- An app rolls out in batches. A failed instance, or more supervisor restarts than allowed during the rollout (counted after each batch's watch window), stops the rollout. Every instance already moved goes back by snapshot, or, if the old version cannot read the new snapshot, by restart from `init`.
+- Rollback returns to the previous version by snapshot when that version's manifest asks for it and accepts the running version, otherwise by restart.
+
 **SDK support.** The Rust SDK derives snapshot code from a versioned state type (serde plus a version tag), with a `migrate(from_version, old)` hook. Most apps never hand-write snapshot bytes.
 
 **Native-process plugins** upgrade with `restart` or `blue-green` only, because their memory can't be snapshotted by the host. A plugin may implement the snapshot messages itself over its pipe.

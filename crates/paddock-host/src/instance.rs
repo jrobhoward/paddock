@@ -26,6 +26,7 @@ use crate::pid::Pid;
 use crate::runtime::{LoadedApp, RuntimeInner};
 use crate::spec::InstanceSpec;
 use crate::state::{InstanceState, ProcessContext};
+use crate::upgrade::UpgradeError;
 
 /// Something waiting in a mailbox.
 #[derive(Debug)]
@@ -36,6 +37,17 @@ pub(crate) enum Message {
     },
     Cast(Envelope),
     Info(Info),
+}
+
+/// A host operation on an instance, handled between callbacks ahead of the
+/// mailbox.
+enum Op {
+    Upgrade {
+        app: LoadedApp,
+        spec: Box<InstanceSpec>,
+        from_version: String,
+        reply: oneshot::Sender<Result<Duration, UpgradeError>>,
+    },
 }
 
 /// A stop request. A kill overrides a graceful shutdown; nothing overrides a
@@ -61,8 +73,9 @@ struct Shared {
     control: watch::Sender<Control>,
     state: watch::Receiver<LifecycleState>,
     exit: watch::Receiver<Option<ExitReason>>,
-    message_max_bytes: u64,
+    message_max_bytes: AtomicU64,
     dropped: Arc<AtomicU64>,
+    ops: mpsc::UnboundedSender<Op>,
     /// Exit and down notifications. Unbounded: OTP never drops signals, and
     /// their number is bounded by links and monitors.
     signals: mpsc::UnboundedSender<Info>,
@@ -135,7 +148,7 @@ impl InstanceHandle {
 
     fn check_size(&self, msg: &Envelope) -> Result<(), CallError> {
         let len = u64::try_from(msg.body.len()).unwrap_or(u64::MAX);
-        if len > self.shared.message_max_bytes {
+        if len > self.shared.message_max_bytes.load(Ordering::Relaxed) {
             return Err(CallError::TooLarge);
         }
         Ok(())
@@ -182,6 +195,40 @@ impl InstanceHandle {
             }
             run
         });
+    }
+
+    /// Swap this instance to another component, keeping its pid, mailbox,
+    /// links, monitors, registered names, timers and callers awaiting
+    /// deferred replies. Between callbacks, the old version's
+    /// `save-snapshot` output is passed to the new version's
+    /// `load-snapshot(from_version, ...)`; `init` does not run. Messages
+    /// sent meanwhile wait in the mailbox. Returns how long the instance was
+    /// paused.
+    ///
+    /// # Errors
+    ///
+    /// [`UpgradeError::Instantiate`] or [`UpgradeError::LoadFailed`] when
+    /// the new version fails (the old one keeps running unchanged),
+    /// [`UpgradeError::SaveFailed`] when the old version's `save-snapshot`
+    /// fails (the instance then exits), [`UpgradeError::NotRunning`] if it
+    /// has exited.
+    pub async fn upgrade(
+        &self,
+        app: &LoadedApp,
+        spec: InstanceSpec,
+        from_version: &str,
+    ) -> Result<Duration, UpgradeError> {
+        let (reply, answer) = oneshot::channel();
+        self.shared
+            .ops
+            .send(Op::Upgrade {
+                app: app.clone(),
+                spec: Box::new(spec),
+                from_version: from_version.to_string(),
+                reply,
+            })
+            .map_err(|_| UpgradeError::NotRunning)?;
+        answer.await.unwrap_or(Err(UpgradeError::NotRunning))
     }
 
     /// Stop now with reason `killed`, without `terminate`. A callback in
@@ -246,6 +293,7 @@ pub(crate) struct InstanceTask {
     me: InstanceHandle,
     mailbox: mpsc::Receiver<Message>,
     signals: mpsc::UnboundedReceiver<Info>,
+    ops: mpsc::UnboundedReceiver<Op>,
     self_mailbox: mpsc::WeakSender<Message>,
     dropped: Arc<AtomicU64>,
     control: watch::Receiver<Control>,
@@ -261,6 +309,7 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
     let (exit_tx, exit_rx) = watch::channel(None);
     let dropped = Arc::new(AtomicU64::new(0));
     let (signals_tx, signals_rx) = mpsc::unbounded_channel();
+    let (ops_tx, ops_rx) = mpsc::unbounded_channel();
     let self_mailbox = mailbox_tx.downgrade();
     let handle = InstanceHandle {
         shared: Arc::new(Shared {
@@ -269,8 +318,9 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
             control: control_tx,
             state: state_rx,
             exit: exit_rx,
-            message_max_bytes: spec.message_max_bytes,
+            message_max_bytes: AtomicU64::new(spec.message_max_bytes),
             dropped: dropped.clone(),
+            ops: ops_tx,
             signals: signals_tx,
             trap_exits: AtomicBool::new(false),
         }),
@@ -280,6 +330,7 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
         me: handle.clone(),
         mailbox: mailbox_rx,
         signals: signals_rx,
+        ops: ops_rx,
         self_mailbox,
         dropped,
         control: control_rx,
@@ -311,6 +362,11 @@ impl InstanceTask {
         self.mailbox.close();
         while self.mailbox.try_recv().is_ok() {}
         self.signals.close();
+        // Fail any upgrade still queued.
+        self.ops.close();
+        while let Ok(Op::Upgrade { reply, .. }) = self.ops.try_recv() {
+            let _ = reply.send(Err(UpgradeError::NotRunning));
+        }
         notify_exit(&rt, self.pid, &reason);
         let _enter = span.enter();
         if reason.is_normal() {
@@ -340,25 +396,16 @@ impl InstanceTask {
             Ok(state) => state,
             Err(why) => return ExitReason::Crashed(why),
         };
-        let mut store = Store::new(&engine, state);
-        store.limiter(|s| &mut s.limiter);
-        store.epoch_deadline_callback(|mut ctx| {
-            if ctx.data_mut().clock.expired() {
-                Ok(UpdateDeadline::Interrupt)
-            } else {
-                // Cooperative preemption: give other instances the thread.
-                Ok(UpdateDeadline::Yield(1))
-            }
-        });
-        store.set_epoch_deadline(1);
+        let mut store = new_store(&engine, state);
+        let mut spec = spec.clone();
 
-        let instance = match self.start(&mut store, app, spec).await {
+        let mut instance = match self.start(&mut store, app, &spec).await {
             Ok(instance) => instance,
             Err(reason) => return reason,
         };
         self.set_state(LifecycleState::Active);
 
-        let stop = match self.serve(&mut store, &instance, spec).await {
+        let stop = match self.serve(&mut store, &mut instance, &mut spec).await {
             Ok(stop) => stop,
             Err(reason) => return reason,
         };
@@ -366,7 +413,7 @@ impl InstanceTask {
         self.set_state(LifecycleState::Stopping);
         self.mailbox.close();
         while self.mailbox.try_recv().is_ok() {}
-        self.stop(&mut store, &instance, spec, stop).await
+        self.stop(&mut store, &instance, &spec, stop).await
     }
 
     /// Instantiate and run `init` within the init timeout.
@@ -401,8 +448,8 @@ impl InstanceTask {
     async fn serve(
         &mut self,
         store: &mut Store<InstanceState>,
-        instance: &PaddockApp,
-        spec: &InstanceSpec,
+        instance: &mut PaddockApp,
+        spec: &mut InstanceSpec,
     ) -> Result<ExitReason, ExitReason> {
         let mut next_ref: u64 = 1;
         loop {
@@ -416,6 +463,19 @@ impl InstanceTask {
                 changed = self.control.changed() => {
                     if changed.is_err() {
                         return Err(ExitReason::Killed);
+                    }
+                    continue;
+                }
+                Some(op) = self.ops.recv() => {
+                    let Op::Upgrade { app, spec: next, from_version, reply } = op;
+                    let result = self.upgrade(store, instance, spec, &app, *next, &from_version).await;
+                    let exit = match &result {
+                        Err(UpgradeError::SaveFailed(reason)) => Some(reason.clone()),
+                        _ => None,
+                    };
+                    let _ = reply.send(result);
+                    if let Some(reason) = exit {
+                        return Err(reason);
                     }
                     continue;
                 }
@@ -469,6 +529,85 @@ impl InstanceTask {
         }
     }
 
+    /// Snapshot upgrade: `save-snapshot` on the current version, then a new
+    /// Store with the new component and `load-snapshot`. The current Store
+    /// is untouched until the new one has loaded, so any failure after the
+    /// snapshot keeps the old version running. A kill during the upgrade
+    /// returns `SaveFailed` with the kill's reason, which ends the instance.
+    async fn upgrade(
+        &mut self,
+        store: &mut Store<InstanceState>,
+        instance: &mut PaddockApp,
+        spec: &mut InstanceSpec,
+        app: &LoadedApp,
+        next: InstanceSpec,
+        from_version: &str,
+    ) -> Result<Duration, UpgradeError> {
+        let started = std::time::Instant::now();
+        self.set_state(LifecycleState::Upgrading);
+        store.data_mut().clock.start(spec.callback_deadline);
+        let saved = killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await;
+        let snapshot = match saved {
+            Err(killed) => return Err(UpgradeError::SaveFailed(killed)),
+            Ok(Err(err)) => return Err(UpgradeError::SaveFailed(classify(&err, store.data()))),
+            Ok(Ok(bytes)) => bytes,
+        };
+
+        let mut state = match InstanceState::new(self.pid, &next, store.data().context()) {
+            Ok(state) => state,
+            Err(why) => {
+                self.set_state(LifecycleState::Active);
+                return Err(UpgradeError::Instantiate(why));
+            }
+        };
+        store.data_mut().hand_over(&mut state);
+        let mut fresh = new_store(store.engine(), state);
+        fresh.data_mut().clock.start(next.init_timeout);
+        let load = tokio::time::timeout(next.init_timeout, async {
+            let new_instance = app.pre.instantiate_async(&mut fresh).await;
+            match new_instance {
+                Err(err) => Err(UpgradeError::Instantiate(describe(&err))),
+                Ok(new_instance) => match new_instance
+                    .call_load_snapshot(&mut fresh, from_version, &snapshot)
+                    .await
+                {
+                    Ok(Ok(())) => Ok(new_instance),
+                    Ok(Err(refused)) => Err(UpgradeError::LoadFailed(refused)),
+                    Err(err) => Err(UpgradeError::LoadFailed(describe(&err))),
+                },
+            }
+        });
+        let outcome = match killable(&mut self.control, load).await {
+            Err(killed) => Err(UpgradeError::SaveFailed(killed)),
+            Ok(Err(_elapsed)) => Err(UpgradeError::LoadFailed("timed out".into())),
+            Ok(Ok(result)) => result,
+        };
+        match outcome {
+            Ok(new_instance) => {
+                *store = fresh;
+                *instance = new_instance;
+                self.me
+                    .shared
+                    .message_max_bytes
+                    .store(next.message_max_bytes, Ordering::Relaxed);
+                *spec = next;
+                self.set_state(LifecycleState::Active);
+                let pause = started.elapsed();
+                tracing::info!(version = %spec.version, pause_us = pause.as_micros(), "upgraded");
+                Ok(pause)
+            }
+            Err(err) => {
+                // Give the instance's timers and waiting callers back.
+                fresh.data_mut().hand_over(store.data_mut());
+                if !matches!(err, UpgradeError::SaveFailed(_)) {
+                    self.set_state(LifecycleState::Active);
+                }
+                tracing::warn!(error = %err, "upgrade reverted");
+                Err(err)
+            }
+        }
+    }
+
     /// Run `terminate` within the shutdown timeout. Overrunning it is a kill.
     async fn stop(
         &mut self,
@@ -499,6 +638,22 @@ impl InstanceTask {
         }
         self.state.send_replace(next);
     }
+}
+
+/// A Store with the instance's limits, deadline accounting and preemption.
+fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Store<InstanceState> {
+    let mut store = Store::new(engine, state);
+    store.limiter(|s| &mut s.limiter);
+    store.epoch_deadline_callback(|mut ctx| {
+        if ctx.data_mut().clock.expired() {
+            Ok(UpdateDeadline::Interrupt)
+        } else {
+            // Cooperative preemption: give other instances the thread.
+            Ok(UpdateDeadline::Yield(1))
+        }
+    });
+    store.set_epoch_deadline(1);
+    store
 }
 
 /// Run `fut` unless the instance is killed first; `Err` carries the kill's

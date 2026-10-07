@@ -38,8 +38,9 @@ mod spec;
 mod state;
 mod supervisor;
 mod table;
+mod upgrade;
 
-pub use apps::{AppDeployment, AppHandle, AppStatus, Apps};
+pub use apps::{AppDeployment, AppHandle, AppStatus, Apps, UpgradeOptions, UpgradeReport};
 pub use config::{MemoryProfile, RuntimeConfig};
 pub use error::HostError;
 pub use instance::InstanceHandle;
@@ -52,3 +53,4 @@ pub use spec::{InstanceSpec, PRIV_PATH, Preopen};
 pub use supervisor::{
     Backoff, Child, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
 };
+pub use upgrade::{UpgradeError, validate_upgrade};

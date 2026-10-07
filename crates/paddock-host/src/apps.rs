@@ -2,23 +2,25 @@
 //! per app, instance pools, and stop in reverse order.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use paddock_manifest::{AppManifest, Strategy};
+use paddock_manifest::{AppManifest, Capability, Strategy, UpgradeMode};
 use tokio::sync::watch;
 
 use crate::error::HostError;
 use crate::instance::InstanceHandle;
 use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason};
+use crate::pid::Pid;
 use crate::pool::Pool;
 use crate::runtime::{LoadedApp, Runtime};
 use crate::spec::InstanceSpec;
 use crate::supervisor::{
     Backoff, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
 };
+use crate::upgrade::{UpgradeError, validate_upgrade};
 
 /// An app ready to run: its verified manifest and compiled component.
 #[derive(Debug, Clone)]
@@ -64,6 +66,57 @@ struct AppShared {
     pool: Option<Arc<Pool>>,
     status: watch::Sender<AppStatus>,
     stopping: AtomicBool,
+    versions: Mutex<Versions>,
+    upgrading: AtomicBool,
+}
+
+#[derive(Debug)]
+struct Versions {
+    current: AppDeployment,
+    previous: Option<AppDeployment>,
+}
+
+/// How an upgrade rolls out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeOptions {
+    /// Approve capabilities the new version declares and the old one did
+    /// not.
+    pub approve: bool,
+    /// Instances upgraded per batch (at least 1).
+    pub batch_size: usize,
+    /// Time to watch each batch before the next.
+    pub observe: Duration,
+    /// Most supervisor restarts tolerated during the rollout; one more stops
+    /// it and reverts.
+    pub max_restarts: u64,
+}
+
+impl Default for UpgradeOptions {
+    fn default() -> Self {
+        Self {
+            approve: false,
+            batch_size: 1,
+            observe: Duration::ZERO,
+            max_restarts: 0,
+        }
+    }
+}
+
+/// What an upgrade or rollback did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeReport {
+    /// The version before.
+    pub from: semver::Version,
+    /// The version after.
+    pub to: semver::Version,
+    /// How the instances moved.
+    pub mode: UpgradeMode,
+    /// The upgraded instances (new pids in `restart` mode).
+    pub instances: Vec<Pid>,
+    /// How long each instance paused (`snapshot` mode).
+    pub pauses: Vec<Duration>,
+    /// Capabilities approved for the new version.
+    pub approved: Vec<Capability>,
 }
 
 impl AppHandle {
@@ -83,6 +136,28 @@ impl AppHandle {
     #[must_use]
     pub fn subscribe_status(&self) -> watch::Receiver<AppStatus> {
         self.shared.status.subscribe()
+    }
+
+    /// The running version.
+    #[must_use]
+    pub fn version(&self) -> semver::Version {
+        self.versions().current.manifest.app.version.clone()
+    }
+
+    /// The version a rollback would return to.
+    #[must_use]
+    pub fn previous_version(&self) -> Option<semver::Version> {
+        self.versions()
+            .previous
+            .as_ref()
+            .map(|d| d.manifest.app.version.clone())
+    }
+
+    fn versions(&self) -> std::sync::MutexGuard<'_, Versions> {
+        self.shared
+            .versions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The app's root supervisor; `None` if it never started.
@@ -148,6 +223,82 @@ impl Apps {
         self.apps.get(name).map(AppHandle::status)
     }
 
+    /// Move a running app to `new`, as its manifest's `upgrade.mode` says:
+    /// `snapshot` carries each instance's state across (same pids), `restart`
+    /// stops each instance and starts the new version from `init` (same ids,
+    /// next incarnation). Instances move in batches; a failed instance, or
+    /// more than `max_restarts` supervisor restarts, stops the rollout and
+    /// returns every moved instance to the old version.
+    ///
+    /// # Errors
+    ///
+    /// The validation errors of [`validate_upgrade`];
+    /// [`UpgradeError::UnknownApp`], [`UpgradeError::InProgress`],
+    /// [`UpgradeError::Invalid`] for an app that is not running; and
+    /// [`UpgradeError::Reverted`] when the rollout stopped.
+    pub async fn upgrade(
+        &self,
+        name: &str,
+        new: AppDeployment,
+        options: &UpgradeOptions,
+    ) -> Result<UpgradeReport, UpgradeError> {
+        let app = self
+            .apps
+            .get(name)
+            .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
+        let old = app.versions().current.clone();
+        let approved = validate_upgrade(&old.manifest, &new.manifest, options.approve)?;
+        let mode = new.manifest.spec.upgrade.mode;
+        let mut report = move_app(app, &old, &new, mode, options).await?;
+        report.approved = approved;
+        let mut versions = app.versions();
+        versions.previous = Some(std::mem::replace(&mut versions.current, new));
+        Ok(report)
+    }
+
+    /// Return a running app to its previous version. Uses `snapshot` mode if
+    /// the previous version's manifest asks for it and accepts snapshots
+    /// from the running version, otherwise `restart`. Capabilities are not
+    /// re-approved: the previous version ran before.
+    ///
+    /// # Errors
+    ///
+    /// [`UpgradeError::NoPrevious`], and as for [`Apps::upgrade`].
+    pub async fn rollback(
+        &self,
+        name: &str,
+        options: &UpgradeOptions,
+    ) -> Result<UpgradeReport, UpgradeError> {
+        let app = self
+            .apps
+            .get(name)
+            .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
+        let (current, previous) = {
+            let v = app.versions();
+            let previous = v
+                .previous
+                .clone()
+                .ok_or_else(|| UpgradeError::NoPrevious(name.into()))?;
+            (v.current.clone(), previous)
+        };
+        let upgrade = &previous.manifest.spec.upgrade;
+        let accepts = upgrade.from_versions.is_empty()
+            || upgrade
+                .from_versions
+                .iter()
+                .any(|r| r.matches(&current.manifest.app.version));
+        let mode = if upgrade.mode == UpgradeMode::Snapshot && accepts {
+            UpgradeMode::Snapshot
+        } else {
+            UpgradeMode::Restart
+        };
+        let report = move_app(app, &current, &previous, mode, options).await?;
+        let mut versions = app.versions();
+        let back = std::mem::replace(&mut versions.current, previous);
+        versions.previous = Some(back);
+        Ok(report)
+    }
+
     /// Stop every app, in reverse start order, waiting for each root
     /// supervisor to stop its instances.
     pub async fn stop(&self) {
@@ -202,7 +353,7 @@ pub(crate) async fn start(
             .iter()
             .find(|d| apps.status(&d.app) != Some(AppStatus::Running));
         let handle = match blocked {
-            Some(dep) => failed(&name, format!("dependency {} is not running", dep.app)),
+            Some(dep) => failed(deployment, format!("dependency {} is not running", dep.app)),
             None => start_app(rt, deployment, spec).await,
         };
         apps.order.push(name.clone());
@@ -211,15 +362,21 @@ pub(crate) async fn start(
     Ok(apps)
 }
 
-fn failed(name: &str, why: String) -> AppHandle {
+fn failed(deployment: &AppDeployment, why: String) -> AppHandle {
+    let name = &deployment.manifest.app.name;
     tracing::error!(app = %name, reason = %why, "app not started");
     AppHandle {
         shared: Arc::new(AppShared {
-            name: name.to_string(),
+            name: name.clone(),
             supervisor: None,
             pool: None,
             status: watch::channel(AppStatus::Failed(ExitReason::Crashed(why))).0,
             stopping: AtomicBool::new(false),
+            versions: Mutex::new(Versions {
+                current: deployment.clone(),
+                previous: None,
+            }),
+            upgrading: AtomicBool::new(false),
         }),
     }
 }
@@ -231,13 +388,13 @@ async fn start_app(rt: &Runtime, deployment: &AppDeployment, spec: SupervisorSpe
     let budget = start_budget(&spec);
     let supervisor = match rt.start_supervisor(spec) {
         Ok(s) => s,
-        Err(err) => return failed(&name, err.to_string()),
+        Err(err) => return failed(deployment, err.to_string()),
     };
     if pooled {
         for _ in 0..manifest.spec.instances.initial() {
             if let Err(err) = supervisor.start_child().await {
                 supervisor.shutdown();
-                return failed(&name, err.to_string());
+                return failed(deployment, err.to_string());
             }
         }
     }
@@ -254,6 +411,11 @@ async fn start_app(rt: &Runtime, deployment: &AppDeployment, spec: SupervisorSpe
             pool: Some(pool.clone()),
             status,
             stopping: AtomicBool::new(false),
+            versions: Mutex::new(Versions {
+                current: deployment.clone(),
+                previous: None,
+            }),
+            upgrading: AtomicBool::new(false),
         }),
     };
     match wait_started(&supervisor, budget).await {
@@ -281,6 +443,199 @@ async fn start_app(rt: &Runtime, deployment: &AppDeployment, spec: SupervisorSpe
         }
     });
     handle
+}
+
+/// Clears an app's in-progress flag when an upgrade ends, however it ends.
+struct UpgradeGuard<'a>(&'a AtomicBool);
+
+impl Drop for UpgradeGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// Move an app's own instances from `from` to `to`. Children that run other
+/// apps (`supervision.children`) are left alone.
+async fn move_app(
+    app: &AppHandle,
+    from: &AppDeployment,
+    to: &AppDeployment,
+    mode: UpgradeMode,
+    options: &UpgradeOptions,
+) -> Result<UpgradeReport, UpgradeError> {
+    let name = app.name().to_string();
+    let supervisor = app
+        .supervisor()
+        .filter(|_| app.status() == AppStatus::Running)
+        .ok_or_else(|| UpgradeError::Invalid(format!("{name} is not running")))?
+        .clone();
+    if app
+        .shared
+        .upgrading
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return Err(UpgradeError::InProgress(name));
+    }
+    let _guard = UpgradeGuard(&app.shared.upgrading);
+
+    let rollout = Rollout::new(&supervisor, from, to, mode);
+    let pooled = supervisor.strategy() == Strategy::SimpleOneForOne;
+    if pooled {
+        supervisor
+            .replace_template(rollout.start(true))
+            .await
+            .map_err(|e| UpgradeError::Invalid(e.to_string()))?;
+    }
+    let ids: Vec<String> = supervisor
+        .children()
+        .iter()
+        .filter(|c| c.app.as_deref() == Some(name.as_str()) && c.instance().is_some())
+        .map(|c| c.id.clone())
+        .collect();
+    let base = supervisor.restart_count();
+    let mut moved: Vec<String> = Vec::new();
+    let mut report = UpgradeReport {
+        from: from.manifest.app.version.clone(),
+        to: to.manifest.app.version.clone(),
+        mode,
+        instances: Vec::new(),
+        pauses: Vec::new(),
+        approved: Vec::new(),
+    };
+    for batch in ids.chunks(options.batch_size.max(1)) {
+        let mut failure = None;
+        for id in batch {
+            match rollout.move_one(id, true).await {
+                Ok((pid, pause)) => {
+                    moved.push(id.clone());
+                    report.instances.push(pid);
+                    report.pauses.extend(pause);
+                }
+                Err(err) => {
+                    failure = Some(format!("{id}: {err}"));
+                    break;
+                }
+            }
+        }
+        if failure.is_none() && !options.observe.is_zero() {
+            tokio::time::sleep(options.observe).await;
+        }
+        let restarts = supervisor.restart_count().saturating_sub(base);
+        if failure.is_none() && restarts > options.max_restarts {
+            failure = Some(format!(
+                "{restarts} restarts during the rollout (limit {})",
+                options.max_restarts
+            ));
+        }
+        if let Some(why) = failure {
+            tracing::warn!(app = %name, reason = %why, "rollout stopped; reverting");
+            for id in moved.iter().rev() {
+                rollout.revert_one(id).await;
+            }
+            if pooled {
+                let _ = supervisor.replace_template(rollout.start(false)).await;
+            }
+            return Err(UpgradeError::Reverted(why));
+        }
+    }
+    tracing::info!(app = %name, from = %report.from, to = %report.to, ?mode, "upgraded");
+    Ok(report)
+}
+
+/// One app's move between two versions.
+struct Rollout<'a> {
+    supervisor: &'a SupervisorHandle,
+    from: &'a AppDeployment,
+    to: &'a AppDeployment,
+    mode: UpgradeMode,
+}
+
+impl<'a> Rollout<'a> {
+    fn new(
+        supervisor: &'a SupervisorHandle,
+        from: &'a AppDeployment,
+        to: &'a AppDeployment,
+        mode: UpgradeMode,
+    ) -> Self {
+        Self {
+            supervisor,
+            from,
+            to,
+            mode,
+        }
+    }
+
+    /// The child spec for the new (`forward`) or old version.
+    fn start(&self, forward: bool) -> ChildStart {
+        let d = if forward { self.to } else { self.from };
+        ChildStart::Instance {
+            app: d.app.clone(),
+            spec: InstanceSpec::from_manifest(&d.manifest),
+        }
+    }
+
+    fn instance(&self, id: &str) -> Option<InstanceHandle> {
+        self.supervisor
+            .children()
+            .into_iter()
+            .find(|c| c.id == id)
+            .and_then(|c| c.instance().cloned())
+    }
+
+    /// Move one child forward or back. In `snapshot` mode the running
+    /// instance is upgraded first and its spec replaced after, so an
+    /// instance that dies in `save-snapshot` restarts as the version it was.
+    async fn move_one(
+        &self,
+        id: &str,
+        forward: bool,
+    ) -> Result<(Pid, Option<Duration>), UpgradeError> {
+        let (target, source) = if forward {
+            (self.to, self.from)
+        } else {
+            (self.from, self.to)
+        };
+        let host = |e: crate::error::HostError| UpgradeError::Instantiate(e.to_string());
+        match self.mode {
+            UpgradeMode::Snapshot => {
+                let instance = self.instance(id).ok_or(UpgradeError::NotRunning)?;
+                let pause = instance
+                    .upgrade(
+                        &target.app,
+                        InstanceSpec::from_manifest(&target.manifest),
+                        &source.manifest.app.version.to_string(),
+                    )
+                    .await?;
+                self.supervisor
+                    .replace_child(id, self.start(forward), false)
+                    .await
+                    .map_err(host)?;
+                Ok((instance.pid(), Some(pause)))
+            }
+            _ => {
+                let child = self
+                    .supervisor
+                    .replace_child(id, self.start(forward), true)
+                    .await
+                    .map_err(host)?;
+                Ok((child.pid().ok_or(UpgradeError::NotRunning)?, None))
+            }
+        }
+    }
+
+    /// Return a moved child to the old version: by snapshot if possible,
+    /// otherwise by restarting it as the old version from `init`.
+    async fn revert_one(&self, id: &str) {
+        if self.move_one(id, false).await.is_err()
+            && let Err(err) = self
+                .supervisor
+                .replace_child(id, self.start(false), true)
+                .await
+        {
+            tracing::error!(child = %id, error = %err, "revert failed");
+        }
+    }
 }
 
 /// How long an app may take to bring every instance to `Active`: one init

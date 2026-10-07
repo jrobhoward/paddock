@@ -87,11 +87,11 @@ jobs:
           tool: wasm-tools
 
       - name: Build fixtures
-        run: cargo build -p paddock-fixture-echo -p paddock-fixture-chaos -p paddock-fixture-services --target wasm32-wasip2 --release --locked
+        run: cargo build -p paddock-fixture-echo -p paddock-fixture-chaos -p paddock-fixture-services -p paddock-fixture-counter --target wasm32-wasip2 --release --locked
 
       - name: Check component world
         run: |
-          for name in paddock_fixture_echo paddock_fixture_chaos paddock_fixture_services; do
+          for name in paddock_fixture_echo paddock_fixture_chaos paddock_fixture_services paddock_fixture_counter; do
             wasm=target/wasm32-wasip2/release/$name.wasm
             wasm-tools validate --features all "$wasm"
             wasm-tools component wit "$wasm" | tee wit.txt
