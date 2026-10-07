@@ -87,3 +87,15 @@ All notable changes are recorded here. The format follows
 - `AppDeployment` carries its `InstanceSpec`; `Apps::add` and `Apps::remove`
   change a running set; instances report app, version and queue depth;
   `Runtime::instances`; `Pid` parses from text.
+- `wit/runtime.wit`: `info` gains a reserved `host-event(tuple<string,
+  envelope>)` case, so later host events reach `@0.1.0` guests.
+- `paddock-sdk`: write apps in Rust with the `App` trait, `Ctx` (every
+  `process` function), typed envelopes (CBOR, JSON, text), logging macros, and
+  `paddock_sdk::app!`. `#[derive(Snapshot)]` (`paddock-sdk-macros`) gives
+  versioned snapshot state with a `migrate` hook.
+- Examples written with the SDK: `counter` (v1, v2, broken v3), `ping-pong`
+  (typed CBOR calls, registry, monitor) and `chaos`, each with a
+  `paddock.toml`.
+- `paddock bundle` builds a signed `.rbp` from a component and `paddock.toml`
+  (refusing undeclared imports, adding `--priv` files), and `paddock keygen`
+  creates minisign keys.

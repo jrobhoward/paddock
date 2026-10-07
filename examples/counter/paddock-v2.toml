@@ -1,0 +1,19 @@
+# Bundle with:
+#   cargo build -p example-counter --target wasm32-wasip2 --release --features v2
+#   paddock bundle examples/counter/paddock-v2.toml target/wasm32-wasip2/release/example_counter.wasm --key paddock.key
+[app]
+name = "counter"
+version = "2.0.0"
+description = "A stateful counter (paddock-sdk example)"
+license = "MIT OR Apache-2.0"
+
+[appserver]
+registered_names = ["counter"]
+
+[appserver.lifecycle]
+start_args = { register = "counter" }
+
+[appserver.upgrade]
+mode = "snapshot"
+snapshot_version = 2
+from_versions = ["^1"]

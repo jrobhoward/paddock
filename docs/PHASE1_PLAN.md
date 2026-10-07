@@ -132,11 +132,11 @@ Sizes are relative (S = days, M = about a week, L = more than a week). Each mile
 - [x] Audit log of deploys, upgrades, grants and denials.
 
 ### M8 Guest SDK and examples (M)
-- [ ] First: add `host-event(tuple<string, envelope>)` to `info` in `wit/runtime.wit`, so later host events reach `@0.1.0` guests (spike S10 showed any new case otherwise refuses old guests; review action A1).
-- [ ] `paddock-sdk`: an `App` trait (init, handle_call, handle_cast, handle_info, terminate), `ProcessContext` (call, cast, link, monitor, timers, registry), typed envelopes with serde + CBOR.
-- [ ] `#[derive(Snapshot)]` for versioned state with a `migrate(from_version, old)` hook.
-- [ ] Examples: `counter` (v1, v2 and broken v3), `ping-pong`, `chaos`.
-- [ ] Bundle tooling: `paddock bundle` or the rustbridge CLI producing a 1.2 `.rbp` from a component and manifest (per S6).
+- [x] First: add `host-event(tuple<string, envelope>)` to `info` in `wit/runtime.wit`, so later host events reach `@0.1.0` guests (spike S10 showed any new case otherwise refuses old guests; review action A1).
+- [x] `paddock-sdk`: an `App` trait (init, handle_call, handle_cast, handle_info, terminate), `ProcessContext` (call, cast, link, monitor, timers, registry), typed envelopes with serde + CBOR. (`Ctx` is the process context; envelopes also do JSON and text; `paddock_sdk::info!` and friends log through `wasi:logging`.)
+- [x] `#[derive(Snapshot)]` for versioned state with a `migrate(from_version, old)` hook.
+- [x] Examples: `counter` (v1, v2 and broken v3), `ping-pong`, `chaos`.
+- [x] Bundle tooling: `paddock bundle` or the rustbridge CLI producing a 1.2 `.rbp` from a component and manifest (per S6). (`paddock bundle` reads a `paddock.toml`, refuses undeclared imports, adds `--priv` files with checksums, signs, and verifies the result; `paddock keygen` makes minisign keys.)
 
 ### M9 Exit test suite and baseline numbers (M)
 - [ ] From the HAppliance/OTP review: admin `state <pid>` through `save-snapshot` (A3), a test that a second node on the same data directory is refused (A5), and optionally runtime `log-level` (A7).

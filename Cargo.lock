@@ -580,6 +580,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-chaos"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "example-counter"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "example-ping-pong"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1294,12 +1321,17 @@ dependencies = [
  "clap",
  "minisign",
  "paddock-api",
+ "paddock-bundle",
+ "paddock-manifest",
  "paddock-node",
  "rustbridge-bundle",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
+ "wat",
 ]
 
 [[package]]
@@ -1387,6 +1419,26 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "paddock-sdk"
+version = "0.0.0"
+dependencies = [
+ "ciborium",
+ "paddock-sdk-macros",
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "paddock-sdk-macros"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

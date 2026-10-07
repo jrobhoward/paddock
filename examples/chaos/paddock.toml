@@ -1,0 +1,16 @@
+# Bundle with:
+#   cargo build -p example-chaos --target wasm32-wasip2 --release
+#   paddock bundle examples/chaos/paddock.toml target/wasm32-wasip2/release/example_chaos.wasm --key paddock.key
+[app]
+name = "chaos"
+version = "1.0.0"
+description = "Fails on purpose (paddock-sdk example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.limits]
+memory_max = "32MiB"
+callback_deadline_ms = 500
+
+[appserver.supervision]
+intensity = 3
+period_ms = 10000

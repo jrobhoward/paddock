@@ -1,0 +1,27 @@
+[package]
+name = "example-counter"
+version = "0.0.0"
+description = "Paddock example: a stateful counter in three versions, for snapshot upgrades"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# v1 by default; `v2` adds history and migrates v1 snapshots; `v3` is v2 with
+# a load_snapshot that always refuses (the deliberately broken upgrade).
+[features]
+v2 = []
+v3 = ["v2"]
+
+[dependencies]
+paddock-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

@@ -186,6 +186,15 @@ pub(crate) enum Info {
         /// Why.
         reason: ExitReason,
     },
+    /// A named host event (`host-event`). No Phase 1 service sends one yet;
+    /// it is reserved so later events reach `@0.1.0` guests.
+    #[allow(dead_code)]
+    HostEvent {
+        /// The event's name.
+        name: String,
+        /// Its payload.
+        msg: Envelope,
+    },
     /// A timer from `send-after` fired.
     Timer {
         /// The reference `send-after` returned.
@@ -205,6 +214,7 @@ impl From<Info> for wit::Info {
                 reason,
             } => Self::Down((reference, pid.into(), (&reason).into())),
             Info::Timer { reference, msg } => Self::Timer((reference, msg.into())),
+            Info::HostEvent { name, msg } => Self::HostEvent((name, msg.into())),
         }
     }
 }

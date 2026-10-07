@@ -1,0 +1,15 @@
+# Bundle with:
+#   cargo build -p example-ping-pong --target wasm32-wasip2 --release
+#   paddock bundle examples/ping-pong/ping.toml target/wasm32-wasip2/release/example_ping_pong.wasm --key paddock.key
+[app]
+name = "ping"
+version = "1.0.0"
+description = "Calls and monitors pong (paddock-sdk example)"
+license = "MIT OR Apache-2.0"
+
+[[appserver.dependencies]]
+app = "pong"
+version = "^1"
+
+[appserver.lifecycle]
+start_args = { role = "ping" }

@@ -19,16 +19,21 @@ doc = false
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+minisign = { workspace = true }
 paddock-api = { workspace = true }
+paddock-bundle = { workspace = true }
+paddock-manifest = { workspace = true }
+rustbridge-bundle = { workspace = true }
+semver = { workspace = true }
+toml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "fs"] }
 
 [dev-dependencies]
-minisign = { workspace = true }
 paddock-node = { workspace = true }
-rustbridge-bundle = { workspace = true }
 tempfile = { workspace = true }
+wat = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
 
 [lints]

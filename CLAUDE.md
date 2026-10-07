@@ -82,6 +82,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-node`: the node daemon (library and `paddock-node` binary):
   config, deploy store, admin server, audit log, log ring.
 - `crates/paddock-cli`: the `paddock` command.
+- `crates/paddock-sdk`, `crates/paddock-sdk-macros`: the Rust guest SDK and
+  its `Snapshot` derive. The SDK owns the wit-bindgen bindings (with
+  `default_bindings_module`), so app crates have no WIT.
+- `examples/`: apps written with the SDK, each with a `paddock.toml`.
+  `paddock-cli`'s `tests/examples.rs` builds, bundles, deploys and drives them.
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.
@@ -94,9 +99,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   its own target directory.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
-  with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. The remaining
-  Phase 1 crate (`paddock-sdk`) lands under `crates/` per the plan's workspace
-  layout.
+  with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. Every crate in the
+  plan's workspace layout now exists.
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
   by `crates/paddock/tests/wit_rules.rs`. `wit/vendor/` holds unmodified
   copies of the draft WASI interfaces Paddock hosts itself (keyvalue, config,
@@ -175,6 +179,11 @@ imports refuses every real component (M1, found by the echo fixture).
 are `cfg(unix)`; code reachable only from them must not warn on Windows, where
 CI runs clippy with `-Dwarnings`. Scope Unix-only imports inside the function,
 or allow dead code for the module with a comment (M7).
+
+**Fixtures and examples build per feature set.** Cargo unifies features within
+one build, so each feature combination (counter v1/v2/v3, services with and
+without `denied`) builds into its own `target/fixtures/<name>` directory, and
+test binaries that build the same set share a directory (M6 to M8).
 
 **Unix socket paths are short.** About 107 bytes on Linux and 103 on macOS;
 the node refuses a longer `admin_socket` with a message saying so, and tests

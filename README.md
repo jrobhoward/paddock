@@ -21,7 +21,7 @@ components, with Erlang/OTP-style semantics:
 
 Pre-release. A single node runs: `paddock-node` deploys signed bundles and
 supervises their instances, and the `paddock` CLI manages it. Phase 1
-milestones M0 to M7 are done; the guest SDK (M8) and the exit test suite (M9)
+milestones M0 to M8 are done; the exit test suite and baseline numbers (M9)
 remain. Until rustbridge's bundle format 1.2 is published, the workspace builds
 only next to a rustbridge checkout on its `bundle-1.2` branch, so CI is red.
 
@@ -79,8 +79,49 @@ Every command takes `--json`. The API is JSON over HTTP, so `curl
 --unix-socket /var/lib/paddock/admin.sock http://paddock/v1/apps` works too;
 `paddock-api` documents the routes. Deploys, upgrades and refusals are recorded
 in `<data_dir>/audit.log`. Unix socket paths are limited to about 107 bytes;
-set `admin_socket` if `data_dir` is long. Producing bundles is M8's job; until
-then they are built with rustbridge's `BundleBuilder`.
+set `admin_socket` if `data_dir` is long. 
+
+## Writing an app
+
+Apps are written with `paddock-sdk` and built for `wasm32-wasip2`; see
+[`examples/`](examples/) (`counter`, `ping-pong`, `chaos`).
+
+```rust
+use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+
+#[derive(Default)]
+struct Counter { count: u64 }
+
+impl App for Counter {
+    fn init(_ctx: &mut Ctx, _args: &[u8]) -> Result<Self, String> {
+        Ok(Self::default())
+    }
+
+    fn handle_call(&mut self, _ctx: &mut Ctx, _call: CallRef, msg: Envelope) -> Reply {
+        if msg.as_text() == Some("inc") {
+            self.count += 1;
+        }
+        Reply::Now(Envelope::text(self.count.to_string()))
+    }
+}
+
+paddock_sdk::app!(Counter);
+```
+
+The app's `paddock.toml` holds its name, version and `appserver` section
+(limits, capabilities, upgrade mode). To build, key and bundle it:
+
+```sh
+cargo build -p example-counter --target wasm32-wasip2 --release
+paddock keygen signer                   # signer.key, signer.pub; prints the public key
+paddock bundle examples/counter/paddock.toml \
+  target/wasm32-wasip2/release/example_counter.wasm --key signer.key
+paddock deploy counter-1.0.0.rbp
+```
+
+`paddock bundle` refuses a component that imports an interface its manifest
+does not declare. The signing key's password comes from
+`PADDOCK_KEY_PASSWORD`, or a prompt.
 
 ## License
 

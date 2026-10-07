@@ -1,5 +1,6 @@
 //! `paddock`: manage a Paddock node through its admin API.
 
+mod bundle;
 mod format;
 
 use std::path::PathBuf;
@@ -57,6 +58,33 @@ impl Rollout {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Build a signed bundle from a component and its paddock.toml.
+    Bundle {
+        /// The app's paddock.toml.
+        manifest: PathBuf,
+        /// The component (`.wasm`, built for wasm32-wasip2).
+        component: PathBuf,
+        /// Minisign secret key (password from PADDOCK_KEY_PASSWORD, or a prompt).
+        #[arg(long)]
+        key: PathBuf,
+        /// Directory of files the app sees read-only at /priv.
+        #[arg(long = "priv")]
+        priv_dir: Option<PathBuf>,
+        /// Output file (default: <name>-<version>.rbp).
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Write the bundle even if the component imports undeclared interfaces.
+        #[arg(long)]
+        skip_import_check: bool,
+    },
+    /// Create a minisign key pair: <prefix>.key and <prefix>.pub.
+    Keygen {
+        /// Path prefix for the two files.
+        prefix: PathBuf,
+        /// Leave the secret key unencrypted.
+        #[arg(long)]
+        no_password: bool,
+    },
     /// Deploy a signed bundle.
     Deploy {
         /// The `.rbp` file.
@@ -159,6 +187,50 @@ async fn read(path: &PathBuf) -> anyhow::Result<Vec<u8>> {
 
 async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()> {
     match command {
+        Command::Bundle {
+            manifest,
+            component,
+            key,
+            priv_dir,
+            out,
+            skip_import_check,
+        } => {
+            let b = bundle::bundle(&bundle::BundleRequest {
+                manifest: &manifest,
+                component: &component,
+                key: &key,
+                priv_dir: priv_dir.as_deref(),
+                out: out.as_deref(),
+                skip_import_check,
+            })?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": b.path, "app": b.name, "version": b.version,
+                        "signer": b.public_key, "imports": b.imports, "priv_files": b.priv_files,
+                    }))?
+                );
+            } else {
+                println!(
+                    "wrote {} ({} {}, {} priv file(s), signed by {})",
+                    b.path.display(),
+                    b.name,
+                    b.version,
+                    b.priv_files,
+                    b.public_key
+                );
+            }
+            Ok(())
+        }
+        Command::Keygen {
+            prefix,
+            no_password,
+        } => {
+            let public = bundle::keygen(&prefix, no_password)?;
+            println!("{public}");
+            Ok(())
+        }
         Command::Deploy { bundle } => {
             let r = client.deploy(read(&bundle).await?).await?;
             print(json, &r, |r| {

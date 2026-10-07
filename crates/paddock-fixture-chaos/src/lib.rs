@@ -299,6 +299,9 @@ impl Guest for Chaos {
                 let line = format!("exit:{}:{}", show_pid(pid), show_exit(&reason));
                 STATE.with_borrow_mut(|s| s.infos.push(line));
             }
+            Info::HostEvent((name, _)) => {
+                STATE.with_borrow_mut(|s| s.infos.push(format!("event:{name}")));
+            }
             Info::Down((reference, pid, reason)) => {
                 let line = format!("down:{reference}:{}:{}", show_pid(pid), show_exit(&reason));
                 STATE.with_borrow_mut(|s| s.infos.push(line));

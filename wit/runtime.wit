@@ -90,6 +90,10 @@ interface types {
     down(tuple<u64, pid, exit-reason>),
     /// A timer from `send-after` fired: timer reference, message.
     timer(tuple<u64, envelope>),
+    /// Any other host event, by name, with its payload. Reserved so the host
+    /// can add events (role changes, key changes, node up and down) without
+    /// a new world version; an app ignores names it does not know.
+    host-event(tuple<string, envelope>),
   }
 
   /// What `handle-call` returns.

@@ -93,7 +93,7 @@ An app is a WebAssembly component that implements a `gen_server`-style callback 
 
 The contract is the `paddock:runtime@0.1.0` package in [`wit/runtime.wit`](../wit/runtime.wit), the source of truth; this section summarizes it.
 
-- `types`: `pid` (`node`, `id`, `incarnation`), `call-ref`, `envelope`, `exit-reason`, `call-error`, `register-error`, `info` (link `exit`, monitor `down`, `timer`) and `call-result` (`reply` or `noreply`).
+- `types`: `pid` (`node`, `id`, `incarnation`), `call-ref`, `envelope`, `exit-reason`, `call-error`, `register-error`, `info` (link `exit`, monitor `down`, `timer`, and a reserved `host-event(name, envelope)`) and `call-result` (`reply` or `noreply`). Every type in an export signature is frozen for a world version (spike S10); `host-event` lets later hosts send new kinds of event to `@0.1.0` guests, which ignore names they do not know.
 - `process` (imported by every app): `self`, `cast`, `call` (returns `result<envelope, call-error>`), `reply`, `link`/`unlink`, `trap-exits`, `monitor`/`demonitor`, `register` (returns `result<_, register-error>`), `whereis`, `send-after`/`cancel-timer`, `exit`.
 - `world app` exports: `init`, `handle-call(caller, msg)`, `handle-cast`, `handle-info`, `terminate`, `save-snapshot`, `load-snapshot(from-version, snapshot)`.
 
@@ -263,7 +263,11 @@ An upgrade swaps an instance's component between messages, carrying state throug
 - An app rolls out in batches. A failed instance, or more supervisor restarts than allowed during the rollout (counted after each batch's watch window), stops the rollout. Every instance already moved goes back by snapshot, or, if the old version cannot read the new snapshot, by restart from `init`.
 - Rollback returns to the previous version by snapshot when that version's manifest asks for it and accepts the running version, otherwise by restart.
 
-**SDK support.** The Rust SDK derives snapshot code from a versioned state type (serde plus a version tag), with a `migrate(from_version, old)` hook. Most apps never hand-write snapshot bytes.
+**SDK support.** `paddock-sdk` (Rust) wraps the app world:
+- An app implements the `App` trait. Only `init` and `handle_call` are required; `handle_cast`, `handle_info` and `terminate` default to doing nothing, and the snapshot pair defaults to refusing snapshot upgrades, so `restart` mode works with no extra code. `paddock_sdk::app!(Type)` exports it.
+- `Ctx` exposes every `process` function. `Envelope` encodes and decodes CBOR, JSON and text by content type.
+- `#[derive(Snapshot)]` with `#[snapshot(version = N, migrate = path)]` writes state as CBOR `[format_version, state]`. Loading an older format hands the raw CBOR value to `migrate`. The snapshot's own format version is independent of the app version, which `load_snapshot` also receives.
+- The bindings live inside the SDK, so app crates carry no WIT. A component still imports only what its code calls: an app that never logs has no `wasi:logging` import.
 
 **Native-process plugins** upgrade with `restart` or `blue-green` only, because their memory can't be snapshotted by the host. A plugin may implement the snapshot messages itself over its pipe.
 
