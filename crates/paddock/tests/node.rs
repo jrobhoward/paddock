@@ -84,8 +84,14 @@ async fn kill____instance____restarted_with_next_incarnation() {
     let status = n.client.status("victim").await.unwrap();
 
     let (b, a): (Vec<u64>, Vec<u64>) = (
-        before.split('.').map(|x| x.parse().unwrap()).collect(),
-        after.split('.').map(|x| x.parse().unwrap()).collect(),
+        before
+            .split(['.', '@'])
+            .map(|x| x.parse().unwrap())
+            .collect(),
+        after
+            .split(['.', '@'])
+            .map(|x| x.parse().unwrap())
+            .collect(),
     );
     assert_eq!(a[1], b[1]);
     assert_eq!(a[2], b[2] + 1);

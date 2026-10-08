@@ -22,8 +22,11 @@
 //! session on both sides: the side that stops hearing ends it, and its
 //! heartbeats, which still get through, carry the new number to the other.
 //!
-//! Extra paths only report [`NodeEvent::PathSilent`] and
-//! [`NodeEvent::PathHeard`]; they carry no frames and never end a session.
+//! Every beat, on the link and on each extra path, carries a small payload
+//! the node sets ([`crate::failover`] puts the node's role and epoch there),
+//! and the receiver keeps the latest one per path. Extra paths only report
+//! [`NodeEvent::PathSilent`] and [`NodeEvent::PathHeard`]; they carry no
+//! frames and never end a session.
 //! Failover (ROADMAP D10) reads them to tell a partition (link silent, serial
 //! heard) from a dead node (both silent).
 
@@ -47,9 +50,9 @@ pub const LINK: &str = "link";
 /// The receiving side reports each beat with
 /// [`Runtime::heard`](crate::Runtime::heard).
 pub trait HeartbeatPath: Send + Sync + 'static {
-    /// Tell `node` this node is alive. Returns `false` if the path cannot
-    /// reach it now.
-    fn beat(&self, node: u32) -> bool;
+    /// Tell `node` this node is alive, with this node's beat payload.
+    /// Returns `false` if the path cannot reach it now.
+    fn beat(&self, node: u32, payload: &[u8]) -> bool;
 }
 
 /// A change in what this node knows about another.
@@ -119,10 +122,14 @@ pub struct PeerStatus {
 }
 
 /// One path to a peer.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct PathState {
     heard: Instant,
     silent: bool,
+    /// The payload of the last beat heard on it, and when. On the link,
+    /// other frames count as hearing it but carry no payload.
+    payload: Vec<u8>,
+    payload_at: Instant,
 }
 
 impl PathState {
@@ -130,8 +137,26 @@ impl PathState {
         Self {
             heard: now,
             silent: false,
+            payload: Vec::new(),
+            payload_at: now,
         }
     }
+
+    fn set_payload(&mut self, payload: Vec<u8>, now: Instant) {
+        self.payload = payload;
+        self.payload_at = now;
+    }
+}
+
+/// The last beat heard from a peer on one path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Beat {
+    pub(crate) path: String,
+    /// A beat (not just any frame) heard within `node_timeout`.
+    pub(crate) live: bool,
+    /// When the last beat, and so `payload`, arrived.
+    pub(crate) heard: Instant,
+    pub(crate) payload: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -165,6 +190,8 @@ pub(crate) struct Liveness {
     paths: RwLock<Vec<(String, Arc<dyn HeartbeatPath>)>>,
     events: broadcast::Sender<NodeEvent>,
     started: AtomicBool,
+    /// What this node's beats carry.
+    payload: RwLock<Vec<u8>>,
 }
 
 impl std::fmt::Debug for Liveness {
@@ -185,7 +212,43 @@ impl Liveness {
             paths: RwLock::new(Vec::new()),
             events: broadcast::channel(1024).0,
             started: AtomicBool::new(false),
+            payload: RwLock::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// Set what this node's beats carry from now on.
+    pub(crate) fn set_payload(&self, payload: Vec<u8>) {
+        *self.payload.write().unwrap_or_else(PoisonError::into_inner) = payload;
+    }
+
+    fn payload(&self) -> Vec<u8> {
+        self.payload
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The last beat from `node` on each path, the link first. Empty if
+    /// `node` is not watched.
+    pub(crate) fn beats_from(&self, node: u32) -> Vec<Beat> {
+        let peers = self.peers();
+        let Some(peer) = peers.get(&node) else {
+            return Vec::new();
+        };
+        let now = Instant::now();
+        let beat = |path: &str, s: &PathState| Beat {
+            path: path.to_string(),
+            live: now.duration_since(s.payload_at) <= self.timeout,
+            heard: s.payload_at,
+            payload: s.payload.clone(),
+        };
+        let mut out = vec![beat(LINK, &peer.link)];
+        out.extend(peer.paths.iter().map(|(name, s)| beat(name, s)));
+        out
     }
 
     fn peers(&self) -> MutexGuard<'_, BTreeMap<u32, Peer>> {
@@ -352,11 +415,12 @@ impl Liveness {
 
     /// `node`'s heartbeat said whether it hears this node. Returns `true` if
     /// `node` just stopped being reachable, so the session must end.
-    pub(crate) fn on_heartbeat(&self, node: u32, hears_me: bool) -> bool {
+    pub(crate) fn on_heartbeat(&self, node: u32, hears_me: bool, payload: Vec<u8>) -> bool {
         let (events, lost) = {
             let mut peers = self.peers();
             let peer = self.peer(&mut peers, node, Instant::now());
             peer.hears_me = hears_me;
+            peer.link.set_payload(payload, Instant::now());
             update(node, peer)
         };
         self.emit(events);
@@ -364,7 +428,7 @@ impl Liveness {
     }
 
     /// A beat from `node` on the extra path `path`.
-    pub(crate) fn on_beat(&self, node: u32, path: &str) {
+    pub(crate) fn on_beat(&self, node: u32, path: &str, payload: &[u8]) {
         let mut events = Vec::new();
         {
             let now = Instant::now();
@@ -372,6 +436,7 @@ impl Liveness {
             let peer = self.peer(&mut peers, node, now);
             if let Some(state) = peer.paths.get_mut(path) {
                 state.heard = now;
+                state.set_payload(payload.to_vec(), now);
                 if state.silent {
                     state.silent = false;
                     events.push(NodeEvent::PathHeard {
@@ -472,6 +537,7 @@ fn round(rt: &Arc<RuntimeInner>) {
         .map(|(_, p)| p.clone())
         .collect();
     let creation = rt.creation();
+    let payload = liveness.payload();
     for (node, to_creation, session, hears_you) in liveness.beats() {
         if let Some(transport) = rt.transport() {
             transport.send(
@@ -480,12 +546,15 @@ fn round(rt: &Arc<RuntimeInner>) {
                     creation,
                     to_creation,
                     session,
-                    frame: Frame::Heartbeat { hears_you },
+                    frame: Frame::Heartbeat {
+                        hears_you,
+                        payload: payload.clone(),
+                    },
                 },
             );
         }
         for path in &paths {
-            path.beat(node);
+            path.beat(node, &payload);
         }
     }
     for node in liveness.check(Instant::now()) {

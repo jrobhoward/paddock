@@ -159,7 +159,7 @@ impl Shared {
 
     /// A beat from `from` to `to` on the extra path `path`: arrives at once
     /// unless the path is cut that way.
-    fn beat(&self, path: &str, from: u32, to: u32) -> bool {
+    fn beat(&self, path: &str, from: u32, to: u32, payload: &[u8]) -> bool {
         let target = {
             let state = self.state();
             if state.path_cut.contains(&(path.to_string(), from, to)) {
@@ -168,7 +168,7 @@ impl Shared {
             state.nodes.get(&to).and_then(Weak::upgrade)
         };
         target.is_some_and(|rt| {
-            rt.liveness.on_beat(from, path);
+            rt.liveness.on_beat(from, path, payload);
             true
         })
     }
@@ -237,10 +237,10 @@ struct PathPort {
 }
 
 impl HeartbeatPath for PathPort {
-    fn beat(&self, node: u32) -> bool {
+    fn beat(&self, node: u32, payload: &[u8]) -> bool {
         self.shared
             .upgrade()
-            .is_some_and(|shared| shared.beat(&self.name, self.node, node))
+            .is_some_and(|shared| shared.beat(&self.name, self.node, node, payload))
     }
 }
 

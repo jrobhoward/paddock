@@ -97,16 +97,32 @@ fn text(body: impl Into<String>) -> Envelope {
     }
 }
 
+/// `node.serial.incarnation@creation`, as the host prints pids: the id's
+/// high 24 bits are the creation, the low 40 the serial number.
 fn show_pid(pid: Pid) -> String {
-    format!("{}.{}.{}", pid.node, pid.id, pid.incarnation)
+    format!(
+        "{}.{}.{}@{}",
+        pid.node,
+        pid.id & ((1 << 40) - 1),
+        pid.incarnation,
+        pid.id >> 40
+    )
 }
 
+/// `node.serial.incarnation@creation`, or `node.id.incarnation` with the
+/// whole id.
 fn parse_pid(s: &str) -> Pid {
-    let mut parts = s.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
+    let (fields, creation) = match s.split_once('@') {
+        Some((fields, creation)) => (fields, creation.parse::<u64>().ok()),
+        None => (s, None),
+    };
+    let mut parts = fields.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
     let mut next = || parts.next().unwrap_or(0);
+    let node = next() as u32;
+    let id = next();
     Pid {
-        node: next() as u32,
-        id: next(),
+        node,
+        id: creation.map_or(id, |c| (c << 40) | id),
         incarnation: next() as u32,
     }
 }

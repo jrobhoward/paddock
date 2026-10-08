@@ -64,7 +64,8 @@ async fn call_until(n: &TestNode, app: &str, body: &str, wanted: &[&str]) -> Str
 }
 
 fn incarnation(pid: &str) -> u64 {
-    pid.rsplit('.').next().unwrap().parse().unwrap()
+    let fields = pid.split('@').next().unwrap();
+    fields.rsplit('.').next().unwrap().parse().unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

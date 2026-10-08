@@ -273,7 +273,7 @@ async fn remote_pid____no_transport____noconnection_everywhere() {
     // A pid on another node: unreachable until a transport exists.
     let (rt, app) = shared();
     let a = rt.spawn(app, spec("trap-exits")).unwrap();
-    let remote = "7.1.1";
+    let remote = "7.1.1@1";
 
     let call = ask(&a, &format!("call:{remote}:500:echo:x")).await;
     let cast = ask(&a, &format!("cast:{remote}:count")).await;

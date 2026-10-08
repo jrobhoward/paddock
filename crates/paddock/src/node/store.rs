@@ -87,7 +87,14 @@ impl Store {
         };
         let next = current
             .checked_add(1)
-            .ok_or_else(|| NodeError::Internal(format!("{}: creation overflow", path.display())))?;
+            .filter(|&n| n <= paddock_host::pid::MAX_CREATION)
+            .ok_or_else(|| {
+                NodeError::Internal(format!(
+                    "{}: creation would pass {}",
+                    path.display(),
+                    paddock_host::pid::MAX_CREATION
+                ))
+            })?;
         let tmp = self.root.join("tmp/creation");
         std::fs::write(&tmp, next.to_string())
             .and_then(|()| std::fs::rename(&tmp, &path))

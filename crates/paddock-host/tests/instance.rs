@@ -47,10 +47,7 @@ async fn call____self____guest_sees_its_pid() {
     let reply = instance.call(text("self"), LONG).await.unwrap();
 
     let pid = instance.pid();
-    assert_eq!(
-        body(&reply),
-        format!("{}.{}.{}", pid.node, pid.id, pid.incarnation)
-    );
+    assert_eq!(body(&reply), pid.text());
     instance.kill();
 }
 

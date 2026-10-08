@@ -69,7 +69,7 @@ async fn remote____call_and_cast____reach_the_other_node() {
     // Same pair, so in order: the cast lands before this call.
     let count = ask(&a, &format!("call:{to_b}:1000:count")).await;
     let from_host = n1.rt.call(b.pid(), text("echo:host"), LONG).await.unwrap();
-    let to_dead = ask(&a, &format!("call:{}.999.1:500:echo:x", n2.id())).await;
+    let to_dead = ask(&a, &format!("call:{}.999.1@1:500:echo:x", n2.id())).await;
 
     assert_eq!(call, "ok:across");
     assert_eq!(cast, "sent");
@@ -97,13 +97,13 @@ async fn remote____link____exits_cross_both_ways() {
     a.kill();
     let dead_link = {
         let d = n1.spawn("trap-exits");
-        ask(&d, &format!("link:{}.999.1", n2.id())).await;
+        ask(&d, &format!("link:{}.999.1@1", n2.id())).await;
         ask_until(&d, "infos", |s| s.contains("exit:")).await
     };
     let b_infos = ask_until(&b, "infos", |s| s.contains("exit:")).await;
 
     assert_eq!(a_infos, format!("exit:{to_c}:killed"));
-    assert_eq!(dead_link, format!("exit:{}.999.1:noproc", n2.id()));
+    assert_eq!(dead_link, format!("exit:{}.999.1@1:noproc", n2.id()));
     assert_eq!(b_infos, format!("exit:{}:killed", pid_text(a.pid())));
     b.kill();
 }
@@ -138,13 +138,13 @@ async fn remote____monitor____down_on_exit_none_after_demonitor() {
     let infos = ask_until(&a, "infos", |s| s.contains("down:")).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
     let later = ask(&a, "infos").await;
-    let dead = ask(&a, &format!("monitor:{}.999.1", n2.id())).await;
+    let dead = ask(&a, &format!("monitor:{}.999.1@1", n2.id())).await;
     let dead_down = ask_until(&a, "infos", |s| s.contains(&format!("down:{dead}:"))).await;
 
     assert_eq!(infos, format!("down:{ref_b}:{to_b}:killed"));
     assert_eq!(later, infos);
     assert!(
-        dead_down.ends_with(&format!("down:{dead}:{}.999.1:noproc", n2.id())),
+        dead_down.ends_with(&format!("down:{dead}:{}.999.1@1:noproc", n2.id())),
         "{dead_down}"
     );
     a.kill();

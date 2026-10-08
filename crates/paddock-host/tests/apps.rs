@@ -59,12 +59,7 @@ fn fast(mut extra: serde_json::Value) -> serde_json::Value {
 }
 
 fn pid_of(reply: &str) -> Pid {
-    let parts: Vec<u64> = reply.split('.').map(|p| p.parse().unwrap()).collect();
-    Pid {
-        node: u32::try_from(parts[0]).unwrap(),
-        id: parts[1],
-        incarnation: u32::try_from(parts[2]).unwrap(),
-    }
+    reply.parse().unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

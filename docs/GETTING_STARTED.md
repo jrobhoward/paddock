@@ -66,15 +66,15 @@ paddock call counter inc           # 1
 paddock call counter inc           # 2
 paddock call counter get           # 1.0.0 count=2
 paddock ps                         # PID, APP, VERSION, STATE, QUEUED, DROPPED
-paddock state 0.1.1                # the instance's state: (paddock-sdk, ..., format 1) {"count": 2}
+paddock state 0.1.1@1              # the instance's state: (paddock-sdk, ..., format 1) {"count": 2}
 ```
 
-Use the pid that `paddock ps` shows: `node.id.incarnation`.
+Use the pid that `paddock ps` shows: `node.serial.incarnation@creation`, where the creation counts the node's starts.
 
 ## 5. Watch it recover
 
 ```sh
-paddock kill 0.1.1                 # its supervisor restarts it, after a 100 ms backoff
+paddock kill 0.1.1@1               # its supervisor restarts it, after a 100 ms backoff
 paddock ps                         # a new incarnation: 0.1.2
 paddock status counter             # restarts: 1
 paddock call counter get           # 1.0.0 count=0: the restarted instance began again

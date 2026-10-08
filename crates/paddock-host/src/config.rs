@@ -57,7 +57,9 @@ pub struct RuntimeConfig {
     /// silent; a silent cluster link ends the session with the peer.
     pub node_timeout: Duration,
     /// This start of the node, raised on every start and kept on disk by the
-    /// node ([`crate::transport::membership`]). Starts at 1.
+    /// node ([`crate::transport::membership`]). From 1 to
+    /// [`crate::pid::MAX_CREATION`]; it is the high bits of every instance
+    /// id.
     pub creation: u32,
     /// What this node does in the cluster.
     pub role: Role,

@@ -226,7 +226,7 @@ impl RolloutParams {
 pub enum Target {
     /// An app, through its pool's routing.
     App(String),
-    /// One instance, by pid (`node.id.incarnation`).
+    /// One instance, by pid (`node.serial.incarnation@creation`, as `ps` shows it).
     Pid(String),
     /// The instance holding a registered name.
     Name(String),

@@ -91,7 +91,13 @@ impl Guest for Counter {
             "get" => STATE.with_borrow(describe),
             "self" => {
                 let p = process::self_();
-                format!("{}.{}.{}", p.node, p.id, p.incarnation)
+                format!(
+                    "{}.{}.{}@{}",
+                    p.node,
+                    p.id & ((1 << 40) - 1),
+                    p.incarnation,
+                    p.id >> 40
+                )
             }
             "trap" => panic!("asked to trap"),
             other => format!("unknown command '{other}'"),

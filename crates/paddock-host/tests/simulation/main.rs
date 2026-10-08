@@ -1,7 +1,8 @@
 //! Races between links, monitors, exits, partitions and heals across nodes,
 //! on a paused clock, so each test sees the same interleaving on every run
 //! (ROADMAP C3). `liveness` covers heartbeats and silent failures (C5),
-//! `membership` joining, restarts and leaving (D2);
+//! `membership` joining, restarts and leaving (D2), `failover` an HA pair
+//! with a witness (D10);
 //! `random` runs seeded random scenarios against the distribution rules.
 //!
 //! Each targeted test fixes a frame delay, puts an event inside that window,
@@ -13,6 +14,7 @@
 
 #[path = "../common/mod.rs"]
 mod common;
+mod failover;
 mod harness;
 mod liveness;
 mod membership;

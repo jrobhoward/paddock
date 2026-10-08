@@ -97,9 +97,9 @@ pub fn body(envelope: &Envelope) -> String {
 
 pub const LONG: Duration = Duration::from_secs(10);
 
-/// A pid as the chaos fixture writes it: `node.id.incarnation`.
+/// A pid as the chaos fixture writes it: `node.serial.incarnation@creation`.
 pub fn pid_text(pid: paddock_host::Pid) -> String {
-    format!("{}.{}.{}", pid.node, pid.id, pid.incarnation)
+    pid.text()
 }
 
 /// Ask the instance `command` and return the reply body.

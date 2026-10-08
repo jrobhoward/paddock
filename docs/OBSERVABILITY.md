@@ -8,7 +8,7 @@ What an operator can see on a running node: instance stats, direct calls to one 
 
 | Column | Meaning |
 | --- | --- |
-| `PID` | `node.id.incarnation`. The id stays across restarts; the incarnation grows by one each time. |
+| `PID` | `node.serial.incarnation@creation`. The serial stays across restarts of the instance; the incarnation grows by one each time; the creation counts the node's starts, so a pid from before a node restart never names a later instance. The instance id is the creation in its high 24 bits and the serial in its low 40. |
 | `APP`, `VERSION`, `STATE` | What it runs, and its lifecycle state (`active`, `upgrading`, ...). |
 | `QUEUED` | Messages waiting in its mailbox. |
 | `DROPPED` | Casts and timer messages dropped because its mailbox was full. |
@@ -26,7 +26,7 @@ Connection handlers do not appear in `ps` (an instance per connection, with no m
 
 ```sh
 paddock call orders 'ping'                     # an app
-paddock call --pid 0.12.3 'ping'               # one instance
+paddock call --pid 0.12.3@1 'ping'             # one instance
 paddock call --name order-router 'ping'        # a registered name
 paddock cast --name order-router 'refresh'
 paddock call orders --cbor '{"id": 42}'        # JSON sent as CBOR; a CBOR reply prints as JSON
@@ -45,7 +45,7 @@ A call through the admin API costs about 65 µs against about 4 µs inside the n
 
 The `paddock` binary carries USDT probes on the message path (provider `paddock`, from `paddock-host`'s `probes` feature, on by default with the `node` feature). They use anyprobe: SystemTap SDT on Linux (bpftrace, perf), DTrace USDT on macOS and FreeBSD, ETW on Windows. With no tracer attached a probe costs one enabled check and its arguments are not computed; `baseline` shows no difference beyond run-to-run noise ([BASELINE.md](BASELINE.md)).
 
-An instance is identified by its pid's `id` (and `incarnation` where shown). A sender of 0 is a message from outside any instance (the admin API). A `&str` argument is two values, a pointer and a length.
+An instance is identified by its pid's whole `id` (and `incarnation` where shown): the node's creation shifted left 40 bits, plus the serial `ps` shows. In bpftrace, `arg0 & 0xffffffffff` is the serial and `arg0 >> 40` the creation. A sender of 0 is a message from outside any instance (the admin API). A `&str` argument is two values, a pointer and a length.
 
 | Probe | Arguments |
 | --- | --- |

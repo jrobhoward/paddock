@@ -56,6 +56,8 @@ pub enum Frame {
     Heartbeat {
         /// Whether the sender hears the receiving node.
         hears_you: bool,
+        /// What the sender's beats carry ([`liveness`]).
+        payload: Vec<u8>,
     },
     /// The sender joins the cluster ([`membership`]); the receiver answers
     /// with [`Frame::Members`].
@@ -70,6 +72,8 @@ pub enum Frame {
     },
     /// The sender leaves the cluster.
     Leave,
+    /// Between a node of an HA pair and its witness ([`crate::failover`]).
+    Failover(crate::failover::FailoverMsg),
     /// A cast to `to`.
     Cast {
         /// The sender, if an instance.
@@ -285,13 +289,21 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
         .liveness
         .on_frame(from_node, packet.creation, packet.session)
     {
-        Session::Stale => return,
+        Session::Stale => {
+            // A heartbeat says what its sender is now, whatever the session.
+            if let Frame::Heartbeat { hears_you, payload } = packet.frame
+                && rt.liveness.on_heartbeat(from_node, hears_you, payload)
+            {
+                end_session(rt, from_node);
+            }
+            return;
+        }
         Session::Current => {}
         Session::Newer(session) => ended(rt, from_node, session),
     }
     match packet.frame {
-        Frame::Heartbeat { hears_you } => {
-            if rt.liveness.on_heartbeat(from_node, hears_you) {
+        Frame::Heartbeat { hears_you, payload } => {
+            if rt.liveness.on_heartbeat(from_node, hears_you, payload) {
                 end_session(rt, from_node);
             }
         }
@@ -323,6 +335,7 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
             let new = rt.membership.merge(&members);
             welcome(rt, &new, Some(from_node));
         }
+        Frame::Failover(msg) => rt.failover.deliver(rt, from_node, msg),
         Frame::Leave => {
             if rt.membership.remove(from_node) {
                 end_session(rt, from_node);

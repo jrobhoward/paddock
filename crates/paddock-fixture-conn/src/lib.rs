@@ -35,7 +35,13 @@ fn command(info: &ConnectionInfo, line: &str) -> Result<Option<String>, String> 
         "info" => format!("{} {}", info.listener, info.peer),
         "self" => {
             let p = process::self_();
-            format!("{}.{}.{}", p.node, p.id, p.incarnation)
+            format!(
+                "{}.{}.{}@{}",
+                p.node,
+                p.id & ((1 << 40) - 1),
+                p.incarnation,
+                p.id >> 40
+            )
         }
         "call" => {
             let (name, body) = rest.split_once(' ').unwrap_or((rest, ""));

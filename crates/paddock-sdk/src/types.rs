@@ -9,6 +9,9 @@ use crate::envelope::Envelope;
 
 /// Identifies one instance: `{node, id, incarnation}`. A restart keeps the id
 /// and bumps the incarnation, so an old pid never reaches the new instance.
+/// The id's high 24 bits are the creation of the node's start that made it,
+/// and its low 40 a serial number, so pids print as
+/// `<node.serial.incarnation@creation>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Pid {
     /// Node.
@@ -21,7 +24,14 @@ pub struct Pid {
 
 impl fmt::Display for Pid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<{}.{}.{}>", self.node, self.id, self.incarnation)
+        write!(
+            f,
+            "<{}.{}.{}@{}>",
+            self.node,
+            self.id & ((1 << 40) - 1),
+            self.incarnation,
+            self.id >> 40
+        )
     }
 }
 

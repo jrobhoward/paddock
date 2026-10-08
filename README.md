@@ -80,8 +80,8 @@ paddock call orders 'ping'
 paddock upgrade orders orders-2.0.0.rbp --approve
 paddock rollback orders                # --restart: from init, state discarded
 paddock ps                             # memory, restarts, last exit per instance
-paddock call --pid 0.12.1 'ping'       # one instance; or --name <registered name>
-paddock state 0.12.1                   # an instance's state, via save-snapshot
+paddock call --pid 0.12.1@1 'ping'     # one instance; or --name <registered name>
+paddock state 0.12.1@1                 # an instance's state, via save-snapshot
 paddock kill 0.12.1
 paddock logs orders -n 50
 paddock log-level orders debug         # until `paddock log-level orders reset`

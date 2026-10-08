@@ -196,6 +196,17 @@ All notable changes are recorded here. The format follows
   `node_timeout_ms`, and `address` and `seeds` (not used until the QUIC
   transport). A witness refuses deploys, and refuses to start on a data
   directory that holds apps.
+- Failover of singletons between an HA pair (`paddock_host::failover`):
+  `Runtime::start_failover` and `serve_witness`, three arbiters (a
+  witness with leases, heartbeat paths, an operator), `FailoverHandle`
+  with the node's leadership (`may_run`) and an operator's `confirm`.
+  Follows spike S16's rules; not yet wired to the node's apps.
+- Heartbeats carry a payload on every path (`HeartbeatPath::beat` and
+  `Runtime::heard` take it), read whatever the session it arrives in.
+- Pids print as `node.serial.incarnation@creation` (`ps`, the API, logs),
+  and `--pid` takes that form or the whole id. Instance ids hold the node's
+  creation in their high 24 bits and a serial number in their low 40, so a
+  pid kept from before a node restarted never names a later instance.
 - `spikes/s16`: a TLA+ model of failover with a lease, adapted from
   HAppliance's specifications.
 - Breaking (`paddock_host::transport`): `Transport::send` and

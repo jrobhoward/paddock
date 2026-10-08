@@ -136,6 +136,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   in-process mesh with fault injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
   the mesh on a paused clock: targeted races and seeded random scenarios
   (`PADDOCK_SIM_SEED=<n>` replays one).
+- `crates/paddock-host/src/failover.rs`: an HA pair's roles, epochs and
+  leases, and the witness (ROADMAP D10; the rules are
+  `spikes/s16/README.md` R1 to R7, so a change there means rerunning the
+  model). `tests/simulation/failover.rs` logs `may_run` and checks that a
+  singleton never runs on both nodes.
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.

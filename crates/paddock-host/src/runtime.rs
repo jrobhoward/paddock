@@ -55,6 +55,7 @@ pub(crate) struct RuntimeInner {
     pub(crate) pending_calls: PendingCalls,
     pub(crate) liveness: Liveness,
     pub(crate) membership: Membership,
+    pub(crate) failover: crate::failover::Shared,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -149,6 +150,13 @@ impl Runtime {
         config: RuntimeConfig,
         extensions: Vec<Arc<dyn Extension>>,
     ) -> Result<Self, HostError> {
+        if !(1..=crate::pid::MAX_CREATION).contains(&config.creation) {
+            return Err(HostError::Engine(format!(
+                "creation {} is outside 1..={}",
+                config.creation,
+                crate::pid::MAX_CREATION
+            )));
+        }
         let mut packages = std::collections::BTreeSet::new();
         for ext in &extensions {
             let package = ext.package();
@@ -188,7 +196,8 @@ impl Runtime {
                     config.address.clone(),
                     config.role,
                 )),
-                next_id: AtomicU64::new(1),
+                failover: crate::failover::Shared::default(),
+                next_id: AtomicU64::new(crate::pid::instance_id(config.creation, 1)),
                 config,
                 _ticker: ticker,
             }),
@@ -444,10 +453,10 @@ impl Runtime {
         self.inner.liveness.add_path(name, path);
     }
 
-    /// A beat from `node` arrived on the extra path `path`. Called by the
-    /// path's receiving side.
-    pub fn heard(&self, node: u32, path: &str) {
-        self.inner.liveness.on_beat(node, path);
+    /// A beat from `node` carrying `payload` arrived on the extra path
+    /// `path`. Called by the path's receiving side.
+    pub fn heard(&self, node: u32, path: &str, payload: &[u8]) {
+        self.inner.liveness.on_beat(node, path, payload);
     }
 
     /// Changes in what this node knows about others, from now on.

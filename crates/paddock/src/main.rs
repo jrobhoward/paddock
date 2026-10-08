@@ -193,7 +193,7 @@ struct Message {
     /// The app and the message body; only the body with --pid or --name.
     #[arg(value_name = "[APP] BODY", num_args = 1..=2, required = true)]
     args: Vec<String>,
-    /// Send to one instance by pid (`node.id.incarnation`) instead of an app.
+    /// Send to one instance by pid (`node.serial.incarnation@creation`, as `ps` shows it) instead of an app.
     #[arg(long, conflicts_with = "name")]
     pid: Option<String>,
     /// Send to the instance holding this registered name.

@@ -171,7 +171,7 @@ fn status_text(status: &AppStatus) -> (String, Option<String>) {
 fn instance_info(h: &InstanceHandle) -> InstanceInfo {
     let pid = h.pid();
     InstanceInfo {
-        pid: format!("{}.{}.{}", pid.node, pid.id, pid.incarnation),
+        pid: pid.text(),
         app: h.app().to_string(),
         version: h.version(),
         state: format!("{:?}", h.state()).to_lowercase(),
@@ -1149,7 +1149,7 @@ impl Node {
             .snapshot()
             .await
             .map_err(|e| NodeError::Conflict(format!("{pid}: {e}")))?;
-        let shown = format!("{}.{}.{}", pid.node, pid.id, pid.incarnation);
+        let shown = pid.text();
         Ok(super::state_view::describe(&shown, &bytes))
     }
 
