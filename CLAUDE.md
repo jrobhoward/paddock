@@ -103,6 +103,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `examples/greeter/` is an extension (a host service from outside
   Paddock): `service` depends on `paddock-host` alone, `app` calls it, and
   `node` is a node binary with it, whose test runs all three.
+  `examples/tracing/` is a demo script and bpftrace scripts for the
+  probes, not a crate.
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.

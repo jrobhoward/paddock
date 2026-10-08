@@ -1,0 +1,38 @@
+// Instance lifecycle as it happens: exits, restarts, rollouts and messages
+// dropped by full mailboxes.
+//
+//   sudo bpftrace -p <node pid> examples/tracing/bt/lifecycle.bt
+//
+// A &str argument is a pointer and a length; buf(ptr, len) reads it.
+
+usdt:*:paddock:instance__exit
+{
+  printf("%-8s exit     0.%d.%d %r\n", strftime("%H:%M:%S", nsecs), arg0, arg1, buf(arg2, arg3));
+}
+
+usdt:*:paddock:supervisor__restart
+{
+  printf("%-8s restart  0.%d.%d (child %r)\n", strftime("%H:%M:%S", nsecs), arg0, arg1, buf(arg2, arg3));
+}
+
+usdt:*:paddock:upgrade__start
+{
+  printf("%-8s upgrade  %r -> %r\n", strftime("%H:%M:%S", nsecs), buf(arg0, arg1), buf(arg2, arg3));
+}
+
+usdt:*:paddock:upgrade__done
+{
+  printf("%-8s upgraded %r -> %r ok=%d\n", strftime("%H:%M:%S", nsecs), buf(arg0, arg1), buf(arg2, arg3), arg4);
+}
+
+usdt:*:paddock:mailbox__drop
+{
+  @dropped_by_instance[arg0] = count();
+}
+
+interval:s:5
+{
+  // Prints nothing while no message was dropped.
+  print(@dropped_by_instance);
+  clear(@dropped_by_instance);
+}

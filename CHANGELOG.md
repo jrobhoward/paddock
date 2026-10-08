@@ -164,6 +164,8 @@ All notable changes are recorded here. The format follows
   `/v1/instances/{pid}/call|cast` and `/v1/names/{name}/call|cast`,
   `api::Target`, `Client::call_to`/`cast_to`, `Node::call_to`/`cast_to`.
 - `admin_latency` example: admin-API call latency, in `docs/BASELINE.md`.
+- `examples/tracing`: a script that runs a node with traffic worth tracing,
+  and bpftrace scripts for its probes.
 - Extensions: host services from outside `paddock-host`. The
   `paddock_host::services::Extension` trait serves one WIT package;
   `Runtime::with_extensions`, `Node::open_with` and `paddock::node::run`

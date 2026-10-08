@@ -1,0 +1,22 @@
+// Guest execution time per callback, host time excluded, by instance id,
+// and callbacks that failed.
+//
+//   sudo bpftrace -p <node pid> examples/tracing/bt/callbacks.bt
+//
+// callback__done(pid, kind, guest_ns, ok).
+
+usdt:*:paddock:callback__done
+{
+  @guest_us[arg0] = hist(arg3 / 1000);
+}
+
+usdt:*:paddock:callback__done
+/arg4 == 0/
+{
+  printf("failed callback: instance %d, %r, %d us of guest time\n", arg0, buf(arg1, arg2), arg3 / 1000);
+}
+
+END
+{
+  printf("\n--- guest time per callback (us) by instance id ---\n");
+}

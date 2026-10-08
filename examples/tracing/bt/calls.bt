@@ -1,0 +1,33 @@
+// Calls: latency per target instance, and who calls whom.
+//
+//   sudo bpftrace -p <node pid> examples/tracing/bt/calls.bt
+//
+// call__start(call, from, to, bytes); call__done(call, to, outcome).
+// Instance ids are the middle number of a pid (0.<id>.<incarnation>);
+// a sender of 0 is the admin API.
+
+usdt:*:paddock:call__start
+{
+  @start[arg0] = nsecs;
+  @calls[arg1, arg2] = count();
+}
+
+usdt:*:paddock:call__done
+/@start[arg0]/
+{
+  @latency_us[arg1] = hist((nsecs - @start[arg0]) / 1000);
+  delete(@start[arg0]);
+}
+
+interval:s:5
+{
+  printf("\n--- calls (from, to) in the last 5 s ---\n");
+  print(@calls);
+  clear(@calls);
+}
+
+END
+{
+  clear(@start);
+  printf("\n--- call latency (us) by target instance id ---\n");
+}

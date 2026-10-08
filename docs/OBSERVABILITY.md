@@ -62,7 +62,9 @@ The call id pairs `call__start` with `call__done`; it is 0 if no tracer was atta
 
 List them in a binary with `readelf -n target/release/paddock | grep -A3 stapsdt`, or `cargo anyprobe` (from the anyprobe repository), which also writes tracer scripts that decode every argument.
 
-bpftrace, attached to a running node (root; `buf(ptr, len)` reads a `&str`):
+[`examples/tracing`](../examples/tracing/README.md) runs a node with traffic worth tracing (calls between apps, kills and restarts, an overflowing mailbox) and has ready-made bpftrace scripts.
+
+bpftrace one-liners, attached to a running node (root; `buf(ptr, len)` reads a `&str`):
 
 ```sh
 PID=$(pgrep -f 'paddock node')

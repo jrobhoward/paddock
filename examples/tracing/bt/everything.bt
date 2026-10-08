@@ -1,0 +1,14 @@
+// Every probe, one line each. Busy nodes print a lot.
+//
+//   sudo bpftrace -p <node pid> examples/tracing/bt/everything.bt
+
+usdt:*:paddock:call__start { printf("call__start      call=%d from=%d to=%d bytes=%d\n", arg0, arg1, arg2, arg3); }
+usdt:*:paddock:call__done { printf("call__done       call=%d to=%d %r\n", arg0, arg1, buf(arg2, arg3)); }
+usdt:*:paddock:cast { printf("cast             from=%d to=%d bytes=%d %r\n", arg0, arg1, arg2, buf(arg3, arg4)); }
+usdt:*:paddock:callback__start { printf("callback__start  pid=%d %r\n", arg0, buf(arg1, arg2)); }
+usdt:*:paddock:callback__done { printf("callback__done   pid=%d %r guest_ns=%d ok=%d\n", arg0, buf(arg1, arg2), arg3, arg4); }
+usdt:*:paddock:instance__exit { printf("instance__exit   0.%d.%d %r\n", arg0, arg1, buf(arg2, arg3)); }
+usdt:*:paddock:supervisor__restart { printf("supervisor__restart 0.%d.%d %r\n", arg0, arg1, buf(arg2, arg3)); }
+usdt:*:paddock:upgrade__start { printf("upgrade__start   %r -> %r\n", buf(arg0, arg1), buf(arg2, arg3)); }
+usdt:*:paddock:upgrade__done { printf("upgrade__done    %r -> %r ok=%d\n", buf(arg0, arg1), buf(arg2, arg3), arg4); }
+usdt:*:paddock:mailbox__drop { printf("mailbox__drop    pid=%d %r\n", arg0, buf(arg1, arg2)); }
