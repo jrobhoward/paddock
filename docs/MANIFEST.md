@@ -232,6 +232,12 @@ acceptors = 4                          # default 4: tasks accepting connections 
 
 [config.orders]
 currency = "USD"                       # overrides the app's config.defaults
+
+[cluster]
+role = "member"                        # or "witness": runs no apps, refuses deploys
+heartbeat_interval_ms = 1000           # how often each peer is told this node is alive
+node_timeout_ms = 5000                 # silence that ends a peer's session; more than the interval
+# address and seeds are read but not used until the QUIC transport exists
 ```
 
 The operator policy (`policy`). Grants add up: the defaults, plus the app's own entry, plus the entry of each signer whose key verified the bundle.

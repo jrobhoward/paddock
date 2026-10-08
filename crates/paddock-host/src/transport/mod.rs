@@ -17,6 +17,7 @@
 //! from an ended session is acted on.
 
 pub mod liveness;
+pub mod membership;
 pub mod memory;
 
 use std::collections::HashMap;
@@ -31,10 +32,16 @@ use crate::pid::Pid;
 use crate::probe;
 use crate::runtime::RuntimeInner;
 use liveness::{NodeEvent, Session};
+use membership::Member;
 
 /// A frame and the session it belongs to ([`liveness`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
+    /// The sender's creation ([`membership`]).
+    pub creation: u32,
+    /// The receiver's creation as the sender knows it; 0 if not yet known.
+    /// A frame meant for an earlier creation is discarded.
+    pub to_creation: u32,
     /// The sender's session number with the receiving node.
     pub session: u64,
     /// The frame.
@@ -50,6 +57,19 @@ pub enum Frame {
         /// Whether the sender hears the receiving node.
         hears_you: bool,
     },
+    /// The sender joins the cluster ([`membership`]); the receiver answers
+    /// with [`Frame::Members`].
+    Join {
+        /// The sender.
+        member: Member,
+    },
+    /// Members the sender knows.
+    Members {
+        /// The members, the sender included.
+        members: Vec<Member>,
+    },
+    /// The sender leaves the cluster.
+    Leave,
     /// A cast to `to`.
     Cast {
         /// The sender, if an instance.
@@ -210,8 +230,13 @@ pub(crate) fn send(rt: &RuntimeInner, node: u32, frame: Frame) -> bool {
     let Some(transport) = rt.transport() else {
         return false;
     };
-    let session = rt.liveness.session(node);
-    transport.send(node, Packet { session, frame })
+    let packet = Packet {
+        creation: rt.creation(),
+        to_creation: rt.liveness.creation(node),
+        session: rt.liveness.session(node),
+        frame,
+    };
+    transport.send(node, packet)
 }
 
 /// Call `to` on `node` and wait up to `timeout` for the reply.
@@ -252,7 +277,14 @@ pub(crate) async fn call(
 
 /// Handle a packet from node `from`.
 pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet: Packet) {
-    match rt.liveness.on_frame(from_node, packet.session) {
+    if packet.to_creation != 0 && packet.to_creation != rt.creation() {
+        // Meant for an earlier start of this node.
+        return;
+    }
+    match rt
+        .liveness
+        .on_frame(from_node, packet.creation, packet.session)
+    {
         Session::Stale => return,
         Session::Current => {}
         Session::Newer(session) => ended(rt, from_node, session),
@@ -261,6 +293,41 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
         Frame::Heartbeat { hears_you } => {
             if rt.liveness.on_heartbeat(from_node, hears_you) {
                 end_session(rt, from_node);
+            }
+        }
+        Frame::Join { member } => {
+            let new = rt.membership.merge(std::slice::from_ref(&member));
+            send(
+                rt,
+                from_node,
+                Frame::Members {
+                    members: rt.membership.list(),
+                },
+            );
+            if !new.is_empty() {
+                for other in rt.membership.others() {
+                    if other != from_node {
+                        send(
+                            rt,
+                            other,
+                            Frame::Members {
+                                members: new.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+            welcome(rt, &new, None);
+        }
+        Frame::Members { members } => {
+            let new = rt.membership.merge(&members);
+            welcome(rt, &new, Some(from_node));
+        }
+        Frame::Leave => {
+            if rt.membership.remove(from_node) {
+                end_session(rt, from_node);
+                rt.liveness.remove_peer(from_node);
+                rt.liveness.announce(NodeEvent::Left { node: from_node });
             }
         }
         Frame::Cast { from, to, msg } => {
@@ -358,6 +425,47 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 });
             }
         }
+    }
+}
+
+/// Members just learned: watch each, announce it, and, except to `told_by`
+/// (who knows this node already), introduce this node.
+fn welcome(rt: &std::sync::Arc<RuntimeInner>, new: &[Member], told_by: Option<u32>) {
+    for m in new {
+        rt.liveness.add_peer(rt, m.node);
+        rt.liveness.announce(NodeEvent::Joined {
+            node: m.node,
+            creation: m.creation,
+        });
+        if Some(m.node) != told_by {
+            send(
+                rt,
+                m.node,
+                Frame::Join {
+                    member: rt.membership.me(),
+                },
+            );
+        }
+    }
+}
+
+/// Join the cluster through `seeds`.
+pub(crate) fn join(rt: &std::sync::Arc<RuntimeInner>, seeds: &[u32]) {
+    let me = rt.membership.me();
+    for &seed in seeds.iter().filter(|&&s| s != rt.node()) {
+        rt.liveness.add_peer(rt, seed);
+        send(rt, seed, Frame::Join { member: me.clone() });
+    }
+}
+
+/// Leave the cluster: tell every member, end every session, and stop
+/// watching them.
+pub(crate) fn leave(rt: &RuntimeInner) {
+    for node in rt.membership.others() {
+        send(rt, node, Frame::Leave);
+        rt.membership.remove(node);
+        end_session(rt, node);
+        rt.liveness.remove_peer(node);
     }
 }
 

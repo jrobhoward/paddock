@@ -64,3 +64,13 @@ fn Store____opened_twice____second_refused_until_first_drops() {
     assert!(matches!(second, Err(NodeError::Conflict(_))), "{second:?}");
     assert!(third.is_ok());
 }
+
+#[test]
+fn Store____next_creation____one_more_on_each_start() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let first = Store::open(dir.path()).unwrap().next_creation().unwrap();
+    let second = Store::open(dir.path()).unwrap().next_creation().unwrap();
+
+    assert_eq!((first, second), (1, 2));
+}

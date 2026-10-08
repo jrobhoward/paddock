@@ -76,6 +76,19 @@ pub enum NodeEvent {
         /// The other node.
         node: u32,
     },
+    /// `node` became a member, or restarted with a new `creation`
+    /// ([`super::membership`]).
+    Joined {
+        /// The other node.
+        node: u32,
+        /// Its creation.
+        creation: u32,
+    },
+    /// `node` left the cluster.
+    Left {
+        /// The other node.
+        node: u32,
+    },
     /// No beat from `node` on `path` for `node_timeout`.
     PathSilent {
         /// The other node.
@@ -123,6 +136,8 @@ impl PathState {
 
 #[derive(Debug)]
 struct Peer {
+    /// Its creation, once a frame from it has been seen.
+    creation: Option<u32>,
     session: u64,
     link: PathState,
     /// What its last heartbeat said: whether it hears this node.
@@ -137,8 +152,8 @@ pub(crate) enum Session {
     /// From a session this side already ended: discard.
     Stale,
     Current,
-    /// The other side ended the session; this side must end it too. Carries
-    /// the new number, already recorded.
+    /// The other side ended the session, or restarted; this side must end
+    /// the old one too. Carries the new number, already recorded.
     Newer(u64),
 }
 
@@ -194,6 +209,7 @@ impl Liveness {
         now: Instant,
     ) -> &'a mut Peer {
         peers.entry(node).or_insert_with(|| Peer {
+            creation: None,
             session: 0,
             link: PathState::new(now),
             hears_me: true,
@@ -232,6 +248,19 @@ impl Liveness {
         {
             handle.spawn(run(Arc::downgrade(rt), self.interval));
         }
+    }
+
+    /// Stop watching `node`.
+    pub(crate) fn remove_peer(&self, node: u32) {
+        self.peers().remove(&node);
+    }
+
+    /// `node`'s creation, if a frame from it has been seen; 0 if not.
+    pub(crate) fn creation(&self, node: u32) -> u32 {
+        self.peers()
+            .get(&node)
+            .and_then(|p| p.creation)
+            .unwrap_or(0)
     }
 
     pub(crate) fn add_path(&self, name: &str, path: Arc<dyn HeartbeatPath>) {
@@ -278,9 +307,11 @@ impl Liveness {
         peer.session
     }
 
-    /// A frame from `node` carrying `session` arrived: it counts as hearing
-    /// the link. Returns how its session compares.
-    pub(crate) fn on_frame(&self, node: u32, session: u64) -> Session {
+    /// A frame from `node`'s creation `creation` carrying `session` arrived:
+    /// it counts as hearing the link. Returns how its session compares. A
+    /// higher creation than before is a restart: its numbering starts
+    /// afresh, and the old session must end.
+    pub(crate) fn on_frame(&self, node: u32, creation: u32, session: u64) -> Session {
         let mut events = Vec::new();
         let result = {
             let mut peers = self.peers();
@@ -293,12 +324,25 @@ impl Liveness {
                     path: LINK.to_string(),
                 });
             }
-            if session < peer.session {
+            if let Some(known) = peer.creation
+                && creation != known
+            {
+                if creation < known {
+                    Session::Stale
+                } else {
+                    peer.creation = Some(creation);
+                    peer.session = session;
+                    Session::Newer(session)
+                }
+            } else if session < peer.session {
+                peer.creation = Some(creation);
                 Session::Stale
             } else if session > peer.session {
+                peer.creation = Some(creation);
                 peer.session = session;
                 Session::Newer(session)
             } else {
+                peer.creation = Some(creation);
                 Session::Current
             }
         };
@@ -340,12 +384,12 @@ impl Liveness {
         self.emit(events);
     }
 
-    /// What to send this round: each peer, its session, and whether this
-    /// side hears it.
-    fn beats(&self) -> Vec<(u32, u64, bool)> {
+    /// What to send this round: each peer, its creation as known here (0
+    /// if not yet), its session, and whether this side hears it.
+    fn beats(&self) -> Vec<(u32, u32, u64, bool)> {
         self.peers()
             .iter()
-            .map(|(&node, p)| (node, p.session, !p.link.silent))
+            .map(|(&node, p)| (node, p.creation.unwrap_or(0), p.session, !p.link.silent))
             .collect()
     }
 
@@ -427,11 +471,14 @@ fn round(rt: &Arc<RuntimeInner>) {
         .iter()
         .map(|(_, p)| p.clone())
         .collect();
-    for (node, session, hears_you) in liveness.beats() {
+    let creation = rt.creation();
+    for (node, to_creation, session, hears_you) in liveness.beats() {
         if let Some(transport) = rt.transport() {
             transport.send(
                 node,
                 Packet {
+                    creation,
+                    to_creation,
                     session,
                     frame: Frame::Heartbeat { hears_you },
                 },

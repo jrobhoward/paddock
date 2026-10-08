@@ -16,8 +16,9 @@
 //! held frames in order; any from a session that ended meanwhile are
 //! discarded by the receiver.
 //!
-//! Joining the mesh makes every node a peer of every other, so each sends
-//! heartbeats. [`Mesh::add_path`] adds a heartbeat path besides the frames
+//! [`Mesh::join`] makes every node a peer of every other, so each sends
+//! heartbeats, as a configured cluster would. [`Mesh::attach`] only connects
+//! the node, for tests of membership ([`super::membership`]). [`Mesh::add_path`] adds a heartbeat path besides the frames
 //! (a serial line between nodes), which [`Mesh::cut_path`] cuts on its own.
 //!
 //! Every random choice comes from one seeded generator, drawn when a frame
@@ -274,6 +275,26 @@ impl Mesh {
     /// [`HostError::Engine`] if another runtime in the mesh has the same
     /// node id, or `rt` already has a transport.
     pub fn join(&self, rt: &Runtime) -> Result<(), HostError> {
+        for other in self.connect(rt)? {
+            other.liveness.add_peer(&other, rt.node());
+            rt.add_peer(other.node());
+        }
+        Ok(())
+    }
+
+    /// Add `rt` as node `rt.node()` and set its transport to the mesh, with
+    /// the mesh's extra paths, but make it no one's peer: it learns the
+    /// others by joining the cluster ([`Runtime::join_cluster`]).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Mesh::join`].
+    pub fn attach(&self, rt: &Runtime) -> Result<(), HostError> {
+        self.connect(rt).map(|_| ())
+    }
+
+    /// [`Mesh::attach`], returning the other nodes.
+    fn connect(&self, rt: &Runtime) -> Result<Vec<Arc<RuntimeInner>>, HostError> {
         let node = rt.node();
         let (others, paths) = {
             let mut state = self.shared.state();
@@ -288,7 +309,17 @@ impl Mesh {
             }
             let others: Vec<Arc<RuntimeInner>> =
                 state.nodes.values().filter_map(Weak::upgrade).collect();
-            state.nodes.insert(node, Arc::downgrade(rt.inner()));
+            // A node started again: what its previous runtime still had in
+            // flight dies with it, as a dead process's connections do.
+            if state
+                .nodes
+                .insert(node, Arc::downgrade(rt.inner()))
+                .is_some()
+            {
+                for other in others.iter().map(|o| o.node()) {
+                    *state.generation.entry(pair(node, other)).or_insert(0) += 1;
+                }
+            }
             (others, state.paths.clone())
         };
         rt.set_transport(Arc::new(Port {
@@ -298,11 +329,7 @@ impl Mesh {
         for name in &paths {
             rt.add_heartbeat_path(name, self.path_port(node, name));
         }
-        for other in others {
-            other.liveness.add_peer(&other, node);
-            rt.add_peer(other.node());
-        }
-        Ok(())
+        Ok(others)
     }
 
     fn path_port(&self, node: u32, name: &str) -> Arc<PathPort> {

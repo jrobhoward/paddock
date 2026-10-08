@@ -73,6 +73,28 @@ impl Store {
         })
     }
 
+    /// Raise and return the node's creation: 1 on the first start, one more
+    /// on each start after (`paddock_host::transport::membership`).
+    pub(crate) fn next_creation(&self) -> Result<u32, NodeError> {
+        let path = self.root.join("creation");
+        let current = match std::fs::read_to_string(&path) {
+            Ok(text) => text
+                .trim()
+                .parse::<u32>()
+                .map_err(|e| NodeError::Internal(format!("{}: {e}", path.display())))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(NodeError::Internal(format!("{}: {e}", path.display()))),
+        };
+        let next = current
+            .checked_add(1)
+            .ok_or_else(|| NodeError::Internal(format!("{}: creation overflow", path.display())))?;
+        let tmp = self.root.join("tmp/creation");
+        std::fs::write(&tmp, next.to_string())
+            .and_then(|()| std::fs::rename(&tmp, &path))
+            .map_err(|e| NodeError::Internal(format!("{}: {e}", path.display())))?;
+        Ok(next)
+    }
+
     pub(crate) fn kv_dir(&self) -> PathBuf {
         self.root.join("kv")
     }

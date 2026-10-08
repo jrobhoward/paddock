@@ -185,6 +185,19 @@ All notable changes are recorded here. The format follows
   `peer_status`, `add_peer` and `heard`, and the `node__down` probe. The
   mesh can stall a pair silently (both ways or one way), cut an extra path,
   and registers peers on join.
+- Cluster membership (`paddock_host::transport::membership`): joining
+  through seeds (`Runtime::join_cluster`), member lists passed on so every
+  pair connects, `leave_cluster`, `members`, roles (`member`, `witness`),
+  and `Joined`/`Left` events. Node creation numbers
+  (`RuntimeConfig::creation`, raised on every node start in
+  `<data_dir>/creation`) on every packet, so a restarted node's peers end
+  its old sessions and discard frames from or for its earlier start.
+- Node config `[cluster]`: `role`, `heartbeat_interval_ms`,
+  `node_timeout_ms`, and `address` and `seeds` (not used until the QUIC
+  transport). A witness refuses deploys, and refuses to start on a data
+  directory that holds apps.
+- `spikes/s16`: a TLA+ model of failover with a lease, adapted from
+  HAppliance's specifications.
 - Breaking (`paddock_host::transport`): `Transport::send` and
   `Runtime::deliver` take a `Packet` (session number and frame) instead of
   a `Frame`.

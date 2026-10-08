@@ -15,14 +15,14 @@ use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
 use paddock_host::services::Extension;
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, InstanceHandle, InstanceSpec,
-    Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid, Runtime,
+    Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid, Role, Runtime,
     RuntimeConfig, UpgradeError, UpgradeOptions, UpgradeReport,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
 
 use super::audit::Audit;
-use super::config::{MemoryProfile, NodeConfig};
+use super::config::{ClusterRole, MemoryProfile, NodeConfig};
 use super::error::{NodeError, internal};
 use super::logring::LogRing;
 use super::store::{AppState, State, Store};
@@ -254,6 +254,17 @@ impl Node {
         if config.trusted_keys.is_empty() {
             tracing::warn!("no trusted keys configured: every deploy will be refused");
         }
+        if !config.cluster.seeds.is_empty() {
+            tracing::warn!("cluster.seeds is not used until the QUIC transport exists");
+        }
+        let desired = store.load_state()?;
+        if config.cluster.role == ClusterRole::Witness && !desired.apps.is_empty() {
+            return Err(NodeError::Invalid(format!(
+                "this node is a witness, which runs no apps, but {} holds deployed apps",
+                config.data_dir.display()
+            )));
+        }
+        let creation = store.next_creation()?;
         let rt = Runtime::with_extensions(
             RuntimeConfig {
                 node: config.node,
@@ -264,14 +275,20 @@ impl Node {
                 },
                 epoch_tick: Duration::from_millis(config.epoch_tick_ms.max(1)),
                 data_dir: Some(store.kv_dir()),
-                ..RuntimeConfig::default()
+                heartbeat_interval: Duration::from_millis(config.cluster.heartbeat_interval_ms),
+                node_timeout: Duration::from_millis(config.cluster.node_timeout_ms),
+                creation,
+                role: match config.cluster.role {
+                    ClusterRole::Member => Role::Member,
+                    ClusterRole::Witness => Role::Witness,
+                },
+                address: config.cluster.address.clone().unwrap_or_default(),
             },
             extensions,
         )
         .map_err(internal)?;
         let apps = rt.start_apps(Vec::new()).await.map_err(internal)?;
         let audit = Audit::new(store.audit_path());
-        let desired = store.load_state()?;
         let node = Self {
             config,
             rt,
@@ -568,6 +585,11 @@ impl Node {
         st: &mut NodeState,
         upload: &Path,
     ) -> Result<DeployResponse, NodeError> {
+        if self.config.cluster.role == ClusterRole::Witness {
+            return Err(NodeError::Refused(
+                "this node is a witness, which runs no apps".into(),
+            ));
+        }
         let built = self.build(upload).await?;
         let (name, version) = (built.name(), built.version());
         if st.desired.apps.contains_key(&name) {

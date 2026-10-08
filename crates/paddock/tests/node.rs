@@ -505,3 +505,73 @@ async fn open____data_dir_held_by_another_node____refused() {
     assert!(err.to_string().contains("in use by another node"), "{err}");
     n.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn witness____deploy_refused_and_apps_on_disk_refuse_the_role() {
+    let mut w = TestNode::start("[cluster]\nrole = \"witness\"\n").await;
+    let refused = w
+        .client
+        .deploy(bundle(
+            &w.key,
+            "echoer",
+            "1.0.0",
+            &fixture("paddock_fixture_chaos"),
+            fast(json!({})),
+            &[],
+        ))
+        .await
+        .unwrap_err();
+    w.shutdown().await;
+    let mut m = TestNode::start("").await;
+    m.client
+        .deploy(bundle(
+            &m.key,
+            "echoer",
+            "1.0.0",
+            &fixture("paddock_fixture_chaos"),
+            fast(json!({})),
+            &[],
+        ))
+        .await
+        .unwrap();
+    m.shutdown().await;
+    m.release();
+
+    let toml = format!("data_dir = {:?}\n[cluster]\nrole = \"witness\"\n", m.data());
+    let mut reopened = None;
+    for _ in 0..250 {
+        match paddock::node::Node::open(
+            paddock::node::NodeConfig::from_toml_str(&toml).unwrap(),
+            common::ring(),
+        )
+        .await
+        {
+            Err(paddock::node::NodeError::Conflict(_)) => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            other => {
+                reopened = Some(other);
+                break;
+            }
+        }
+    }
+
+    assert_eq!(kind(&refused), "refused");
+    assert!(refused.to_string().contains("witness"), "{refused}");
+    let Some(Err(err)) = reopened else {
+        panic!("a witness opened a data directory holding apps");
+    };
+    assert!(err.to_string().contains("witness"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart____creation_raised_on_every_start() {
+    let mut n = TestNode::start("").await;
+    let first = std::fs::read_to_string(n.data().join("creation")).unwrap();
+
+    n.restart().await;
+    let second = std::fs::read_to_string(n.data().join("creation")).unwrap();
+
+    assert_eq!((first.as_str(), second.as_str()), ("1", "2"));
+    n.shutdown().await;
+}

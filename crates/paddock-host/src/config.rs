@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::transport::membership::Role;
+
 /// How much address space each linear memory reserves (spike S2).
 ///
 /// Virtual address space, not RAM, limits how many instances a node can hold.
@@ -54,6 +56,13 @@ pub struct RuntimeConfig {
     /// How long a peer may stay silent on a path before that path counts as
     /// silent; a silent cluster link ends the session with the peer.
     pub node_timeout: Duration,
+    /// This start of the node, raised on every start and kept on disk by the
+    /// node ([`crate::transport::membership`]). Starts at 1.
+    pub creation: u32,
+    /// What this node does in the cluster.
+    pub role: Role,
+    /// Where other nodes reach this one; its meaning is the transport's.
+    pub address: String,
 }
 
 impl Default for RuntimeConfig {
@@ -66,6 +75,9 @@ impl Default for RuntimeConfig {
             data_dir: None,
             heartbeat_interval: Duration::from_secs(1),
             node_timeout: Duration::from_secs(5),
+            creation: 1,
+            role: Role::Member,
+            address: String::new(),
         }
     }
 }

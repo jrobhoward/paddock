@@ -29,6 +29,7 @@ use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
 use crate::transport::liveness::{HeartbeatPath, Liveness, NodeEvent, PeerStatus};
+use crate::transport::membership::{Member, Membership};
 use crate::transport::{self, Packet, PendingCalls, Transport};
 use paddock_bundle::manifest::LogLevel;
 
@@ -53,6 +54,7 @@ pub(crate) struct RuntimeInner {
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
     pub(crate) liveness: Liveness,
+    pub(crate) membership: Membership,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -62,6 +64,11 @@ impl RuntimeInner {
     /// This node's id, for pids.
     pub(crate) fn node(&self) -> u32 {
         self.config.node
+    }
+
+    /// This start of the node.
+    pub(crate) fn creation(&self) -> u32 {
+        self.config.creation
     }
 
     /// The transport to other nodes, once set.
@@ -175,6 +182,12 @@ impl Runtime {
                 transport: std::sync::OnceLock::new(),
                 pending_calls: PendingCalls::default(),
                 liveness: Liveness::new(config.heartbeat_interval, config.node_timeout),
+                membership: Membership::new(Member::new(
+                    config.node,
+                    config.creation,
+                    config.address.clone(),
+                    config.role,
+                )),
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -441,6 +454,26 @@ impl Runtime {
     #[must_use]
     pub fn node_events(&self) -> tokio::sync::broadcast::Receiver<NodeEvent> {
         self.inner.liveness.subscribe()
+    }
+
+    /// Join the cluster through `seeds` (node ids the transport reaches):
+    /// each is told about this node and answers with the members it knows,
+    /// and this node then joins each of those
+    /// ([`transport::membership`]). Call inside the tokio runtime, after
+    /// [`Runtime::set_transport`].
+    pub fn join_cluster(&self, seeds: &[u32]) {
+        transport::join(&self.inner, seeds);
+    }
+
+    /// Leave the cluster: every member is told, and every session ends.
+    pub fn leave_cluster(&self) {
+        transport::leave(&self.inner);
+    }
+
+    /// The members this node knows, itself included, by node id.
+    #[must_use]
+    pub fn members(&self) -> Vec<Member> {
+        self.inner.membership.list()
     }
 
     /// What this node knows about `node`, if it watches it.

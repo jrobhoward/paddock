@@ -66,3 +66,48 @@ fn NodeConfig____listeners____address_and_default_acceptors() {
     assert_eq!((modbus.address.port(), modbus.acceptors), (1502, 4));
     assert_eq!(config.listeners["web"].acceptors, 8);
 }
+
+#[test]
+fn NodeConfig____cluster____read_with_defaults() {
+    let default = NodeConfig::from_toml_str("data_dir = \"/d\"\n").unwrap();
+    let witness = NodeConfig::from_toml_str(
+        r#"
+data_dir = "/d"
+
+[cluster]
+role = "witness"
+heartbeat_interval_ms = 200
+node_timeout_ms = 1000
+seeds = ["2@10.0.0.2:7400"]
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(default.cluster.role, ClusterRole::Member);
+    assert_eq!(
+        (
+            default.cluster.heartbeat_interval_ms,
+            default.cluster.node_timeout_ms
+        ),
+        (1_000, 5_000)
+    );
+    assert_eq!(witness.cluster.role, ClusterRole::Witness);
+    assert_eq!(
+        (
+            witness.cluster.heartbeat_interval_ms,
+            witness.cluster.node_timeout_ms
+        ),
+        (200, 1_000)
+    );
+    assert_eq!(witness.cluster.seeds, ["2@10.0.0.2:7400"]);
+}
+
+#[test]
+fn NodeConfig____timeout_not_above_interval____refused() {
+    let err = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[cluster]\nheartbeat_interval_ms = 500\nnode_timeout_ms = 500\n",
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("node_timeout_ms"), "{err}");
+}

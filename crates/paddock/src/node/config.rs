@@ -15,6 +15,11 @@
 //! # Node-level config overrides, per app, on top of the manifest defaults.
 //! [config.orders]
 //! "db.host" = "pg.internal"
+//!
+//! [cluster]
+//! role = "member"               # or "witness": runs no apps
+//! heartbeat_interval_ms = 1000
+//! node_timeout_ms = 5000
 //! ```
 
 use std::collections::BTreeMap;
@@ -72,6 +77,63 @@ pub struct NodeConfig {
     /// Addresses for the listeners apps declare, by listener name.
     #[serde(default)]
     pub listeners: BTreeMap<String, ListenerBinding>,
+    /// This node's part in a cluster.
+    #[serde(default)]
+    pub cluster: ClusterConfig,
+}
+
+/// What a node does in the cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterRole {
+    /// Runs apps.
+    #[default]
+    Member,
+    /// Runs no apps: a third node for failover decisions (ROADMAP D10).
+    Witness,
+}
+
+/// The `[cluster]` section.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterConfig {
+    /// What this node does.
+    #[serde(default)]
+    pub role: ClusterRole,
+    /// How often this node tells each peer it is alive, in milliseconds.
+    #[serde(default = "default_heartbeat_ms")]
+    pub heartbeat_interval_ms: u64,
+    /// Silence after which a peer's session ends, in milliseconds. More
+    /// than `heartbeat_interval_ms`.
+    #[serde(default = "default_node_timeout_ms")]
+    pub node_timeout_ms: u64,
+    /// Where other nodes reach this one. Used from the QUIC transport on
+    /// (ROADMAP D1).
+    #[serde(default)]
+    pub address: Option<String>,
+    /// Nodes to join through. Used from the QUIC transport on (ROADMAP D1).
+    #[serde(default)]
+    pub seeds: Vec<String>,
+}
+
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            role: ClusterRole::default(),
+            heartbeat_interval_ms: default_heartbeat_ms(),
+            node_timeout_ms: default_node_timeout_ms(),
+            address: None,
+            seeds: Vec::new(),
+        }
+    }
+}
+
+fn default_heartbeat_ms() -> u64 {
+    1_000
+}
+
+fn default_node_timeout_ms() -> u64 {
+    5_000
 }
 
 /// Where a listener an app declares listens on this node.
@@ -104,7 +166,19 @@ impl NodeConfig {
     ///
     /// [`NodeError::Invalid`] with the location of the problem.
     pub fn from_toml_str(text: &str) -> Result<Self, NodeError> {
-        toml::from_str(text).map_err(|e| NodeError::Invalid(format!("node config: {e}")))
+        let config: Self =
+            toml::from_str(text).map_err(|e| NodeError::Invalid(format!("node config: {e}")))?;
+        let cluster = &config.cluster;
+        if cluster.heartbeat_interval_ms == 0
+            || cluster.node_timeout_ms <= cluster.heartbeat_interval_ms
+        {
+            return Err(NodeError::Invalid(format!(
+                "node config: cluster.node_timeout_ms ({}) must be more than \
+                 cluster.heartbeat_interval_ms ({}), which must be more than 0",
+                cluster.node_timeout_ms, cluster.heartbeat_interval_ms
+            )));
+        }
+        Ok(config)
     }
 
     /// Read and parse a configuration file.

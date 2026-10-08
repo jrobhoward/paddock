@@ -131,7 +131,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   (local, dead, or another node). Process-core code that names a pid calls
   it, never the process table directly. `src/transport/`: frames between
   nodes, the `Transport` trait, `liveness` (heartbeats and sessions; every
-  node-down goes through `transport::end_session`), and `memory`, the
+  node-down goes through `transport::end_session`), `membership` (joining,
+  members, node creation numbers), and `memory`, the
   in-process mesh with fault injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
   the mesh on a paused clock: targeted races and seeded random scenarios
   (`PADDOCK_SIM_SEED=<n>` replays one).
@@ -139,7 +140,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.
 - `docs/`: design and plan.
-- `spikes/`: throwaway programs that answered design questions. Excluded from
+- `spikes/`: throwaway programs that answered design questions
+  (`spikes/s16` is a TLA+ model, run with TLC; its README has the commands). Excluded from
   the main workspace, from the conventions below, and from the Definition of
   Done. Spike code uses `.unwrap()` freely and is never copied into `crates/`
   as is.

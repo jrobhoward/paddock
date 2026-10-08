@@ -61,6 +61,7 @@ pub use spec::{InstanceSpec, PRIV_PATH, Preopen};
 pub use supervisor::{
     Backoff, Child, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
 };
+pub use transport::membership::{Member, Role};
 pub use upgrade::{UpgradeError, validate_upgrade};
 /// The wasmtime this crate links against, for extensions' bindings
 /// ([`services::extension`]).

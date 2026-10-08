@@ -276,6 +276,11 @@ impl TestNode {
         self.server = Some(server);
     }
 
+    /// Drop the node, after `shutdown`, so its data directory is free.
+    pub fn release(&mut self) {
+        self.node = None;
+    }
+
     pub async fn shutdown(&mut self) {
         if let Some(node) = &self.node {
             node.shutdown().await;
