@@ -264,6 +264,7 @@ impl Node {
                 },
                 epoch_tick: Duration::from_millis(config.epoch_tick_ms.max(1)),
                 data_dir: Some(store.kv_dir()),
+                ..RuntimeConfig::default()
             },
             extensions,
         )

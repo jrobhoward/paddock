@@ -53,6 +53,9 @@ anyprobe::probes! {
     /// handler's instance id, the listener's name. Its end is
     /// `instance__exit`.
     pub fn connection__open(pid: u64, listener: &str);
+    /// The session with another node ended (`nodedown`): the node, the
+    /// session number that follows.
+    pub fn node__down(node: u32, session: u64);
 }
 
 /// The outcome name a probe reports for a call or cast.
@@ -178,4 +181,12 @@ pub(crate) fn connection_open(pid: Pid, listener: &str) {
 pub(crate) fn mailbox_drop(pid: Pid, kind: &str) {
     #[cfg(feature = "probes")]
     anyprobe::fire!(mailbox__drop(pid.id, kind));
+}
+
+/// The session with another node ended.
+#[inline]
+#[allow(unused_variables)]
+pub(crate) fn node_down(node: u32, session: u64) {
+    #[cfg(feature = "probes")]
+    anyprobe::fire!(node__down(node, session));
 }

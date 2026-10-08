@@ -60,6 +60,7 @@ An instance is identified by its pid's `id` (and `incarnation` where shown). A s
 | `upgrade__done` | app, target version, completed |
 | `mailbox__drop` | instance id, kind (`cast`, `timer`) |
 | `connection__open` | handler instance id, listener name; its end is `instance__exit` |
+| `node__down` | node, the session number that follows; the session with that node ended (links and monitors with it got `noconnection`) |
 
 The call id pairs `call__start` with `call__done`; it is 0 if no tracer was attached when the call started. Probe names and arguments are an interface: scripts depend on them, so they change only with a CHANGELOG entry.
 

@@ -48,6 +48,12 @@ pub struct RuntimeConfig {
     /// Where node state lives (`disk` keyvalue buckets). `None` disables
     /// disk buckets.
     pub data_dir: Option<PathBuf>,
+    /// How often this node tells each peer it is alive
+    /// ([`crate::transport::liveness`]). Zero sends no heartbeats.
+    pub heartbeat_interval: Duration,
+    /// How long a peer may stay silent on a path before that path counts as
+    /// silent; a silent cluster link ends the session with the peer.
+    pub node_timeout: Duration,
 }
 
 impl Default for RuntimeConfig {
@@ -58,6 +64,8 @@ impl Default for RuntimeConfig {
             memory_profile: MemoryProfile::Standard,
             epoch_tick: Duration::from_millis(2),
             data_dir: None,
+            heartbeat_interval: Duration::from_secs(1),
+            node_timeout: Duration::from_secs(5),
         }
     }
 }

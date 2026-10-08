@@ -1,7 +1,7 @@
 //! Races between links, monitors, exits, partitions and heals across nodes,
 //! on a paused clock, so each test sees the same interleaving on every run
-//! (ROADMAP C3). `random` runs seeded random scenarios against the
-//! distribution rules.
+//! (ROADMAP C3). `liveness` covers heartbeats and silent failures (C5);
+//! `random` runs seeded random scenarios against the distribution rules.
 //!
 //! Each targeted test fixes a frame delay, puts an event inside that window,
 //! and asserts the one outcome DESIGN.md's "Distribution" rules allow.
@@ -13,6 +13,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 mod harness;
+mod liveness;
 mod random;
 
 use std::time::Duration;

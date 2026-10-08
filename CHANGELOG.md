@@ -177,6 +177,17 @@ All notable changes are recorded here. The format follows
   replay one); 500 new seeds run nightly.
 - The epoch ticker parks between ticks, so dropping a runtime stops it at
   once whatever the tick.
+- Node liveness (`paddock_host::transport::liveness`): heartbeats between
+  peers (`RuntimeConfig::heartbeat_interval`, `node_timeout`), sessions
+  numbered on every frame so both sides of a lost node end together and
+  frames from an ended session are discarded, extra heartbeat paths
+  (`HeartbeatPath`, for a serial line), `Runtime::node_events`,
+  `peer_status`, `add_peer` and `heard`, and the `node__down` probe. The
+  mesh can stall a pair silently (both ways or one way), cut an extra path,
+  and registers peers on join.
+- Breaking (`paddock_host::transport`): `Transport::send` and
+  `Runtime::deliver` take a `Packet` (session number and frame) instead of
+  a `Frame`.
 - The dev profile builds Cranelift optimized: tests that compile guest
   components compile each in about 0.2 s instead of over 2 s.
 - USDT probes on the message path (provider `paddock`): calls, casts,

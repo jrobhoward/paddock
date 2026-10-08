@@ -15,15 +15,25 @@
 //! - The epoch ticker is a real-time OS thread. A tick landing inside a
 //!   callback would yield it and reorder ready tasks, so the tick is an hour:
 //!   no preemption, and no callback deadline in practice.
+//!
+//! Heartbeats are faster than a node's defaults ([`HEARTBEAT`] and
+//! [`NODE_TIMEOUT`]), so detection tests stay short in virtual time.
 
 use std::future::Future;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use paddock_host::transport::liveness::NodeEvent;
 use paddock_host::transport::memory::Mesh;
 use paddock_host::{InstanceHandle, LoadedApp, Runtime, RuntimeConfig};
+use tokio::sync::broadcast;
 
 use crate::common::{fixture, spec};
+
+/// Heartbeat interval on every simulated node.
+pub const HEARTBEAT: Duration = Duration::from_millis(100);
+/// Silence after which a simulated node counts a path as silent.
+pub const NODE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// The chaos component's bytes, read once.
 fn chaos() -> &'static [u8] {
@@ -43,6 +53,8 @@ impl SimNode {
             node,
             max_instances: 32,
             epoch_tick: Duration::from_secs(3600),
+            heartbeat_interval: HEARTBEAT,
+            node_timeout: NODE_TIMEOUT,
             ..RuntimeConfig::default()
         })
         .unwrap();
@@ -92,6 +104,15 @@ where
             .collect();
         scenario(Sim { mesh, nodes }).await
     })
+}
+
+/// The events received so far, without waiting.
+pub fn drain(events: &mut broadcast::Receiver<NodeEvent>) -> Vec<NodeEvent> {
+    let mut out = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        out.push(event);
+    }
+    out
 }
 
 /// Let virtual time pass.

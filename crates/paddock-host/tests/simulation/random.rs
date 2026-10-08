@@ -1,8 +1,10 @@
 //! Random scenarios: from a seed, a sequence of spawns, links, unlinks,
-//! monitors, demonitors, kills, calls, casts, partitions, heals and pauses
-//! across three nodes with random frame delays, then a check of every live
-//! instance's exit and down notices, and every call's result, against the
-//! distribution rules (DESIGN.md, "Distribution").
+//! monitors, demonitors, kills, calls, casts, partitions, stalls (both ways
+//! or one way), heals and pauses across three nodes with random frame
+//! delays, then a check of every live instance's exit and down notices, and
+//! every call's result, against the distribution rules (DESIGN.md,
+//! "Distribution"). Which sessions ended, and when, comes from each node's
+//! [`NodeEvent`]s.
 //!
 //! `PADDOCK_SIM_SEEDS` sets how many seeds each test runs (default 24),
 //! starting from `PADDOCK_SIM_FIRST_SEED` (default 0); `PADDOCK_SIM_SEED`
@@ -14,10 +16,12 @@ use std::fmt::Write as _;
 use std::time::Duration;
 
 use paddock_host::InstanceHandle;
+use paddock_host::transport::liveness::NodeEvent;
 use paddock_host::transport::memory::Faults;
+use tokio::sync::broadcast;
 
 use crate::common::{ask, pid_text};
-use crate::harness::{Sim, pass, simulate};
+use crate::harness::{Sim, drain, pass, simulate};
 
 const NODES: u32 = 3;
 const OPS: usize = 40;
@@ -87,6 +91,10 @@ enum Op {
         b: usize,
     },
     Partition(u32, u32),
+    /// Both ways.
+    Stall(u32, u32),
+    /// From the first node to the second.
+    StallOneWay(u32, u32),
     Heal(u32, u32),
     Pass(u64),
 }
@@ -112,10 +120,21 @@ struct Run {
     drops: bool,
     insts: Vec<Inst>,
     ops: Vec<Op>,
-    /// Pairs cut now.
+    /// Pairs partitioned now.
     cut: BTreeSet<(u32, u32)>,
-    /// Pairs cut when each operation ran.
+    /// Pairs partitioned when each operation ran.
     cut_before: Vec<BTreeSet<(u32, u32)>>,
+    /// Directions (from, to) stalled now.
+    stalled: BTreeSet<(u32, u32)>,
+    /// Directions stalled when each operation ran.
+    stalled_before: Vec<BTreeSet<(u32, u32)>>,
+    /// (observer, node) where the observer refuses frames to the node now.
+    unreachable: BTreeSet<(u32, u32)>,
+    /// The same, when each operation ran.
+    unreachable_before: Vec<BTreeSet<(u32, u32)>>,
+    /// Sessions ended: (operation during which it was seen, observer, node).
+    /// Those seen after the last operation carry `OPS`.
+    downs: Vec<(usize, u32, u32)>,
     links: Vec<Link>,
     monitors: Vec<Monitor>,
     /// Each live instance's notices at the end.
@@ -137,18 +156,62 @@ impl Run {
         self.insts[i].node
     }
 
-    /// Whether `x` and `y` were cut when operation `op` ran, or are cut
-    /// by a later one.
-    fn cut_from(&self, x: u32, y: u32, op: usize) -> bool {
+    /// Whether `x` refused frames to `y` when operation `op` ran.
+    fn cut_at(&self, x: u32, y: u32, op: usize) -> bool {
         x != y
             && (self.cut_before[op].contains(&pair(x, y))
-                || self.ops[op + 1..]
-                    .iter()
-                    .any(|o| matches!(o, Op::Partition(p, q) if pair(*p, *q) == pair(x, y))))
+                || self.unreachable_before[op].contains(&(x, y)))
     }
 
-    fn cut_at(&self, x: u32, y: u32, op: usize) -> bool {
-        self.cut_before[op].contains(&pair(x, y))
+    /// Whether `x` saw its session with `y` end during operation `op`
+    /// (`at`), or after it.
+    fn down(&self, x: u32, y: u32, op: usize, at: bool) -> bool {
+        self.downs
+            .iter()
+            .any(|&(o, obs, n)| obs == x && n == y && if at { o == op } else { o > op })
+    }
+
+    /// Whether `x` certainly loses what it shares with `y` from operation
+    /// `op` on: refused then, or its session ended later.
+    fn cut_certain(&self, x: u32, y: u32, op: usize) -> bool {
+        x != y && (self.cut_at(x, y, op) || self.down(x, y, op, false))
+    }
+
+    /// Whether it may: also when the session ended during `op` itself,
+    /// before or after the operation took effect, or frames can be lost.
+    fn cut_maybe(&self, x: u32, y: u32, op: usize) -> bool {
+        x != y && (self.cut_certain(x, y, op) || self.down(x, y, op, true) || self.drops)
+    }
+
+    /// Whether frames between `x` and `y` might be held or refused when
+    /// operation `op` ran, without `x` refusing them itself.
+    fn shaky(&self, x: u32, y: u32, op: usize) -> bool {
+        x != y
+            && (self.stalled_before[op].contains(&(x, y))
+                || self.stalled_before[op].contains(&(y, x))
+                || self.unreachable_before[op].contains(&(y, x))
+                || self.down(x, y, op, true)
+                || self.down(y, x, op, true)
+                || self.drops)
+    }
+
+    /// Record the events each node saw during operation `op`.
+    fn record(&mut self, op: usize, events: &mut [broadcast::Receiver<NodeEvent>]) {
+        for (k, rx) in events.iter_mut().enumerate() {
+            let observer = u32::try_from(k).unwrap() + 1;
+            for event in drain(rx) {
+                match event {
+                    NodeEvent::Down { node, .. } => self.downs.push((op, observer, node)),
+                    NodeEvent::Unreachable { node } => {
+                        self.unreachable.insert((observer, node));
+                    }
+                    NodeEvent::Reachable { node } => {
+                        self.unreachable.remove(&(observer, node));
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     fn killed_before(&self, i: usize, op: usize) -> bool {
@@ -167,6 +230,13 @@ impl Run {
         }
         for (i, infos) in &self.infos {
             writeln!(out, "notices of {i} ({}): {infos}", self.insts[*i].pid).unwrap();
+        }
+        for (op, observer, node) in &self.downs {
+            writeln!(
+                out,
+                "op {op}: node {observer} ended its session with {node}"
+            )
+            .unwrap();
         }
         out
     }
@@ -187,6 +257,11 @@ async fn scenario(sim: Sim, seed: u64, drops: bool) -> Run {
         ops: Vec::new(),
         cut: BTreeSet::new(),
         cut_before: Vec::new(),
+        stalled: BTreeSet::new(),
+        stalled_before: Vec::new(),
+        unreachable: BTreeSet::new(),
+        unreachable_before: Vec::new(),
+        downs: Vec::new(),
         links: Vec::new(),
         monitors: Vec::new(),
         infos: BTreeMap::new(),
@@ -195,9 +270,12 @@ async fn scenario(sim: Sim, seed: u64, drops: bool) -> Run {
         run.spawn(&sim, node);
         run.spawn(&sim, node);
     }
+    let mut events: Vec<_> = sim.nodes.iter().map(|n| n.rt.node_events()).collect();
 
     for index in 0..OPS {
         run.cut_before.push(run.cut.clone());
+        run.stalled_before.push(run.stalled.clone());
+        run.unreachable_before.push(run.unreachable.clone());
         let op = match run.step(&sim, &mut rng, index).await {
             Some(op) => op,
             None => {
@@ -207,9 +285,12 @@ async fn scenario(sim: Sim, seed: u64, drops: bool) -> Run {
             }
         };
         run.ops.push(op);
+        run.record(index, &mut events);
     }
 
-    pass(1000).await;
+    // Long enough for stalls still in place to end their sessions.
+    pass(2000).await;
+    run.record(OPS, &mut events);
     for i in run.alive() {
         let infos = ask(&run.insts[i].handle, "infos").await;
         run.infos.insert(i, infos);
@@ -262,9 +343,11 @@ impl Run {
                     .await;
                 Some(Op::Cast { a, b })
             }
-            68..74 => self.partition(sim, rng),
-            74..82 => self.heal(sim, rng),
-            82..85 if self.insts.len() < MAX_INSTANCES => {
+            68..72 => self.partition(sim, rng),
+            72..76 => self.stall(sim, rng, true),
+            76..79 => self.stall(sim, rng, false),
+            79..87 => self.heal(sim, rng),
+            87..90 if self.insts.len() < MAX_INSTANCES => {
                 let node = u32::try_from(rng.below(3)).unwrap() + 1;
                 Some(Op::Spawn(self.spawn(sim, node)))
             }
@@ -349,11 +432,40 @@ impl Run {
         Some(Op::Partition(x, y))
     }
 
+    /// Stall a pair not stalled yet, both ways or in one direction.
+    fn stall(&mut self, sim: &Sim, rng: &mut Rng, both: bool) -> Option<Op> {
+        let free: Vec<(u32, u32)> = (1..=NODES)
+            .flat_map(|x| (1..=NODES).map(move |y| (x, y)))
+            .filter(|&(x, y)| x != y)
+            .filter(|&(x, y)| !self.stalled.contains(&(x, y)) && !self.stalled.contains(&(y, x)))
+            .collect();
+        let (x, y) = rng.pick(&free)?;
+        self.stalled.insert((x, y));
+        if both {
+            self.stalled.insert((y, x));
+            sim.mesh.stall(x, y);
+            Some(Op::Stall(x, y))
+        } else {
+            sim.mesh.stall_one_way(x, y);
+            Some(Op::StallOneWay(x, y))
+        }
+    }
+
+    /// Heal a pair that is partitioned or stalled.
     fn heal(&mut self, sim: &Sim, rng: &mut Rng) -> Option<Op> {
-        let broken: Vec<(u32, u32)> = self.cut.iter().copied().collect();
+        let broken: Vec<(u32, u32)> = self
+            .cut
+            .iter()
+            .copied()
+            .chain(self.stalled.iter().map(|&(x, y)| pair(x, y)))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let (x, y) = rng.pick(&broken)?;
         sim.mesh.heal(x, y);
         self.cut.remove(&(x, y));
+        self.stalled.remove(&(x, y));
+        self.stalled.remove(&(y, x));
         Some(Op::Heal(x, y))
     }
 }
@@ -421,7 +533,9 @@ fn check_links(run: &Run, e: usize, notices: &Notices<'_>, out: &mut Vec<String>
             .cloned()
             .unwrap_or_default();
         let o_killed = run.insts[o].killed.is_some();
-        let cut = run.cut_from(run.node(e), run.node(o), link.op);
+        let (x, y) = (run.node(e), run.node(o));
+        let certain = run.cut_certain(x, y, link.op);
+        let maybe = run.cut_maybe(x, y, link.op);
         let mut allowed = Vec::new();
         if o_killed {
             allowed.push("killed");
@@ -429,15 +543,15 @@ fn check_links(run: &Run, e: usize, notices: &Notices<'_>, out: &mut Vec<String>
         if o_killed && initiator {
             allowed.push("noproc");
         }
-        if cut {
+        if maybe {
             allowed.push("noconnection");
         }
         // The target's side exists only once the link frame arrives, which a
-        // cut can prevent.
+        // session's end can prevent.
         let due = if initiator {
-            o_killed || cut
+            o_killed || certain
         } else {
-            o_killed && !cut
+            o_killed && !maybe
         };
         let must = due && !link.unlinked && !run.drops;
         let what = format!("link {e}-{o} (op {})", link.op);
@@ -466,15 +580,15 @@ fn check_monitors(run: &Run, e: usize, notices: &Notices<'_>, out: &mut Vec<Stri
             .map(|v| v.iter().map(|(_, r)| *r).collect())
             .unwrap_or_default();
         let t_killed = run.insts[m.target].killed.is_some();
-        let cut = run.cut_from(run.node(e), run.node(m.target), m.op);
+        let (x, y) = (run.node(e), run.node(m.target));
         let mut allowed = Vec::new();
         if t_killed {
             allowed.extend(["killed", "noproc"]);
         }
-        if cut {
+        if run.cut_maybe(x, y, m.op) {
             allowed.push("noconnection");
         }
-        let must = !m.demonitored && !run.drops && (t_killed || cut);
+        let must = !m.demonitored && !run.drops && (t_killed || run.cut_certain(x, y, m.op));
         let what = format!("monitor {} (op {})", m.reference, m.op);
         check(out, e, &what, &seen, &allowed, must);
     }
@@ -488,15 +602,19 @@ fn check_calls(run: &Run, out: &mut Vec<String>) {
         };
         // A kill is a signal: a call made in the same instant can still
         // reach the target, which then dies with it (`exited`).
-        let expected: &[&str] = if run.cut_at(run.node(*a), run.node(*b), i) {
-            &["err:noconnection"]
+        let (x, y) = (run.node(*a), run.node(*b));
+        let mut expected: Vec<&str> = if run.cut_at(x, y, i) {
+            vec!["err:noconnection"]
         } else if run.killed_before(*b, i) {
-            &["err:noproc", "err:exited:killed"]
+            vec!["err:noproc", "err:exited:killed"]
         } else {
-            &["ok:x"]
+            vec!["ok:x"]
         };
-        let lost = run.drops && result == "err:timeout";
-        if !expected.contains(&result.as_str()) && !lost {
+        // Held frames time the call out; a session's end fails it.
+        if run.shaky(x, y, i) {
+            expected.extend(["err:timeout", "err:noconnection"]);
+        }
+        if !expected.contains(&result.as_str()) {
             out.push(format!(
                 "op {i}: call {a}->{b} gave {result}, expected {expected:?}"
             ));

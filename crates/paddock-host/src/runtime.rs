@@ -28,7 +28,8 @@ use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
-use crate::transport::{self, Frame, PendingCalls, Transport};
+use crate::transport::liveness::{HeartbeatPath, Liveness, NodeEvent, PeerStatus};
+use crate::transport::{self, Packet, PendingCalls, Transport};
 use paddock_bundle::manifest::LogLevel;
 
 /// Hosts instances on one node.
@@ -51,6 +52,7 @@ pub(crate) struct RuntimeInner {
     pub(crate) extensions: Vec<Arc<dyn Extension>>,
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
+    pub(crate) liveness: Liveness,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -172,6 +174,7 @@ impl Runtime {
                 extensions,
                 transport: std::sync::OnceLock::new(),
                 pending_calls: PendingCalls::default(),
+                liveness: Liveness::new(config.heartbeat_interval, config.node_timeout),
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -402,17 +405,48 @@ impl Runtime {
             .map_err(|_| HostError::Engine("a transport is already set".into()))
     }
 
-    /// Handle a frame that node `from` sent to this node. Called by the
+    /// Handle a packet that node `from` sent to this node. Called by the
     /// transport; must run inside the tokio runtime.
-    pub fn deliver(&self, from: u32, frame: Frame) {
-        transport::deliver(&self.inner, from, frame);
+    pub fn deliver(&self, from: u32, packet: Packet) {
+        transport::deliver(&self.inner, from, packet);
     }
 
-    /// Node `node` cannot be reached: links and monitors with its pids end
-    /// with `noconnection`, and calls waiting on it fail. Called by the
-    /// transport.
+    /// Node `node` cannot be reached: the session with it ends, so links and
+    /// monitors with its pids end with `noconnection` and calls waiting on
+    /// it fail. Called by a transport that detects loss itself; heartbeats
+    /// ([`transport::liveness`]) detect it otherwise.
     pub fn node_down(&self, node: u32) {
-        transport::node_down(&self.inner, node);
+        transport::end_session(&self.inner, node);
+    }
+
+    /// Send heartbeats to `node` and watch it. Starts the heartbeat task on
+    /// first use, so call it inside the tokio runtime.
+    pub fn add_peer(&self, node: u32) {
+        self.inner.liveness.add_peer(&self.inner, node);
+    }
+
+    /// Also beat every peer on `path`, reported as `name` in
+    /// [`NodeEvent`]s.
+    pub fn add_heartbeat_path(&self, name: &str, path: Arc<dyn HeartbeatPath>) {
+        self.inner.liveness.add_path(name, path);
+    }
+
+    /// A beat from `node` arrived on the extra path `path`. Called by the
+    /// path's receiving side.
+    pub fn heard(&self, node: u32, path: &str) {
+        self.inner.liveness.on_beat(node, path);
+    }
+
+    /// Changes in what this node knows about others, from now on.
+    #[must_use]
+    pub fn node_events(&self) -> tokio::sync::broadcast::Receiver<NodeEvent> {
+        self.inner.liveness.subscribe()
+    }
+
+    /// What this node knows about `node`, if it watches it.
+    #[must_use]
+    pub fn peer_status(&self, node: u32) -> Option<PeerStatus> {
+        self.inner.liveness.status(node)
     }
 
     /// Every live instance, ordered by pid.

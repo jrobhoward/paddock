@@ -1,18 +1,22 @@
 //! Node-to-node delivery: frames, the transport that carries them, and what
 //! a runtime does with frames from other nodes.
 //!
-//! A [`Transport`] sends [`Frame`]s to other nodes, at most once and in
-//! order per pair of nodes, and reports a node it can no longer reach with
-//! [`Runtime::node_down`](crate::Runtime::node_down). Frames from other
-//! nodes arrive through [`Runtime::deliver`](crate::Runtime::deliver).
+//! A [`Transport`] sends [`Packet`]s to other nodes, at most once and in
+//! order per pair of nodes, and may report a node it can no longer reach
+//! with [`Runtime::node_down`](crate::Runtime::node_down). Packets from
+//! other nodes arrive through [`Runtime::deliver`](crate::Runtime::deliver).
 //! [`memory`] is an in-process transport for tests, with faults to inject;
 //! QUIC (ROADMAP D1) implements the same trait.
 //!
-//! Each node keeps its own side of a link or monitor between nodes. When a
-//! node is lost, its links and monitors end with `noconnection` on this
-//! side and calls waiting on it fail with `noconnection` (DESIGN.md,
-//! "Failure handling").
+//! Each node keeps its own side of a link or monitor between nodes. When the
+//! session with a node ends, because the transport reported it lost or
+//! because [`liveness`] stopped hearing it, its links and monitors end with
+//! `noconnection` on this side and calls waiting on it fail with
+//! `noconnection` (DESIGN.md, "Failure handling"). Every packet carries the
+//! session it belongs to, so both sides end a session together and nothing
+//! from an ended session is acted on.
 
+pub mod liveness;
 pub mod memory;
 
 use std::collections::HashMap;
@@ -24,12 +28,28 @@ use tokio::sync::oneshot;
 use crate::delivery::{self, Route};
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
+use crate::probe;
 use crate::runtime::RuntimeInner;
+use liveness::{NodeEvent, Session};
+
+/// A frame and the session it belongs to ([`liveness`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Packet {
+    /// The sender's session number with the receiving node.
+    pub session: u64,
+    /// The frame.
+    pub frame: Frame,
+}
 
 /// One message between nodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Frame {
+    /// The sender is alive ([`liveness`]).
+    Heartbeat {
+        /// Whether the sender hears the receiving node.
+        hears_you: bool,
+    },
     /// A cast to `to`.
     Cast {
         /// The sender, if an instance.
@@ -122,11 +142,11 @@ pub enum Frame {
     },
 }
 
-/// Carries frames to other nodes.
+/// Carries packets to other nodes.
 pub trait Transport: Send + Sync + 'static {
-    /// Send `frame` to `node`. Returns `false` if `node` cannot be reached
-    /// now; the frame is then dropped.
-    fn send(&self, node: u32, frame: Frame) -> bool;
+    /// Send `packet` to `node`. Returns `false` if `node` cannot be reached
+    /// now; the packet is then dropped.
+    fn send(&self, node: u32, packet: Packet) -> bool;
 }
 
 /// Where a call's reply goes.
@@ -181,9 +201,17 @@ impl PendingCalls {
     }
 }
 
-/// Send to `node`, if a transport is set and reaches it.
+/// Send to `node`, in the current session, if a transport is set and
+/// `node` is reachable.
 pub(crate) fn send(rt: &RuntimeInner, node: u32, frame: Frame) -> bool {
-    rt.transport().is_some_and(|t| t.send(node, frame))
+    if !rt.liveness.reachable(node) {
+        return false;
+    }
+    let Some(transport) = rt.transport() else {
+        return false;
+    };
+    let session = rt.liveness.session(node);
+    transport.send(node, Packet { session, frame })
 }
 
 /// Call `to` on `node` and wait up to `timeout` for the reply.
@@ -222,9 +250,19 @@ pub(crate) async fn call(
     }
 }
 
-/// Handle a frame from node `from`.
-pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, frame: Frame) {
-    match frame {
+/// Handle a packet from node `from`.
+pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet: Packet) {
+    match rt.liveness.on_frame(from_node, packet.session) {
+        Session::Stale => return,
+        Session::Current => {}
+        Session::Newer(session) => ended(rt, from_node, session),
+    }
+    match packet.frame {
+        Frame::Heartbeat { hears_you } => {
+            if rt.liveness.on_heartbeat(from_node, hears_you) {
+                end_session(rt, from_node);
+            }
+        }
         Frame::Cast { from, to, msg } => {
             let _ = delivery::cast(rt, from, to, msg);
         }
@@ -323,9 +361,16 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, frame: 
     }
 }
 
-/// `node` can no longer be reached: end every link and monitor with it as
-/// `noconnection`, and fail calls waiting on it.
-pub(crate) fn node_down(rt: &RuntimeInner, node: u32) {
+/// End the session with `node`: raise its number, so frames from the old
+/// one are discarded, and end every link and monitor with it.
+pub(crate) fn end_session(rt: &RuntimeInner, node: u32) {
+    let session = rt.liveness.end(node);
+    ended(rt, node, session);
+}
+
+/// The session with `node` ended and `session` follows: end every link and
+/// monitor with it as `noconnection`, and fail calls waiting on it.
+fn ended(rt: &RuntimeInner, node: u32, session: u64) {
     let down = rt.links.on_node_down(node);
     for (local, remote) in down.links {
         if let Route::Local(target) = delivery::route(rt, local) {
@@ -342,4 +387,6 @@ pub(crate) fn node_down(rt: &RuntimeInner, node: u32) {
         }
     }
     rt.pending_calls.fail_node(node);
+    probe::node_down(node, session);
+    rt.liveness.announce(NodeEvent::Down { node, session });
 }

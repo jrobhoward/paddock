@@ -130,8 +130,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host/src/delivery.rs`: the one place a pid is routed
   (local, dead, or another node). Process-core code that names a pid calls
   it, never the process table directly. `src/transport/`: frames between
-  nodes, the `Transport` trait, and `memory`, the in-process mesh with fault
-  injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
+  nodes, the `Transport` trait, `liveness` (heartbeats and sessions; every
+  node-down goes through `transport::end_session`), and `memory`, the
+  in-process mesh with fault injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
   the mesh on a paused clock: targeted races and seeded random scenarios
   (`PADDOCK_SIM_SEED=<n>` replays one).
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,

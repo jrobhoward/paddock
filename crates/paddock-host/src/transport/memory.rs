@@ -6,8 +6,19 @@
 //! freely. Per pair, a frame can be delayed (a fixed delay plus a random
 //! jitter, still in order) or dropped at random. A partition cuts a pair:
 //! sends fail, frames in flight are lost, and both nodes see the other go
-//! down (`noconnection`). Healing reconnects the pair; links and monitors
-//! lost to the partition stay lost, as in OTP.
+//! down (`noconnection`) at once, as when a connection is closed. Healing
+//! reconnects the pair; links and monitors lost to the partition stay lost,
+//! as in OTP.
+//!
+//! A stall is the silent failure: frames between the pair (in one direction
+//! or both) are held, as QUIC holds unacknowledged data, and nobody is told.
+//! The nodes' heartbeats ([`super::liveness`]) find it. Healing releases the
+//! held frames in order; any from a session that ended meanwhile are
+//! discarded by the receiver.
+//!
+//! Joining the mesh makes every node a peer of every other, so each sends
+//! heartbeats. [`Mesh::add_path`] adds a heartbeat path besides the frames
+//! (a serial line between nodes), which [`Mesh::cut_path`] cuts on its own.
 //!
 //! Every random choice comes from one seeded generator, drawn when a frame
 //! is sent, so a test that sends in a fixed order gets the same faults on
@@ -27,14 +38,15 @@
 //! # Ok(()) }
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 
-use super::{Frame, Transport};
+use super::liveness::HeartbeatPath;
+use super::{Packet, Transport};
 use crate::error::HostError;
 use crate::runtime::{Runtime, RuntimeInner};
 
@@ -65,6 +77,8 @@ impl std::fmt::Debug for Mesh {
 
 struct Shared {
     state: Mutex<State>,
+    /// Woken when stalls are healed.
+    healed: Notify,
 }
 
 struct State {
@@ -76,11 +90,17 @@ struct State {
     partitioned: HashSet<(u32, u32)>,
     /// Bumped per pair at each partition; frames sent before it are lost.
     generation: HashMap<(u32, u32), u64>,
+    /// Stalled directions, (from, to): frames wait.
+    stalled: HashSet<(u32, u32)>,
+    /// Extra heartbeat paths, by name.
+    paths: BTreeSet<String>,
+    /// Cut directions of extra paths: (path, from, to).
+    path_cut: HashSet<(String, u32, u32)>,
     rng: SplitMix64,
 }
 
 struct Queue {
-    tx: mpsc::UnboundedSender<(Instant, u64, Frame)>,
+    tx: mpsc::UnboundedSender<(Instant, u64, Packet)>,
     /// When the last frame queued is due, so a later one is never earlier.
     last_due: Instant,
 }
@@ -94,7 +114,7 @@ impl Shared {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn send(self: &Arc<Self>, from: u32, to: u32, frame: Frame) -> bool {
+    fn send(self: &Arc<Self>, from: u32, to: u32, packet: Packet) -> bool {
         let mut state = self.state();
         if state.partitioned.contains(&pair(from, to))
             || !state.nodes.get(&to).is_some_and(|rt| rt.strong_count() > 0)
@@ -129,7 +149,27 @@ impl Shared {
         };
         let due = (now + faults.delay + jitter).max(queue.last_due);
         queue.last_due = due;
-        queue.tx.send((due, generation, frame)).is_ok()
+        queue.tx.send((due, generation, packet)).is_ok()
+    }
+
+    fn stalled(&self, from: u32, to: u32) -> bool {
+        self.state().stalled.contains(&(from, to))
+    }
+
+    /// A beat from `from` to `to` on the extra path `path`: arrives at once
+    /// unless the path is cut that way.
+    fn beat(&self, path: &str, from: u32, to: u32) -> bool {
+        let target = {
+            let state = self.state();
+            if state.path_cut.contains(&(path.to_string(), from, to)) {
+                return true;
+            }
+            state.nodes.get(&to).and_then(Weak::upgrade)
+        };
+        target.is_some_and(|rt| {
+            rt.liveness.on_beat(from, path);
+            true
+        })
     }
 
     /// The runtime for `node`, if it is in the mesh and alive.
@@ -143,13 +183,21 @@ async fn carry(
     shared: Weak<Shared>,
     from: u32,
     to: u32,
-    mut rx: mpsc::UnboundedReceiver<(Instant, u64, Frame)>,
+    mut rx: mpsc::UnboundedReceiver<(Instant, u64, Packet)>,
 ) {
-    while let Some((due, generation, frame)) = rx.recv().await {
+    while let Some((due, generation, packet)) = rx.recv().await {
         tokio::time::sleep_until(due).await;
         let Some(shared) = shared.upgrade() else {
             return;
         };
+        loop {
+            // Registered before the check, so a heal in between wakes it.
+            let healed = shared.healed.notified();
+            if !shared.stalled(from, to) {
+                break;
+            }
+            healed.await;
+        }
         let target = {
             let state = shared.state();
             let key = pair(from, to);
@@ -161,7 +209,7 @@ async fn carry(
             }
         };
         if let Some(rt) = target {
-            super::deliver(&rt, from, frame);
+            super::deliver(&rt, from, packet);
         }
     }
 }
@@ -173,10 +221,25 @@ struct Port {
 }
 
 impl Transport for Port {
-    fn send(&self, node: u32, frame: Frame) -> bool {
+    fn send(&self, node: u32, packet: Packet) -> bool {
         self.shared
             .upgrade()
-            .is_some_and(|shared| shared.send(self.node, node, frame))
+            .is_some_and(|shared| shared.send(self.node, node, packet))
+    }
+}
+
+/// One node's side of an extra heartbeat path.
+struct PathPort {
+    shared: Weak<Shared>,
+    node: u32,
+    name: String,
+}
+
+impl HeartbeatPath for PathPort {
+    fn beat(&self, node: u32) -> bool {
+        self.shared
+            .upgrade()
+            .is_some_and(|shared| shared.beat(&self.name, self.node, node))
     }
 }
 
@@ -193,13 +256,18 @@ impl Mesh {
                     default_faults: Faults::default(),
                     partitioned: HashSet::new(),
                     generation: HashMap::new(),
+                    stalled: HashSet::new(),
+                    paths: BTreeSet::new(),
+                    path_cut: HashSet::new(),
                     rng: SplitMix64(seed),
                 }),
+                healed: Notify::new(),
             }),
         }
     }
 
-    /// Add `rt` as node `rt.node()`, and set its transport to the mesh.
+    /// Add `rt` as node `rt.node()`, set its transport to the mesh, and
+    /// make it and every other node peers, with the mesh's extra paths.
     ///
     /// # Errors
     ///
@@ -207,7 +275,7 @@ impl Mesh {
     /// node id, or `rt` already has a transport.
     pub fn join(&self, rt: &Runtime) -> Result<(), HostError> {
         let node = rt.node();
-        {
+        let (others, paths) = {
             let mut state = self.shared.state();
             if state
                 .nodes
@@ -218,12 +286,71 @@ impl Mesh {
                     "node {node} is already in the mesh"
                 )));
             }
+            let others: Vec<Arc<RuntimeInner>> =
+                state.nodes.values().filter_map(Weak::upgrade).collect();
             state.nodes.insert(node, Arc::downgrade(rt.inner()));
-        }
+            (others, state.paths.clone())
+        };
         rt.set_transport(Arc::new(Port {
             shared: Arc::downgrade(&self.shared),
             node,
-        }))
+        }))?;
+        for name in &paths {
+            rt.add_heartbeat_path(name, self.path_port(node, name));
+        }
+        for other in others {
+            other.liveness.add_peer(&other, node);
+            rt.add_peer(other.node());
+        }
+        Ok(())
+    }
+
+    fn path_port(&self, node: u32, name: &str) -> Arc<PathPort> {
+        Arc::new(PathPort {
+            shared: Arc::downgrade(&self.shared),
+            node,
+            name: name.to_string(),
+        })
+    }
+
+    /// Add a heartbeat path named `name` between every pair of nodes, now
+    /// and as they join.
+    pub fn add_path(&self, name: &str) {
+        let nodes: Vec<Arc<RuntimeInner>> = {
+            let mut state = self.shared.state();
+            if !state.paths.insert(name.to_string()) {
+                return;
+            }
+            state.nodes.values().filter_map(Weak::upgrade).collect()
+        };
+        for rt in nodes {
+            rt.liveness.add_path(name, self.path_port(rt.node(), name));
+        }
+    }
+
+    /// Cut the extra path `name` between `a` and `b`, both ways.
+    pub fn cut_path(&self, a: u32, b: u32, name: &str) {
+        let mut state = self.shared.state();
+        state.path_cut.insert((name.to_string(), a, b));
+        state.path_cut.insert((name.to_string(), b, a));
+    }
+
+    /// Reconnect the extra path `name` between `a` and `b`.
+    pub fn heal_path(&self, a: u32, b: u32, name: &str) {
+        let mut state = self.shared.state();
+        state.path_cut.remove(&(name.to_string(), a, b));
+        state.path_cut.remove(&(name.to_string(), b, a));
+    }
+
+    /// Hold frames between `a` and `b`, both ways, telling nobody.
+    pub fn stall(&self, a: u32, b: u32) {
+        self.stall_one_way(a, b);
+        self.stall_one_way(b, a);
+    }
+
+    /// Hold frames from `from` to `to`, telling nobody.
+    pub fn stall_one_way(&self, from: u32, to: u32) {
+        self.shared.state().stalled.insert((from, to));
     }
 
     /// Faults on frames from `from` to `to` (one direction).
@@ -249,10 +376,10 @@ impl Mesh {
             *state.generation.entry(key).or_insert(0) += 1;
         }
         if let Some(rt) = self.shared.runtime(a) {
-            super::node_down(&rt, b);
+            super::end_session(&rt, b);
         }
         if let Some(rt) = self.shared.runtime(b) {
-            super::node_down(&rt, a);
+            super::end_session(&rt, a);
         }
     }
 
@@ -271,14 +398,27 @@ impl Mesh {
         }
     }
 
-    /// Reconnect `a` and `b`.
+    /// Reconnect `a` and `b` after a partition or a stall; held frames
+    /// move on.
     pub fn heal(&self, a: u32, b: u32) {
-        self.shared.state().partitioned.remove(&pair(a, b));
+        {
+            let mut state = self.shared.state();
+            state.partitioned.remove(&pair(a, b));
+            state.stalled.remove(&(a, b));
+            state.stalled.remove(&(b, a));
+        }
+        self.shared.healed.notify_waiters();
     }
 
-    /// Reconnect every pair.
+    /// Reconnect every pair, and every extra path.
     pub fn heal_all(&self) {
-        self.shared.state().partitioned.clear();
+        {
+            let mut state = self.shared.state();
+            state.partitioned.clear();
+            state.stalled.clear();
+            state.path_cut.clear();
+        }
+        self.shared.healed.notify_waiters();
     }
 }
 
