@@ -29,6 +29,12 @@
 //!
 //! Build for `wasm32-wasip2` and bundle with `paddock bundle`.
 //!
+//! Host services, each needing its capability in the manifest:
+//! - [`log`] and its macros (`info!` and friends): `wasi:logging`, always
+//!   available.
+//! - `config` (cargo feature `config`): `wasi:config`.
+//! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
+//!
 //! In a guest, a panic is a trap: the host ends the instance with
 //! `crashed` and its supervisor restarts it. The SDK panics only for
 //! states that are bugs (a callback before a successful `init`, a snapshot
@@ -37,8 +43,12 @@
 extern crate self as paddock_sdk;
 
 mod app;
+#[cfg(feature = "config")]
+pub mod config;
 mod ctx;
 mod envelope;
+#[cfg(feature = "keyvalue")]
+pub mod kv;
 pub mod log;
 pub mod snapshot;
 mod types;
@@ -47,7 +57,13 @@ mod types;
 #[allow(missing_docs, clippy::too_many_arguments)]
 pub mod bindings {
     wit_bindgen::generate!({
-        path: ["../../wit", "../../wit/vendor/wasi-logging", "wit"],
+        path: [
+            "../../wit",
+            "../../wit/vendor/wasi-logging",
+            "../../wit/vendor/wasi-config",
+            "../../wit/vendor/wasi-keyvalue",
+            "wit",
+        ],
         world: "paddock:sdk/app",
         pub_export_macro: true,
         default_bindings_module: "paddock_sdk::bindings",

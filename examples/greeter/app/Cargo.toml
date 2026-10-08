@@ -1,0 +1,20 @@
+[package]
+name = "example-greeter-app"
+version = "0.0.0"
+description = "Paddock example: an app that calls the greeter extension"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

@@ -41,8 +41,9 @@
 //! - `demonitor:<ref>`: reply `ok`.
 //! - `exit:<pid>:<reason>`: send an exit signal; reasons are `normal`,
 //!   `shutdown`, `killed` or `crashed-<text>`. Reply `ok`.
-//! - `infos`: reply the exit and down notifications received, as
-//!   `exit:<pid>:<reason>` and `down:<ref>:<pid>:<reason>`, joined by `;`.
+//! - `infos`: reply the exit and down notifications and host events
+//!   received, as `exit:<pid>:<reason>`, `down:<ref>:<pid>:<reason>` and
+//!   `event:<name>:<body>`, joined by `;`.
 //!
 //! Built for `wasm32-wasip2`; the host build only checks that the bindings
 //! compile.
@@ -312,8 +313,9 @@ impl Guest for Chaos {
                 let line = format!("exit:{}:{}", show_pid(pid), show_exit(&reason));
                 STATE.with_borrow_mut(|s| s.infos.push(line));
             }
-            Info::HostEvent((name, _)) => {
-                STATE.with_borrow_mut(|s| s.infos.push(format!("event:{name}")));
+            Info::HostEvent((name, msg)) => {
+                let body = String::from_utf8_lossy(&msg.body).into_owned();
+                STATE.with_borrow_mut(|s| s.infos.push(format!("event:{name}:{body}")));
             }
             Info::Down((reference, pid, reason)) => {
                 let line = format!("down:{reference}:{}:{}", show_pid(pid), show_exit(&reason));

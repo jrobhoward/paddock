@@ -18,6 +18,9 @@
 //! grant = ["wasi:http/outgoing-handler"]
 //! ```
 //!
+//! A `grant` list holds capability keys and extension package names
+//! (`"example:greeting"`) alike.
+//!
 //! Policy grants or withholds whole capabilities. The scope an app requests
 //! (buckets, preopens, hosts) is used as written; narrowing scopes by policy
 //! is not supported in Phase 1.
@@ -25,7 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::manifest::Capability;
+use crate::manifest::{Capability, is_extension_key};
 use serde::Deserialize;
 
 use crate::error::BundleError;
@@ -46,8 +49,9 @@ pub struct OperatorPolicy {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Grants {
-    /// Capabilities granted, by key (`wasi:keyvalue`).
-    pub grant: BTreeSet<Capability>,
+    /// Capabilities and extensions granted, by key (`wasi:keyvalue`,
+    /// `example:greeting`).
+    pub grant: Granted,
 }
 
 /// Capabilities granted to apps signed by one key.
@@ -56,9 +60,47 @@ pub struct Grants {
 pub struct SignerGrants {
     /// The signer's minisign public key, base64.
     pub key: String,
-    /// Capabilities granted, by key.
+    /// Capabilities and extensions granted, by key.
     #[serde(default)]
-    pub grant: BTreeSet<Capability>,
+    pub grant: Granted,
+}
+
+/// Granted capabilities and extension packages. Written in policy as one
+/// list of keys.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<String>")]
+pub struct Granted {
+    /// Built-in capabilities.
+    pub capabilities: BTreeSet<Capability>,
+    /// Extension packages (`example:greeting`).
+    pub extensions: BTreeSet<String>,
+}
+
+impl Granted {
+    fn extend(&mut self, other: &Self) {
+        self.capabilities.extend(&other.capabilities);
+        self.extensions.extend(other.extensions.iter().cloned());
+    }
+}
+
+impl TryFrom<Vec<String>> for Granted {
+    type Error = String;
+
+    fn try_from(keys: Vec<String>) -> Result<Self, String> {
+        let mut granted = Self::default();
+        for key in keys {
+            if let Ok(capability) = Capability::try_from(key.clone()) {
+                granted.capabilities.insert(capability);
+            } else if is_extension_key(&key) {
+                granted.extensions.insert(key);
+            } else {
+                return Err(format!(
+                    "unknown capability '{key}' (not a capability key or an extension package outside wasi and paddock)"
+                ));
+            }
+        }
+        Ok(granted)
+    }
 }
 
 impl OperatorPolicy {
@@ -86,7 +128,7 @@ impl OperatorPolicy {
     /// Everything granted to `app` whose bundle was verified by
     /// `signer_key`.
     #[must_use]
-    pub fn granted(&self, app: &str, signer_key: &str) -> BTreeSet<Capability> {
+    pub fn granted(&self, app: &str, signer_key: &str) -> Granted {
         let mut granted = self.defaults.grant.clone();
         if let Some(entry) = self.apps.get(app) {
             granted.extend(&entry.grant);

@@ -226,7 +226,7 @@ pub enum Info {
         msg: Envelope,
     },
     /// A named host event. Ignore names you do not know: later hosts add
-    /// events here.
+    /// events here. The SDK handles `log-level` itself.
     Event {
         /// The event's name.
         name: String,

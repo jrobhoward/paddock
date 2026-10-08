@@ -21,7 +21,7 @@ use crate::message::{CallError, Envelope};
 use crate::pid::Pid;
 use crate::pool::Pool;
 use crate::registry::Registry;
-use crate::services;
+use crate::services::{self, Extension};
 use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
@@ -45,6 +45,7 @@ pub(crate) struct RuntimeInner {
     pub(crate) links: LinkTable,
     pools: RwLock<HashMap<String, Arc<Pool>>>,
     pub(crate) services: services::Shared,
+    pub(crate) extensions: Vec<Arc<dyn Extension>>,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -104,10 +105,39 @@ impl Runtime {
     /// example when the pool cannot reserve its address space) or the epoch
     /// thread cannot start.
     pub fn new(config: RuntimeConfig) -> Result<Self, HostError> {
+        Self::with_extensions(config, Vec::new())
+    }
+
+    /// Like [`Runtime::new`], with host services from outside this crate
+    /// ([`services::extension`]).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Runtime::new`], and [`HostError::Engine`] for an extension
+    /// whose package is not a valid extension key, is served twice, or
+    /// cannot link.
+    pub fn with_extensions(
+        config: RuntimeConfig,
+        extensions: Vec<Arc<dyn Extension>>,
+    ) -> Result<Self, HostError> {
+        let mut packages = std::collections::BTreeSet::new();
+        for ext in &extensions {
+            let package = ext.package();
+            if !paddock_bundle::manifest::is_extension_key(package) {
+                return Err(HostError::Engine(format!(
+                    "extension package '{package}' must be `namespace:package` outside wasi and paddock"
+                )));
+            }
+            if !packages.insert(package.to_string()) {
+                return Err(HostError::Engine(format!(
+                    "extension package '{package}' is served twice"
+                )));
+            }
+        }
         let engine =
             Engine::new(&engine_config(&config)).map_err(|e| HostError::Engine(describe(&e)))?;
         // Fail now, not at the first load, if the host interfaces cannot link.
-        base_linker(&engine).map_err(|e| HostError::Engine(describe(&e)))?;
+        base_linker(&engine, &extensions).map_err(|e| HostError::Engine(describe(&e)))?;
         let services = services::Shared::new(&config)?;
         let ticker = Ticker::start(engine.clone(), config.epoch_tick)
             .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
@@ -119,6 +149,7 @@ impl Runtime {
                 links: LinkTable::default(),
                 pools: RwLock::default(),
                 services,
+                extensions,
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -139,8 +170,10 @@ impl Runtime {
         let load = |e: wasmtime::Error| HostError::Load(describe(&e));
         let engine = &self.inner.engine;
         let component = Component::new(engine, component).map_err(load)?;
-        let mut linker = base_linker(engine).map_err(load)?;
-        let stubbed = deny::link_stubs(&mut linker, engine, &component).map_err(load)?;
+        let extensions = &self.inner.extensions;
+        let mut linker = base_linker(engine, extensions).map_err(load)?;
+        let served: Vec<&str> = extensions.iter().map(|e| e.package()).collect();
+        let stubbed = deny::link_stubs(&mut linker, engine, &component, &served).map_err(load)?;
         let pre = linker.instantiate_pre(&component).map_err(load)?;
         Ok(LoadedApp {
             pre: PaddockAppPre::new(pre).map_err(load)?,
@@ -230,6 +263,13 @@ impl Runtime {
     /// return to each instance's own level with `None`.
     pub fn set_log_level(&self, app: &str, level: Option<LogLevel>) {
         self.inner.services.logging.set_override(app, level);
+        // Each instance works out its own effective level and tells its
+        // guest (`log-level` host event).
+        for instance in self.instances() {
+            if instance.app() == app {
+                instance.announce();
+            }
+        }
     }
 
     /// The log level override for `app`, if one is set.
@@ -335,11 +375,17 @@ impl Runtime {
 }
 
 /// The host interfaces every app is linked against.
-fn base_linker(engine: &Engine) -> wasmtime::Result<Linker<InstanceState>> {
+fn base_linker(
+    engine: &Engine,
+    extensions: &[Arc<dyn Extension>],
+) -> wasmtime::Result<Linker<InstanceState>> {
     let mut linker = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     PaddockApp::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)?;
     services::link(&mut linker)?;
+    for ext in extensions {
+        ext.link(&mut linker)?;
+    }
     Ok(linker)
 }
 

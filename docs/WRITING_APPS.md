@@ -183,9 +183,9 @@ Each service must be declared under `capabilities` in the manifest **and** grant
 
 | Capability | Use from Rust |
 | --- | --- |
-| `wasi:logging` | `paddock_sdk::info!("order {id} accepted")` (and `debug!`, `warn!`, `error!`). Records carry the app, version and pid. The host caps level and rate (`max_level`, `rate_limit_per_sec`), and the operator can change the level at run time with `paddock log-level`. |
-| `wasi:config` | `wasi:config/store`: `get(key)`, `get-all()`. Values come from `config.defaults`, overridden by the node's `[config.<app>]`. |
-| `wasi:keyvalue` | `wasi:keyvalue` (`store`, `atomics`, `batch`), on the buckets the manifest names. `memory` buckets survive instance crashes; `disk` buckets also survive node restarts. Each bucket can have a quota. |
+| `wasi:logging` | `paddock_sdk::info!("order {id} accepted")` (and `trace!`, `debug!`, `warn!`, `error!`). Records carry the app, version and pid. The host caps level and rate (`max_level`, `rate_limit_per_sec`), and the operator can change the level at run time with `paddock log-level`. The host tells the SDK the effective level, so a record below it is skipped before formatting (about 3 ns, against about 440 ns when the host drops it); records written during `init` are filtered by the host only. |
+| `wasi:config` | `paddock_sdk::config::get("db.host")` and `get_all()`, with the SDK's `config` feature. Values come from `config.defaults`, overridden by the node's `[config.<app>]`. Without the capability granted they return `ConfigError::Denied`. |
+| `wasi:keyvalue` | `paddock_sdk::kv::Bucket::open("orders")`, with the SDK's `keyvalue` feature: `get`, `set`, `delete`, `exists`, `keys` (all pages), `increment`, the batch calls, and CBOR-typed `get_value` and `set_value`. Only the buckets the manifest names open. `memory` buckets survive instance crashes; `disk` buckets also survive node restarts. Each bucket can have a quota. |
 | `wasi:filesystem` | `std::fs`. `/priv` holds the bundle's files read-only (`paddock bundle --priv <dir>`), and each preopen maps a guest path to a volume the operator configures. Paths cannot escape their preopen. |
 
 The SDK wraps logging only. For config and keyvalue, generate bindings with `wit-bindgen` from the WIT vendored in [`wit/vendor/`](../wit/vendor/), as [`crates/paddock-fixture-services`](../crates/paddock-fixture-services/src/lib.rs) does. That fixture implements `paddock:runtime/app` directly, without the SDK; combining the SDK with separately generated WASI bindings is untested in Phase 1.

@@ -1,11 +1,9 @@
 //! Opening a bundle and verifying it against operator-trusted keys.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::manifest::{
-    AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Kind, ManifestError, Provenance,
-    SECTION,
+    AppInfo, AppManifest, AppSpec, ComponentRef, Kind, ManifestError, Provenance, SECTION,
 };
 use rustbridge_bundle::{BundleLoader, Platform};
 
@@ -169,7 +167,7 @@ impl VerifiedBundle {
     /// and [`BundleError::ImportsRefused`] if any import is undeclared or
     /// unknown.
     pub fn effective_grant(&self, policy: &OperatorPolicy) -> Result<EffectiveGrant, BundleError> {
-        let granted: BTreeSet<Capability> = policy.granted(
+        let granted = policy.granted(
             &self.manifest.app.name,
             &self.manifest.provenance.signer_key,
         );

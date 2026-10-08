@@ -8,7 +8,8 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{LONG, body, shared, spec, text};
+use common::{LONG, ask, body, shared, spec, text};
+use paddock_bundle::manifest::{Capability, LogLevel};
 use paddock_host::{CallError, ExitReason, LifecycleState};
 use rstest::rstest;
 
@@ -314,4 +315,51 @@ async fn cast____after_exit____noproc() {
     let result = instance.cast(text("count"));
 
     assert_eq!(result, Err(CallError::Noproc));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn log_level_event____granted_logging____after_init_and_on_each_change() {
+    let (rt, app) = shared();
+    let mut granted = spec("");
+    granted.app = "log-event".into();
+    granted.granted.insert(Capability::Logging);
+    granted.services.logging.level = LogLevel::Warn;
+    let mut plain = spec("");
+    plain.app = "log-event".into();
+    let granted = rt.spawn(app, granted).unwrap();
+    let plain = rt.spawn(app, plain).unwrap();
+
+    let first = ask(&granted, "infos").await;
+    rt.set_log_level("log-event", Some(LogLevel::Debug));
+    let changed = ask(&granted, "infos").await;
+    rt.set_log_level("log-event", None);
+    let reset = ask(&granted, "infos").await;
+    let ungranted = ask(&plain, "infos").await;
+
+    assert_eq!(first, "event:log-level:warn");
+    assert_eq!(changed, "event:log-level:warn;event:log-level:debug");
+    assert_eq!(
+        reset,
+        "event:log-level:warn;event:log-level:debug;event:log-level:warn"
+    );
+    assert_eq!(ungranted, "");
+    granted.kill();
+    plain.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn log_level_event____after_snapshot_upgrade____sent_to_new_guest() {
+    let (rt, app) = shared();
+    let mut s = spec("");
+    s.app = "log-event-upgrade".into();
+    s.granted.insert(Capability::Logging);
+    let h = rt.spawn(app, s.clone()).unwrap();
+    ask(&h, "infos").await;
+
+    s.version = "0.2.0".into();
+    h.upgrade(app, s, "0.1.0").await.unwrap();
+    let after = ask(&h, "infos").await;
+
+    assert_eq!(after, "event:log-level:info");
+    h.kill();
 }

@@ -1,0 +1,22 @@
+package example:greeting@0.1.0;
+
+/// Greetings from a host service outside Paddock: the `greeter` extension.
+interface greet {
+  variant error {
+    /// The operator did not grant `example:greeting` to this app.
+    access-denied,
+    /// Anything else.
+    other(string),
+  }
+
+  /// Greet `name` with the salutation the app's manifest configures.
+  hello: func(name: string) -> result<string, error>;
+
+  /// How many greetings this node has made, every app together.
+  count: func() -> result<u64, error>;
+}
+
+/// What a client imports, and what the host provides.
+world client {
+  import greet;
+}

@@ -598,6 +598,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-greeter-app"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "example-greeter-node"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "example-greeter-service",
+ "minisign",
+ "paddock",
+ "paddock-host",
+ "rustbridge-bundle",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "example-greeter-service"
+version = "0.0.0"
+dependencies = [
+ "paddock-host",
+ "serde_json",
+]
+
+[[package]]
 name = "example-ping-pong"
 version = "0.0.0"
 dependencies = [
@@ -1340,6 +1371,14 @@ name = "paddock-fixture-echo"
 version = "0.0.0"
 dependencies = [
  "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "paddock-fixture-sdk"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "serde",
 ]
 
 [[package]]

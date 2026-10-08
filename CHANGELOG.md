@@ -130,12 +130,36 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `paddock-bundle`: `OperatorPolicy::granted` returns `Granted`
+  (capabilities and extension packages), `effective_grant` takes it, and
+  `EffectiveGrant` reports `granted_extensions` and `denied_extensions`.
+  `ImportClass` and `ImportLink` gained extension cases and are no longer
+  `Copy`.
 - `paddock-host` host services follow one pattern (`paddock_host::services`):
   each has its own WIT world, spec, shared and per-instance state, and
   linking. `wasi:logging`, `wasi:config` and `wasi:keyvalue` use it.
   `InstanceSpec` fields moved under `InstanceSpec::services`: `log_level` and
   `log_rate_limit` to `logging.level` and `logging.rate_limit`, `config` to
   `config.values`, `buckets` to `keyvalue.buckets`.
+- A guest log record below the app's level costs about 3 ns (was about
+  440 ns): the host announces the effective level as
+  `host-event("log-level", ...)` after `init`, after a snapshot upgrade and
+  on `paddock log-level`, and `paddock-sdk`'s macros check it before
+  formatting. Adds `paddock_sdk::trace!` and `paddock_sdk::log::enabled`.
+  Host services can announce host events (`Service::announce`).
+- `paddock-sdk` features `config` and `keyvalue`: `paddock_sdk::config`
+  (`get`, `get_all`) and `paddock_sdk::kv::Bucket` (store, atomics, batch,
+  paging `keys`, CBOR-typed `get_value` and `set_value`), with the
+  `paddock-fixture-sdk` test fixture.
+- Extensions: host services from outside `paddock-host`. The
+  `paddock_host::services::Extension` trait serves one WIT package;
+  `Runtime::with_extensions`, `Node::open_with` and `paddock::node::run`
+  take extensions. Manifests declare them under
+  `capabilities.extensions."<package>"` and policy grants them by package
+  name. `paddock_host::wasmtime` re-exports wasmtime for their bindings.
+  Example: `examples/greeter`.
+- `examples/chaos` has a `log:<n>` command and declares `wasi:logging`; the
+  chaos fixture's `infos` includes host events with their payload.
 - The default epoch tick is 2 ms (was 10 ms), in `RuntimeConfig` and the
   node's `epoch_tick_ms`. A busy instance holds its worker for at most a
   tick, so p99 latency under oversubscription falls from about 10.7 ms to

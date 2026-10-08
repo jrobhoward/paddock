@@ -172,7 +172,8 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
         &failing_manifest,
         "[app]\nname = \"chaos-fail\"\nversion = \"1.0.0\"\n\
          [appserver.lifecycle]\nstart_args = { fail = \"trap\" }\n\
-         [appserver.supervision]\nintensity = 2\nbackoff = { initial_ms = 10, max_ms = 20 }\n",
+         [appserver.supervision]\nintensity = 2\nbackoff = { initial_ms = 10, max_ms = 20 }\n\
+         [appserver.capabilities.\"wasi:logging\"]\n",
     )
     .unwrap();
     let chaos_fail = bundle(failing_manifest, chaos, "chaos-fail.rbp").await;

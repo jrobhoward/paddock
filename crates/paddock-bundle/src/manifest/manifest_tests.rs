@@ -219,6 +219,9 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "api": { "messages": [{ "name": "a", "pattern": "call" }, { "name": "a", "pattern": "cast" }] } }), "api.messages[1].name")]
 #[case(json!({ "placement": { "mode": "singleton" }, "instances": { "count": 2 } }), "placement.mode")]
 #[case(json!({ "placement": { "mode": "singleton" }, "instances": { "min": 1, "max": 3 } }), "placement.mode")]
+#[case(json!({ "capabilities": { "extensions": { "wasi:extra": {} } } }), "capabilities.extensions.wasi:extra")]
+#[case(json!({ "capabilities": { "extensions": { "example:greeting/greet": {} } } }), "capabilities.extensions.example:greeting/greet")]
+#[case(json!({ "capabilities": { "extensions": { "example:greeting": 3 } } }), "capabilities.extensions.example:greeting")]
 #[case(json!({ "health": { "interval_ms": 0 } }), "health.interval_ms")]
 #[case(json!({ "observability": { "trace_sampling": 1.5 } }), "observability.trace_sampling")]
 fn AppSpec____rule_broken____invalid_at_path(#[case] value: serde_json::Value, #[case] path: &str) {

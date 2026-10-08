@@ -1,0 +1,30 @@
+[package]
+name = "example-greeter-node"
+version = "0.0.0"
+description = "Paddock example: a node binary with the greeter extension"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "greeter-node"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+example-greeter-service = { path = "../service" }
+paddock = { path = "../../../crates/paddock" }
+
+[dev-dependencies]
+minisign = { workspace = true }
+paddock-host = { workspace = true }
+rustbridge-bundle = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

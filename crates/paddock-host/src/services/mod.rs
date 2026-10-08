@@ -30,14 +30,23 @@
 //!   bound in node configuration, so an app does not name host paths or
 //!   addresses.
 //!
+//! Services from outside this crate are [`Extension`]s ([`extension`]):
+//! the same shape behind an object-safe trait, registered at runtime.
+//!
 //! Adding a service is a new module here and one line in each of the
-//! registries below ([`ServiceSpecs`], `Shared`, `States`, `link`,
-//! `INTERFACES`); the process core and orchestration do not change.
+//! registries below ([`ServiceSpecs`], `Shared`, `States` and its
+//! `announce`, `link`, `INTERFACES`); the process core and orchestration do not change.
 
 pub mod config;
+pub mod extension;
 pub mod keyvalue;
 pub mod logging;
 
+pub use extension::{
+    Extension, ExtensionApp, ExtensionCtx, ExtensionSpec, StoreData, extension_ctx,
+};
+
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,7 +55,9 @@ use wasmtime::component::{HasData, Linker, ResourceTable};
 
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
+use crate::message::Envelope;
 use crate::output::Tags;
+use crate::pid::Pid;
 use crate::spec::InstanceSpec;
 use crate::state::CallbackClock;
 
@@ -85,10 +96,19 @@ pub(crate) trait Service: Sized + 'static {
     ///
     /// A wasmtime error if an interface is already linked.
     fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> wasmtime::Result<()>;
+
+    /// Host events to send the instance as `info.host-event`: after `init`,
+    /// after a snapshot upgrade (the new guest starts fresh), and when the
+    /// runtime asks the instance to announce again (an operator change).
+    /// None by default.
+    fn announce(_state: &Self::Instance, _tags: &Tags) -> Vec<(String, Envelope)> {
+        Vec::new()
+    }
 }
 
-/// What a service's host functions see.
-pub(crate) struct ServiceCtx<'a, I> {
+/// What a service's host functions see: the service's own per-instance
+/// state and the facilities every service shares.
+pub struct ServiceCtx<'a, I> {
     /// The service's own per-instance state.
     pub(crate) state: &'a mut I,
     /// Who the instance is, for log records and errors.
@@ -98,7 +118,44 @@ pub(crate) struct ServiceCtx<'a, I> {
     clock: &'a mut CallbackClock,
 }
 
+impl<I> std::fmt::Debug for ServiceCtx<'_, I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServiceCtx")
+            .field("app", &self.tags.app)
+            .field("pid", &self.tags.pid)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'a, I> ServiceCtx<'a, I> {
+    /// The service's per-instance state.
+    pub fn state(&mut self) -> &mut I {
+        self.state
+    }
+
+    /// The instance's app name.
+    #[must_use]
+    pub fn app(&self) -> &str {
+        &self.tags.app
+    }
+
+    /// The instance's app version.
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.tags.version
+    }
+
+    /// The instance's pid.
+    #[must_use]
+    pub fn pid(&self) -> Pid {
+        self.tags.pid
+    }
+
+    /// The instance's resource table, for resources handed to the guest.
+    pub fn table(&mut self) -> &mut ResourceTable {
+        self.table
+    }
+
     pub(crate) fn new(
         state: &'a mut I,
         tags: &'a Tags,
@@ -114,7 +171,7 @@ impl<'a, I> ServiceCtx<'a, I> {
     }
 
     /// Exclude time spent waiting in the host from the callback deadline.
-    pub(crate) fn add_host_time(&mut self, spent: Duration) {
+    pub fn add_host_time(&mut self, spent: Duration) {
         self.clock.add_host_time(spent);
     }
 }
@@ -142,6 +199,8 @@ pub struct ServiceSpecs {
     pub keyvalue: keyvalue::KeyValueSpec,
     /// `wasi:logging`.
     pub logging: logging::LoggingSpec,
+    /// Extensions the manifest declares, by package.
+    pub extensions: BTreeMap<String, ExtensionSpec>,
 }
 
 impl ServiceSpecs {
@@ -150,6 +209,12 @@ impl ServiceSpecs {
             config: config::Config::spec(manifest),
             keyvalue: keyvalue::KeyValue::spec(manifest),
             logging: logging::Logging::spec(manifest),
+            extensions: manifest
+                .capabilities
+                .extensions
+                .iter()
+                .map(|(package, scope)| (package.clone(), ExtensionSpec::new(scope.clone())))
+                .collect(),
         }
     }
 }
@@ -176,11 +241,42 @@ pub(crate) struct States {
     pub(crate) config: config::Instance,
     pub(crate) keyvalue: keyvalue::Instance,
     pub(crate) logging: logging::Instance,
+    pub(crate) extensions: extension::ExtensionStates,
 }
 
 impl States {
-    pub(crate) fn new(shared: &Shared, spec: &InstanceSpec) -> Self {
-        Self {
+    /// Every service's announcements, in registry order.
+    pub(crate) fn announce(&self, tags: &Tags) -> Vec<(String, Envelope)> {
+        let mut events = config::Config::announce(&self.config, tags);
+        events.extend(keyvalue::KeyValue::announce(&self.keyvalue, tags));
+        events.extend(logging::Logging::announce(&self.logging, tags));
+        events
+    }
+
+    /// # Errors
+    ///
+    /// The message of an extension that refused the instance's scope.
+    pub(crate) fn new(
+        shared: &Shared,
+        spec: &InstanceSpec,
+        extensions: &[Arc<dyn Extension>],
+    ) -> Result<Self, String> {
+        let null = serde_json::Value::Null;
+        let mut states = extension::ExtensionStates::default();
+        for ext in extensions {
+            let declared = spec.services.extensions.get(ext.package());
+            let app = ExtensionApp {
+                app: &spec.app,
+                version: &spec.version,
+                scope: declared.map_or(&null, |d| &d.scope),
+                granted: declared.is_some_and(|d| d.granted),
+            };
+            let state = ext
+                .instance(&app)
+                .map_err(|e| format!("extension {}: {e}", ext.package()))?;
+            states.push(state);
+        }
+        Ok(Self {
             config: instance::<config::Config>(&shared.config, &spec.services.config, spec),
             keyvalue: instance::<keyvalue::KeyValue>(
                 &shared.keyvalue,
@@ -188,7 +284,8 @@ impl States {
                 spec,
             ),
             logging: instance::<logging::Logging>(&shared.logging, &spec.services.logging, spec),
-        }
+            extensions: states,
+        })
     }
 }
 

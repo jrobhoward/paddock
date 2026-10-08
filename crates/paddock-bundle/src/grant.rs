@@ -18,10 +18,12 @@ use crate::manifest::{AppSpec, Capability, ImportClass, classify_import};
 use serde::Serialize;
 
 use crate::error::BundleError;
+use crate::policy::Granted;
 
 /// How one import is linked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "link", content = "capability", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ImportLink {
     /// Granted to every app.
     Implicit,
@@ -29,6 +31,11 @@ pub enum ImportLink {
     Granted(Capability),
     /// Linked to deny stubs; the capability was declared but not granted.
     Denied(Capability),
+    /// Linked to the node's service for this extension package, if it has
+    /// one (deny stubs otherwise).
+    GrantedExtension(String),
+    /// Linked to deny stubs; the extension was declared but not granted.
+    DeniedExtension(String),
 }
 
 /// The permissions an app runs with, recorded with the deployment for audit.
@@ -42,6 +49,12 @@ pub struct EffectiveGrant {
     pub denied: BTreeSet<Capability>,
     /// Capabilities declared but not imported.
     pub unused: BTreeSet<Capability>,
+    /// Extension packages imported, declared and granted.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub granted_extensions: BTreeSet<String>,
+    /// Extension packages imported and declared but not granted.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub denied_extensions: BTreeSet<String>,
 }
 
 /// Check `imports` against `spec` and compute the effective grant given the
@@ -54,13 +67,15 @@ pub struct EffectiveGrant {
 pub fn effective_grant(
     imports: &[String],
     spec: &AppSpec,
-    operator_grants: &BTreeSet<Capability>,
+    operator: &Granted,
 ) -> Result<EffectiveGrant, BundleError> {
+    let operator_grants = &operator.capabilities;
     let declared: BTreeSet<Capability> = spec.capabilities.declared().into_iter().collect();
     let mut links = BTreeMap::new();
     let mut undeclared = Vec::new();
     let mut unknown = Vec::new();
     let mut imported = BTreeSet::new();
+    let (mut granted_extensions, mut denied_extensions) = (BTreeSet::new(), BTreeSet::new());
 
     for import in imports {
         match classify_import(import) {
@@ -68,6 +83,20 @@ pub fn effective_grant(
                 links.insert(import.clone(), ImportLink::Implicit);
             }
             ImportClass::Unknown => unknown.push(import.clone()),
+            ImportClass::Extension(package) => {
+                if !spec.capabilities.extensions.contains_key(&package) {
+                    undeclared.push(format!("{import} (needs extensions.\"{package}\")"));
+                } else if operator.extensions.contains(&package) {
+                    links.insert(
+                        import.clone(),
+                        ImportLink::GrantedExtension(package.clone()),
+                    );
+                    granted_extensions.insert(package);
+                } else {
+                    links.insert(import.clone(), ImportLink::DeniedExtension(package.clone()));
+                    denied_extensions.insert(package);
+                }
+            }
             ImportClass::Capability(candidates) => {
                 let declared_here: Vec<Capability> = candidates
                     .iter()
@@ -107,6 +136,8 @@ pub fn effective_grant(
         granted,
         denied,
         unused: declared.difference(&imported).copied().collect(),
+        granted_extensions,
+        denied_extensions,
     })
 }
 

@@ -351,7 +351,7 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 
 **Term storage notes.** Keys are strings and values are bytes, matching `wasi:keyvalue`. Buckets are per app and namespaced by the host, so apps can't read each other's data. Sharing data between apps goes through messages or an explicitly shared bucket granted to both. Atomic increment and compare-and-swap come from `wasi:keyvalue/atomics`.
 
-**Logging notes.** Apps never write to stdout as a log channel. The host captures stdout and stderr anyway and tags them, so legacy code still produces useful output. Rate limits per app stop one noisy app from flooding the node.
+**Logging notes.** Apps never write to stdout as a log channel. The host captures stdout and stderr anyway and tags them, so legacy code still produces useful output. Rate limits per app stop one noisy app from flooding the node. The logging service announces each instance's effective level as `host-event("log-level", "<level>")` after `init`, after a snapshot upgrade and on every operator change; `paddock-sdk` caches it and skips records below it before formatting. The host still filters every record, so a guest that ignores the event is capped the same way.
 
 **Denial by capability.** A declared capability the operator does not grant is still linked, and fails softly:
 - `wasi:logging` drops records.
@@ -365,6 +365,8 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 - A `Spec`: what the manifest asks of the service for one app, in `InstanceSpec::services`.
 - `Shared` state, one per runtime (pools, limits, operator overrides), and `Instance` state, one per instance.
 - Its own `bindgen!` world, linked with the per-interface `add_to_linker` and a getter that hands each host function a `ServiceCtx`: the service's own instance state plus the facilities every service shares (app, version and pid tags; the callback clock; the resource table). A service never sees the rest of the instance.
+
+Services from outside `paddock-host` are extensions: an object-safe `Extension` trait serving one WIT package outside the reserved `wasi` and `paddock` namespaces, registered with `Runtime::with_extensions` (or `paddock::node::run`). Apps declare the package under `capabilities.extensions`, with a scope table the extension reads; operators grant it by package name. An extension builds its bindings with `paddock_host::wasmtime` (`wasmtime_crate` in `bindgen!`), so it cannot link against a different wasmtime, and reaches its per-instance state through the same `ServiceCtx`, found by type. Extensions are native code in the node process: they are trusted like the node itself, and only operators choose which a node runs.
 
 Linking happens once per engine, so a host call is a direct call on the service's state, with no dynamic dispatch. A registry in `services/mod.rs` lists the services; adding one is a module plus a line in each registry, with no change to the process core or orchestration. Every service follows these rules:
 - An ungranted capability fails softly, as an `access-denied` error value where the interface has one, never a trap.
@@ -389,6 +391,7 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mTLS 
 | Node (cluster CA cert) | Routing messages, holding link and registry state | Inventing messages from pids it doesn't host |
 | Bundle signer (minisign key from `.rbp`) | Authorship and integrity of code | Permissions: signing doesn't grant anything |
 | App instance | Its own state and granted capabilities | Anything else |
+| Extension (native code built into a node by its operator) | Everything the node is | — |
 
 **Deployment checks**
 
@@ -523,7 +526,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 - [ ] Should supervisors ever be written in Wasm, or always host-native?
 - [ ] Is selective receive needed, or are call refs plus deferred reply enough?
 - [ ] Messaging ACL by app name, by registered name, or by capability token?
-- [ ] Ship the server as a library (embedded in another binary) as well as a daemon?
+- [x] Ship the server as a library (embedded in another binary) as well as a daemon? Yes, for host services: `paddock::node::run` and `Node::open_with` take extensions (ROADMAP A5).
 - [ ] How far to go with native-process plugins before Phase 3?
 
 ## Roadmap

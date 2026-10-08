@@ -1,0 +1,20 @@
+[package]
+name = "paddock-fixture-sdk"
+version = "0.0.0"
+description = "Test fixture: an app using wasi:config and wasi:keyvalue through paddock-sdk"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["config", "keyvalue"] }
+serde = { workspace = true }
+
+[lints]
+workspace = true

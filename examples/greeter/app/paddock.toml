@@ -1,0 +1,12 @@
+# Bundle with:
+#   cargo build -p example-greeter-app --target wasm32-wasip2 --release
+#   paddock bundle examples/greeter/app/paddock.toml target/wasm32-wasip2/release/example_greeter_app.wasm --key paddock.key
+# Run on a node built with the greeter service (examples/greeter/node).
+[app]
+name = "greeted"
+version = "1.0.0"
+description = "Calls the greeter extension (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.capabilities.extensions."example:greeting"]
+salutation = "Howdy"

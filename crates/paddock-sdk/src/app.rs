@@ -171,6 +171,13 @@ pub mod dispatch {
 
     /// `handle-info`.
     pub fn handle_info<A: App>(cell: &RefCell<Option<A>>, info: bindings::Info) {
+        // The SDK's own event: the host's effective log level.
+        if let bindings::Info::HostEvent((name, msg)) = &info
+            && name == crate::log::LEVEL_EVENT
+        {
+            crate::log::set_from_host(&msg.body);
+            return;
+        }
         with(cell, |app, ctx| app.handle_info(ctx, info.into()));
     }
 

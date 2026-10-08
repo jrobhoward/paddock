@@ -1,15 +1,33 @@
-//! `paddock node`: run a Paddock node.
+//! Running a node as a process: what `paddock node` does, and what a node
+//! binary built with extra host services calls.
+//!
+//! ```no_run
+//! # fn greeter() -> std::sync::Arc<dyn paddock_host::services::Extension> { unimplemented!() }
+//! fn main() -> anyhow::Result<()> {
+//!     let config = std::path::PathBuf::from("node.toml");
+//!     paddock::node::run(&config, vec![greeter()])
+//! }
+//! ```
 
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
-use paddock::node::{LogRing, Node, NodeConfig, RingLayer};
+use paddock_host::services::Extension;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-/// Run a node from its configuration file until SIGTERM or Ctrl-C.
-pub(crate) fn run(config: &Path) -> anyhow::Result<()> {
+use super::{LogRing, Node, NodeConfig, RingLayer};
+
+/// Run a node from its configuration file, with `extensions` (none for a
+/// plain node), until SIGTERM or Ctrl-C. Logs go to stderr, filtered by
+/// `RUST_LOG` (default `info`).
+///
+/// # Errors
+///
+/// A bad configuration, a node that cannot open (see [`Node::open_with`]),
+/// or an admin socket that cannot be served.
+pub fn run(config: &Path, extensions: Vec<Arc<dyn Extension>>) -> anyhow::Result<()> {
     let config = NodeConfig::from_file(config)?;
     let ring = LogRing::new(10_000);
     tracing_subscriber::registry()
@@ -24,12 +42,16 @@ pub(crate) fn run(config: &Path) -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("cannot start the async runtime")?
-        .block_on(serve(config, ring))
+        .block_on(serve(config, ring, extensions))
 }
 
-async fn serve(config: NodeConfig, ring: Arc<LogRing>) -> anyhow::Result<()> {
-    let node = Arc::new(Node::open(config, ring).await?);
-    paddock::node::serve(node.clone(), shutdown_signal())
+async fn serve(
+    config: NodeConfig,
+    ring: Arc<LogRing>,
+    extensions: Vec<Arc<dyn Extension>>,
+) -> anyhow::Result<()> {
+    let node = Arc::new(Node::open_with(config, ring, extensions).await?);
+    super::serve(node.clone(), shutdown_signal())
         .await
         .context("admin API")?;
     tracing::info!("shutting down");

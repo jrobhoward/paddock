@@ -98,9 +98,14 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `default_bindings_module`), so app crates have no WIT.
 - `examples/`: apps written with the SDK, each with a `paddock.toml`.
   `paddock`'s `tests/examples.rs` builds, bundles, deploys and drives them.
+  `examples/greeter/` is an extension (a host service from outside
+  Paddock): `service` depends on `paddock-host` alone, `app` calls it, and
+  `node` is a node binary with it, whose test runs all three.
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.
+- `crates/paddock-fixture-sdk`: a guest that uses `wasi:config` and
+  `wasi:keyvalue` through `paddock-sdk`'s `config` and `kv` wrappers.
 - `crates/paddock-fixture-services`: a guest that drives logging, config,
   keyvalue, the filesystem and stdout. Its `denied` feature adds an import no
   host implements, for deny-stub tests; nodes refuse that build, so node tests

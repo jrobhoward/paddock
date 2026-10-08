@@ -12,7 +12,12 @@
 //!   host sets).
 //! - A [`Capability`]: must be declared under `capabilities`, keyed by
 //!   [`Capability::key`], or the deploy is refused.
-//! - Unknown: no host provides it, so the deploy is refused.
+//! - An extension: an interface of a package outside the reserved `wasi` and
+//!   `paddock` namespaces, served by a host service the node was built with.
+//!   It must be declared under `capabilities.extensions`, keyed by its
+//!   package (`"example:greeting"`), or the deploy is refused.
+//! - Unknown: a `wasi` or `paddock` interface no host provides, so the
+//!   deploy is refused.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -206,14 +211,34 @@ impl<'a> InterfaceName<'a> {
     }
 }
 
+/// Namespaces whose interfaces only built-in capabilities provide.
+pub const RESERVED_NAMESPACES: &[&str] = &["wasi", "paddock"];
+
+/// Whether `key` names an extension package: `namespace:package`, outside
+/// [`RESERVED_NAMESPACES`], with no interface or version.
+#[must_use]
+pub fn is_extension_key(key: &str) -> bool {
+    InterfaceName::parse(key).is_some_and(|n| {
+        n.interface.is_none()
+            && n.version.is_none()
+            && n.package
+                .split_once(':')
+                .is_some_and(|(ns, _)| !RESERVED_NAMESPACES.contains(&ns))
+    })
+}
+
 /// How an import relates to the manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ImportClass {
     /// Granted to every app; no declaration needed.
     Implicit,
     /// Allowed if any of these capabilities is declared (more than one only
     /// for interfaces shared between capabilities, such as `wasi:http/types`).
     Capability(&'static [Capability]),
+    /// An extension package (`example:greeting`), allowed if declared under
+    /// `capabilities.extensions`.
+    Extension(String),
     /// No host provides it.
     Unknown,
 }
@@ -231,6 +256,9 @@ pub fn classify_import(name: &str) -> ImportClass {
     });
     if implicit {
         return ImportClass::Implicit;
+    }
+    if is_extension_key(parsed.package) {
+        return ImportClass::Extension(parsed.package.to_string());
     }
     // Two capabilities share `wasi:http/types`; everything else maps to one.
     const HTTP_TYPES: &[Capability] = &[Capability::HttpOutgoing, Capability::HttpIncoming];
@@ -334,6 +362,12 @@ pub struct Capabilities {
         skip_serializing_if = "Option::is_none"
     )]
     pub admin: Option<AdminScope>,
+    /// Extension packages the app uses, by package name
+    /// (`"example:greeting"`), each with the scope its host service reads.
+    /// Served only by nodes built with that service (`paddock-host`'s
+    /// `Extension`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 impl Capabilities {
@@ -411,6 +445,17 @@ impl Capabilities {
                 format!("{}.prefix", Capability::Metrics.key()),
                 "must not be empty",
             );
+        }
+        for (key, scope) in &self.extensions {
+            if !is_extension_key(key) {
+                v.error_at(
+                    format!("extensions.{key}"),
+                    "must be a package name (`namespace:package`) outside the wasi and paddock namespaces",
+                );
+            }
+            if !scope.is_object() {
+                v.error_at(format!("extensions.{key}"), "must be a table");
+            }
         }
     }
 }

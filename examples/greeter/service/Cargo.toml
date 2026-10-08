@@ -1,0 +1,17 @@
+[package]
+name = "example-greeter-service"
+version = "0.0.0"
+description = "Paddock example: a host service (extension) built against paddock-host alone"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+paddock-host = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

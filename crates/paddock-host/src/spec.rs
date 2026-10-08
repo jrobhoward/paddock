@@ -122,6 +122,16 @@ impl InstanceSpec {
         self
     }
 
+    /// Keep only the extensions in `granted` granted (the operator's
+    /// effective grant); the others stay declared but denied.
+    #[must_use]
+    pub fn with_granted_extensions(mut self, granted: &BTreeSet<String>) -> Self {
+        for (package, ext) in &mut self.services.extensions {
+            ext.granted = ext.granted && granted.contains(package);
+        }
+        self
+    }
+
     /// Set the preopens a manifest's `wasi:filesystem` scope asks for:
     /// `priv_dir` (the bundle's files) read-only at `/priv`, and each
     /// declared preopen backed by the host directory `volume` resolves its

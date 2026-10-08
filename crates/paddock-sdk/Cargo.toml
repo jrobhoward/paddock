@@ -9,6 +9,12 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# `paddock_sdk::config`: the app's configuration (`wasi:config`).
+config = []
+# `paddock_sdk::kv`: keyvalue buckets (`wasi:keyvalue`).
+keyvalue = []
+
 [dependencies]
 ciborium = { workspace = true }
 paddock-sdk-macros = { workspace = true }

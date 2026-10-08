@@ -37,8 +37,9 @@ pub(crate) struct ProcessContext {
     pub(crate) dropped: Arc<AtomicU64>,
 }
 
-/// Store data for one instance.
-pub(crate) struct InstanceState {
+/// Store data for one instance. Public only as the opaque
+/// [`StoreData`](crate::services::StoreData) extensions link against.
+pub struct InstanceState {
     pub(crate) pid: Pid,
     tags: Arc<Tags>,
     wasi: WasiCtx,
@@ -80,7 +81,7 @@ impl InstanceState {
                     .map_err(|e| format!("preopen {} -> {}: {e}", p.host.display(), p.guest))?;
             }
         }
-        let services = States::new(&ctx.rt.services, spec);
+        let services = States::new(&ctx.rt.services, spec, &ctx.rt.extensions)?;
         Ok(Self {
             pid,
             tags,
@@ -94,6 +95,22 @@ impl InstanceState {
             timers: Timers::default(),
             services,
         })
+    }
+
+    /// The context for an extension whose state is `S`, if one made it.
+    pub(crate) fn extension_ctx<S: 'static>(&mut self) -> Option<ServiceCtx<'_, S>> {
+        let state = self.services.extensions.get_mut::<S>()?;
+        Some(ServiceCtx::new(
+            state,
+            &self.tags,
+            &mut self.table,
+            &mut self.clock,
+        ))
+    }
+
+    /// The host events the services want this instance to see now.
+    pub(crate) fn announcements(&self) -> Vec<(String, Envelope)> {
+        self.services.announce(&self.tags)
     }
 
     /// A context for a new Store of the same instance (an upgrade).
@@ -118,6 +135,14 @@ impl InstanceState {
     pub(crate) fn await_reply(&mut self, call_ref: u64, reply: oneshot::Sender<Envelope>) {
         self.pending.retain(|_, waiting| !waiting.is_closed());
         self.pending.insert(call_ref, reply);
+    }
+}
+
+impl std::fmt::Debug for InstanceState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InstanceState")
+            .field("pid", &self.pid)
+            .finish_non_exhaustive()
     }
 }
 

@@ -14,3 +14,6 @@ callback_deadline_ms = 500
 [appserver.supervision]
 intensity = 3
 period_ms = 10000
+
+[appserver.capabilities."wasi:logging"]
+max_level = "info"

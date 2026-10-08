@@ -200,7 +200,7 @@ fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     #[cfg(feature = "node")]
     if let Command::Node { config } = &args.command {
-        return cli::node::run(config);
+        return paddock::node::run(config, Vec::new());
     }
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

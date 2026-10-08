@@ -120,6 +120,24 @@ The tail above follows the tick, not the gaps between messages. With 16 workers,
   - Yielding after 1 ms of back-to-back callbacks, at the 10 ms tick: p99 stayed at 9–11 ms. The tail tracks the tick instead, so the waiting comes from preemption inside callbacks at the tick, not from gaps between messages.
 - Epoch-check overhead (`epoch_cost`) is the same at 2 ms: the checks cost the same whatever the tick, and a yield every 2 ms is negligible.
 
+## 2026-10-07: guest log records (roadmap A3)
+
+Same machine. `log_cost.rs` runs `examples/chaos` (built with `paddock-sdk`), whose `log:<n>` command writes n `debug!` records, on one instance with `wasi:logging` granted. Cost per record is the time of `log:100000` minus `log:0`, divided by 100,000; median of 5 runs. No tracing subscriber is installed, so the host's own output formatting is not counted.
+
+```sh
+cargo build --release --target wasm32-wasip2 -p example-chaos
+cargo run --release -p paddock-host --example log_cost
+```
+
+| Record | Before A3 | After A3 |
+| --- | --- | --- |
+| Below the level (`debug!` at level `info`) | 426–451 ns | 3 ns |
+| Emitted (`debug!` at level `debug`) | 607–618 ns | 607–624 ns |
+
+- Before A3 a filtered record was formatted in the guest, copied to the host and dropped there.
+- Now the host announces the effective level as a `log-level` host event and the SDK's macros check it before `format!`, so a filtered record is a load and a compare.
+- Emitted records cost the same: the guest-side check adds nothing measurable.
+
 ## Not measured yet
 
 - Calls through a node's admin API (HTTP on a Unix socket), which add hyper and JSON on top of the figures above (roadmap B5).

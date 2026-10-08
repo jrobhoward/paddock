@@ -1,8 +1,13 @@
 package paddock:sdk;
 
 /// The world the SDK binds: the app world plus the host services the SDK
-/// wraps. A component imports only what its code calls.
+/// wraps. A component imports only what its code calls, so an app that
+/// never opens a bucket has no `wasi:keyvalue` import.
 world app {
   include paddock:runtime/app@0.1.0;
   import wasi:logging/logging@0.1.0-draft;
+  import wasi:config/store@0.2.0-rc.1;
+  import wasi:keyvalue/store@0.2.0-draft;
+  import wasi:keyvalue/atomics@0.2.0-draft;
+  import wasi:keyvalue/batch@0.2.0-draft;
 }

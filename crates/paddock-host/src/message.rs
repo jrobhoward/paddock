@@ -186,9 +186,8 @@ pub(crate) enum Info {
         /// Why.
         reason: ExitReason,
     },
-    /// A named host event (`host-event`). No Phase 1 service sends one yet;
-    /// it is reserved so later events reach `@0.1.0` guests.
-    #[allow(dead_code)]
+    /// A named host event (`host-event`), from a service's announcements
+    /// (`log-level` from logging). Guests ignore names they do not know.
     HostEvent {
         /// The event's name.
         name: String,

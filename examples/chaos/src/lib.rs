@@ -3,7 +3,8 @@
 //!
 //! `start_args = { fail = "error" | "trap" | "spin" }` makes `init` fail.
 //! Text commands: `echo:<text>`, `trap` (panic), `spin` (loop forever),
-//! `alloc:<mib>` (allocate and keep `<mib>` MiB).
+//! `alloc:<mib>` (allocate and keep `<mib>` MiB), `log:<n>` (write `<n>`
+//! debug records, for measuring what a filtered record costs).
 
 use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
 use serde::Deserialize;
@@ -53,7 +54,14 @@ impl App for Chaos {
                 self.hoard.push(std::hint::black_box(vec![1u8; mib << 20]));
                 "ok".to_string()
             }
-            _ => "commands: echo:<text>, trap, spin, alloc:<mib>".to_string(),
+            "log" => {
+                let n: u32 = arg.parse().unwrap_or(0);
+                for i in 0..n {
+                    paddock_sdk::debug!("record {i} of {n}");
+                }
+                "ok".to_string()
+            }
+            _ => "commands: echo:<text>, trap, spin, alloc:<mib>, log:<n>".to_string(),
         };
         Reply::Now(Envelope::text(reply))
     }

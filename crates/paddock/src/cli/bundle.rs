@@ -17,7 +17,6 @@
 //! snapshot_version = 1
 //! ```
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
@@ -167,7 +166,7 @@ pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
         .with_context(|| format!("cannot read {}", req.component.display()))?;
     let imports = paddock_bundle::component_imports(&component)?;
     if !req.skip_import_check {
-        paddock_bundle::effective_grant(&imports, &spec, &BTreeSet::new())?;
+        paddock_bundle::effective_grant(&imports, &spec, &paddock_bundle::Granted::default())?;
     }
 
     let mut manifest = Manifest::new(&app.name, &app.version);

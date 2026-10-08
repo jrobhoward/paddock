@@ -12,6 +12,7 @@ use crate::api::{
 };
 use paddock_bundle::manifest::UpgradeMode;
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
+use paddock_host::services::Extension;
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, InstanceHandle, InstanceSpec,
     MemoryProfile as HostProfile, Pid, Runtime, RuntimeConfig, UpgradeError, UpgradeOptions,
@@ -166,6 +167,23 @@ impl Node {
     /// [`NodeError::Conflict`] if another node has `data_dir` open;
     /// [`NodeError::Internal`] if the store or runtime cannot start.
     pub async fn open(config: NodeConfig, logs: Arc<LogRing>) -> Result<Self, NodeError> {
+        Self::open_with(config, logs, Vec::new()).await
+    }
+
+    /// Like [`Node::open`], with host services from outside `paddock-host`
+    /// (`paddock_host::services::Extension`). Apps declare an extension by
+    /// its package under `capabilities.extensions`; the policy grants it by
+    /// the same name.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Node::open`], and [`NodeError::Internal`] for an extension
+    /// the runtime refuses (a bad or duplicate package name).
+    pub async fn open_with(
+        config: NodeConfig,
+        logs: Arc<LogRing>,
+        extensions: Vec<Arc<dyn Extension>>,
+    ) -> Result<Self, NodeError> {
         let store = Store::open(&config.data_dir)?;
         let policy = match &config.policy {
             Some(path) => {
@@ -176,16 +194,19 @@ impl Node {
         if config.trusted_keys.is_empty() {
             tracing::warn!("no trusted keys configured: every deploy will be refused");
         }
-        let rt = Runtime::new(RuntimeConfig {
-            node: config.node,
-            max_instances: config.max_instances,
-            memory_profile: match config.memory_profile {
-                MemoryProfile::Standard => HostProfile::Standard,
-                MemoryProfile::Dense => HostProfile::Dense,
+        let rt = Runtime::with_extensions(
+            RuntimeConfig {
+                node: config.node,
+                max_instances: config.max_instances,
+                memory_profile: match config.memory_profile {
+                    MemoryProfile::Standard => HostProfile::Standard,
+                    MemoryProfile::Dense => HostProfile::Dense,
+                },
+                epoch_tick: Duration::from_millis(config.epoch_tick_ms.max(1)),
+                data_dir: Some(store.kv_dir()),
             },
-            epoch_tick: Duration::from_millis(config.epoch_tick_ms.max(1)),
-            data_dir: Some(store.kv_dir()),
-        })
+            extensions,
+        )
         .map_err(internal)?;
         let apps = rt.start_apps(Vec::new()).await.map_err(internal)?;
         let audit = Audit::new(store.audit_path());
@@ -281,7 +302,9 @@ impl Node {
             .await
             .map_err(internal)?
             .map_err(|e| NodeError::Refused(e.to_string()))?;
-        let mut spec = InstanceSpec::from_manifest(&manifest).with_granted(&grant.granted);
+        let mut spec = InstanceSpec::from_manifest(&manifest)
+            .with_granted(&grant.granted)
+            .with_granted_extensions(&grant.granted_extensions);
         if let Some(overrides) = self.config.config.get(&name) {
             spec.services.config.values.extend(overrides.clone());
         }
@@ -303,13 +326,17 @@ impl Node {
                 p.guest
             )));
         }
-        let keys = |set: &std::collections::BTreeSet<paddock_bundle::manifest::Capability>| {
-            set.iter().map(|c| c.key().to_string()).collect::<Vec<_>>()
+        let keys = |set: &std::collections::BTreeSet<paddock_bundle::manifest::Capability>,
+                    extensions: &std::collections::BTreeSet<String>| {
+            set.iter()
+                .map(|c| c.key().to_string())
+                .chain(extensions.iter().cloned())
+                .collect::<Vec<_>>()
         };
         let info = DeployInfo {
             signer: manifest.provenance.signer_key.clone(),
-            granted: keys(&grant.granted),
-            denied: keys(&grant.denied),
+            granted: keys(&grant.granted, &grant.granted_extensions),
+            denied: keys(&grant.denied, &grant.denied_extensions),
             stubbed: app.stubbed_imports().to_vec(),
             warnings: manifest
                 .spec

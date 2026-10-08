@@ -6,6 +6,11 @@
 //! A token bucket per app, shared by its instances, enforces
 //! `rate_limit_per_sec` and reports how many records it dropped. Without the
 //! capability granted, records are dropped silently.
+//!
+//! The service announces the effective level to each instance as
+//! `host-event("log-level", "<level>")`, after `init`, after a snapshot
+//! upgrade and on every operator change, so a guest can skip building
+//! records that would be dropped.
 
 mod limits;
 
@@ -19,6 +24,8 @@ use wasmtime::component::Linker;
 use super::{Ctx, HostState, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
+use crate::message::Envelope;
+use crate::output::Tags;
 use limits::{Admit, LogLimits};
 
 mod bindings {
@@ -119,6 +126,37 @@ impl Service for Logging {
 
     fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
         logging::add_to_linker::<T, Ctx<Self>>(linker, T::service)
+    }
+
+    /// `log-level` with the effective level (`trace` to `critical`), so the
+    /// guest SDK can skip formatting records the host would drop. Only to
+    /// instances granted logging; the host still filters every record.
+    fn announce(state: &Instance, tags: &Tags) -> Vec<(String, Envelope)> {
+        if !state.granted {
+            return Vec::new();
+        }
+        let level = state
+            .shared
+            .override_for(&tags.app)
+            .unwrap_or(state.spec.level);
+        vec![(
+            LEVEL_EVENT.to_string(),
+            Envelope::new("text/plain", level_name(level)),
+        )]
+    }
+}
+
+/// The host event that carries the effective log level.
+pub const LEVEL_EVENT: &str = "log-level";
+
+fn level_name(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Trace => "trace",
+        LogLevel::Debug => "debug",
+        LogLevel::Info => "info",
+        LogLevel::Warn => "warn",
+        LogLevel::Error => "error",
+        LogLevel::Critical => "critical",
     }
 }
 

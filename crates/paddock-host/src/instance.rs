@@ -51,6 +51,8 @@ enum Op {
     Snapshot {
         reply: oneshot::Sender<Result<Vec<u8>, SnapshotError>>,
     },
+    /// Send the services' current host events again.
+    Announce,
 }
 
 /// Why reading an instance's state failed.
@@ -290,6 +292,12 @@ impl InstanceHandle {
         answer.await.unwrap_or(Err(SnapshotError::NotRunning))
     }
 
+    /// Have the instance send its services' host events again, after an
+    /// operator change such as a new log level. Ignored once it has exited.
+    pub(crate) fn announce(&self) {
+        let _ = self.shared.ops.send(Op::Announce);
+    }
+
     /// Stop now with reason `killed`, without `terminate`. A callback in
     /// progress is abandoned.
     pub fn kill(&self) {
@@ -433,6 +441,7 @@ impl InstanceTask {
                 Op::Snapshot { reply } => {
                     let _ = reply.send(Err(SnapshotError::NotRunning));
                 }
+                Op::Announce => {}
             }
         }
         notify_exit(&rt, self.pid, &reason);
@@ -472,6 +481,7 @@ impl InstanceTask {
             Err(reason) => return reason,
         };
         self.set_state(LifecycleState::Active);
+        self.announce(&store);
 
         let stop = match self.serve(&mut store, &mut instance, &mut spec).await {
             Ok(stop) => stop,
@@ -631,6 +641,17 @@ impl InstanceTask {
                 let _ = reply.send(result);
                 exit
             }
+            Op::Announce => {
+                self.announce(store);
+                None
+            }
+        }
+    }
+
+    /// Queue the services' host events, ahead of mailbox messages.
+    fn announce(&self, store: &Store<InstanceState>) {
+        for (name, msg) in store.data().announcements() {
+            self.me.signal(Info::HostEvent { name, msg });
         }
     }
 
@@ -703,6 +724,8 @@ impl InstanceTask {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = spec.version.clone();
                 self.set_state(LifecycleState::Active);
+                // The new guest starts with fresh statics.
+                self.announce(store);
                 let pause = started.elapsed();
                 tracing::info!(version = %spec.version, pause_us = pause.as_micros(), "upgraded");
                 Ok(pause)

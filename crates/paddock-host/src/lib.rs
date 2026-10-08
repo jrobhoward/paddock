@@ -57,3 +57,6 @@ pub use supervisor::{
     Backoff, Child, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
 };
 pub use upgrade::{UpgradeError, validate_upgrade};
+/// The wasmtime this crate links against, for extensions' bindings
+/// ([`services::extension`]).
+pub use wasmtime;

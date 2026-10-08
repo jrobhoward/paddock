@@ -16,6 +16,8 @@ use super::*;
 #[case("paddock:runtime/supervisor@0.1.0", false)]
 #[case("paddock:sql/query@0.1.0", false)]
 #[case("plain-name", false)]
+#[case("example:greeting/greet@0.1.0", true)]
+#[case("example:other/greet@0.1.0", false)]
 fn provided____interface____matches_host_list(#[case] name: &str, #[case] expected: bool) {
-    assert_eq!(provided(name), expected);
+    assert_eq!(provided(name, &["example:greeting"]), expected);
 }

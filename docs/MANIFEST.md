@@ -149,6 +149,16 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `paddock:secrets`, `wasi:http/outgoing-handler`, `wasi:http/incoming-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
 | `wasi:sockets`, `paddock:sql` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
 | `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
+| `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
+
+`extensions` declares packages served by host services built into a node from outside Paddock (extensions; see [`examples/greeter`](../examples/greeter/README.md)). The key is the WIT package, `namespace:package`, outside the reserved `wasi` and `paddock` namespaces; an import from any interface of that package needs the declaration:
+
+```toml
+[appserver.capabilities.extensions."example:greeting"]
+salutation = "Howdy"
+```
+
+A node built without the extension links deny stubs for the package, as for any declared interface no host provides.
 
 ### `config`
 
@@ -221,4 +231,4 @@ key = "RWQ..."
 grant = ["wasi:keyvalue"]
 ```
 
-Policy grants or withholds whole capabilities. The scope an app requests (buckets, preopens) is used as written; narrowing scopes by policy is not supported in Phase 1.
+A `grant` list takes extension packages (`"example:greeting"`) as well as capability keys. Policy grants or withholds whole capabilities. The scope an app requests (buckets, preopens) is used as written; narrowing scopes by policy is not supported in Phase 1.

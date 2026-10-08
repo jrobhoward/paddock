@@ -2,5 +2,3 @@
 
 pub(crate) mod bundle;
 pub(crate) mod format;
-#[cfg(feature = "node")]
-pub(crate) mod node;

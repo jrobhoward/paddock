@@ -231,16 +231,19 @@ async fn transient____normal_exit_not_restarted_but_crash_is() {
     let before = pids(&s);
     let n = instance(&s, 0);
 
-    ask(
-        &n,
-        &format!(
-            "exit:{}.{}.{}:normal",
-            n.pid().node,
-            n.pid().id,
-            n.pid().incarnation
-        ),
-    )
-    .await;
+    // The instance stops itself; whether its reply gets out first is a race,
+    // and either is fine here.
+    let _ = n
+        .call(
+            text(&format!(
+                "exit:{}.{}.{}:normal",
+                n.pid().node,
+                n.pid().id,
+                n.pid().incarnation
+            )),
+            LONG,
+        )
+        .await;
     instance(&s, 1).kill();
     let after = wait_for_pids(&s, |p| {
         p[0].is_none() && p[1] != before[1] && p[1].is_some()

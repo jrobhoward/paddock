@@ -45,10 +45,13 @@ const DENIED_CASES: &[&str] = &[
 /// of it is ever created.
 struct Denied;
 
-fn provided(name: &str) -> bool {
+fn provided(name: &str, extensions: &[&str]) -> bool {
     let Some(parsed) = InterfaceName::parse(name) else {
         return false;
     };
+    if extensions.contains(&parsed.package) {
+        return true;
+    }
     let core = PROVIDED.iter().any(|(package, interfaces)| {
         parsed.package == *package
             && interfaces.is_none_or(|list| parsed.interface.is_some_and(|i| list.contains(&i)))
@@ -64,18 +67,20 @@ fn provided(name: &str) -> bool {
 }
 
 /// Link deny stubs for every interface `component` imports that the host
-/// does not provide. Returns the stubbed interface names.
+/// does not provide, counting the packages of the runtime's `extensions` as
+/// provided. Returns the stubbed interface names.
 pub(crate) fn link_stubs<T: 'static>(
     linker: &mut Linker<T>,
     engine: &Engine,
     component: &Component,
+    extensions: &[&str],
 ) -> Result<Vec<String>> {
     let mut stubbed = Vec::new();
     for (name, item) in component.component_type().imports(engine) {
         let ComponentItem::ComponentInstance(instance) = item.ty else {
             continue;
         };
-        if provided(name) {
+        if provided(name, extensions) {
             continue;
         }
         let mut li = linker.instance(name)?;
