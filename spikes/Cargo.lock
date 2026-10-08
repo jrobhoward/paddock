@@ -1675,6 +1675,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "s13-bench"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "tokio",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "s13-guest"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
 name = "s14-bench"
 version = "0.0.0"
 dependencies = [

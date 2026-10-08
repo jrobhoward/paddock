@@ -293,10 +293,21 @@ async fn sequential(addr: SocketAddr) -> Stats {
 
 /// Many keep-alive connections for a fixed time.
 async fn concurrent(addr: SocketAddr) -> Stats {
+    concurrent_n(addr, CONNECTIONS).await
+}
+
+/// `connections` keep-alive connections for a fixed time.
+async fn concurrent_n(addr: SocketAddr, connections: usize) -> Stats {
+    concurrent_spread(vec![addr], connections).await
+}
+
+/// `connections` keep-alive connections spread over `addrs`.
+async fn concurrent_spread(addrs: Vec<SocketAddr>, connections: usize) -> Stats {
     let deadline = Instant::now() + LOAD_TIME;
     let started = Instant::now();
-    let tasks: Vec<_> = (0..CONNECTIONS)
-        .map(|_| {
+    let tasks: Vec<_> = (0..connections)
+        .map(|i| {
+            let addr = addrs[i % addrs.len()];
             tokio::spawn(async move {
                 let mut sender = connect(addr).await;
                 let mut samples = Vec::new();
@@ -341,6 +352,16 @@ fn main() {
     let workers: usize = std::env::args()
         .nth(1)
         .map_or(4, |a| a.parse().unwrap());
+    if std::env::args().nth(2).as_deref() == Some("sweep") {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(workers)
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move { tokio::spawn(sweep()).await })
+            .unwrap();
+        return;
+    }
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
         .enable_all()
@@ -348,6 +369,38 @@ fn main() {
         .unwrap()
         .block_on(async move { tokio::spawn(run(workers)).await })
         .unwrap();
+}
+
+/// Throughput against connection count, native and guest-owned socket.
+async fn sweep() {
+    let engine = engine();
+    let servers = [
+        ("native hyper", native_server().await),
+        ("guest-owned socket", guest_socket_server(&engine).await),
+    ];
+    println!("| Server | connections | p50 | p99 | req/s |");
+    println!("|---|---|---|---|---|");
+    for (label, addr) in servers {
+        for n in [1usize, 2, 4, 8, 16, 32] {
+            let s = tokio::task::spawn_blocking(move || load(move || concurrent_n(addr, n)))
+                .await
+                .unwrap();
+            println!("| {label} | {n} | {} |", s.line());
+        }
+    }
+    // Few connections per instance: eight guest servers, connections
+    // spread evenly.
+    let mut addrs = Vec::new();
+    for _ in 0..8 {
+        addrs.push(guest_socket_server(&engine).await);
+    }
+    for n in [8usize, 16, 32] {
+        let a = addrs.clone();
+        let s = tokio::task::spawn_blocking(move || load(move || concurrent_spread(a, n)))
+            .await
+            .unwrap();
+        println!("| 8 guest-owned sockets, spread | {n} | {} |", s.line());
+    }
 }
 
 async fn run(workers: usize) {

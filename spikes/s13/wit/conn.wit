@@ -1,0 +1,13 @@
+package s13:conn;
+
+/// A connection the host accepted, handed to a guest as two streams.
+interface handler {
+  use wasi:io/streams@0.2.12.{input-stream, output-stream};
+
+  /// Serve one connection until the client closes it.
+  serve: func(input: input-stream, output: output-stream);
+}
+
+world conn {
+  export handler;
+}

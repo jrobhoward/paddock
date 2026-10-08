@@ -6,8 +6,9 @@
 //! in one redb file under the node's data directory and survive restarts.
 //!
 //! Every operation runs as one transaction against a [`Txn`], so both
-//! backends share the quota, counter and paging rules. Disk operations run on
-//! tokio's blocking pool, keeping fsyncs off the workers that run guests.
+//! backends share the quota, counter and paging rules. Disk writes run on
+//! tokio's blocking pool, keeping fsyncs off the workers that run guests;
+//! disk reads run on the calling worker, usually from redb's page cache.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -273,6 +274,14 @@ impl KvStore {
                     .clone()
                     .ok_or("disk storage is not configured on this node")?;
                 let quota = bucket.quota;
+                // Reads run here: redb usually serves them from its page
+                // cache in a microsecond or two, and a hop to the blocking
+                // pool costs about 20 µs (spike S14). A cache miss blocks
+                // this worker for one read from disk. Writes fsync, so they
+                // stay off the worker.
+                if op.read_only() {
+                    return disk.run(&key, op, quota);
+                }
                 tokio::task::spawn_blocking(move || disk.run(&key, op, quota))
                     .await
                     .map_err(|e| format!("storage task failed: {e}"))?

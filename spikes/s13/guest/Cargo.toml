@@ -1,0 +1,15 @@
+[package]
+name = "s13-guest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# Answers `ok2` instead of `ok`, for the upgrade test.
+v2 = []
+
+[dependencies]
+wit-bindgen = "0.62"

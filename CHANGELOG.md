@@ -175,6 +175,9 @@ All notable changes are recorded here. The format follows
   Example: `examples/greeter`.
 - `examples/chaos` has a `log:<n>` command and declares `wasi:logging`; the
   chaos fixture's `infos` includes host events with their payload.
+- `disk` keyvalue reads run on the calling worker instead of tokio's
+  blocking pool: a small read costs about 2.4 µs (was 22–30 µs). Writes,
+  which fsync, stay on the blocking pool.
 - The default epoch tick is 2 ms (was 10 ms), in `RuntimeConfig` and the
   node's `epoch_tick_ms`. A busy instance holds its worker for at most a
   tick, so p99 latency under oversubscription falls from about 10.7 ms to
