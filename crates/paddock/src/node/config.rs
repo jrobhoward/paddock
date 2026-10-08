@@ -69,6 +69,24 @@ pub struct NodeConfig {
     /// Config overrides per app.
     #[serde(default)]
     pub config: BTreeMap<String, BTreeMap<String, String>>,
+    /// Addresses for the listeners apps declare, by listener name.
+    #[serde(default)]
+    pub listeners: BTreeMap<String, ListenerBinding>,
+}
+
+/// Where a listener an app declares listens on this node.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListenerBinding {
+    /// The address to bind, `ip:port`.
+    pub address: std::net::SocketAddr,
+    /// Tasks accepting connections at once.
+    #[serde(default = "default_acceptors")]
+    pub acceptors: usize,
+}
+
+fn default_acceptors() -> usize {
+    4
 }
 
 fn default_max_instances() -> u32 {

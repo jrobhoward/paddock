@@ -78,5 +78,9 @@ required-features = ["node"]
 name = "node"
 required-features = ["node"]
 
+[[test]]
+name = "listeners"
+required-features = ["node"]
+
 [lints]
 workspace = true

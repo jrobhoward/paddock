@@ -77,6 +77,41 @@ pub fn counter(version: u8) -> Vec<u8> {
     std::fs::read(target.join("wasm32-wasip2/release/paddock_fixture_counter.wasm")).unwrap()
 }
 
+/// The connection fixture (`paddock-fixture-conn`), v1 or v2 (`echo`
+/// replies `v2:<text>`).
+pub fn conn(version: u8) -> Vec<u8> {
+    static BUILT: [OnceLock<()>; 2] = [OnceLock::new(), OnceLock::new()];
+    let target = workspace_root().join(format!("target/fixtures/conn-v{version}"));
+    BUILT[usize::from(version - 1)].get_or_init(|| {
+        let feature = (version > 1).then_some("v2");
+        build("paddock-fixture-conn", feature, &target);
+    });
+    std::fs::read(target.join("wasm32-wasip2/release/paddock_fixture_conn.wasm")).unwrap()
+}
+
+/// A signed connection-handler bundle (`paddock:connection` world).
+pub fn conn_bundle(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    component: &[u8],
+    appserver: serde_json::Value,
+) -> Vec<u8> {
+    bundle_world(
+        key,
+        name,
+        version,
+        component,
+        appserver,
+        &[],
+        paddock_bundle_world(),
+    )
+}
+
+fn paddock_bundle_world() -> &'static str {
+    "paddock:connection/connection-handler@0.1.0"
+}
+
 /// A signed `.rbp` with `component` and `appserver`, plus checksummed
 /// files.
 pub fn bundle(
@@ -87,11 +122,23 @@ pub fn bundle(
     appserver: serde_json::Value,
     files: &[(&str, &[u8])],
 ) -> Vec<u8> {
+    bundle_world(key, name, version, component, appserver, files, WORLD)
+}
+
+fn bundle_world(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    component: &[u8],
+    appserver: serde_json::Value,
+    files: &[(&str, &[u8])],
+    world: &str,
+) -> Vec<u8> {
     let dir = TempDir::new().unwrap();
     let wasm = dir.path().join(format!("{name}.wasm"));
     std::fs::write(&wasm, component).unwrap();
     let mut builder = BundleBuilder::new(Manifest::new(name, version))
-        .add_component(Platform::Wasm32Wasip2, &wasm, WORLD)
+        .add_component(Platform::Wasm32Wasip2, &wasm, world)
         .unwrap()
         .with_extension("appserver", appserver)
         .with_signing_key(key.pk.to_base64(), key.sk.clone());

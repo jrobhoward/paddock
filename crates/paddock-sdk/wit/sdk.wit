@@ -11,3 +11,9 @@ world app {
   import wasi:keyvalue/atomics@0.2.0-draft;
   import wasi:keyvalue/batch@0.2.0-draft;
 }
+
+/// The world the SDK binds for connection handlers (feature `connection`):
+/// one instance per connection accepted on the app's listeners.
+world connection {
+  include paddock:connection/connection-handler@0.1.0;
+}

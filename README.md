@@ -13,6 +13,9 @@ components, with Erlang/OTP-style semantics:
   runaway app is killed and restarted, and linked apps are told.
 - **Hot upgrade** swaps an app's component between messages, carrying state
   through snapshot functions, and reverts if the new version fails to load it.
+- **Connections**: a connection-handler app serves TCP connections on
+  listeners the node owns, one sandboxed instance per connection, at native
+  throughput (spike S13).
 - **Isolation**: each app gets its own memory, a CPU deadline per callback,
   and only the capabilities its manifest declares and the operator grants.
 - **Distribution** runs over QUIC with mutual TLS (Phase 2).

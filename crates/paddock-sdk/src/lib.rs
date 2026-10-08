@@ -35,6 +35,9 @@
 //! - `config` (cargo feature `config`): `wasi:config`.
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
 //!
+//! Connection handlers (cargo feature `connection`) implement `Connection`
+//! instead of [`App`]: one instance per connection on the app's listeners.
+//!
 //! In a guest, a panic is a trap: the host ends the instance with
 //! `crashed` and its supervisor restarts it. The SDK panics only for
 //! states that are bugs (a callback before a successful `init`, a snapshot
@@ -45,6 +48,8 @@ extern crate self as paddock_sdk;
 mod app;
 #[cfg(feature = "config")]
 pub mod config;
+#[cfg(feature = "connection")]
+pub mod connection;
 mod ctx;
 mod envelope;
 #[cfg(feature = "keyvalue")]
@@ -62,6 +67,8 @@ pub mod bindings {
             "../../wit/vendor/wasi-logging",
             "../../wit/vendor/wasi-config",
             "../../wit/vendor/wasi-keyvalue",
+            "../../wit/vendor/wasi-io",
+            "../../wit/connection",
             "wit",
         ],
         world: "paddock:sdk/app",

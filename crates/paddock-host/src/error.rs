@@ -37,6 +37,10 @@ pub enum HostError {
     #[error("cannot start apps: {0}")]
     InvalidApps(String),
 
+    /// A listener could not bind its address.
+    #[error("cannot listen: {0}")]
+    Listen(String),
+
     /// Node storage (the data directory or the keyvalue database) could not
     /// be opened.
     #[error("cannot open storage: {0}")]

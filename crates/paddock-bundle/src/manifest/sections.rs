@@ -244,6 +244,43 @@ pub enum PlacementMode {
     HotStandby,
 }
 
+/// One `listeners` entry: a listener a connection-handler app serves. The
+/// node binds the name to an address (`[listeners]` in node config); the
+/// app never names a host address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListenerDecl {
+    /// The listener's name, bound to an address by the node.
+    pub name: String,
+    /// A connection with no bytes in either direction for this long is
+    /// closed.
+    #[serde(default = "default_idle_timeout_ms")]
+    pub idle_timeout_ms: u64,
+    /// Most connections open at once; more are refused.
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
+}
+
+fn default_idle_timeout_ms() -> u64 {
+    60_000
+}
+
+fn default_max_connections() -> u32 {
+    1024
+}
+
+impl ListenerDecl {
+    /// Names are checked with the other listeners' (`unique_names`).
+    pub(crate) fn validate(&self, v: &mut Validator) {
+        if self.idle_timeout_ms == 0 {
+            v.error_at("idle_timeout_ms", "must be greater than zero");
+        }
+        if self.max_connections == 0 {
+            v.error_at("max_connections", "must be greater than zero");
+        }
+    }
+}
+
 /// The `health` section: an optional `health` export polled by the host. Not
 /// enforced until Phase 2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

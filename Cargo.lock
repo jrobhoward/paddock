@@ -664,6 +664,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-line-server"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+]
+
+[[package]]
 name = "example-ping-pong"
 version = "0.0.0"
 dependencies = [
@@ -1389,6 +1396,13 @@ dependencies = [
 
 [[package]]
 name = "paddock-fixture-chaos"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
+name = "paddock-fixture-conn"
 version = "0.0.0"
 dependencies = [
  "wit-bindgen 0.62.0",

@@ -51,6 +51,45 @@ pub fn component_imports(bytes: &[u8]) -> Result<Vec<String>, BundleError> {
     Ok(imports)
 }
 
+/// The world a component implements, judged by its exports: a component
+/// exporting `paddock:connection/handler` is a connection handler
+/// ([`CONNECTION_WORLD`](crate::CONNECTION_WORLD)); anything else is an app
+/// ([`APP_WORLD`](crate::APP_WORLD)), whose exports the node checks when it
+/// links the component.
+///
+/// # Errors
+///
+/// [`BundleError::InvalidComponent`] if `bytes` is not a WebAssembly
+/// component.
+pub fn component_world(bytes: &[u8]) -> Result<&'static str, BundleError> {
+    let invalid = |e: wasmparser::BinaryReaderError| BundleError::InvalidComponent(e.to_string());
+    let mut depth = 0usize;
+    for payload in Parser::new(0).parse_all(bytes) {
+        match payload.map_err(invalid)? {
+            Payload::ModuleSection { .. } | Payload::ComponentSection { .. } => depth += 1,
+            Payload::End(_) => match depth.checked_sub(1) {
+                Some(d) => depth = d,
+                None => break,
+            },
+            Payload::ComponentExportSection(reader) if depth == 0 => {
+                for export in reader {
+                    if export
+                        .map_err(invalid)?
+                        .name
+                        .name
+                        .starts_with("paddock:connection/handler@")
+                    {
+                        return Ok(crate::CONNECTION_WORLD);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    component_imports(bytes)?;
+    Ok(crate::APP_WORLD)
+}
+
 #[cfg(test)]
 #[path = "imports_tests.rs"]
 mod imports_tests;

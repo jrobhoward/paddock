@@ -164,6 +164,36 @@ pub fn detail(d: &AppDetail) -> String {
         out.push(String::new());
         out.push(instances(&d.instance_list));
     }
+    if !d.listeners.is_empty() {
+        let rows: Vec<Vec<String>> = d
+            .listeners
+            .iter()
+            .map(|l| {
+                vec![
+                    l.name.clone(),
+                    l.address.clone(),
+                    l.active.to_string(),
+                    l.accepted.to_string(),
+                    l.refused.to_string(),
+                    l.crashed.to_string(),
+                    l.idle_closed.to_string(),
+                ]
+            })
+            .collect();
+        out.push(String::new());
+        out.push(table(
+            &[
+                "LISTENER",
+                "ADDRESS",
+                "ACTIVE",
+                "ACCEPTED",
+                "REFUSED",
+                "CRASHED",
+                "IDLE CLOSED",
+            ],
+            &rows,
+        ));
+    }
     out.join("\n")
 }
 

@@ -109,6 +109,11 @@ impl InstanceState {
         ))
     }
 
+    /// Resources handed to the guest.
+    pub(crate) fn table_mut(&mut self) -> &mut ResourceTable {
+        &mut self.table
+    }
+
     /// The host events the services want this instance to see now.
     pub(crate) fn announcements(&self) -> Vec<(String, Envelope)> {
         self.services.announce(&self.tags)

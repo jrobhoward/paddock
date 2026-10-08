@@ -54,3 +54,15 @@ fn NodeConfig____unknown_key____error_names_it() {
 
     assert!(err.to_string().contains("data_dri"), "{err}");
 }
+
+#[test]
+fn NodeConfig____listeners____address_and_default_acceptors() {
+    let config = NodeConfig::from_toml_str(
+        "data_dir = \"/tmp/x\"\n[listeners.modbus]\naddress = \"0.0.0.0:1502\"\n[listeners.web]\naddress = \"127.0.0.1:8080\"\nacceptors = 8\n",
+    )
+    .unwrap();
+
+    let modbus = &config.listeners["modbus"];
+    assert_eq!((modbus.address.port(), modbus.acceptors), (1502, 4));
+    assert_eq!(config.listeners["web"].acceptors, 8);
+}

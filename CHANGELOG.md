@@ -151,6 +151,15 @@ All notable changes are recorded here. The format follows
   (`get`, `get_all`) and `paddock_sdk::kv::Bucket` (store, atomics, batch,
   paging `keys`, CBOR-typed `get_value` and `set_value`), with the
   `paddock-fixture-sdk` test fixture.
+- Connection handlers: a component exporting `paddock:connection/handler`
+  serves TCP connections on listeners the manifest declares
+  (`[[appserver.listeners]]`) and the node binds (`[listeners.<name>]`),
+  with an instance per connection reading and writing `wasi:io` streams.
+  Idle timeout, connection cap, crashes close only their connection,
+  upgrades and rollbacks apply to new connections. `Runtime::listen`,
+  `Runtime::load_connection`, a `connection__open` probe, listeners in
+  `paddock status`; `paddock bundle` detects the world from the component.
+  SDK feature `connection`; example `examples/line-server`.
 - USDT probes on the message path (provider `paddock`): calls, casts,
   callbacks with guest time, exits, supervisor restarts, rollouts and
   mailbox drops, from anyprobe (a git dependency on its GitHub `main`).

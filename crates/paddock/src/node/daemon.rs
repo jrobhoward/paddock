@@ -7,16 +7,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{
-    AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, RolloutParams,
-    StateResponse, Target, UpgradeResponse,
+    AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, ListenerInfo, LogLine,
+    RolloutParams, StateResponse, Target, UpgradeResponse,
 };
-use paddock_bundle::manifest::UpgradeMode;
+use paddock_bundle::manifest::{AppManifest, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
 use paddock_host::services::Extension;
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, InstanceHandle, InstanceSpec,
-    MemoryProfile as HostProfile, Pid, Runtime, RuntimeConfig, UpgradeError, UpgradeOptions,
-    UpgradeReport,
+    Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid, Runtime,
+    RuntimeConfig, UpgradeError, UpgradeOptions, UpgradeReport,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -38,6 +38,41 @@ pub struct Node {
     logs: Arc<LogRing>,
     policy: OperatorPolicy,
     state: Mutex<NodeState>,
+    /// Running connection-handler apps, by name. Locked only briefly,
+    /// never across an await.
+    connections: std::sync::Mutex<HashMap<String, ConnectionApp>>,
+}
+
+/// A connection-handler app this node runs: its listeners, and the
+/// component they hand new connections to.
+struct ConnectionApp {
+    listeners: Vec<Listener>,
+    current: ConnectionBuild,
+    previous: Option<ConnectionBuild>,
+}
+
+impl std::fmt::Debug for ConnectionApp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionApp")
+            .field("listeners", &self.listeners)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A compiled connection handler with the spec its instances run with.
+#[derive(Clone)]
+struct ConnectionBuild {
+    manifest: AppManifest,
+    connection: LoadedConnection,
+    spec: InstanceSpec,
+}
+
+/// What a bundle runs as.
+enum Runnable {
+    /// Callbacks under a root supervisor.
+    App(AppDeployment),
+    /// An instance per connection on the app's listeners.
+    Connection(ConnectionBuild),
 }
 
 #[derive(Debug, Default)]
@@ -62,17 +97,24 @@ struct DeployInfo {
 /// A verified, compiled bundle ready to run.
 struct Built {
     bundle: VerifiedBundle,
-    deployment: AppDeployment,
+    run: Runnable,
     info: DeployInfo,
 }
 
 impl Built {
+    fn manifest(&self) -> &AppManifest {
+        match &self.run {
+            Runnable::App(d) => &d.manifest,
+            Runnable::Connection(c) => &c.manifest,
+        }
+    }
+
     fn name(&self) -> String {
-        self.deployment.manifest.app.name.clone()
+        self.manifest().app.name.clone()
     }
 
     fn version(&self) -> String {
-        self.deployment.manifest.app.version.to_string()
+        self.manifest().app.version.to_string()
     }
 }
 
@@ -241,6 +283,7 @@ impl Node {
                 desired,
                 ..NodeState::default()
             }),
+            connections: std::sync::Mutex::default(),
         };
         node.restore().await;
         Ok(node)
@@ -288,15 +331,21 @@ impl Node {
             .bundle
             .extract_priv(&self.store.priv_dir(name, &app.current))
             .map_err(internal)?;
-        let handle = self
-            .apps
-            .add(built.deployment)
-            .await
-            .map_err(|e| NodeError::Invalid(e.to_string()))?;
+        let handle = self.run(name, built.run).await?;
         st.info.insert(name.to_string(), built.info);
         if let Some(previous) = &app.previous {
             let prev = self.build(&self.store.bundle_path(name, previous)).await?;
-            handle.set_previous(Some(prev.deployment));
+            match (handle, prev.run) {
+                (Some(handle), Runnable::App(d)) => handle.set_previous(Some(d)),
+                (None, Runnable::Connection(c)) => {
+                    if let Some(app) = self.connection_apps().get_mut(name) {
+                        app.previous = Some(c);
+                    }
+                }
+                // A previous version of the other kind cannot be rolled back
+                // to (the world changed); keep none.
+                _ => {}
+            }
             st.previous_info.insert(name.to_string(), prev.info);
         }
         st.restore_errors.remove(name);
@@ -316,10 +365,17 @@ impl Node {
         let (name, version) = (manifest.app.name.clone(), manifest.app.version.to_string());
         let rt = self.rt.clone();
         let component = bundle.component.clone();
-        let app = tokio::task::spawn_blocking(move || rt.load(&component))
-            .await
-            .map_err(internal)?
-            .map_err(|e| NodeError::Refused(e.to_string()))?;
+        let connection = manifest.component.world == paddock_bundle::CONNECTION_WORLD;
+        let loaded = tokio::task::spawn_blocking(move || {
+            if connection {
+                rt.load_connection(&component).map(Loaded::Connection)
+            } else {
+                rt.load(&component).map(Loaded::App)
+            }
+        })
+        .await
+        .map_err(internal)?
+        .map_err(|e| NodeError::Refused(e.to_string()))?;
         let mut spec = InstanceSpec::from_manifest(&manifest)
             .with_granted(&grant.granted)
             .with_granted_extensions(&grant.granted_extensions);
@@ -355,7 +411,10 @@ impl Node {
             signer: manifest.provenance.signer_key.clone(),
             granted: keys(&grant.granted, &grant.granted_extensions),
             denied: keys(&grant.denied, &grant.denied_extensions),
-            stubbed: app.stubbed_imports().to_vec(),
+            stubbed: match &loaded {
+                Loaded::App(app) => app.stubbed_imports().to_vec(),
+                Loaded::Connection(c) => c.stubbed_imports().to_vec(),
+            },
             warnings: manifest
                 .spec
                 .unenforced_fields()
@@ -363,30 +422,120 @@ impl Node {
                 .map(ToString::to_string)
                 .collect(),
         };
-        Ok(Built {
-            bundle,
-            deployment: AppDeployment {
+        let run = match loaded {
+            Loaded::App(app) => Runnable::App(AppDeployment {
                 manifest,
                 app,
                 spec,
-            },
-            info,
-        })
+            }),
+            Loaded::Connection(connection) => Runnable::Connection(ConnectionBuild {
+                manifest,
+                connection,
+                spec,
+            }),
+        };
+        Ok(Built { bundle, run, info })
+    }
+
+    fn connection_apps(&self) -> std::sync::MutexGuard<'_, HashMap<String, ConnectionApp>> {
+        self.connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Start a built app: under a supervisor, or on its listeners. Returns
+    /// the supervised app's handle.
+    async fn run(&self, name: &str, run: Runnable) -> Result<Option<AppHandle>, NodeError> {
+        match run {
+            Runnable::App(deployment) => self
+                .apps
+                .add(deployment)
+                .await
+                .map(Some)
+                .map_err(|e| NodeError::Invalid(e.to_string())),
+            Runnable::Connection(build) => {
+                let listeners = self.listen(&build)?;
+                self.connection_apps().insert(
+                    name.to_string(),
+                    ConnectionApp {
+                        listeners,
+                        current: build,
+                        previous: None,
+                    },
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    /// Bind every listener a connection handler declares, at the address
+    /// node config gives it.
+    fn listen(&self, build: &ConnectionBuild) -> Result<Vec<Listener>, NodeError> {
+        let mut started: Vec<Listener> = Vec::new();
+        for decl in &build.manifest.spec.listeners {
+            let bound = self.config.listeners.get(&decl.name).ok_or_else(|| {
+                NodeError::Invalid(format!(
+                    "listener '{}' is not bound in node config ([listeners.{}])",
+                    decl.name, decl.name
+                ))
+            });
+            let listener = bound.and_then(|b| {
+                let mut spec = ListenerSpec::new(&decl.name, b.address);
+                spec.acceptors = b.acceptors;
+                spec.max_connections = usize::try_from(decl.max_connections).unwrap_or(usize::MAX);
+                spec.idle_timeout = Duration::from_millis(decl.idle_timeout_ms);
+                self.rt
+                    .listen(spec, build.connection.clone(), build.spec.clone())
+                    .map_err(|e| NodeError::Invalid(e.to_string()))
+            });
+            match listener {
+                Ok(l) => started.push(l),
+                Err(e) => {
+                    for l in &started {
+                        l.stop();
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(started)
+    }
+
+    /// Stop a connection handler's listeners, if it is one. Returns whether
+    /// it was.
+    fn stop_connections(&self, name: &str) -> bool {
+        let Some(app) = self.connection_apps().remove(name) else {
+            return false;
+        };
+        for l in &app.listeners {
+            l.stop();
+        }
+        true
+    }
+
+    /// Whether `name` runs now, under a supervisor or on listeners.
+    fn running(&self, name: &str) -> bool {
+        self.apps.app(name).is_some() || self.connection_apps().contains_key(name)
     }
 
     fn summary(&self, name: &str, app: &AppState, restore_error: Option<&String>) -> AppSummary {
         let handle = self.apps.app(name);
-        let (status, reason) = match (&handle, restore_error) {
-            (Some(h), _) => status_text(&h.status()),
-            (None, Some(e)) => ("failed".into(), Some(e.clone())),
-            (None, None) => ("stopped".into(), None),
+        let connections = self
+            .connection_apps()
+            .get(name)
+            .map(|c| c.listeners.iter().map(|l| l.stats().active).sum::<usize>());
+        let (status, reason) = match (&handle, connections, restore_error) {
+            (Some(h), _, _) => status_text(&h.status()),
+            (None, Some(_), _) => ("running".into(), None),
+            (None, None, Some(e)) => ("failed".into(), Some(e.clone())),
+            (None, None, None) => ("stopped".into(), None),
         };
         AppSummary {
             name: name.to_string(),
             version: app.current.clone(),
             status,
             reason,
-            instances: handle.map_or(0, |h| h.instances().len()),
+            instances: handle.map_or(connections.unwrap_or(0), |h| h.instances().len()),
             previous: app.previous.clone(),
         }
     }
@@ -431,9 +580,9 @@ impl Node {
             .map_err(internal)?;
         self.store.keep_upload(upload, &name, &version)?;
         let info = built.info.clone();
-        if let Err(e) = self.apps.add(built.deployment).await {
+        if let Err(e) = self.run(&name, built.run).await {
             self.store.remove_version(&name, &version);
-            return Err(NodeError::Invalid(e.to_string()));
+            return Err(e);
         }
         let app = AppState {
             current: version,
@@ -516,12 +665,20 @@ impl Node {
             .map_err(internal)?;
         self.store.keep_upload(upload, name, &version)?;
         let info = built.info.clone();
-        let snapshot = built.deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
-        match self
-            .apps
-            .upgrade(name, built.deployment, &options(params))
-            .await
-        {
+        let result = match built.run {
+            Runnable::Connection(build) => self
+                .upgrade_connections(name, build, params)
+                .map_err(|e| (e, false)),
+            Runnable::App(deployment) => {
+                let snapshot = deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
+                self.apps
+                    .upgrade(name, deployment, &options(params))
+                    .await
+                    .map(|r| upgrade_response(&r))
+                    .map_err(|e| (rollout_error(e, snapshot, params), true))
+            }
+        };
+        match result {
             Ok(report) => {
                 if let Some(dropped) = current.previous.as_ref().filter(|p| **p != version) {
                     self.store.remove_version(name, dropped);
@@ -536,15 +693,86 @@ impl Node {
                 if let Some(old) = st.info.insert(name.to_string(), info) {
                     st.previous_info.insert(name.to_string(), old);
                 }
-                Ok(upgrade_response(&report))
+                Ok(report)
             }
-            Err(e) => {
+            Err((e, _)) => {
                 if current.previous.as_deref() != Some(version.as_str()) {
                     self.store.remove_version(name, &version);
                 }
-                Err(rollout_error(e, snapshot, params))
+                Err(e)
             }
         }
+    }
+
+    /// Upgrade a connection handler: new connections get `build`; open ones
+    /// keep their version.
+    fn upgrade_connections(
+        &self,
+        name: &str,
+        build: ConnectionBuild,
+        params: &RolloutParams,
+    ) -> Result<UpgradeResponse, NodeError> {
+        let mut apps = self.connection_apps();
+        let app = apps.get_mut(name).ok_or_else(|| {
+            NodeError::Invalid(format!(
+                "{name} is not a connection handler; the new version's world does not match"
+            ))
+        })?;
+        let approved =
+            paddock_host::validate_upgrade(&app.current.manifest, &build.manifest, params.approve)
+                .map_err(upgrade_error)?;
+        let names = |m: &AppManifest| {
+            m.spec
+                .listeners
+                .iter()
+                .map(|l| l.name.clone())
+                .collect::<Vec<_>>()
+        };
+        if names(&app.current.manifest) != names(&build.manifest) {
+            return Err(NodeError::Invalid(format!(
+                "{name}'s listeners change between versions; remove and deploy it instead"
+            )));
+        }
+        for listener in &app.listeners {
+            listener.replace(build.connection.clone(), build.spec.clone());
+        }
+        let from = app.current.manifest.app.version.to_string();
+        let to = build.manifest.app.version.to_string();
+        app.previous = Some(std::mem::replace(&mut app.current, build));
+        Ok(UpgradeResponse {
+            from,
+            to,
+            mode: "new-connections".into(),
+            instances: Vec::new(),
+            pauses_us: Vec::new(),
+            approved: approved.iter().map(|c| c.key().to_string()).collect(),
+        })
+    }
+
+    /// Roll a connection handler back to its previous version, for new
+    /// connections. `None` if `name` is not a connection handler.
+    fn rollback_connections(&self, name: &str) -> Option<Result<UpgradeResponse, NodeError>> {
+        let mut apps = self.connection_apps();
+        let app = apps.get_mut(name)?;
+        let Some(previous) = app.previous.take() else {
+            return Some(Err(NodeError::Conflict(format!(
+                "{name} has no previous version"
+            ))));
+        };
+        for listener in &app.listeners {
+            listener.replace(previous.connection.clone(), previous.spec.clone());
+        }
+        let from = app.current.manifest.app.version.to_string();
+        let to = previous.manifest.app.version.to_string();
+        app.previous = Some(std::mem::replace(&mut app.current, previous));
+        Some(Ok(UpgradeResponse {
+            from,
+            to,
+            mode: "new-connections".into(),
+            instances: Vec::new(),
+            pauses_us: Vec::new(),
+            approved: Vec::new(),
+        }))
     }
 
     /// Roll a running app back to its previous version.
@@ -562,13 +790,18 @@ impl Node {
         if !st.desired.apps.contains_key(name) {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
         }
-        let snapshot =
-            self.apps.app(name).and_then(|a| a.rollback_mode()) == Some(UpgradeMode::Snapshot);
-        let result = self
-            .apps
-            .rollback(name, &options(params))
-            .await
-            .map_err(|e| rollout_error(e, snapshot, params));
+        let result = match self.rollback_connections(name) {
+            Some(result) => result,
+            None => {
+                let snapshot = self.apps.app(name).and_then(|a| a.rollback_mode())
+                    == Some(UpgradeMode::Snapshot);
+                self.apps
+                    .rollback(name, &options(params))
+                    .await
+                    .map(|r| upgrade_response_from(&r))
+                    .map_err(|e| rollout_error(e, snapshot, params))
+            }
+        };
         match &result {
             Ok(r) => {
                 if let Some(entry) = st.desired.apps.get_mut(name)
@@ -594,7 +827,7 @@ impl Node {
                 json!({ "app": name, "reason": e.to_string() }),
             ),
         }
-        result.map(|r| upgrade_response_from(&r))
+        result
     }
 
     /// Stop an app; it stays deployed and does not start on restart.
@@ -613,7 +846,7 @@ impl Node {
         if !app.running {
             return Err(NodeError::Conflict(format!("{name} is already stopped")));
         }
-        if self.apps.app(name).is_some() {
+        if !self.stop_connections(name) && self.apps.app(name).is_some() {
             self.apps
                 .remove(name)
                 .await
@@ -642,7 +875,7 @@ impl Node {
             .get(name)
             .cloned()
             .ok_or_else(|| NodeError::NotFound(format!("{name} is not deployed")))?;
-        if self.apps.app(name).is_some() {
+        if self.running(name) {
             return Err(NodeError::Conflict(format!("{name} is already running")));
         }
         let started = self.start_stored(&mut st, name, &app).await;
@@ -676,7 +909,7 @@ impl Node {
         if !st.desired.apps.contains_key(name) {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
         }
-        if self.apps.app(name).is_some() {
+        if !self.stop_connections(name) && self.apps.app(name).is_some() {
             self.apps
                 .remove(name)
                 .await
@@ -759,6 +992,11 @@ impl Node {
                 .map_or(0, paddock_host::SupervisorHandle::restart_count),
             instance_list: handle
                 .map(|h| h.instances().iter().map(instance_info).collect())
+                .unwrap_or_default(),
+            listeners: self
+                .connection_apps()
+                .get(name)
+                .map(|c| c.listeners.iter().map(listener_info).collect())
                 .unwrap_or_default(),
         })
     }
@@ -927,6 +1165,10 @@ impl Node {
 
     /// Stop every app, in reverse start order.
     pub async fn shutdown(&self) {
+        let names: Vec<String> = self.connection_apps().keys().cloned().collect();
+        for name in names {
+            self.stop_connections(&name);
+        }
         self.apps.stop().await;
     }
 
@@ -934,6 +1176,25 @@ impl Node {
     #[must_use]
     pub fn socket(&self) -> std::path::PathBuf {
         self.config.socket()
+    }
+}
+
+/// What a bundle's component compiled to.
+enum Loaded {
+    App(paddock_host::LoadedApp),
+    Connection(LoadedConnection),
+}
+
+fn listener_info(l: &Listener) -> ListenerInfo {
+    let stats = l.stats();
+    ListenerInfo {
+        name: l.spec().name.clone(),
+        address: l.local_addr().to_string(),
+        active: stats.active,
+        accepted: stats.accepted,
+        refused: stats.refused,
+        crashed: stats.crashed,
+        idle_closed: stats.idle_closed,
     }
 }
 

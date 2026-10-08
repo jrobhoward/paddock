@@ -72,6 +72,28 @@ pub struct AppDetail {
     pub restarts: u64,
     /// The running instances.
     pub instance_list: Vec<InstanceInfo>,
+    /// The app's listeners, for a connection handler.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub listeners: Vec<ListenerInfo>,
+}
+
+/// One listener of a connection-handler app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListenerInfo {
+    /// The listener's name in the manifest.
+    pub name: String,
+    /// The address it listens on.
+    pub address: String,
+    /// Connections open now.
+    pub active: usize,
+    /// Connections accepted in total.
+    pub accepted: u64,
+    /// Connections refused because `max_connections` were open.
+    pub refused: u64,
+    /// Connections whose handler failed.
+    pub crashed: u64,
+    /// Connections closed by the idle timeout.
+    pub idle_closed: u64,
 }
 
 /// One running instance.
@@ -142,7 +164,8 @@ pub struct UpgradeResponse {
     pub from: String,
     /// Version after.
     pub to: String,
-    /// `snapshot` or `restart`.
+    /// `snapshot`, `restart`, or `new-connections` for a connection handler
+    /// (new connections get the new version; open ones keep theirs).
     pub mode: String,
     /// Pids moved.
     pub instances: Vec<String>,

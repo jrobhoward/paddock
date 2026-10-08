@@ -185,6 +185,19 @@ An upgrade that adds capabilities needs `paddock upgrade --approve`. `--batch`, 
 | `log_level` | `"info"` | The app's log level when `wasi:logging` sets no `max_level`. An operator can override either at run time with `paddock log-level <app> <level>` (and `reset`). |
 | `metrics`, `trace_sampling` | `false`, `0.0` | *Not enforced* (Phase 2). |
 
+### `listeners`
+
+Only for a connection handler (a component exporting `paddock:connection/handler`): the listeners whose connections it serves, one instance per connection. An app world declares none, and a connection handler at least one.
+
+```toml
+[[appserver.listeners]]
+name = "lines"            # bound to an address by the node: [listeners.lines]
+idle_timeout_ms = 60000   # default 60000: no bytes in either direction this long closes the connection
+max_connections = 256     # default 1024: more are refused
+```
+
+Names are unique within an app and follow the app-name rules. Upgrades keep the same listener names.
+
 ### Documentation-only and later sections
 
 | Section | Status |
@@ -212,6 +225,10 @@ epoch_tick_ms = 2                      # granularity of callback deadlines and p
 
 [volumes]
 orders-data = "/srv/paddock/orders"    # backs manifest preopens with volume = "orders-data"
+
+[listeners.lines]
+address = "0.0.0.0:7070"               # binds a manifest listener named "lines"
+acceptors = 4                          # default 4: tasks accepting connections at once
 
 [config.orders]
 currency = "USD"                       # overrides the app's config.defaults

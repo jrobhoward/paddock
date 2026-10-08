@@ -192,6 +192,36 @@ The SDK wraps logging only. For config and keyvalue, generate bindings with `wit
 
 Always available without a declaration: clocks, random, stdout and stderr (captured as log records), and `paddock:runtime/process`.
 
+## Connection handlers
+
+A connection handler serves TCP connections instead of messages: the node accepts each connection on a listener and starts an instance of the handler for it. Enable the SDK's `connection` feature, implement `Connection`, and export it with `paddock_sdk::connection!`:
+
+```rust
+use std::io::{BufRead, BufReader, Write};
+use paddock_sdk::connection::{Connection, ConnectionInfo, Stream};
+use paddock_sdk::Ctx;
+
+struct Lines;
+
+impl Connection for Lines {
+    fn serve(ctx: &mut Ctx, _info: ConnectionInfo, stream: Stream) -> Result<(), String> {
+        let mut out = stream.clone_writer();
+        for line in BufReader::new(stream).lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            writeln!(out, "{line}").map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+paddock_sdk::connection!(Lines);
+```
+
+- `Stream` implements `std::io::Read` and `Write`; a read of 0 bytes means the client closed.
+- Returning closes the connection; an error closes it as a crash. A connection idle for the listener's `idle_timeout_ms` is closed by the host.
+- The handler has a `Ctx` for calling and casting to apps (`ctx.whereis("counter")`), but no mailbox. Keep state that must outlive a connection in an app or a keyvalue bucket, and keep the protocol in the handler: [`examples/line-server`](../examples/line-server) forwards `inc` to the counter example.
+- Declare the listeners in the manifest (`[[appserver.listeners]]`, see [MANIFEST.md](MANIFEST.md)); the operator binds each to an address in node config.
+
 ## Testing
 
 - **Unit-test the logic natively.** Keep message handling in plain functions, and leave the `App` impl as a thin shell around them.

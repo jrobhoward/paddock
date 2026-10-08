@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{Spec, WORLD, rewrite};
+use common::{Spec, WORLD, appserver, rewrite};
 use minisign::KeyPair;
 use paddock_bundle::manifest::{Capability, ManifestError};
 use paddock_bundle::{BundleError, ImportLink, OperatorPolicy, VerifiedBundle};
@@ -175,6 +175,67 @@ fn open____unsupported_world____refused() {
     assert!(
         matches!(&result, Err(BundleError::UnsupportedWorld { world, .. }) if world == "paddock:runtime/app@9.0.0"),
         "{result:?}"
+    );
+}
+
+#[test]
+fn open____connection_world_without_listeners____refused_at_listeners() {
+    let dir = TempDir::new().unwrap();
+    let spec = Spec {
+        world: paddock_bundle::CONNECTION_WORLD,
+        ..Spec::default()
+    };
+    let path = spec.write(&dir);
+
+    let result = VerifiedBundle::open(&path, &[spec.public_key()]);
+
+    let Err(BundleError::Manifest(ManifestError::Invalid(errors))) = &result else {
+        panic!("expected an invalid manifest, got {result:?}");
+    };
+    assert_eq!(errors[0].path, "appserver.listeners");
+}
+
+#[test]
+fn open____app_world_with_listeners____refused_at_listeners() {
+    let dir = TempDir::new().unwrap();
+    let mut appserver = appserver();
+    appserver["listeners"] = serde_json::json!([{ "name": "lines" }]);
+    let spec = Spec {
+        appserver: Some(appserver),
+        ..Spec::default()
+    };
+    let path = spec.write(&dir);
+
+    let result = VerifiedBundle::open(&path, &[spec.public_key()]);
+
+    let Err(BundleError::Manifest(ManifestError::Invalid(errors))) = &result else {
+        panic!("expected an invalid manifest, got {result:?}");
+    };
+    assert_eq!(errors[0].path, "appserver.listeners");
+}
+
+#[test]
+fn open____connection_world_with_listener____opens() {
+    let dir = TempDir::new().unwrap();
+    let mut appserver = appserver();
+    appserver["listeners"] = serde_json::json!([{ "name": "lines", "idle_timeout_ms": 5000 }]);
+    let spec = Spec {
+        world: paddock_bundle::CONNECTION_WORLD,
+        appserver: Some(appserver),
+        ..Spec::default()
+    };
+    let path = spec.write(&dir);
+
+    let bundle = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap();
+
+    let listeners = &bundle.manifest.spec.listeners;
+    assert_eq!(
+        (
+            listeners[0].name.as_str(),
+            listeners[0].idle_timeout_ms,
+            listeners[0].max_connections
+        ),
+        ("lines", 5000, 1024)
     );
 }
 

@@ -41,6 +41,6 @@ mod policy;
 
 pub use error::BundleError;
 pub use grant::{EffectiveGrant, ImportLink, effective_grant};
-pub use imports::component_imports;
-pub use load::{PRIV_DIR, SUPPORTED_WORLDS, VerifiedBundle};
+pub use imports::{component_imports, component_world};
+pub use load::{APP_WORLD, CONNECTION_WORLD, PRIV_DIR, SUPPORTED_WORLDS, VerifiedBundle};
 pub use policy::{Granted, Grants, OperatorPolicy, SignerGrants};

@@ -121,9 +121,15 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   world; a guest test fixture. Generated bindings live in a `bindings` module
   with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. 
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
-  by `crates/paddock/tests/wit_rules.rs`. `wit/vendor/` holds unmodified
-  copies of the draft WASI interfaces Paddock hosts itself (keyvalue, config,
-  logging); bindings name each package path explicitly.
+  by `crates/paddock/tests/wit_rules.rs`. `wit/connection/`: the
+  `paddock:connection` package (connection handlers), separate because it
+  uses `wasi:io` streams, which `paddock:runtime` excludes. `wit/vendor/`
+  holds unmodified copies of the WASI interfaces Paddock binds against
+  (keyvalue, config, logging, and `wasi:io` for connections); bindings name
+  each package path explicitly.
+- `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
+  an instance per connection. `crates/paddock-fixture-conn` is its test
+  guest; `examples/line-server` the SDK example.
 - `docs/`: design and plan.
 - `spikes/`: throwaway programs that answered design questions. Excluded from
   the main workspace, from the conventions below, and from the Definition of

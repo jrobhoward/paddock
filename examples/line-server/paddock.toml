@@ -1,0 +1,20 @@
+# A connection handler: the node binds the `lines` listener to an address
+# in its config:
+#
+#   [listeners.lines]
+#   address = "127.0.0.1:7070"
+#
+# Bundle with:
+#   cargo build -p example-line-server --target wasm32-wasip2 --release
+#   paddock bundle examples/line-server/paddock.toml target/wasm32-wasip2/release/example_line_server.wasm --key paddock.key
+# Deploy the counter example too; `inc` and `get` are forwarded to it.
+[app]
+name = "line-server"
+version = "1.0.0"
+description = "A line protocol over TCP, one instance per connection (paddock-sdk example)"
+license = "MIT OR Apache-2.0"
+
+[[appserver.listeners]]
+name = "lines"
+idle_timeout_ms = 60000
+max_connections = 256

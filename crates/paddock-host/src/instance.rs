@@ -440,6 +440,26 @@ pub(crate) struct InstanceTask {
     exit: watch::Sender<Option<ExitReason>>,
 }
 
+/// A pid's handle and process context with no mailbox behind them, for a
+/// connection handler: it can call, cast and link like an instance, but
+/// messages, timers and exit signals sent to it are dropped.
+pub(crate) fn detached(
+    pid: Pid,
+    spec: &InstanceSpec,
+    rt: Arc<RuntimeInner>,
+) -> (InstanceHandle, ProcessContext) {
+    let (handle, task) = prepare(pid, spec);
+    let ctx = ProcessContext {
+        rt,
+        me: handle.clone(),
+        mailbox: task.self_mailbox.clone(),
+        dropped: task.dropped.clone(),
+    };
+    // Dropping the task closes the mailbox and signal receivers.
+    drop(task);
+    (handle, ctx)
+}
+
 /// Create the channels for a new instance.
 pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, InstanceTask) {
     let (mailbox_tx, mailbox_rx) = mpsc::channel(spec.mailbox_max.max(1));
@@ -861,7 +881,7 @@ impl InstanceTask {
 }
 
 /// A Store with the instance's limits, deadline accounting and preemption.
-fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Store<InstanceState> {
+pub(crate) fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Store<InstanceState> {
     let mut store = Store::new(engine, state);
     store.limiter(|s| &mut s.limiter);
     store.epoch_deadline_callback(|mut ctx| {
@@ -897,7 +917,7 @@ async fn killable<F: Future>(
 }
 
 /// Tell linked instances and monitors that `pid` exited.
-fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
+pub(crate) fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
     let notices = rt.links.on_exit(pid);
     for other in notices.linked {
         if let Some(handle) = rt.table.lookup(other) {
@@ -916,7 +936,7 @@ fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
 }
 
 /// Map a failed guest call to an exit reason.
-fn classify(err: &wasmtime::Error, state: &InstanceState) -> ExitReason {
+pub(crate) fn classify(err: &wasmtime::Error, state: &InstanceState) -> ExitReason {
     if state.limiter.memory_exceeded {
         return ExitReason::Crashed("memory_limit".to_string());
     }

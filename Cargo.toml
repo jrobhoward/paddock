@@ -4,6 +4,7 @@ members = [
     "crates/paddock",
     "crates/paddock-bundle",
     "crates/paddock-fixture-chaos",
+    "crates/paddock-fixture-conn",
     "crates/paddock-fixture-counter",
     "crates/paddock-fixture-echo",
     "crates/paddock-fixture-sdk",
@@ -17,6 +18,7 @@ members = [
     "examples/greeter/app",
     "examples/greeter/node",
     "examples/greeter/service",
+    "examples/line-server",
 ]
 # Throwaway spike code is its own workspace with its own lock file; the
 # conventions and Definition of Done below do not apply to it.

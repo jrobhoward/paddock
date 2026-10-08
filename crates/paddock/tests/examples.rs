@@ -74,7 +74,12 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
     let socket = dir.path().join("a.sock");
     let ex = root().join("examples");
     let plain = build(
-        &["example-counter", "example-ping-pong", "example-chaos"],
+        &[
+            "example-counter",
+            "example-ping-pong",
+            "example-chaos",
+            "example-line-server",
+        ],
         None,
         "plain",
     );
@@ -94,6 +99,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
         .join("example_counter.wasm"),
     ];
     let ping_pong = plain.join("example_ping_pong.wasm");
+    let plain_wasm = plain.clone();
     let chaos = plain.join("example_chaos.wasm");
 
     // One encrypted key (opened with PADDOCK_KEY_PASSWORD) for the first
@@ -177,9 +183,20 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
     )
     .unwrap();
     let chaos_fail = bundle(failing_manifest, chaos, "chaos-fail.rbp").await;
+    let line_server = bundle(
+        ex.join("line-server/paddock.toml"),
+        plain_wasm.join("example_line_server.wasm"),
+        "line-server.rbp",
+    )
+    .await;
+    let lines_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
 
     let toml = format!(
-        "data_dir = {:?}\nadmin_socket = {:?}\nmax_instances = 16\ntrusted_keys = [{:?}, {:?}]\n",
+        "data_dir = {:?}\nadmin_socket = {:?}\nmax_instances = 16\ntrusted_keys = [{:?}, {:?}]\n[listeners.lines]\naddress = \"127.0.0.1:{lines_port}\"\n",
         dir.path().join("data"),
         socket,
         encrypted.stdout,
@@ -256,6 +273,30 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
         broken.stderr
     );
     assert_eq!(still.stdout, "2.0.0 count=3 history=");
+
+    // line-server: a connection handler on a listener, handing `inc` to
+    // the counter app by its registered name.
+    let deployed = paddock(&socket, &["deploy", s(&line_server)]).await;
+    assert!(deployed.ok, "{}", deployed.stderr);
+    let (read, mut write) = tokio::net::TcpStream::connect(("127.0.0.1", lines_port))
+        .await
+        .unwrap()
+        .into_split();
+    let mut read = tokio::io::BufReader::new(read);
+    let mut replies = Vec::new();
+    for line in ["echo hello", "inc", "get"] {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        write
+            .write_all(format!("{line}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut reply = String::new();
+        read.read_line(&mut reply).await.unwrap();
+        replies.push(reply.trim_end().to_string());
+    }
+    let status = paddock(&socket, &["status", "line-server"]).await;
+    assert_eq!(replies, ["hello", "4", "2.0.0 count=4 history=4"]);
+    assert!(status.stdout.contains("LISTENER"), "{}", status.stdout);
 
     // chaos: a crash loop in init is marked failed with the reason.
     let deployed = paddock(&socket, &["--json", "deploy", s(&chaos_fail)]).await;

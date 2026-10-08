@@ -1,0 +1,23 @@
+[package]
+name = "paddock-fixture-conn"
+version = "0.0.0"
+description = "Test fixture: a connection handler with a line protocol"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# `echo` replies `v2:<text>`, for upgrade tests.
+v2 = []
+
+[dependencies]
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

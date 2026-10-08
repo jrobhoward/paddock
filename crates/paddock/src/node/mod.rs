@@ -18,7 +18,7 @@ mod server;
 mod state_view;
 mod store;
 
-pub use config::{MemoryProfile, NodeConfig};
+pub use config::{ListenerBinding, MemoryProfile, NodeConfig};
 pub use daemon::Node;
 pub use error::NodeError;
 pub use logring::{LogRing, RingLayer};

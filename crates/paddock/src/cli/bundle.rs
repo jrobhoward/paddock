@@ -179,7 +179,7 @@ pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
         .add_component(
             Platform::Wasm32Wasip2,
             req.component,
-            paddock_bundle::SUPPORTED_WORLDS[0],
+            paddock_bundle::component_world(&component)?,
         )?
         .with_extension(paddock_bundle::manifest::SECTION, appserver);
     let mut priv_files = 0;

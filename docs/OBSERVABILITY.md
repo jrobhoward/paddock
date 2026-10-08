@@ -18,6 +18,8 @@ What an operator can see on a running node: instance stats, direct calls to one 
 
 `paddock state <pid>` shows an instance's state through its `save-snapshot`.
 
+Connection handlers do not appear in `ps` (an instance per connection, with no mailbox). `paddock status <app>` lists their listeners instead: address, connections open now, and totals accepted, refused (over `max_connections`), crashed and closed by the idle timeout.
+
 ## Calling one instance
 
 `paddock call` and `paddock cast` address an app (through its pool's routing), one instance by pid, or the instance holding a registered name:
@@ -57,6 +59,7 @@ An instance is identified by its pid's `id` (and `incarnation` where shown). A s
 | `upgrade__start` | app, target version |
 | `upgrade__done` | app, target version, completed |
 | `mailbox__drop` | instance id, kind (`cast`, `timer`) |
+| `connection__open` | handler instance id, listener name; its end is `instance__exit` |
 
 The call id pairs `call__start` with `call__done`; it is 0 if no tracer was attached when the call started. Probe names and arguments are an interface: scripts depend on them, so they change only with a CHANGELOG entry.
 

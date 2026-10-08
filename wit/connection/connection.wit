@@ -1,0 +1,35 @@
+package paddock:connection@0.1.0;
+
+/// A connection handler: the host owns a listener (declared in the app's
+/// manifest, bound to an address by the node), accepts connections, and
+/// starts one instance of this world per connection.
+///
+/// Kept apart from `paddock:runtime`, which has no `wasi:io` types so a
+/// WASI 0.3 world can be added without changing it. In WASI 0.3 the two
+/// streams become `stream<u8>`.
+interface handler {
+  use wasi:io/streams@0.2.12.{input-stream, output-stream};
+
+  /// What the host knows about the connection.
+  record connection-info {
+    /// The listener's name in the app's manifest.
+    listener: string,
+    /// The peer's address, `ip:port`.
+    peer: string,
+  }
+
+  /// Serve one connection; returning closes it. An error closes it as a
+  /// crash, with the message as the reason. No bytes in either direction
+  /// for the listener's idle timeout also closes it. A crash ends this
+  /// connection only; it is not restarted.
+  serve: func(info: connection-info, input: input-stream, output: output-stream) -> result<_, string>;
+}
+
+/// What a connection-handler component implements. It may call and cast
+/// to other instances through `process` (finding them with `whereis`). It
+/// has a pid but no mailbox: messages, timers and exit signals sent to it
+/// are dropped.
+world connection-handler {
+  import paddock:runtime/process@0.1.0;
+  export handler;
+}

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::manifest::{
     AppInfo, AppManifest, AppSpec, ComponentRef, Kind, ManifestError, Provenance, SECTION,
+    ValidationError,
 };
 use rustbridge_bundle::{BundleLoader, Platform};
 
@@ -12,8 +13,15 @@ use crate::grant::{EffectiveGrant, effective_grant};
 use crate::imports::component_imports;
 use crate::policy::OperatorPolicy;
 
+/// The world of an app: callbacks driven one message at a time.
+pub const APP_WORLD: &str = "paddock:runtime/app@0.1.0";
+
+/// The world of a connection handler: one instance per connection accepted
+/// on the app's listeners.
+pub const CONNECTION_WORLD: &str = "paddock:connection/connection-handler@0.1.0";
+
 /// The WIT worlds this node can run.
-pub const SUPPORTED_WORLDS: &[&str] = &["paddock:runtime/app@0.1.0"];
+pub const SUPPORTED_WORLDS: &[&str] = &[APP_WORLD, CONNECTION_WORLD];
 
 /// The variant Phase 1 deploys.
 const VARIANT: &str = "release";
@@ -83,6 +91,18 @@ impl VerifiedBundle {
 
         let section = rb.extension(SECTION).ok_or(BundleError::NoAppSection)?;
         let spec = AppSpec::from_json_value(section).map_err(prefix_section)?;
+        let connection = world == CONNECTION_WORLD;
+        if connection == spec.listeners.is_empty() {
+            return Err(ManifestError::Invalid(vec![ValidationError {
+                path: format!("{SECTION}.listeners"),
+                message: if connection {
+                    "a connection handler must declare at least one listener".into()
+                } else {
+                    "only a connection handler (paddock:connection) declares listeners".into()
+                },
+            }])
+            .into());
+        }
         if spec.kind != Kind::WasmComponent {
             return Err(BundleError::UnsupportedKind(
                 serde_json::to_value(spec.kind)

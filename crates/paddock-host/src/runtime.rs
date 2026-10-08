@@ -17,6 +17,7 @@ use crate::deny;
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
 use crate::links::LinkTable;
+use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
 use crate::message::{CallError, Envelope};
 use crate::pid::Pid;
 use crate::pool::Pool;
@@ -52,6 +53,16 @@ pub(crate) struct RuntimeInner {
 }
 
 impl RuntimeInner {
+    /// This node's id, for pids.
+    pub(crate) fn node(&self) -> u32 {
+        self.config.node
+    }
+
+    /// A fresh instance id.
+    pub(crate) fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// An instance of the running app called `name`, round-robin.
     pub(crate) fn pool_member(&self, name: &str) -> Option<InstanceHandle> {
         let pool = self
@@ -168,17 +179,54 @@ impl Runtime {
     /// version.
     pub fn load(&self, component: &[u8]) -> Result<LoadedApp, HostError> {
         let load = |e: wasmtime::Error| HostError::Load(describe(&e));
-        let engine = &self.inner.engine;
-        let component = Component::new(engine, component).map_err(load)?;
-        let extensions = &self.inner.extensions;
-        let mut linker = base_linker(engine, extensions).map_err(load)?;
-        let served: Vec<&str> = extensions.iter().map(|e| e.package()).collect();
-        let stubbed = deny::link_stubs(&mut linker, engine, &component, &served).map_err(load)?;
-        let pre = linker.instantiate_pre(&component).map_err(load)?;
+        let (pre, stubbed) = self.link(component).map_err(load)?;
         Ok(LoadedApp {
             pre: PaddockAppPre::new(pre).map_err(load)?,
             stubbed: Arc::new(stubbed),
         })
+    }
+
+    /// Compile a connection-handler component
+    /// (`paddock:connection/connection-handler`) and link it, as
+    /// [`Runtime::load`] does for apps.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Runtime::load`], including a component that does not export
+    /// the connection handler.
+    pub fn load_connection(&self, component: &[u8]) -> Result<LoadedConnection, HostError> {
+        let load = |e: wasmtime::Error| HostError::Load(describe(&e));
+        let (pre, stubbed) = self.link(component).map_err(load)?;
+        LoadedConnection::new(pre, stubbed).map_err(load)
+    }
+
+    fn link(
+        &self,
+        component: &[u8],
+    ) -> wasmtime::Result<(wasmtime::component::InstancePre<InstanceState>, Vec<String>)> {
+        let engine = &self.inner.engine;
+        let component = Component::new(engine, component)?;
+        let extensions = &self.inner.extensions;
+        let mut linker = base_linker(engine, extensions)?;
+        let served: Vec<&str> = extensions.iter().map(|e| e.package()).collect();
+        let stubbed = deny::link_stubs(&mut linker, engine, &component, &served)?;
+        Ok((linker.instantiate_pre(&component)?, stubbed))
+    }
+
+    /// Bind a listener and hand each accepted connection to a new instance
+    /// of `connection`, run with `spec`'s limits and services
+    /// ([`crate::listener`]). Must be called inside the tokio runtime.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Listen`] if the address cannot be bound.
+    pub fn listen(
+        &self,
+        listener: ListenerSpec,
+        connection: LoadedConnection,
+        spec: InstanceSpec,
+    ) -> Result<Listener, HostError> {
+        listener::listen(&self.inner, listener, connection, spec)
     }
 
     /// Start a new instance (incarnation 1). It begins in `Starting`; watch

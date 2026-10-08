@@ -1,0 +1,19 @@
+[package]
+name = "example-line-server"
+version = "0.0.0"
+description = "Paddock example: a connection handler speaking a line protocol, handing work to the counter app"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["connection"] }
+
+[lints]
+workspace = true

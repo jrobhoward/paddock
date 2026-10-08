@@ -49,8 +49,8 @@ pub use lifecycle::{
 };
 pub use limits::{Limits, WASM32_MEMORY_MAX};
 pub use sections::{
-    Api, ConfigSpec, Dependency, Health, LogLevel, MessagePattern, MessageSpec, MessagingAcl,
-    NameScope, Observability, Placement, PlacementMode, RegisteredName,
+    Api, ConfigSpec, Dependency, Health, ListenerDecl, LogLevel, MessagePattern, MessageSpec,
+    MessagingAcl, NameScope, Observability, Placement, PlacementMode, RegisteredName,
 };
 pub use unenforced::{Phase, UnenforcedField};
 pub use validate::{MAX_NAME_LEN, is_valid_name};
@@ -102,6 +102,10 @@ pub struct AppSpec {
     pub health: Option<Health>,
     /// Logging, metrics and tracing defaults.
     pub observability: Observability,
+    /// Listeners a connection-handler app serves
+    /// (`paddock:connection/connection-handler`); an app world has none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub listeners: Vec<ListenerDecl>,
 }
 
 impl AppSpec {
@@ -175,6 +179,10 @@ impl AppSpec {
             v.at("health", |v| health.validate(v));
         }
         v.at("observability", |v| self.observability.validate(v));
+        for (i, l) in self.listeners.iter().enumerate() {
+            v.at(format!("listeners[{i}]"), |v| l.validate(v));
+        }
+        v.unique_names("listeners", self.listeners.iter().map(|l| l.name.as_str()));
     }
 }
 

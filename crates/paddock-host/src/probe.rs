@@ -49,6 +49,10 @@ anyprobe::probes! {
     /// A message was dropped because the mailbox was full: instance id,
     /// kind (`cast`, `timer`).
     pub fn mailbox__drop(pid: u64, kind: &str);
+    /// A listener accepted a connection and started its handler: the
+    /// handler's instance id, the listener's name. Its end is
+    /// `instance__exit`.
+    pub fn connection__open(pid: u64, listener: &str);
 }
 
 /// The outcome name a probe reports for a call or cast.
@@ -158,6 +162,14 @@ pub(crate) fn upgrade_start(app: &str, to: &str) {
 pub(crate) fn upgrade_done(app: &str, to: &str, ok: bool) {
     #[cfg(feature = "probes")]
     anyprobe::fire!(upgrade__done(app, to, ok));
+}
+
+/// A listener started a connection handler.
+#[inline]
+#[allow(unused_variables)]
+pub(crate) fn connection_open(pid: Pid, listener: &str) {
+    #[cfg(feature = "probes")]
+    anyprobe::fire!(connection__open(pid.id, listener));
 }
 
 /// A full mailbox dropped a message.

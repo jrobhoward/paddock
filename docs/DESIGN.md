@@ -99,6 +99,17 @@ The contract is the `paddock:runtime@0.1.0` package in [`wit/runtime.wit`](../wi
 
 `call-error` and `register-error` both carry an `access-denied` case (messaging ACLs, names missing from the manifest). `call-error` also has `too-large`, for a body over the target's `message_max_bytes`; it is separate from `overloaded` because retrying cannot help. `crates/paddock/tests/wit_rules.rs` enforces the package's rules: synchronous functions only, no `stream`/`future`, no `wasi:io` types, and an `access-denied` error on every capability function.
 
+### Connection handlers
+
+A second world serves connections instead of messages: `paddock:connection/connection-handler` in [`wit/connection/connection.wit`](../wit/connection/connection.wit). It exports `serve(info, input-stream, output-stream)` and imports `process`. It is a separate package because it uses `wasi:io` streams, which `paddock:runtime` excludes so a WASI 0.3 world can be added beside it; in WASI 0.3 the streams become `stream<u8>`.
+
+- **Listeners.** The manifest declares listeners by name (`[[appserver.listeners]]`, with an idle timeout and a connection cap), and the node binds each name to an address in its config (`[listeners.<name>]`), as with volumes. A name the node does not bind refuses the deploy. The host owns the socket and accepts on several tasks (the Ranch pattern); crashes and upgrades never touch it.
+- **An instance per connection** (spike S13: native throughput). It has the app's limits and host services and a pid, so it can call, cast and link, but no mailbox: messages, timers and exit signals sent to it are dropped. A component that exports `paddock:connection/handler` is bundled with this world; a bundle's world and its listeners must agree.
+- **No per-callback deadline:** `serve` lasts as long as the connection. A connection with no bytes in either direction for the listener's idle timeout is closed and its instance dropped, which also ends a handler spinning without I/O.
+- **Failures** end their connection only, as `crashed` (a trap or an error from `serve`) or `timeout` (idle). Nothing restarts: the client reconnects.
+- **Upgrades** apply to new connections; open connections keep the version they started with until they close. A rollback does the same in reverse. Listener names must stay the same across versions.
+- **Instance slots.** Each open connection uses one slot of the node's `max_instances`; size it for apps and connections together.
+
 **Messages are envelopes of bytes.** WIT has no recursive types, so there is no clean Erlang-style "any term". An envelope carries a content type (CBOR by default; JSON and rustbridge binary allowed) and an optional schema id. Bytes are already serialized for the network, and the manifest can publish JSON Schemas the way `.rbp` bundles already do.
 
 ## App manifest and capability model

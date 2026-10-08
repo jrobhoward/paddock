@@ -53,6 +53,7 @@ fn detail____failed_app____shows_reason_and_denied() {
         warnings: vec!["messaging_acl is not enforced until Phase 2".into()],
         restarts: 3,
         instance_list: vec![],
+        listeners: vec![],
     };
 
     let out = detail(&d);
@@ -111,4 +112,36 @@ fn cbor_from_json____round_trip____reply_prints_same_json() {
     assert_eq!(shown, r#"{"id":7,"tags":["a","b"]}"#);
     assert_eq!(text, "plain");
     assert!(bad.unwrap_err().starts_with("BODY is not JSON"));
+}
+
+#[test]
+fn detail____connection_handler____lists_listeners() {
+    let d = AppDetail {
+        summary: summary("modbus-gw", "running"),
+        signer: "RWQ".into(),
+        granted: vec![],
+        denied: vec![],
+        stubbed: vec![],
+        warnings: vec![],
+        restarts: 0,
+        instance_list: vec![],
+        listeners: vec![paddock::api::ListenerInfo {
+            name: "modbus".into(),
+            address: "0.0.0.0:1502".into(),
+            active: 3,
+            accepted: 40,
+            refused: 1,
+            crashed: 2,
+            idle_closed: 5,
+        }],
+    };
+
+    let out = detail(&d);
+
+    let row = out.lines().last().unwrap();
+    assert!(out.contains("LISTENER"), "{out}");
+    assert!(
+        row.starts_with("modbus") && row.contains("0.0.0.0:1502"),
+        "{out}"
+    );
 }
