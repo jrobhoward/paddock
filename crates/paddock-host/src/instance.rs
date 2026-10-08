@@ -19,6 +19,7 @@ use tracing::Instrument;
 use wasmtime::{Store, Trap, UpdateDeadline};
 
 use crate::bindings::{CallResult, PaddockApp};
+use crate::delivery;
 use crate::error::describe;
 use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason, Info};
@@ -539,7 +540,7 @@ impl InstanceTask {
             }
         }
         probe::instance_exit(self.pid, &reason);
-        notify_exit(&rt, self.pid, &reason);
+        delivery::notify_exit(&rt, self.pid, &reason);
         let _enter = span.enter();
         if reason.is_normal() {
             tracing::info!(%reason, "instance stopped");
@@ -913,25 +914,6 @@ async fn killable<F: Future>(
             Err(_) => ExitReason::Killed,
         }),
         out = fut => Ok(out),
-    }
-}
-
-/// Tell linked instances and monitors that `pid` exited.
-pub(crate) fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
-    let notices = rt.links.on_exit(pid);
-    for other in notices.linked {
-        if let Some(handle) = rt.table.lookup(other) {
-            handle.exit_signal(pid, reason.clone(), false);
-        }
-    }
-    for (reference, watcher) in notices.monitors {
-        if let Some(handle) = rt.table.lookup(watcher) {
-            handle.signal(Info::Down {
-                reference,
-                pid,
-                reason: reason.clone(),
-            });
-        }
     }
 }
 

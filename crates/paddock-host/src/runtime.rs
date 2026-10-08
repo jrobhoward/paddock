@@ -13,6 +13,7 @@ use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConf
 use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{PaddockApp, PaddockAppPre};
 use crate::config::{MemoryProfile, RuntimeConfig};
+use crate::delivery;
 use crate::deny;
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
@@ -27,6 +28,7 @@ use crate::spec::InstanceSpec;
 use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
+use crate::transport::{self, Frame, PendingCalls, Transport};
 use paddock_bundle::manifest::LogLevel;
 
 /// Hosts instances on one node.
@@ -47,6 +49,8 @@ pub(crate) struct RuntimeInner {
     pools: RwLock<HashMap<String, Arc<Pool>>>,
     pub(crate) services: services::Shared,
     pub(crate) extensions: Vec<Arc<dyn Extension>>,
+    transport: std::sync::OnceLock<Arc<dyn Transport>>,
+    pub(crate) pending_calls: PendingCalls,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -56,6 +60,11 @@ impl RuntimeInner {
     /// This node's id, for pids.
     pub(crate) fn node(&self) -> u32 {
         self.config.node
+    }
+
+    /// The transport to other nodes, once set.
+    pub(crate) fn transport(&self) -> Option<&Arc<dyn Transport>> {
+        self.transport.get()
     }
 
     /// A fresh instance id.
@@ -157,10 +166,12 @@ impl Runtime {
                 engine,
                 table: ProcessTable::default(),
                 registry: Registry::default(),
-                links: LinkTable::default(),
+                links: LinkTable::new(config.node),
                 pools: RwLock::default(),
                 services,
                 extensions,
+                transport: std::sync::OnceLock::new(),
+                pending_calls: PendingCalls::default(),
                 next_id: AtomicU64::new(1),
                 config,
                 _ticker: ticker,
@@ -349,7 +360,7 @@ impl Runtime {
     /// [`CallError::Noproc`] for a dead pid or an earlier incarnation, and as
     /// for [`InstanceHandle::cast`].
     pub fn cast(&self, to: Pid, msg: Envelope) -> Result<(), CallError> {
-        self.lookup(to).ok_or(CallError::Noproc)?.cast(msg)
+        delivery::cast(&self.inner, None, to, msg)
     }
 
     /// Call a pid.
@@ -364,10 +375,44 @@ impl Runtime {
         msg: Envelope,
         timeout: Duration,
     ) -> Result<Envelope, CallError> {
-        self.lookup(to)
-            .ok_or(CallError::Noproc)?
-            .call(msg, timeout)
-            .await
+        delivery::call(&self.inner, None, to, msg, timeout).await
+    }
+
+    pub(crate) fn inner(&self) -> &Arc<RuntimeInner> {
+        &self.inner
+    }
+
+    /// This node's id, carried in every local pid.
+    #[must_use]
+    pub fn node(&self) -> u32 {
+        self.inner.node()
+    }
+
+    /// Carry frames for pids on other nodes through `transport`
+    /// ([`crate::transport`]). Set once; without one, every other node is
+    /// unreachable (`noconnection`).
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Engine`] if a transport is already set.
+    pub fn set_transport(&self, transport: Arc<dyn Transport>) -> Result<(), HostError> {
+        self.inner
+            .transport
+            .set(transport)
+            .map_err(|_| HostError::Engine("a transport is already set".into()))
+    }
+
+    /// Handle a frame that node `from` sent to this node. Called by the
+    /// transport; must run inside the tokio runtime.
+    pub fn deliver(&self, from: u32, frame: Frame) {
+        transport::deliver(&self.inner, from, frame);
+    }
+
+    /// Node `node` cannot be reached: links and monitors with its pids end
+    /// with `noconnection`, and calls waiting on it fail. Called by the
+    /// transport.
+    pub fn node_down(&self, node: u32) {
+        transport::node_down(&self.inner, node);
     }
 
     /// Every live instance, ordered by pid.

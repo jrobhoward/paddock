@@ -32,8 +32,9 @@ use wasmtime::component::Resource;
 use wasmtime_wasi::p2::bindings::io::streams::{InputStream, OutputStream};
 use wasmtime_wasi::p2::pipe::{AsyncReadStream, AsyncWriteStream};
 
+use crate::delivery;
 use crate::error::HostError;
-use crate::instance::{self, classify, new_store, notify_exit};
+use crate::instance::{self, classify, new_store};
 use crate::message::ExitReason;
 use crate::pid::Pid;
 use crate::probe;
@@ -382,7 +383,7 @@ fn finish(rt: &RuntimeInner, shared: &Shared, pid: Pid, end: End) {
     }
     rt.registry.unregister_all(pid);
     probe::instance_exit(pid, &reason);
-    notify_exit(rt, pid, &reason);
+    delivery::notify_exit(rt, pid, &reason);
 }
 
 /// When a connection last moved a byte.

@@ -160,6 +160,15 @@ All notable changes are recorded here. The format follows
   `Runtime::load_connection`, a `connection__open` probe, listeners in
   `paddock status`; `paddock bundle` detects the world from the component.
   SDK feature `connection`; example `examples/line-server`.
+- Delivery between nodes: `paddock_host::transport` (`Frame`, the
+  `Transport` trait, `Runtime::set_transport`, `deliver`, `node_down`).
+  Calls, casts, exit signals, links and monitors reach pids on other nodes;
+  a lost node ends its links and monitors with `noconnection` and fails
+  calls waiting on it. Without a transport, pids on other nodes get
+  `noconnection`.
+- `transport::memory::Mesh`: runtimes in one process as nodes, with
+  per-pair delay and jitter, random drops from a seed, partition, isolate
+  and heal, for tests.
 - USDT probes on the message path (provider `paddock`): calls, casts,
   callbacks with guest time, exits, supervisor restarts, rollouts and
   mailbox drops, from anyprobe (a git dependency on its GitHub `main`).

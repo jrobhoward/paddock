@@ -347,6 +347,8 @@ Apps should prefer process groups. Erlang's `global` shows that global locks dur
 
 **Partitions.** When a partition heals, process groups merge naturally. Global names conflict only if Raft is off; with Raft on, the minority side can't register. Paddock does not attempt automatic split-brain resolution for app state; that is the app's concern.
 
+**Delivery seam.** Every process-core operation that names a pid (call, cast, exit signal, link, unlink, monitor, demonitor, exit and down notices) goes through one routing function: a live local pid gets it directly, a dead local pid gets `noproc`, and a pid on another node becomes a frame for that node's transport. Without a transport, or with the node unreachable, the operation gets `noconnection`. Each node keeps its own side of a link or monitor that crosses nodes. Linking or monitoring a remote pid is recorded at once and confirmed by the other node only when it fails: a dead target answers with a `noproc` exit or down. When a node is lost, the transport reports it and every link and monitor with its pids ends with `noconnection`, and calls waiting on it fail. Links lost to a partition stay lost after it heals, as in OTP. An in-memory transport joins runtimes in one process with injected delay, jitter, drops and partitions, for tests; QUIC implements the same `Transport` trait.
+
 **Wire format.** A frame carries source pid, destination pid or name, call ref (if any), envelope content type, schema id, and body. Frames are length-prefixed CBOR. Protocol version is negotiated at connect time so nodes can roll.
 
 ## Host services

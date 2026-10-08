@@ -21,6 +21,7 @@
 mod apps;
 mod bindings;
 mod config;
+mod delivery;
 mod deny;
 mod error;
 mod instance;
@@ -39,6 +40,7 @@ mod spec;
 mod state;
 mod supervisor;
 mod table;
+pub mod transport;
 mod upgrade;
 
 pub use apps::{AppDeployment, AppHandle, AppStatus, Apps, UpgradeOptions, UpgradeReport};

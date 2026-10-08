@@ -267,3 +267,38 @@ async fn link____restarted_instance____does_not_inherit_links() {
     assert!(a2.wait().await != ExitReason::Normal);
     assert_eq!(b.exit_reason(), Some(ExitReason::Killed));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_pid____no_transport____noconnection_everywhere() {
+    // A pid on another node: unreachable until a transport exists.
+    let (rt, app) = shared();
+    let a = rt.spawn(app, spec("trap-exits")).unwrap();
+    let remote = "7.1.1";
+
+    let call = ask(&a, &format!("call:{remote}:500:echo:x")).await;
+    let cast = ask(&a, &format!("cast:{remote}:count")).await;
+    let link = ask(&a, &format!("link:{remote}")).await;
+    let reference = ask(&a, &format!("monitor:{remote}")).await;
+    let infos = ask_until(&a, "infos", |s| s.contains("down:")).await;
+    let from_host = rt
+        .call(
+            paddock_host::Pid {
+                node: 7,
+                id: 1,
+                incarnation: 1,
+            },
+            text("echo:x"),
+            LONG,
+        )
+        .await;
+
+    assert_eq!(call, "err:noconnection");
+    assert_eq!(cast, "sent");
+    assert_eq!(link, "ok");
+    assert_eq!(
+        infos,
+        format!("exit:{remote}:noconnection;down:{reference}:{remote}:noconnection")
+    );
+    assert_eq!(from_host, Err(paddock_host::CallError::Noconnection));
+    a.kill();
+}

@@ -14,6 +14,7 @@ use wasmtime::{Error, ResourceLimiter, Result};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 
 use crate::bindings::paddock::runtime::{process, types};
+use crate::delivery;
 use crate::instance::{InstanceHandle, Message};
 use crate::message::{Envelope, ExitReason, Info};
 use crate::output::{CapturedOutput, Tags};
@@ -358,9 +359,7 @@ impl process::Host for InstanceState {
         let to = Pid::from(to);
         // At most once: a cast to a dead pid, or one the target refuses, is
         // dropped without telling the sender.
-        if let Some(target) = self.ctx.rt.table.lookup(to)
-            && let Err(err) = target.cast_from(Some(self.pid), msg.into())
-        {
+        if let Err(err) = delivery::cast(&self.ctx.rt, Some(self.pid), to, msg.into()) {
             tracing::debug!(%to, error = %err, "cast dropped");
         }
         Ok(())
@@ -378,17 +377,15 @@ impl process::Host for InstanceState {
             // cannot read until this callback returns.
             return Err(Error::msg("call to self would deadlock"));
         }
-        let Some(target) = self.ctx.rt.table.lookup(to) else {
-            return Ok(Err(types::CallError::Noproc));
-        };
         let started = Instant::now();
-        let result = target
-            .call_from(
-                Some(self.pid),
-                msg.into(),
-                Duration::from_millis(timeout_ms.into()),
-            )
-            .await;
+        let result = delivery::call(
+            &self.ctx.rt,
+            Some(self.pid),
+            to,
+            msg.into(),
+            Duration::from_millis(timeout_ms.into()),
+        )
+        .await;
         self.clock.add_host_time(started.elapsed());
         Ok(result.map(Into::into).map_err(|e| (&e).into()))
     }
@@ -406,21 +403,16 @@ impl process::Host for InstanceState {
         if other == self.pid {
             return Ok(());
         }
-        let table = &self.ctx.rt.table;
-        if !self
-            .ctx
-            .rt
-            .links
-            .link(self.pid, other, |p| table.lookup(p).is_some())
-        {
-            // Linking to a dead pid is an immediate `noproc` exit signal.
-            self.ctx.me.exit_signal(other, ExitReason::Noproc, false);
+        if let Err(reason) = delivery::link(&self.ctx.rt, self.pid, other) {
+            // Linking to a dead or unreachable pid is an immediate exit
+            // signal (`noproc` or `noconnection`).
+            self.ctx.me.exit_signal(other, reason, false);
         }
         Ok(())
     }
 
     async fn unlink(&mut self, other: types::Pid) -> Result<()> {
-        self.ctx.rt.links.unlink(self.pid, other.into());
+        delivery::unlink(&self.ctx.rt, self.pid, other.into());
         Ok(())
     }
 
@@ -431,24 +423,19 @@ impl process::Host for InstanceState {
 
     async fn monitor(&mut self, other: types::Pid) -> Result<u64> {
         let other = Pid::from(other);
-        let table = &self.ctx.rt.table;
-        let (reference, alive) = self
-            .ctx
-            .rt
-            .links
-            .monitor(self.pid, other, |p| table.lookup(p).is_some());
-        if !alive {
+        let (reference, down) = delivery::monitor(&self.ctx.rt, self.pid, other);
+        if let Some(reason) = down {
             self.ctx.me.signal(Info::Down {
                 reference,
                 pid: other,
-                reason: ExitReason::Noproc,
+                reason,
             });
         }
         Ok(reference)
     }
 
     async fn demonitor(&mut self, monitor_ref: u64) -> Result<()> {
-        self.ctx.rt.links.demonitor(self.pid, monitor_ref);
+        delivery::demonitor(&self.ctx.rt, self.pid, monitor_ref);
         Ok(())
     }
 
@@ -468,12 +455,7 @@ impl process::Host for InstanceState {
     }
 
     async fn whereis(&mut self, name: String) -> Result<Option<types::Pid>> {
-        let rt = &self.ctx.rt;
-        let found = rt
-            .registry
-            .whereis(&name)
-            .or_else(|| rt.pool_member(&name).map(|h| h.pid()));
-        Ok(found.map(Into::into))
+        Ok(delivery::whereis(&self.ctx.rt, &name).map(Into::into))
     }
 
     async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
@@ -506,8 +488,8 @@ impl process::Host for InstanceState {
                     reason,
                 });
             }
-        } else if let Some(target) = self.ctx.rt.table.lookup(other) {
-            target.exit_signal(self.pid, reason, untrappable);
+        } else {
+            delivery::exit_signal(&self.ctx.rt, self.pid, other, reason, untrappable);
         }
         Ok(())
     }
