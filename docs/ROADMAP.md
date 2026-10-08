@@ -31,20 +31,22 @@ Phase 2 is split in two, so that single-node platform work does not wait on clus
 
 | Phase | Tracks | Exit |
 | --- | --- | --- |
-| 2a: platform on one node | 0, A, B, E | An app serves HTTP, reads a secret, logs and exports metrics on one node, and an operator can trace its messages on a live node |
-| 2b: cluster | C, D | A three-node cluster passes partition and node-loss tests (DESIGN.md roadmap) |
+| 2a: platform on one node | 0, A, B, E, F, G | An app serves HTTP, reads a secret, logs and exports metrics on one node, and an operator can trace its messages on a live node; a protocol extension (Modbus) feeds device data to a hash-routed pool; baselines exist for a large multi-socket machine and a Raspberry Pi 5 |
+| 2b: cluster | C, D | A primary and standby node fail over on node loss, then a three-node cluster passes partition tests (DESIGN.md roadmap) |
 | 3: application server | see "Phase 3" | One real workload runs a full release cycle with zero downtime |
 
 ## Order
 
 ```
-0 ─► A ─┬─► B ──────────┐
-        ├─► E (E1, E2…) ┼─► Phase 2a done
-        │               │
-        └─► C ─► D ─────┴─► Phase 2b done
+0 ─► A ─┬─► B ──────────────────────┐
+        ├─► F (F1 spike first) ─► E1 ┼─► Phase 2a done
+        ├─► E (E2…) ────────────────┤
+        ├─► G ──────────────────────┤
+        │                           │
+        └─► C ─► D (failover first) ┴─► Phase 2b done
 ```
 
-Track 0 comes first because the crate consolidation (0.1) moves files that every later track touches. Track A comes next because B and E add host code that should follow A's service pattern. B, C and E can then run in parallel: they touch different areas. D needs C.
+Track 0 comes first because the crate consolidation (0.1) moves files that every later track touches. Track A comes next because B, E and F add host code that should follow A's service pattern. B, C, E, F and G can then run in parallel: they touch different areas. E1 (HTTP ingress) builds on F's listeners. D needs C, and starts with failover (DESIGN.md, "Scaling and where code runs").
 
 ## Code areas
 
@@ -58,6 +60,7 @@ An area is a unit of focus: a set of modules with a narrow interface to the rest
 | Host services | `paddock-host`: `services` (A1), one module per service (`services::config`, `services::keyvalue`, `services::logging`), plus `deny` and `output` | The `Service` trait and `ServiceCtx` (A1); each service owns its state, linking and capability check | A, E |
 | Orchestration | `paddock-host`: `apps`, `pool`, `supervisor`, `upgrade`, `lifecycle`, `spec` | `Apps`, `AppHandle`, `UpgradeOptions` | 0 (rollback), D (placement later) |
 | Observability | `paddock-host`: `probe` (new in B1) | Probe functions called from the other host areas | B |
+| I/O and protocols | `paddock-host`: listeners and streams (new in F2, F3); protocol and serial services as extensions (A5) in their own crates | Host-owned listeners, stream resources, connection-to-instance policies | F, E1 |
 | Node and admin | `paddock` (`node`, `api`, `cli`) | Admin API routes under `/v1`, the CLI | 0, B, D |
 | Guest SDK | `paddock-sdk`, `paddock-sdk-macros` | `App`, `Ctx`, envelopes, snapshots, logging; services by cargo feature | A, E |
 | Fixtures and examples | `crates/paddock-fixture-*`, `examples/` | Guest components for tests | Any track |
@@ -108,6 +111,8 @@ Today every host service is wired through the same files: one host world (`crate
 - [x] **A4 SDK wrappers for `wasi:config` and `wasi:keyvalue`**, done: `paddock_sdk::config` and `paddock_sdk::kv` (features `config`, `keyvalue`), tested through `paddock-fixture-sdk` (`crates/paddock-host/tests/sdk_services.rs`). The SDK's world imports both always; checked with `wasm-tools` that an app not calling them has no such imports. Original scope: each behind a cargo feature of `paddock-sdk`, with a fixture that uses both through the SDK. Today an app generates its own bindings, and combining them with the SDK is untested. A component still imports only what its code calls.
 - [x] **A5 Out-of-tree services.** Done: `paddock_host::services::Extension`, `Runtime::with_extensions`, `Node::open_with` and `paddock::node::run`; manifests declare `capabilities.extensions."<package>"` and policy grants the package by name. `examples/greeter` (service, app, node) runs end to end. Original scope: A node can be built as a library with extra services: `paddock::node::Builder` (or similar) takes services implementing the A1 trait. One example service in `examples/` built against `paddock-host` alone. This settles DESIGN.md's open question on shipping the server as a library.
 
+- [ ] **A6 Keyvalue reads without the blocking-pool hop.** From S14: a `disk` bucket read costs 22–30 µs against 1–2.5 µs for native redb, almost all of it the hop to tokio's blocking pool on every operation; run inline, reads cost 1.2–1.5 µs above native. Run read-only operations on the worker (redb reads usually hit its page cache; a miss blocks the worker for that read), or hand them to a dedicated storage thread more cheaply. Writes stay off the worker (they fsync). Rerun S14 and `pool_load`. Services area.
+
 Exit: a new service is one module (or crate) plus its manifest section, and adding it changes no file in the process core or orchestration areas.
 
 ## Track B: Observability (M)
@@ -138,6 +143,8 @@ Exit: two-runtime tests cover remote call, cast, link, monitor and `noconnection
 
 DESIGN.md "Distribution", built on C's transport interface. Detailed milestones are written when C is done; the list below is the scope.
 
+Order (reprioritized 2026-10-07, DESIGN.md "Scaling and where code runs"): nodes are added for availability first, load second. Do D1, D2, D10, D7, then D3, D8, D5, D6, then D4 and D9.
+
 - [ ] D1 Node identity and certificates (cluster CA, short-lived certs), QUIC transport with mutual TLS (quinn, rustls) implementing C's transport.
 - [ ] D2 Membership: static seed list, control stream per node pair, node-down by QUIC idle timeout.
 - [ ] D3 Remote pids, calls, casts, links and monitors over the mesh; wire format with protocol version negotiation.
@@ -146,26 +153,53 @@ DESIGN.md "Distribution", built on C's transport interface. Detailed milestones 
 - [ ] D6 Admin API over TLS TCP for remote operation.
 - [ ] D7 Health exports (manifest `health`).
 - [ ] D8 Backpressure between nodes: what a sender sees when the link to a remote node is congested (review finding; DESIGN.md defines only full mailboxes).
+- [ ] D10 Failover: enforce `placement.mode` `singleton` and `hot-standby` across two or more nodes. On node-down the standby node starts (or promotes) the app; `hot-standby` instances learn their role through a `host-event`. Apps recover state from their sources (a SCADA app re-polls its field devices) or from `disk` buckets restored on the standby, before replicated storage (Phase 3) exists. Exit: a primary and standby pair, with the primary killed, serves again within a stated time.
 - [ ] D9 Spike S11: passivation of idle instances through the snapshot pair (snapshot, drop the Store, rebuild on the next message), for address-space headroom. Time-box 2 days.
 
-Exit: a three-node cluster passes partition and node-loss tests.
+Exit: a primary and standby pair fails over on node loss (D10), and a three-node cluster passes partition and node-loss tests.
 
 ## Track E: Edge services (M each)
 
 Guest-facing services, each one module on A's pattern, each with its manifest section enforced (removed from the unenforced list), its denial behavior, an SDK wrapper behind a cargo feature, and a MANIFEST.md entry. Independent of each other and of C and D.
 
-- [ ] **E1 HTTP ingress** (`wasi:http/incoming-handler`). The host terminates TLS and routes by host and path. Needs a design note first: how a request maps to an instance in a pool, how it relates to the app world's callbacks and the callback deadline, and whether a request is handled as a call. Spike S13 (host-owned TCP listeners kept across restart and upgrade) informs it.
-- [ ] **E2 HTTP egress** (`wasi:http/outgoing-handler`) through a filtering proxy with an allow-list; wasmtime's `wasi:http` host per S7.
+- [ ] **E1 HTTP ingress** (`wasi:http/incoming-handler`), on F2's listeners. S15: terminate HTTP in the host and deliver each request to a pooled instance (about 75% of native throughput), not an instance per request (about 15%). The host terminates TLS and routes by host and path. Needs a design note first: how a request maps to an instance in a pool, how it relates to the app world's callbacks and the callback deadline, and whether a request is handled as a call. Spike S13 (host-owned TCP listeners kept across restart and upgrade) informs it.
+- [ ] **E2 HTTP egress** (`wasi:http/outgoing-handler`; S15: wasmtime's default sender opens a connection per request, so the host sender needs connection pooling) through a filtering proxy with an allow-list; wasmtime's `wasi:http` host per S7.
 - [ ] **E3 Secrets** (`paddock:secrets`), resolved from files or environment first, Vault later.
 - [ ] **E4 Metrics** (`paddock:metrics`) for app-defined counters and histograms, and an export (OpenTelemetry or Prometheus) that also carries B1's host events.
 - [ ] **E5 SQL datasources** (`paddock:sql`, Phase 3 in DESIGN.md). The host owns a connection pool per named datasource, configured per node, and the manifest requests a datasource and a connection cap. Because datasources live in node configuration, an app restarted on another node connects to the same database. The host-side pool uses a permissive-licensed driver such as `tokio-postgres`. A second route needs no new interface: an app ships its own driver and connects over `wasi:sockets` with a connect rule (Phase 3 sockets), at the cost of per-instance connections and app-managed credentials.
 
+## Track F: I/O and protocols (L)
+
+Getting data into and out of apps at high rates: host-owned sockets, protocol stacks and devices, with apps doing the decisions. From S14, S15 and DESIGN.md "Scaling and where code runs": terminate I/O and protocols in the host, where they use every core; give guests streams or framed messages.
+
+- [ ] **F1 Spike S13: host-owned listeners and guest streams.** Can the host bind a listener, keep it across instance restart and upgrade, and hand accepted connections to guests as stream resources? Also explain S15's finding that a guest owning 32 connections handles only about 7.5k requests/s (about 133 µs per request on one core, far above its parsing work): measure the cost of `wasi:io` poll and stream calls per connection, so F3's design knows what a guest-side stream costs. Time-box 2 days.
+- [ ] **F2 Listener service.** Listeners declared in the manifest (name, protocol) and bound to addresses in node config; several accept tasks per listener (`SO_REUSEPORT`), the Ranch pattern; listeners survive instance restarts and upgrades. Connection-to-instance policies: an instance per connection (instances start in about 77 µs), or host framing into messages to a hash-routed pool.
+- [ ] **F3 Streams for guests**, if F1 shows they are cheap enough: an accepted connection as a stream resource an instance reads and writes, for low-rate protocols parsed in the sandbox.
+- [ ] **F4 Batching.** Guidance and an SDK helper for sending many updates in one message (one cast costs about 1.3 µs whatever it carries); measure points per second end to end with `pool_load`.
+- [ ] **F5 Serial extension.** Named serial ports declared by apps and bound to device paths in node config (the volumes and datasources rule); the host owns the tty and offers a byte stream or framed messages. An extension (A5), in its own crate.
+- [ ] **F6 Modbus TCP extension**, on `tokio-modbus` (MIT OR Apache-2.0): polling and serving registers, delivering point updates to a hash-routed pool by device id. The first protocol extension and the Phase 2a exit test. DNP3 and ICCP are parked until their stacks' licenses are reviewed.
+
+Exit: a node polls Modbus devices through F6, routes updates by device to a pool, and an app answers through F2's listener; throughput recorded in BASELINE.md.
+
+## Track G: Scale and platforms (M)
+
+Measured so far only on one 16-core machine. Scale up (80+ cores, likely two sockets) and down (a 4-core, 8 GB Raspberry Pi 5) need numbers before designs depend on them.
+
+- [ ] **G1 Large machine.** `pool_load`, `baseline` and S15 at 32 to 80 workers on a multi-socket machine. Watch for contention in shared structures (process table, registry, pool round robin) and cross-socket work stealing; options if it shows: a runtime per socket with pinned workers, or several nodes per machine.
+- [ ] **G2 Raspberry Pi 5 baseline**: `baseline`, `pool_load`, `log_cost`, instances per GB with the dense profile.
+- [ ] **G3 Linux arm64 in CI.** macOS on Apple silicon covers aarch64 code generation, not Linux paths such as probes.
+- [ ] **G4 Cache compiled components** in the deploy store (wasmtime ahead-of-time compilation), so restarts and small machines do not recompile every bundle.
+- [ ] **G5 Dedicated workers** for latency-critical instances (control loops), so bulk traffic cannot delay them. Measure first (after G1).
+
+Exit: G1 and G2 numbers in BASELINE.md, arm64 in CI, and a node restart that does not recompile.
+
 ## Phase 3
 
-From DESIGN.md's roadmap, not yet broken into tracks: placement and failover, opt-in global names (Raft), replicated storage, sockets (with spike S13), native-process plugins, blue-green upgrades, more guest SDKs, fuel metering. rustbridge work for Phase 3: the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait, and the native-process runner.
+From DESIGN.md's roadmap, not yet broken into tracks: placement (failover of singleton and hot-standby apps moved to D10), opt-in global names (Raft), replicated storage, sockets (after F1), native-process plugins, blue-green upgrades, more guest SDKs, fuel metering. rustbridge work for Phase 3: the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait, and the native-process runner.
 
 ## Parked
 
+- **DNP3 and ICCP extensions** (from F6). The mature DNP3 implementations in Rust found so far are source-available with commercial terms; no permissively licensed ICCP (TASE.2 over MMS) stack in Rust is known. Review licenses before choosing a stack or wrapping a C library.
 - **rustbridge release** (deferred from Track 0 on 2026-10-07). Switch `rustbridge-bundle` from the `experiment/wasm` git branch to a crates.io release that includes bundle format 1.2. Not needed while Paddock is a private research project; required before the repo goes public or any Paddock crate is published.
 - **Spike S9: debugging guests.** Two routes exist in wasmtime 49:
   - **Native debugger (works today).** `Config::debug_info(true)` plus wasmtime's `debug-builtins` feature registers JIT code with GDB and LLDB, so breakpoints and stepping work in guest Rust source built with debug info. Best-effort: some locals are unrecoverable. Attaching pauses the whole node, so it suits a development node only.
@@ -204,4 +238,6 @@ From DESIGN.md's roadmap, not yet broken into tracks: placement and failover, op
 | S10 | New `info` cases and old guests | Done; `host-event` reserved ([spikes/s10](../spikes/s10/README.md)) |
 | S11 | Passivation | Planned, D9 |
 | S12 | TLA+ model of remote links and monitors | Planned, C4 |
-| S13 | Host-owned TCP listeners | Planned, before E1 and Phase 3 sockets |
+| S13 | Host-owned TCP listeners and guest streams | Planned, F1 |
+| S14 | Storage inside the guest versus host services; cost of a host call | Done: about 140 ns per host import; small keyvalue reads 1.2 µs over native once the blocking-pool hop goes; redb runs in a guest at 1.0–1.5x native in memory ([spikes/s14](../spikes/s14/README.md)) |
+| S15 | HTTP in the guest versus the host | Done: host-terminated HTTP plus an instance call keeps about 75% of native throughput; `wasi:http` with an instance per request about 15%; a guest-owned socket is capped at one core; `wasi:http` egress opens a connection per request ([spikes/s15](../spikes/s15/README.md)) |

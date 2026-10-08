@@ -271,6 +271,30 @@ An upgrade swaps an instance's component between messages, carrying state throug
 
 **Native-process plugins** upgrade with `restart` or `blue-green` only, because their memory can't be snapshotted by the host. A plugin may implement the snapshot messages itself over its pipe.
 
+## Scaling and where code runs
+
+**An instance runs on one core.** WASI 0.2 has no threads, and WASI 0.3's async gives an instance concurrency, not parallelism. As in Erlang, parallelism comes from many instances: an app runs as a pool (`instances.count`), and `instances.routing = "hash:<key>"` keeps each key's messages on one instance, in order. Sharding by device, account or session gives per-key state and ordering with parallelism across keys. "A guest with four cores" is a pool of four or more instances sharing state through messages and host services.
+
+**Terminate I/O and protocols in the host; decide in guests.** Spikes S14 and S15 measured the split:
+- Host-terminated HTTP calling a pooled instance keeps about 75% of native throughput; a guest that owns its socket is capped at one core.
+- A host call costs about 0.15 µs and a message about 1.3 to 2.3 µs; guest compute runs at 1.0 to 2.4x native (S8).
+
+So high-rate work with little logic stays native and multi-core, and logic that benefits from isolation, supervision and hot upgrade runs in guests:
+
+| Host (native) | Guests |
+| --- | --- |
+| Accepting connections, TLS, framing, high-rate parsing | Per-key state machines, rules, alarms, control decisions |
+| Protocol stacks (Modbus, DNP3, ICCP), serial ports, as extensions | Calculations, routing between subsystems |
+| Bulk paths that need no app logic (device data to a historian) | Anything that must be upgraded live or isolated from other apps |
+
+**Getting data in and out.** The host owns listeners (ROADMAP F2): several accept tasks per listener, the Ranch pattern, kept across instance restarts and upgrades. A connection becomes either an instance of its own (about 77 µs to start, about 56 KiB idle) or framed messages to a hash-routed pool. Low-rate protocols can be parsed inside the sandbox from a host-owned stream, which confines a parser bug to one instance. Devices such as serial lines are never opened by guests: a node binds a named port to a device path, apps declare the name, and an extension owns the device (the same rule as volumes and datasources).
+
+**Throughput comes from batching and cores, not clock rate.** A message costs about the same whatever it carries, so high-rate data moves in batches (many point updates per cast). Scale up adds cores to tokio's worker pool and instances to pools; past 16 cores this is not yet measured, and two-socket machines may need a runtime per socket or several nodes per machine (ROADMAP G1).
+
+**Nodes for availability first.** When nodes are added for availability rather than load, failover comes before a general cluster: `placement.mode = "singleton"` or `"hot-standby"`, with apps recovering state from their sources (a SCADA app re-polls its field devices) or from restored storage until replicated storage exists (ROADMAP D10).
+
+**Scaling down.** On a small machine (a Raspberry Pi 5: 4 cores, 8 GB) the same node runs fewer, smaller apps: the dense memory profile, a 4-worker runtime, and compiled components cached in the deploy store so restarts do not recompile (ROADMAP G2 to G4). wasmtime and anyprobe support aarch64 Linux; Paddock has no numbers there yet.
+
 ## Distribution
 
 Nodes form a full mesh over QUIC (quinn + rustls) with mutual TLS. Delivery is at most once and ordered per sender/receiver pair, the same promise Erlang makes. Anything stronger is opt-in.
@@ -480,6 +504,8 @@ Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and
 - **S6 (bundles): reusable with upstream changes.** `rustbridge-bundle` 1.0.1 works as a library but rejects bundle version 1.2 and the `wasm32-wasip2` platform, and drops unknown sections such as `appserver`. Its signature check defaults to a key carried inside the bundle; Paddock always verifies against operator-trusted keys. Seven rustbridge changes are listed in `spikes/s6/README.md`.
 - **S7 (WASI hosts):** use wasmtime's crates for core WASI, `wasi:config` and `wasi:http`. `wasmtime-wasi-keyvalue` is a demo (writes don't persist past a bucket handle), and there is no `wasi:logging` host, so Paddock writes both. Details: `spikes/S7-wasi-host-crates.md`. (M5 also writes its own `wasi:config` host, two functions, because the crate's host cannot deny access.)
 - **S8 (guest versus native speed): 1.0x to 2.4x for compute; about 2 µs per call.** Measured through `paddock-host` with identical source compiled both ways. Plain integer code matches native (software SHA-256 at 1.02x, fannkuch-redux 1.56x). The gaps come from CPU features wasm lacks: native SHA-256 with SHA extensions is about 6.8x faster, and n-body runs at 2.35x scalar and 1.82x with wasm `simd128`. A call into an instance costs 2 µs on the same worker and 4.8 µs across threads, so Paddock suits messages carrying more than tens of microseconds of work. Message bodies are copied in and out through the canonical ABI at about one `memcpy` each (about 28 µs per MiB). Against languageshootout.com's figures, guest compute sits between the JVM and Node and is 5–15x faster than BEAM; the methods differ, so that comparison is rough. Details: `spikes/s8/README.md`.
+- **S15 (HTTP in the guest versus the host): terminate protocols in the host.** Host hyper calling a pooled instance per request keeps about 75% of native throughput (115k against 152k requests/s, 32 connections); `wasi:http` with a new instance per request about 15%; a guest that owns its socket matches native latency on one connection but is capped at one core. `wasi:http` egress costs what a native new-connection request costs, because wasmtime's sender does not pool connections. Details: `spikes/s15/README.md`.
+- **S14 (storage and host calls): host services are cheap to call; I/O and scheduling dominate.** A host import round trip costs about 140 ns; a small keyvalue read through the whole path about 1.2 µs more than native redb, once the service stops sending reads to tokio's blocking pool (today about 20 µs per read; ROADMAP A6). Moving a 64 KiB value through the keyvalue path costs 10–22 µs, mostly allocations and copies around the canonical ABI copy. redb runs inside a guest (1.0–1.5x native in memory), but on files every write is a WASI call (unsynced writes 4–6x native), so durable storage stays a host service. Details: `spikes/s14/README.md`.
 - **Interface rule (from S4, S7):** every `paddock:*` capability function returns `result<T, error>` where `error` has an `access-denied` case (the name `wasi:keyvalue` and `wasi:sockets` use), so a denied capability is an error value, not a trap. The generic deny stub also accepts `permission-denied` and `access`.
 
 ## WASI 0.2 to 0.3 migration
@@ -534,7 +560,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 The phases in outline; [ROADMAP.md](ROADMAP.md) is the plan, with tracks, order and status.
 
 1. **Phase 1: single node.** Deploy `.rbp` with a Wasm component; instances, mailboxes, call/cast, timers; links, monitors, host supervisors; memory, deadline and mailbox limits; logging, config, keyvalue (memory and disk), preopened files; snapshot upgrade with revert; admin CLI. *Exit: two sample apps survive kill, crash-loop and upgrade tests.*
-2. **Phase 2a: platform on one node.** Host-service pattern, HTTP ingress and egress, secrets, metrics and tracing, introspection. **Phase 2b: cluster.** QUIC mesh with mTLS, static seeds; remote pids, links, monitors and `noconnection`; process groups; messaging ACLs. *Exit: three-node cluster passes partition and node-loss tests.*
+2. **Phase 2a: platform on one node.** Host-service pattern, I/O and protocols (host-owned listeners, extensions for protocols and serial lines), HTTP ingress and egress, secrets, metrics and tracing, introspection, scale and platform baselines. **Phase 2b: cluster.** Failover of singleton and hot-standby apps first; QUIC mesh with mTLS, static seeds; remote pids, links, monitors and `noconnection`; process groups; messaging ACLs. *Exit: three-node cluster passes partition and node-loss tests.*
 3. **Phase 3: application server.** Placement and failover, opt-in global names (Raft), replicated storage, SQL pools, sockets, native-process plugins, blue-green upgrades, more guest SDKs. *Exit: one real workload runs a full release cycle with zero downtime.*
 
 ## Sources
