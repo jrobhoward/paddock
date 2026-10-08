@@ -138,7 +138,33 @@ cargo run --release -p paddock-host --example log_cost
 - Now the host announces the effective level as a `log-level` host event and the SDK's macros check it before `format!`, so a filtered record is a load and a compare.
 - Emitted records cost the same: the guest-side check adds nothing measurable.
 
+## 2026-10-07: admin API and probes (roadmap B1, B5)
+
+Same machine.
+
+```sh
+cargo build --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures
+cargo run --release -p paddock --example admin_latency -- 1    # and 4
+cargo run --release -p paddock-host --example baseline --features probes -- 1 1000 standard
+```
+
+`admin_latency.rs` starts a node with its admin socket, deploys the chaos fixture and times 20,000 `echo:x` calls each way, with the client in the same process as the node. `Client` opens a Unix-socket connection per request, as the CLI and `curl` do. Two runs each:
+
+| Path | Workers | p50 | p99 | Calls/s |
+| --- | --- | --- | --- | --- |
+| In process (`Node::call`: pool routing, no HTTP) | 1 | 4.3 µs | 5.2–5.3 µs | 272,000–275,000 |
+| In process | 4 | 4.6–5.1 µs | 7.6–8.1 µs | 168,000–186,000 |
+| Admin API, one client | 1 | 65–66 µs | 121–124 µs | 14,800–15,100 |
+| Admin API, one client | 4 | 67–68 µs | 106–108 µs | 14,200–14,400 |
+| Admin API, 16 clients | 1 | 728–750 µs | 951–964 µs | 22,000–22,600 |
+| Admin API, 16 clients | 4 | 516–533 µs | 796–798 µs | 31,000–32,200 |
+
+- A call through the admin API costs about 60 µs more than one inside the node: connecting, HTTP/1.1 on both sides, and the copies. It suits operators and tests, not a data path.
+- 16 clients reach about 2x one client's rate on 4 workers; client and server share the workers here, so a separate client process would see somewhat more.
+- The in-process figure is the node's own routing (app lookup, pool pick) on top of the 2.3 µs instance call above.
+
+Probes (`paddock-host`'s `probes` feature, anyprobe USDT) with no tracer attached, `baseline` on 1 worker, two runs each: empty call p50 2.30–2.35 µs without the feature and 2.36–2.40 µs with it, 763,000–770,000 casts/s against 766,000–775,000. The difference is within run-to-run variation.
+
 ## Not measured yet
 
-- Calls through a node's admin API (HTTP on a Unix socket), which add hyper and JSON on top of the figures above (roadmap B5).
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.

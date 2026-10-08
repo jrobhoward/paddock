@@ -23,6 +23,7 @@ use crate::error::describe;
 use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
+use crate::probe;
 use crate::runtime::{LoadedApp, RuntimeInner};
 use crate::spec::InstanceSpec;
 use crate::state::{InstanceState, ProcessContext};
@@ -100,6 +101,11 @@ struct Shared {
     /// their number is bounded by links and monitors.
     signals: mpsc::UnboundedSender<Info>,
     trap_exits: AtomicBool,
+    /// Bytes of linear memory, as the Store's limiter last allowed it to
+    /// grow.
+    memory: Arc<AtomicU64>,
+    /// Why the previous incarnation exited, when a supervisor restarted it.
+    last_exit: std::sync::Mutex<Option<ExitReason>>,
 }
 
 impl InstanceHandle {
@@ -157,6 +163,44 @@ impl InstanceHandle {
         self.shared.dropped.load(Ordering::Relaxed)
     }
 
+    /// Bytes of linear memory the instance has grown to (its largest memory
+    /// as last grown; 0 before it starts).
+    #[must_use]
+    pub fn memory_bytes(&self) -> u64 {
+        self.shared.memory.load(Ordering::Relaxed)
+    }
+
+    /// How many times this instance has been restarted: its incarnation
+    /// minus one.
+    #[must_use]
+    pub fn restarts(&self) -> u32 {
+        self.shared.pid.incarnation.saturating_sub(1)
+    }
+
+    /// Why the previous incarnation exited, if a supervisor restarted this
+    /// one after an exit it saw.
+    #[must_use]
+    pub fn last_exit(&self) -> Option<ExitReason> {
+        self.shared
+            .last_exit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn set_last_exit(&self, reason: ExitReason) {
+        *self
+            .shared
+            .last_exit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
+    }
+
+    /// The counter the Store's limiter records memory growth in.
+    pub(crate) fn memory_counter(&self) -> Arc<AtomicU64> {
+        self.shared.memory.clone()
+    }
+
     /// Wait for the instance to exit and return why.
     pub async fn wait(&self) -> ExitReason {
         let mut exit = self.shared.exit.clone();
@@ -176,17 +220,27 @@ impl InstanceHandle {
     /// (the cast is dropped and counted), [`CallError::Noproc`] if the
     /// instance has exited.
     pub fn cast(&self, msg: Envelope) -> Result<(), CallError> {
-        self.check_size(&msg)?;
-        self.shared
-            .mailbox
-            .try_send(Message::Cast(msg))
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => {
-                    self.shared.dropped.fetch_add(1, Ordering::Relaxed);
-                    CallError::Overloaded
-                }
-                mpsc::error::TrySendError::Closed(_) => CallError::Noproc,
-            })
+        self.cast_from(None, msg)
+    }
+
+    /// [`InstanceHandle::cast`] from instance `from`, for the probes.
+    pub(crate) fn cast_from(&self, from: Option<Pid>, msg: Envelope) -> Result<(), CallError> {
+        let bytes = msg.body.len();
+        let result = self.check_size(&msg).and_then(|()| {
+            self.shared
+                .mailbox
+                .try_send(Message::Cast(msg))
+                .map_err(|e| match e {
+                    mpsc::error::TrySendError::Full(_) => {
+                        self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+                        probe::mailbox_drop(self.pid(), "cast");
+                        CallError::Overloaded
+                    }
+                    mpsc::error::TrySendError::Closed(_) => CallError::Noproc,
+                })
+        });
+        probe::cast_sent(from, self.pid(), bytes, &result);
+        result
     }
 
     fn check_size(&self, msg: &Envelope) -> Result<(), CallError> {
@@ -207,6 +261,24 @@ impl InstanceHandle {
     /// [`CallError::Timeout`] if no reply arrives in time (a late reply is
     /// dropped), and [`CallError::Exited`] if the instance exits first.
     pub async fn call(&self, msg: Envelope, timeout: Duration) -> Result<Envelope, CallError> {
+        self.call_from(None, msg, timeout).await
+    }
+
+    /// [`InstanceHandle::call`] from instance `from`, for the probes.
+    pub(crate) async fn call_from(
+        &self,
+        from: Option<Pid>,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<Envelope, CallError> {
+        let to = self.pid();
+        let call = probe::call_start(from, to, msg.body.len());
+        let result = self.send_call(msg, timeout).await;
+        probe::call_done(call, to, &result);
+        result
+    }
+
+    async fn send_call(&self, msg: Envelope, timeout: Duration) -> Result<Envelope, CallError> {
         self.check_size(&msg)?;
         let (reply, answer) = oneshot::channel();
         let queued = self.shared.mailbox.try_send(Message::Call { msg, reply });
@@ -392,6 +464,8 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
             ops: ops_tx,
             signals: signals_tx,
             trap_exits: AtomicBool::new(false),
+            memory: Arc::new(AtomicU64::new(0)),
+            last_exit: std::sync::Mutex::new(None),
         }),
     };
     let task = InstanceTask {
@@ -444,6 +518,7 @@ impl InstanceTask {
                 Op::Announce => {}
             }
         }
+        probe::instance_exit(self.pid, &reason);
         notify_exit(&rt, self.pid, &reason);
         let _enter = span.enter();
         if reason.is_normal() {
@@ -558,6 +633,12 @@ impl InstanceTask {
             };
 
             store.data_mut().clock.start(spec.callback_deadline);
+            let kind = match &message {
+                Message::Call { .. } => "call",
+                Message::Cast(_) => "cast",
+                Message::Info(_) => "info",
+            };
+            probe::callback_start(self.pid, kind);
             let outcome = match message {
                 Message::Call { msg, reply } => {
                     let call_ref = next_ref;
@@ -593,6 +674,11 @@ impl InstanceTask {
                     killable(&mut self.control, handle).await?
                 }
             };
+            if probe::callback_done_enabled() {
+                let guest = store.data().clock.guest_time();
+                let guest_ns = u64::try_from(guest.as_nanos()).unwrap_or(u64::MAX);
+                probe::callback_done(self.pid, kind, guest_ns, outcome.is_ok());
+            }
             if let Err(err) = outcome {
                 tracing::debug!(error = %describe(&err), "callback failed");
                 return Err(classify(&err, store.data()));

@@ -31,6 +31,8 @@ milestones M0 to M9 are done. rustbridge's bundle format 1.2 comes from its
 - [`docs/MANIFEST.md`](docs/MANIFEST.md): every manifest field, capabilities,
   node configuration and operator policy.
 - [`docs/BASELINE.md`](docs/BASELINE.md): baseline performance numbers.
+- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md): instance stats, calling
+  one instance, and tracing a live node with its probes.
 - [`docs/DESIGN.md`](docs/DESIGN.md): architecture, app model, manifest and
   capability model, failure handling, upgrades, distribution, security, risks.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md): status, remaining work and its
@@ -74,7 +76,8 @@ paddock status orders
 paddock call orders 'ping'
 paddock upgrade orders orders-2.0.0.rbp --approve
 paddock rollback orders                # --restart: from init, state discarded
-paddock ps
+paddock ps                             # memory, restarts, last exit per instance
+paddock call --pid 0.12.1 'ping'       # one instance; or --name <registered name>
 paddock state 0.12.1                   # an instance's state, via save-snapshot
 paddock kill 0.12.1
 paddock logs orders -n 50

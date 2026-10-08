@@ -49,7 +49,10 @@ fn write_bundle(dir: &Path, key: &KeyPair, name: &str) -> PathBuf {
         .unwrap()
         .with_extension(
             "appserver",
-            serde_json::json!({ "lifecycle": { "shutdown_timeout_ms": 300 } }),
+            serde_json::json!({
+                "lifecycle": { "shutdown_timeout_ms": 300 },
+                "registered_names": ["demo-name"]
+            }),
         )
         .with_signing_key(key.pk.to_base64(), key.sk.clone())
         .write(&out)
@@ -120,6 +123,12 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
     let ps_json = paddock(&socket, &["--json", "ps"]).await;
     let ps: Vec<paddock::api::InstanceInfo> = serde_json::from_str(&ps_json.stdout).unwrap();
     let state = paddock(&socket, &["state", &ps[0].pid]).await;
+    let by_pid = paddock(&socket, &["call", "--pid", &ps[0].pid, "echo:by-pid"]).await;
+    let registered = paddock(&socket, &["call", "demo", "register:demo-name"]).await;
+    let by_name = paddock(&socket, &["call", "--name", "demo-name", "echo:by-name"]).await;
+    let cast_by_name = paddock(&socket, &["cast", "--name", "demo-name", "count"]).await;
+    let too_many = paddock(&socket, &["call", "--pid", &ps[0].pid, "demo", "x"]).await;
+    let unknown_name = paddock(&socket, &["call", "--name", "nobody", "x"]).await;
     let debug = paddock(&socket, &["log-level", "demo", "debug"]).await;
     let bogus = paddock(&socket, &["log-level", "demo", "loud"]).await;
     let reset = paddock(&socket, &["log-level", "demo", "reset"]).await;
@@ -157,13 +166,30 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
             .lines()
             .next()
             .unwrap()
-            .ends_with("QUEUED  DROPPED"),
+            .ends_with("RESTARTS  LAST EXIT"),
         "{}",
         ps_table.stdout
     );
     assert_eq!(
         state.stdout,
         format!("{} (raw, 8 bytes)\n0200000000000000\n", ps[0].pid)
+    );
+    assert_eq!(by_pid.stdout.trim(), "by-pid");
+    assert_eq!(registered.stdout.trim(), "ok");
+    assert_eq!(by_name.stdout.trim(), "by-name");
+    assert_eq!(cast_by_name.stdout.trim(), "cast to name demo-name");
+    assert!(
+        !too_many.ok && too_many.stderr.contains("give only the body"),
+        "{}",
+        too_many.stderr
+    );
+    assert!(
+        !unknown_name.ok
+            && unknown_name
+                .stderr
+                .contains("no instance registered as nobody"),
+        "{}",
+        unknown_name.stderr
     );
     assert_eq!(debug.stdout.trim(), "demo logs at debug");
     assert!(

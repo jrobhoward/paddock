@@ -89,6 +89,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "anyprobe"
+version = "0.9.0"
+source = "git+https://github.com/jrobhoward/anyprobe?branch=main#bb4f810d444c3f0a1d182f49ab314ef527322eb8"
+dependencies = [
+ "anyprobe-macros",
+ "dof",
+ "libc",
+ "thiserror",
+ "tracelogging_dynamic",
+ "unicode-ident",
+]
+
+[[package]]
+name = "anyprobe-macros"
+version = "0.9.0"
+source = "git+https://github.com/jrobhoward/anyprobe?branch=main#bb4f810d444c3f0a1d182f49ab314ef527322eb8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -529,6 +552,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "dof"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ed9b77e3c2a83995eedff2fbf992eef44c9f319b8016254f68108e27a4d06e7"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zerocopy",
 ]
 
 [[package]]
@@ -1392,6 +1427,7 @@ dependencies = [
 name = "paddock-host"
 version = "0.0.0"
 dependencies = [
+ "anyprobe",
  "ciborium",
  "paddock-bundle",
  "redb",
@@ -2193,6 +2229,21 @@ name = "toml_writer"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+
+[[package]]
+name = "tracelogging"
+version = "1.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0015caf14cad7613b7bbbb9ee44399ad9a694307be545d8af4e2711178e547e"
+
+[[package]]
+name = "tracelogging_dynamic"
+version = "1.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81357ee826ff21547ab41ceea8a4fcf58d60681de2055e65bc704c32e6e3614b"
+dependencies = [
+ "tracelogging",
+]
 
 [[package]]
 name = "tracing"

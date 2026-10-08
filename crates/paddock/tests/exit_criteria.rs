@@ -92,6 +92,8 @@ async fn exit_criterion_1____kill____restarted_links_get_exit_monitors_get_down_
     let stale_kill = n.client.kill(&target).await.unwrap_err();
     let target_status = n.client.status("target").await.unwrap();
     let watcher_status = n.client.status("watcher").await.unwrap();
+    let ps = n.client.ps().await.unwrap();
+    let restarted = ps.iter().find(|i| i.pid == next).unwrap();
 
     assert_eq!(linked, "ok");
     assert_eq!(incarnation(&next), incarnation(&target) + 1);
@@ -99,6 +101,11 @@ async fn exit_criterion_1____kill____restarted_links_get_exit_monitors_get_down_
     assert_eq!(stale_call, "err:noproc");
     assert_eq!(kind(&stale_kill), "not_found");
     assert_eq!((target_status.restarts, watcher_status.restarts), (1, 0));
+    assert_eq!(
+        (restarted.restarts, restarted.last_exit.as_deref()),
+        (1, Some("killed"))
+    );
+    assert!(restarted.memory_bytes > 0, "{restarted:?}");
     n.shutdown().await;
 }
 

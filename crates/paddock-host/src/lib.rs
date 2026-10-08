@@ -30,6 +30,7 @@ mod message;
 mod output;
 mod pid;
 mod pool;
+mod probe;
 mod registry;
 mod runtime;
 pub mod services;

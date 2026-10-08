@@ -14,6 +14,8 @@
 //! | `POST /v1/apps/{app}/upgrade?approve=true&batch=N&observe_ms=N&max_restarts=N&restart=true` | `.rbp` bytes | [`UpgradeResponse`] |
 //! | `POST /v1/apps/{app}/rollback?batch=N&observe_ms=N&max_restarts=N&restart=true` | | [`UpgradeResponse`] |
 //! | `POST /v1/apps/{app}/call?timeout_ms=N` | message body, with its `Content-Type` | reply body |
+//! | `POST /v1/instances/{pid}/call?timeout_ms=N`, `/v1/names/{name}/call?timeout_ms=N` | as above, to one instance by pid or registered name | reply body |
+//! | `POST /v1/instances/{pid}/cast`, `/v1/names/{name}/cast` | message body, with its `Content-Type` | [`Done`] |
 //! | `GET /v1/apps/{app}/logs?lines=N` | | `Vec<LogLine>` |
 //! | `POST /v1/apps/{app}/cast` | message body, with its `Content-Type` | [`Done`] |
 //! | `POST /v1/apps/{app}/log-level?level=debug` (or `reset`) | | [`Done`] |
@@ -88,6 +90,15 @@ pub struct InstanceInfo {
     /// Casts and timer messages dropped because its mailbox was full.
     #[serde(default)]
     pub dropped: u64,
+    /// Bytes of linear memory it has grown to.
+    #[serde(default)]
+    pub memory_bytes: u64,
+    /// Times it has been restarted (its incarnation minus one).
+    #[serde(default)]
+    pub restarts: u32,
+    /// Why its previous incarnation exited, if its supervisor restarted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_exit: Option<String>,
 }
 
 /// An instance's state, from its `save-snapshot`.
@@ -183,6 +194,39 @@ impl RolloutParams {
             String::new()
         } else {
             format!("?{}", parts.join("&"))
+        }
+    }
+}
+
+/// Where a call or cast goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// An app, through its pool's routing.
+    App(String),
+    /// One instance, by pid (`node.id.incarnation`).
+    Pid(String),
+    /// The instance holding a registered name.
+    Name(String),
+}
+
+impl Target {
+    /// The route for `verb` (`call` or `cast`) to this target.
+    #[must_use]
+    pub fn path(&self, verb: &str) -> String {
+        match self {
+            Self::App(app) => format!("/v1/apps/{app}/{verb}"),
+            Self::Pid(pid) => format!("/v1/instances/{pid}/{verb}"),
+            Self::Name(name) => format!("/v1/names/{name}/{verb}"),
+        }
+    }
+}
+
+impl std::fmt::Display for Target {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::App(app) => f.write_str(app),
+            Self::Pid(pid) => write!(f, "pid {pid}"),
+            Self::Name(name) => write!(f, "name {name}"),
         }
     }
 }

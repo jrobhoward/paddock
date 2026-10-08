@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 
 use super::{
     ApiError, AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, RolloutParams,
-    StateResponse, UpgradeResponse,
+    StateResponse, Target, UpgradeResponse,
 };
 
 /// Why a request failed.
@@ -203,9 +203,24 @@ impl Client {
         content_type: &str,
         body: Vec<u8>,
     ) -> Result<Done, ClientError> {
+        self.cast_to(&Target::App(app.to_string()), content_type, body)
+            .await
+    }
+
+    /// Cast to an app, an instance by pid, or a registered name.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn cast_to(
+        &self,
+        target: &Target,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<Done, ClientError> {
         self.json(
             Method::POST,
-            &format!("/v1/apps/{app}/cast"),
+            &target.path("cast"),
             Some((content_type, body)),
         )
         .await
@@ -247,7 +262,29 @@ impl Client {
         body: Vec<u8>,
         timeout_ms: u64,
     ) -> Result<(String, Vec<u8>), ClientError> {
-        let path = format!("/v1/apps/{app}/call?timeout_ms={timeout_ms}");
+        self.call_to(
+            &Target::App(app.to_string()),
+            content_type,
+            body,
+            timeout_ms,
+        )
+        .await
+    }
+
+    /// Call an app, an instance by pid, or a registered name, and return
+    /// the reply's content type and body.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn call_to(
+        &self,
+        target: &Target,
+        content_type: &str,
+        body: Vec<u8>,
+        timeout_ms: u64,
+    ) -> Result<(String, Vec<u8>), ClientError> {
+        let path = format!("{}?timeout_ms={timeout_ms}", target.path("call"));
         let (status, content_type, body) = self
             .send(Method::POST, &path, Some((content_type, body)))
             .await?;

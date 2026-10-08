@@ -338,7 +338,7 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 | Sockets | `wasi:sockets` with allow-list | `gen_tcp`, `gen_udp` | — | 3 |
 | Database pools | `paddock:sql` against named datasources | — | JDBC datasources | 3 |
 | Metrics and tracing | `paddock:metrics`; OpenTelemetry export | `telemetry` | Metrics subsystem | 2 |
-| Introspection | Admin API: apps, pids, mailbox depth, memory, restarts, message trace | `observer`, `recon`, `dbg` | Management console | 2 |
+| Introspection | Admin API: apps, pids, mailbox depth, memory, restarts; message trace through USDT probes (OBSERVABILITY.md) | `observer`, `recon`, `dbg` | Management console | 1 (probes, `ps`); 2 (cluster-wide) |
 | Placement and failover | Cluster controller | `dist_ac`, takeover | HA singleton | 3 |
 | Distributed transactions | Not provided | — | JTA | Never |
 

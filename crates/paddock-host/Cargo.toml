@@ -9,7 +9,14 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# USDT probes on the message path (`src/probe.rs`): SystemTap SDT on Linux,
+# DTrace on macOS and FreeBSD, ETW on Windows. Without it the probe calls
+# compile to nothing.
+probes = ["dep:anyprobe"]
+
 [dependencies]
+anyprobe = { workspace = true, optional = true }
 ciborium = { workspace = true }
 paddock-bundle = { workspace = true }
 redb = { workspace = true }

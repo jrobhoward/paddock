@@ -18,6 +18,7 @@ use crate::instance::{InstanceHandle, Message};
 use crate::message::{Envelope, ExitReason, Info};
 use crate::output::{CapturedOutput, Tags};
 use crate::pid::Pid;
+use crate::probe;
 use crate::runtime::RuntimeInner;
 use crate::services::config::Config;
 use crate::services::keyvalue::KeyValue;
@@ -87,7 +88,7 @@ impl InstanceState {
             tags,
             wasi: wasi.build(),
             table: ResourceTable::new(),
-            limiter: Limiter::new(spec.memory_max, spec.table_max),
+            limiter: Limiter::new(spec.memory_max, spec.table_max, ctx.me.memory_counter()),
             clock: CallbackClock::default(),
             ctx,
             registered_names: spec.registered_names.clone(),
@@ -183,15 +184,18 @@ pub(crate) struct Limiter {
     table_max: Option<usize>,
     pub(crate) memory_exceeded: bool,
     pub(crate) table_exceeded: bool,
+    /// Linear memory size as last allowed to grow, for `ps`.
+    memory: Arc<AtomicU64>,
 }
 
 impl Limiter {
-    fn new(memory_max: u64, table_max: Option<u32>) -> Self {
+    fn new(memory_max: u64, table_max: Option<u32>, memory: Arc<AtomicU64>) -> Self {
         Self {
             memory_max: usize::try_from(memory_max).unwrap_or(usize::MAX),
             table_max: table_max.map(|t| usize::try_from(t).unwrap_or(usize::MAX)),
             memory_exceeded: false,
             table_exceeded: false,
+            memory,
         }
     }
 }
@@ -207,6 +211,10 @@ impl ResourceLimiter for Limiter {
             self.memory_exceeded = true;
             return Err(Error::msg("memory_limit"));
         }
+        self.memory.store(
+            u64::try_from(desired).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
         Ok(true)
     }
 
@@ -266,6 +274,12 @@ impl CallbackClock {
         self.timed_out
     }
 
+    /// Guest execution time of the current callback so far: wall time
+    /// minus time spent in host imports.
+    pub(crate) fn guest_time(&self) -> Duration {
+        self.started.elapsed().saturating_sub(self.host_time)
+    }
+
     /// Exclude time spent suspended in a host import from the deadline.
     pub(crate) fn add_host_time(&mut self, spent: Duration) {
         self.host_time += spent;
@@ -283,6 +297,7 @@ pub(crate) struct Timers {
 impl Timers {
     fn start(
         &mut self,
+        pid: Pid,
         delay: Duration,
         msg: Envelope,
         mailbox: mpsc::WeakSender<Message>,
@@ -298,6 +313,7 @@ impl Timers {
             let info = Message::Info(Info::Timer { reference, msg });
             if let Err(mpsc::error::TrySendError::Full(_)) = mailbox.try_send(info) {
                 dropped.fetch_add(1, Ordering::Relaxed);
+                probe::mailbox_drop(pid, "timer");
             }
         });
         self.active.insert(reference, task.abort_handle());
@@ -338,7 +354,7 @@ impl process::Host for InstanceState {
         // At most once: a cast to a dead pid, or one the target refuses, is
         // dropped without telling the sender.
         if let Some(target) = self.ctx.rt.table.lookup(to)
-            && let Err(err) = target.cast(msg.into())
+            && let Err(err) = target.cast_from(Some(self.pid), msg.into())
         {
             tracing::debug!(%to, error = %err, "cast dropped");
         }
@@ -362,7 +378,11 @@ impl process::Host for InstanceState {
         };
         let started = Instant::now();
         let result = target
-            .call(msg.into(), Duration::from_millis(timeout_ms.into()))
+            .call_from(
+                Some(self.pid),
+                msg.into(),
+                Duration::from_millis(timeout_ms.into()),
+            )
             .await;
         self.clock.add_host_time(started.elapsed());
         Ok(result.map(Into::into).map_err(|e| (&e).into()))
@@ -453,6 +473,7 @@ impl process::Host for InstanceState {
 
     async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
         Ok(self.timers.start(
+            self.pid,
             Duration::from_millis(ms.into()),
             msg.into(),
             self.ctx.mailbox.clone(),

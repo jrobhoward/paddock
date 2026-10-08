@@ -32,6 +32,7 @@ use crate::error::HostError;
 use crate::instance::InstanceHandle;
 use crate::message::ExitReason;
 use crate::pid::Pid;
+use crate::probe;
 use crate::runtime::{LoadedApp, Runtime};
 use crate::spec::InstanceSpec;
 
@@ -458,6 +459,8 @@ struct Slot {
     child: Option<ChildHandle>,
     generation: u64,
     last_pid: Option<Pid>,
+    /// Why the child last exited, for the next incarnation's `last_exit`.
+    last_reason: Option<ExitReason>,
     restarting: bool,
 }
 
@@ -607,6 +610,7 @@ impl Task {
             child: None,
             generation: 0,
             last_pid: None,
+            last_reason: None,
             restarting: false,
         });
         self.slots.len() - 1
@@ -625,6 +629,14 @@ impl Task {
                 ChildHandle::Supervisor(self.rt.start_supervisor((**spec).clone())?)
             }
         };
+        if slot.last_pid.is_some()
+            && let Some(pid) = handle.pid()
+        {
+            probe::supervisor_restart(pid, &slot.spec.id);
+        }
+        if let (ChildHandle::Instance(instance), Some(reason)) = (&handle, &slot.last_reason) {
+            instance.set_last_exit(reason.clone());
+        }
         slot.last_pid = handle.pid().or(slot.last_pid);
         slot.child = Some(handle.clone());
         slot.restarting = false;
@@ -652,6 +664,7 @@ impl Task {
         slot.child = None;
         tracing::info!(child = %slot.id, reason = %event.reason, "child exited");
         self.last_exit = Some((slot.id.clone(), event.reason.clone()));
+        slot.last_reason = Some(event.reason.clone());
         if !should_restart(slot.spec.restart, &event.reason) {
             if slot.spec.restart == RestartType::Temporary || self.template.is_some() {
                 self.slots.remove(index);

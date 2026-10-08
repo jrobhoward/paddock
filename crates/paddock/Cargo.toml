@@ -21,8 +21,8 @@ default = ["node"]
 # The node daemon (`paddock node`) and everything it runs on, wasmtime
 # included. Without it, the CLI and bundle tooling only.
 node = [
-    "dep:ciborium",
     "dep:paddock-host",
+    "paddock-host/probes",
     "dep:tracing",
     "dep:tracing-subscriber",
     "tokio/rt-multi-thread",
@@ -34,7 +34,7 @@ node = [
 [dependencies]
 anyhow = { workspace = true }
 bytes = { workspace = true }
-ciborium = { workspace = true, optional = true }
+ciborium = { workspace = true }
 clap = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
@@ -57,6 +57,10 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
 wat = { workspace = true }
 wit-parser = { workspace = true }
+
+[[example]]
+name = "admin_latency"
+required-features = ["node"]
 
 [[test]]
 name = "cli"

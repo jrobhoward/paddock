@@ -78,3 +78,37 @@ fn upgrade____snapshot____reports_longest_pause() {
         "1.0.0 -> 2.0.0 (snapshot), 2 instance(s), longest pause 900 µs"
     );
 }
+
+#[test]
+fn instances____restarted_instance____memory_restarts_and_last_exit() {
+    let info = InstanceInfo {
+        pid: "0.3.2".into(),
+        app: "orders".into(),
+        version: "1.0.0".into(),
+        state: "active".into(),
+        queued: 0,
+        dropped: 0,
+        memory_bytes: 3 << 19,
+        restarts: 1,
+        last_exit: Some("killed".into()),
+    };
+
+    let out = instances(&[info]);
+
+    let row = out.lines().nth(1).unwrap();
+    assert!(row.contains("1.5MiB"), "{out}");
+    assert!(row.trim_end().ends_with("1         killed"), "{out}");
+}
+
+#[test]
+fn cbor_from_json____round_trip____reply_prints_same_json() {
+    let bytes = cbor_from_json(r#"{"id":7,"tags":["a","b"]}"#).unwrap();
+
+    let shown = reply("application/cbor", &bytes);
+    let text = reply("text/plain", b"plain");
+    let bad = cbor_from_json("not json");
+
+    assert_eq!(shown, r#"{"id":7,"tags":["a","b"]}"#);
+    assert_eq!(text, "plain");
+    assert!(bad.unwrap_err().starts_with("BODY is not JSON"));
+}

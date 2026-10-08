@@ -68,13 +68,62 @@ pub fn instances(list: &[InstanceInfo]) -> String {
                 i.state.clone(),
                 i.queued.to_string(),
                 i.dropped.to_string(),
+                memory(i.memory_bytes),
+                i.restarts.to_string(),
+                i.last_exit.clone().unwrap_or_else(|| "-".into()),
             ]
         })
         .collect();
     table(
-        &["PID", "APP", "VERSION", "STATE", "QUEUED", "DROPPED"],
+        &[
+            "PID",
+            "APP",
+            "VERSION",
+            "STATE",
+            "QUEUED",
+            "DROPPED",
+            "MEMORY",
+            "RESTARTS",
+            "LAST EXIT",
+        ],
         &rows,
     )
+}
+
+/// Bytes as KiB or MiB, for tables.
+fn memory(bytes: u64) -> String {
+    const MIB: u64 = 1 << 20;
+    if bytes >= MIB {
+        #[allow(clippy::cast_precision_loss)]
+        let mib = bytes as f64 / MIB as f64;
+        format!("{mib:.1}MiB")
+    } else {
+        format!("{}KiB", bytes.div_ceil(1024))
+    }
+}
+
+/// JSON text as CBOR bytes, for `--cbor`.
+///
+/// # Errors
+///
+/// A message if `json` is not JSON.
+pub fn cbor_from_json(json: &str) -> Result<Vec<u8>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("BODY is not JSON: {e}"))?;
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&value, &mut bytes).map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+/// A reply body for printing: CBOR as JSON, anything else as text.
+pub fn reply(content_type: &str, body: &[u8]) -> String {
+    if content_type.starts_with("application/cbor")
+        && let Ok(value) = ciborium::from_reader::<ciborium::Value, _>(body)
+        && let Ok(json) = serde_json::to_string(&value)
+    {
+        return json;
+    }
+    String::from_utf8_lossy(body).into_owned()
 }
 
 /// `paddock status <app>`.

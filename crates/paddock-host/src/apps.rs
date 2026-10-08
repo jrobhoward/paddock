@@ -15,6 +15,7 @@ use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason};
 use crate::pid::Pid;
 use crate::pool::Pool;
+use crate::probe;
 use crate::runtime::{LoadedApp, Runtime};
 use crate::spec::InstanceSpec;
 use crate::supervisor::{
@@ -631,6 +632,20 @@ impl Drop for UpgradeGuard<'_> {
 /// Move an app's own instances from `from` to `to`. Children that run other
 /// apps (`supervision.children`) are left alone.
 async fn move_app(
+    app: &AppHandle,
+    from: &AppDeployment,
+    to: &AppDeployment,
+    mode: UpgradeMode,
+    options: &UpgradeOptions,
+) -> Result<UpgradeReport, UpgradeError> {
+    let version = to.manifest.app.version.to_string();
+    probe::upgrade_start(app.name(), &version);
+    let result = rollout(app, from, to, mode, options).await;
+    probe::upgrade_done(app.name(), &version, result.is_ok());
+    result
+}
+
+async fn rollout(
     app: &AppHandle,
     from: &AppDeployment,
     to: &AppDeployment,

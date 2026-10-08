@@ -151,6 +151,19 @@ All notable changes are recorded here. The format follows
   (`get`, `get_all`) and `paddock_sdk::kv::Bucket` (store, atomics, batch,
   paging `keys`, CBOR-typed `get_value` and `set_value`), with the
   `paddock-fixture-sdk` test fixture.
+- USDT probes on the message path (provider `paddock`): calls, casts,
+  callbacks with guest time, exits, supervisor restarts, rollouts and
+  mailbox drops, from anyprobe (a git dependency on its GitHub `main`).
+  `paddock-host`'s `probes` feature; on in the `paddock` binary.
+  `docs/OBSERVABILITY.md` lists them with bpftrace one-liners.
+- `paddock ps` and `GET /v1/instances` show memory, restart count and the
+  last exit reason (`InstanceHandle::memory_bytes`, `restarts`,
+  `last_exit`).
+- `paddock call`/`cast` take `--pid` or `--name` to address one instance,
+  and `--cbor` to send a JSON body as CBOR; routes
+  `/v1/instances/{pid}/call|cast` and `/v1/names/{name}/call|cast`,
+  `api::Target`, `Client::call_to`/`cast_to`, `Node::call_to`/`cast_to`.
+- `admin_latency` example: admin-API call latency, in `docs/BASELINE.md`.
 - Extensions: host services from outside `paddock-host`. The
   `paddock_host::services::Extension` trait serves one WIT package;
   `Runtime::with_extensions`, `Node::open_with` and `paddock::node::run`

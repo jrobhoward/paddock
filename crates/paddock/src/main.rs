@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use clap::{Args as ClapArgs, Parser, Subcommand};
 use cli::{bundle, format};
-use paddock::api::{Client, RolloutParams};
+use paddock::api::{Client, RolloutParams, Target};
 use serde::Serialize;
 
 /// Run and manage a Paddock node.
@@ -163,15 +163,10 @@ enum Command {
         /// Level, or `reset`.
         level: String,
     },
-    /// Cast to an app.
+    /// Cast to an app, or to one instance by pid or registered name.
     Cast {
-        /// App name.
-        app: String,
-        /// The message body.
-        body: String,
-        /// The message content type.
-        #[arg(long, default_value = "text/plain")]
-        content_type: String,
+        #[command(flatten)]
+        message: Message,
     },
     /// Show an app's recent log records.
     Logs {
@@ -181,19 +176,54 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 100)]
         lines: usize,
     },
-    /// Call an app and print the reply.
+    /// Call an app, or one instance by pid or registered name, and print
+    /// the reply.
     Call {
-        /// App name.
-        app: String,
-        /// The message body.
-        body: String,
-        /// The message content type.
-        #[arg(long, default_value = "text/plain")]
-        content_type: String,
+        #[command(flatten)]
+        message: Message,
         /// How long to wait for the reply.
         #[arg(long, default_value_t = 5_000)]
         timeout_ms: u64,
     },
+}
+
+/// A message for `call` and `cast`, and where it goes.
+#[derive(Debug, ClapArgs)]
+struct Message {
+    /// The app and the message body; only the body with --pid or --name.
+    #[arg(value_name = "[APP] BODY", num_args = 1..=2, required = true)]
+    args: Vec<String>,
+    /// Send to one instance by pid (`node.id.incarnation`) instead of an app.
+    #[arg(long, conflicts_with = "name")]
+    pid: Option<String>,
+    /// Send to the instance holding this registered name.
+    #[arg(long)]
+    name: Option<String>,
+    /// The message content type.
+    #[arg(long, default_value = "text/plain")]
+    content_type: String,
+    /// Read BODY as JSON and send it as CBOR (`application/cbor`); a CBOR
+    /// reply prints as JSON.
+    #[arg(long, conflicts_with = "content_type")]
+    cbor: bool,
+}
+
+impl Message {
+    /// The target, content type and body bytes.
+    fn into_parts(self) -> anyhow::Result<(Target, String, Vec<u8>)> {
+        let (target, body) = match (self.pid, self.name, self.args.as_slice()) {
+            (Some(pid), None, [body]) => (Target::Pid(pid), body.clone()),
+            (None, Some(name), [body]) => (Target::Name(name), body.clone()),
+            (None, None, [app, body]) => (Target::App(app.clone()), body.clone()),
+            (None, None, _) => anyhow::bail!("give an app and a body, or --pid/--name and a body"),
+            _ => anyhow::bail!("with --pid or --name, give only the body"),
+        };
+        if !self.cbor {
+            return Ok((target, self.content_type, body.into_bytes()));
+        }
+        let bytes = format::cbor_from_json(&body).map_err(|e| anyhow::anyhow!("--cbor: {e}"))?;
+        Ok((target, "application/cbor".into(), bytes))
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -318,28 +348,26 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
                 d.message.clone()
             })
         }
-        Command::Cast {
-            app,
-            body,
-            content_type,
-        } => print(
-            json,
-            &client.cast(&app, &content_type, body.into_bytes()).await?,
-            |d| d.message.clone(),
-        ),
+        Command::Cast { message } => {
+            let (target, content_type, body) = message.into_parts()?;
+            print(
+                json,
+                &client.cast_to(&target, &content_type, body).await?,
+                |d| d.message.clone(),
+            )
+        }
         Command::Logs { app, lines } => {
             print(json, &client.logs(&app, lines).await?, |l| format::logs(l))
         }
         Command::Call {
-            app,
-            body,
-            content_type,
+            message,
             timeout_ms,
         } => {
-            let (_, reply) = client
-                .call(&app, &content_type, body.into_bytes(), timeout_ms)
+            let (target, content_type, body) = message.into_parts()?;
+            let (reply_type, reply) = client
+                .call_to(&target, &content_type, body, timeout_ms)
                 .await?;
-            println!("{}", String::from_utf8_lossy(&reply));
+            println!("{}", format::reply(&reply_type, &reply));
             Ok(())
         }
     }

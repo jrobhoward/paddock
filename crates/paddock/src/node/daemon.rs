@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use crate::api::{
     AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, RolloutParams,
-    StateResponse, UpgradeResponse,
+    StateResponse, Target, UpgradeResponse,
 };
 use paddock_bundle::manifest::UpgradeMode;
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
@@ -102,6 +102,21 @@ fn rollout_error(e: UpgradeError, snapshot: bool, params: &RolloutParams) -> Nod
     upgrade_error(e)
 }
 
+/// What a call or cast target resolved to.
+enum Resolved {
+    App(AppHandle),
+    Instance(InstanceHandle),
+}
+
+/// The node error for a failed call or cast to `target`.
+fn send_error(verb: &str, target: &Target, e: &CallError) -> NodeError {
+    match e {
+        CallError::Noproc => NodeError::NotFound(format!("{target} has no running instance")),
+        CallError::TooLarge => NodeError::Invalid(e.to_string()),
+        other => NodeError::Conflict(format!("{verb} to {target} failed: {other}")),
+    }
+}
+
 fn status_text(status: &AppStatus) -> (String, Option<String>) {
     match status {
         AppStatus::Starting => ("starting".into(), None),
@@ -120,6 +135,9 @@ fn instance_info(h: &InstanceHandle) -> InstanceInfo {
         state: format!("{:?}", h.state()).to_lowercase(),
         queued: h.queued(),
         dropped: h.dropped_messages(),
+        memory_bytes: h.memory_bytes(),
+        restarts: h.restarts(),
+        last_exit: h.last_exit().map(|r| r.to_string()),
     }
 }
 
@@ -776,15 +794,69 @@ impl Node {
         msg: Envelope,
         timeout: Duration,
     ) -> Result<Envelope, NodeError> {
-        let app = self
-            .apps
-            .app(name)
-            .ok_or_else(|| NodeError::NotFound(format!("{name} is not running")))?;
-        app.call(msg, timeout).await.map_err(|e| match e {
-            CallError::Noproc => NodeError::NotFound(format!("{name} has no running instance")),
-            CallError::TooLarge => NodeError::Invalid(e.to_string()),
-            other => NodeError::Conflict(format!("call to {name} failed: {other}")),
+        self.call_to(&Target::App(name.to_string()), msg, timeout)
+            .await
+    }
+
+    /// Call an app (through its pool), an instance by pid, or the instance
+    /// holding a registered name.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] for an app that is not running, an unknown
+    /// pid or an unregistered name, [`NodeError::Invalid`] for a bad pid or
+    /// a body over `message_max_bytes`, and [`NodeError::Conflict`] for the
+    /// other call failures.
+    pub async fn call_to(
+        &self,
+        target: &Target,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<Envelope, NodeError> {
+        let result = match self.resolve(target)? {
+            Resolved::App(app) => app.call(msg, timeout).await,
+            Resolved::Instance(h) => h.call(msg, timeout).await,
+        };
+        result.map_err(|e| send_error("call", target, &e))
+    }
+
+    /// Cast to an app, an instance by pid, or a registered name.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Node::call_to`]; a full mailbox is [`NodeError::Conflict`]
+    /// (the cast is dropped and counted).
+    pub fn cast_to(&self, target: &Target, msg: Envelope) -> Result<Done, NodeError> {
+        match self.resolve(target)? {
+            Resolved::App(app) => app.cast(msg),
+            Resolved::Instance(h) => h.cast(msg),
+        }
+        .map_err(|e| send_error("cast", target, &e))?;
+        Ok(Done {
+            message: format!("cast to {target}"),
         })
+    }
+
+    fn resolve(&self, target: &Target) -> Result<Resolved, NodeError> {
+        match target {
+            Target::App(name) => self
+                .apps
+                .app(name)
+                .map(Resolved::App)
+                .ok_or_else(|| NodeError::NotFound(format!("{name} is not running"))),
+            Target::Pid(pid) => {
+                let pid: Pid = pid.parse().map_err(NodeError::Invalid)?;
+                self.rt
+                    .lookup(pid)
+                    .map(Resolved::Instance)
+                    .ok_or_else(|| NodeError::NotFound(format!("no instance {pid}")))
+            }
+            Target::Name(name) => self
+                .rt
+                .whereis(name)
+                .map(Resolved::Instance)
+                .ok_or_else(|| NodeError::NotFound(format!("no instance registered as {name}"))),
+        }
     }
 
     /// Cast to an app, routed to one of its instances.
@@ -796,18 +868,7 @@ impl Node {
     /// [`NodeError::Conflict`] for a full mailbox (the cast is dropped and
     /// counted).
     pub fn cast(&self, name: &str, msg: Envelope) -> Result<Done, NodeError> {
-        let app = self
-            .apps
-            .app(name)
-            .ok_or_else(|| NodeError::NotFound(format!("{name} is not running")))?;
-        app.cast(msg).map_err(|e| match e {
-            CallError::Noproc => NodeError::NotFound(format!("{name} has no running instance")),
-            CallError::TooLarge => NodeError::Invalid(e.to_string()),
-            other => NodeError::Conflict(format!("cast to {name} failed: {other}")),
-        })?;
-        Ok(Done {
-            message: format!("cast to {name}"),
-        })
+        self.cast_to(&Target::App(name.to_string()), msg)
     }
 
     /// An instance's state through `save-snapshot`.

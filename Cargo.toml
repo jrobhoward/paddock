@@ -71,6 +71,9 @@ paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
 # checksums). Cargo.lock pins the commit. Move to a crates.io release once one
 # includes format 1.2.
 rustbridge-bundle = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
+# USDT probes (paddock-host's `probes` feature). Pre-release; Cargo.lock pins
+# the commit of `main`. Move to a crates.io release once there is one.
+anyprobe = { git = "https://github.com/jrobhoward/anyprobe", branch = "main", default-features = false }
 
 # Test-only
 minisign = "0.9"

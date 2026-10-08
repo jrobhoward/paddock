@@ -93,6 +93,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   supervisors, and app sets with pools. `src/services/`: host services, one
   module each on the `Service` pattern (DESIGN.md, "Host service pattern");
   a new service goes there, not into `state.rs` or `runtime.rs`.
+  `src/probe.rs`: USDT probes (anyprobe, `probes` feature); host code calls
+  its functions, never anyprobe directly.
 - `crates/paddock-sdk`, `crates/paddock-sdk-macros`: the Rust guest SDK and
   its `Snapshot` derive. The SDK owns the wit-bindgen bindings (with
   `default_bindings_module`), so app crates have no WIT.
@@ -332,6 +334,7 @@ across them:
 |---|---|---|
 | `README.md` | What Paddock does, how to run it, caveats that change how it should be used | Link out rather than expand |
 | `docs/DESIGN.md` | Design, rationale, prior art, spike findings, risks | Update when a decision changes; not a development log |
+| `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
 | `docs/ROADMAP.md` | The single plan: status, tracks, code areas, crate plan, parked ideas, spike status | Tick items as they land; add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
 | `CHANGELOG.md` | What changed, under `Unreleased` until the first release | Keep a Changelog format; one line per change |

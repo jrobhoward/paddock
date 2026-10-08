@@ -8,7 +8,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::api::{ApiError, RolloutParams};
+use crate::api::{ApiError, RolloutParams, Target};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
@@ -206,13 +206,15 @@ async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
             Err(e) => error(&e),
         },
         (&Method::POST, ["v1", "apps", app, "upgrade"]) => upgrade(node, app, &q, req).await,
-        (&Method::POST, ["v1", "apps", app, "call"]) => call(node, app, &q, req).await,
-        (&Method::POST, ["v1", "apps", app, "cast"]) => match body(req).await {
-            Ok((content_type, bytes)) => {
-                respond(node.cast(app, Envelope::new(content_type, bytes)))
-            }
-            Err(e) => error(&e),
-        },
+        (
+            &Method::POST,
+            [
+                "v1",
+                kind @ ("apps" | "instances" | "names"),
+                id,
+                verb @ ("call" | "cast"),
+            ],
+        ) => send(node, kind, id, verb, &q, req).await,
         (&Method::POST, ["v1", "apps", app, "log-level"]) => {
             match q.iter().find(|(k, _)| k == "level") {
                 Some((_, level)) => respond(node.set_log_level(app, level).await),
@@ -246,7 +248,37 @@ async fn upgrade(node: &Node, app: &str, q: &[(String, String)], req: Request<In
     }
 }
 
-async fn call(node: &Node, app: &str, q: &[(String, String)], req: Request<Incoming>) -> Reply {
+/// `call` or `cast` to an app, an instance by pid, or a registered name.
+async fn send(
+    node: &Node,
+    kind: &str,
+    id: &str,
+    verb: &str,
+    q: &[(String, String)],
+    req: Request<Incoming>,
+) -> Reply {
+    let target = match kind {
+        "apps" => Target::App(id.to_string()),
+        "instances" => Target::Pid(id.to_string()),
+        _ => Target::Name(id.to_string()),
+    };
+    if verb == "call" {
+        return call(node, &target, q, req).await;
+    }
+    match body(req).await {
+        Ok((content_type, bytes)) => {
+            respond(node.cast_to(&target, Envelope::new(content_type, bytes)))
+        }
+        Err(e) => error(&e),
+    }
+}
+
+async fn call(
+    node: &Node,
+    target: &Target,
+    q: &[(String, String)],
+    req: Request<Incoming>,
+) -> Reply {
     let timeout = match param::<u64>(q, "timeout_ms") {
         Ok(t) => Duration::from_millis(t.unwrap_or(5_000)),
         Err(e) => return error(&e),
@@ -256,7 +288,7 @@ async fn call(node: &Node, app: &str, q: &[(String, String)], req: Request<Incom
         Err(e) => return error(&e),
     };
     match node
-        .call(app, Envelope::new(content_type, bytes), timeout)
+        .call_to(target, Envelope::new(content_type, bytes), timeout)
         .await
     {
         Ok(reply) => {
