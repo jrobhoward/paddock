@@ -47,3 +47,21 @@ jobs:
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}
+
+  # Random distribution scenarios (ROADMAP C3) on new seeds each night: run
+  # N starts at N * 1000. A failure prints its seed; replay it locally with
+  # PADDOCK_SIM_SEED=<seed> cargo test -p paddock-host --test simulation random.
+  simulation:
+    name: simulation seeds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --target wasm32-wasip2
+
+      - name: Run seeds
+        env:
+          PADDOCK_SIM_FIRST_SEED: ${{ github.run_number }}000
+          PADDOCK_SIM_SEEDS: "500"
+        run: cargo +stable test -p paddock-host --test simulation --locked random

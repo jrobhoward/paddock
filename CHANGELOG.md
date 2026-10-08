@@ -169,6 +169,16 @@ All notable changes are recorded here. The format follows
 - `transport::memory::Mesh`: runtimes in one process as nodes, with
   per-pair delay and jitter, random drops from a seed, partition, isolate
   and heal, for tests.
+- Deterministic distribution tests (`paddock-host`'s `tests/simulation`):
+  nodes on a paused tokio clock, so races between links, monitors, exits,
+  partitions and heals replay the same way every run. Targeted race tests,
+  and seeded random scenarios checked against the distribution rules
+  (`PADDOCK_SIM_SEEDS`, `PADDOCK_SIM_FIRST_SEED`, `PADDOCK_SIM_SEED` to
+  replay one); 500 new seeds run nightly.
+- The epoch ticker parks between ticks, so dropping a runtime stops it at
+  once whatever the tick.
+- The dev profile builds Cranelift optimized: tests that compile guest
+  components compile each in about 0.2 s instead of over 2 s.
 - USDT probes on the message path (provider `paddock`): calls, casts,
   callbacks with guest time, exits, supervisor restarts, rollouts and
   mailbox drops, from anyprobe (a git dependency on its GitHub `main`).

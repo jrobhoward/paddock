@@ -1,6 +1,6 @@
 # Paddock: Roadmap
 
-2026-10-07 · Companion to [DESIGN.md](DESIGN.md)
+2026-10-08 · Companion to [DESIGN.md](DESIGN.md)
 
 The single plan for remaining work. It replaces `docs/PHASE1_PLAN.md`, which tracked Phase 1 to completion (see git history up to commit `a1f84c8`). DESIGN.md holds the design and its rationale; this file holds what is left to build, in what order, and which part of the code each piece of work touches.
 
@@ -31,22 +31,23 @@ Phase 2 is split in two, so that single-node platform work does not wait on clus
 
 | Phase | Tracks | Exit |
 | --- | --- | --- |
-| 2a: platform on one node | 0, A, B, E, F, G | An app serves HTTP, reads a secret, logs and exports metrics on one node, and an operator can trace its messages on a live node; a protocol extension (Modbus) feeds device data to a hash-routed pool; baselines exist for a large multi-socket machine and a Raspberry Pi 5 |
+| 2a: platform on one node | 0, A, B, E, F, G, H | An app serves HTTP, reads a secret, logs and exports metrics on one node, and an operator can trace its messages on a live node; a protocol extension (Modbus) feeds device data to a hash-routed pool, which keeps a point table in a shared bucket that other apps watch; baselines exist for a large multi-socket machine and a Raspberry Pi 5 |
 | 2b: cluster | C, D | A primary and standby node fail over on node loss, then a three-node cluster passes partition tests (DESIGN.md roadmap) |
 | 3: application server | see "Phase 3" | One real workload runs a full release cycle with zero downtime |
 
 ## Order
 
 ```
-0 ─► A ─┬─► B ──────────────────────┐
-        ├─► F (F1 spike first) ─► E1 ┼─► Phase 2a done
-        ├─► E (E2…) ────────────────┤
-        ├─► G ──────────────────────┤
-        │                           │
-        └─► C ─► D (failover first) ┴─► Phase 2b done
+0 ─► A ─┬─► B ───────────────────────────┐
+        ├─► F (F1 spike first) ─► E1 ─────┤
+        ├─► H ─► F6 ──────────────────────┼─► Phase 2a done
+        ├─► E (E2…) ──────────────────────┤
+        ├─► G ────────────────────────────┤
+        │                                 │
+        └─► C ─► D (failover first) ──────┴─► Phase 2b done
 ```
 
-Track 0 comes first because the crate consolidation (0.1) moves files that every later track touches. Track A comes next because B, E and F add host code that should follow A's service pattern. B, C, E, F and G can then run in parallel: they touch different areas. E1 (HTTP ingress) builds on F's listeners. D needs C, and starts with failover (DESIGN.md, "Scaling and where code runs").
+Track 0 comes first because the crate consolidation (0.1) moves files that every later track touches. Track A comes next because B, E and F add host code that should follow A's service pattern. B, C, E, F, G and H can then run in parallel: they touch different areas. E1 (HTTP ingress) builds on F's listeners. F6 (Modbus) waits for H, so device data lands in a shared bucket that apps watch. D needs C, and starts with failover (DESIGN.md, "Scaling and where code runs").
 
 ## Code areas
 
@@ -56,8 +57,8 @@ An area is a unit of focus: a set of modules with a narrow interface to the rest
 | --- | --- | --- | --- |
 | Contract | `wit/`, WIT rules tests | The `paddock:runtime` world; versioned, never changed in place | Any track, with the WIT rules |
 | Manifest and bundle | `paddock-bundle` (`manifest`, `bundle`, `policy`, `grant`) | `AppSpec`, `VerifiedBundle`, the effective grant | 0, E (new manifest sections) |
-| Process core | `paddock-host`: `pid`, `table`, `registry`, `links`, `message`, `instance`, `runtime`, `state` (process functions) | Spawn, call, cast, link, monitor, exit; after C1, a delivery interface | C, D |
-| Host services | `paddock-host`: `services` (A1), one module per service (`services::config`, `services::keyvalue`, `services::logging`), plus `deny` and `output` | The `Service` trait and `ServiceCtx` (A1); each service owns its state, linking and capability check | A, E |
+| Process core | `paddock-host`: `pid`, `table`, `registry`, `links`, `message`, `instance`, `runtime`, `state` (process functions) | Spawn, call, cast, link, monitor, exit; after C1, a delivery interface | C, D, H1 (quotas) |
+| Host services | `paddock-host`: `services` (A1), one module per service (`services::config`, `services::keyvalue`, `services::logging`), plus `deny` and `output` | The `Service` trait and `ServiceCtx` (A1); each service owns its state, linking and capability check | A, E, H |
 | Orchestration | `paddock-host`: `apps`, `pool`, `supervisor`, `upgrade`, `lifecycle`, `spec` | `Apps`, `AppHandle`, `UpgradeOptions` | 0 (rollback), D (placement later) |
 | Observability | `paddock-host`: `probe` (new in B1) | Probe functions called from the other host areas | B |
 | I/O and protocols | `paddock-host`: listeners and streams (new in F2, F3); protocol and serial services as extensions (A5) in their own crates | Host-owned listeners, stream resources, connection-to-instance policies | F, E1 |
@@ -134,7 +135,8 @@ Prepares the process core for remote pids without any networking. Today call, ca
 
 - [x] **C1 Delivery interface.** Every pid resolution in the process core (call, cast, reply, link and unlink, monitor and demonitor, exit signals, `exit`/`down` notifications, whereis) goes through one interface that answers "local, or to node N". The local implementation is today's behavior; existing tests pass unchanged.
 - [x] **C2 In-process transport.** Two or more runtimes in one process connected by an in-memory transport with fault injection: drop, delay, reorder between pairs, partition, heal. Remote links and monitors, and `noconnection` on partition, follow DESIGN.md "Distribution". Done as `paddock_host::transport` (`Frame`, the `Transport` trait, `Runtime::deliver` and `node_down`) and `transport::memory::Mesh` (per-pair delay and jitter in order, random drop from a seed, partition, isolate, heal); `tests/distribution.rs`. Frames between one pair never reorder (the transport's promise); pairs interleave. Open: node-down from a dropped runtime is reported only by `partition`/`isolate`, not detected.
-- [ ] **C3 Deterministic tests.** Link, monitor and exit races, and partition and heal, on C2 with tokio's paused clock (or turmoil), repeatable from a seed.
+- [x] **C3 Deterministic tests.** Done 2026-10-08: `crates/paddock-host/tests/simulation`. Nodes run on a `current_thread` tokio runtime with a paused clock and an hour-long epoch tick (no real-time preemption), so a run depends only on its seed. Eight targeted races (monitor, link, unlink and demonitor against an exit in flight; partition against a down or a link in flight; heal before old frames are due; a reply after its call timed out) and random scenarios over three nodes: links, monitors, kills, calls, casts, partitions and heals, checked for at most one notice per link or monitor, exactly one when due, allowed reasons only, and call results that follow from the state. 2,000 seeds pass with reliable frames and with 5% lost; the first long run found a wrong expectation in the checker (a kill is asynchronous), not a host bug. Mutations (dropping the demonitor check, losing one `noconnection` exit) are caught. 24 seeds run in CI (about 4 s), 500 new seeds nightly. Not covered yet: node-down detection (C5) and non-trapping instances whose links cascade.
+- [ ] **C5 Control frames and heartbeats.** Frames between nodes today carry process traffic only. Add node-level frames (heartbeat, and later membership and failover messages) to the transport, a heartbeat per node pair with node-down after a configurable silence, and links in the mesh that fail on their own (a second path, standing in for a serial line). Closes C2's open item: a node that stops answering is detected, not only reported by `partition`. Transport area.
 - [ ] **C4 Spike S12.** A TLA+ model of remote links, monitors and `noconnection` with pid incarnations, model-checked with a safe and an adversarial network; invariants listed. Time-box 3 days. If a rule does not hold, narrow the Phase 2 guarantees to what the model shows. Runs before or beside C2.
 
 Exit: two-runtime tests cover remote call, cast, link, monitor and `noconnection` under injected partitions, with no network.
@@ -143,17 +145,29 @@ Exit: two-runtime tests cover remote call, cast, link, monitor and `noconnection
 
 DESIGN.md "Distribution", built on C's transport interface. Detailed milestones are written when C is done; the list below is the scope.
 
-Order (reprioritized 2026-10-07, DESIGN.md "Scaling and where code runs"): nodes are added for availability first, load second. Do D1, D2, D10, D7, then D3, D8, D5, D6, then D4 and D9.
+Order (reprioritized 2026-10-08, DESIGN.md "Scaling and where code runs"): nodes are added for availability first, load second. Membership and failover are built on C's `Transport` trait and tested on the in-memory mesh before QUIC exists, so the cluster logic and the network are separate pieces of work:
+
+1. C3 and C5, then D2 and D10 on the mesh.
+2. D1 (QUIC), which overlaps step 1; D2 and D10 then rerun over loopback, ending in a demo with two `paddock node` processes and a witness.
+3. C4 (TLA+ of links and monitors) before D3.
+4. D7, D3, D8, D5, D6, then D4 (needs H2) and D9.
+
+No D item needs consensus. Raft (or HAppliance-style replication) arrives with Phase 3's replicated buckets and global names.
 
 - [ ] D1 Node identity and certificates (cluster CA, short-lived certs), QUIC transport with mutual TLS (quinn, rustls) implementing C's transport.
-- [ ] D2 Membership: static seed list, control stream per node pair, node-down by QUIC idle timeout.
+- [ ] D2 Membership: static seed list, control stream per node pair, node-down by C5's heartbeats (QUIC idle timeout as a backstop). A node can run as a witness, with no apps (a node config role).
 - [ ] D3 Remote pids, calls, casts, links and monitors over the mesh; wire format with protocol version negotiation.
-- [ ] D4 Process groups (gossiped, like OTP `pg`).
-- [ ] D5 Messaging ACLs (`messaging_acl`), enforced for local and remote senders. Settles DESIGN.md's open question on ACL identity.
+- [ ] D4 Process groups across nodes: H2's local groups, gossiped like OTP `pg`; `publish` sends one copy per remote node, which fans out locally.
+- [ ] D5 Messaging ACLs (`messaging_acl`), enforced for local and remote senders, by app name through declared routes (`may_call`, `accept_from`) checked against the host-stamped sender (DESIGN.md, "Open questions"). Capability tokens are parked.
 - [ ] D6 Admin API over TLS TCP for remote operation.
 - [ ] D7 Health exports (manifest `health`).
 - [ ] D8 Backpressure between nodes: what a sender sees when the link to a remote node is congested (review finding; DESIGN.md defines only full mailboxes).
-- [ ] D10 Failover: enforce `placement.mode` `singleton` and `hot-standby` across two or more nodes. On node-down the standby node starts (or promotes) the app; `hot-standby` instances learn their role through a `host-event`. Apps recover state from their sources (a SCADA app re-polls its field devices) or from `disk` buckets restored on the standby, before replicated storage (Phase 3) exists. Exit: a primary and standby pair, with the primary killed, serves again within a stated time.
+- [ ] D10 Failover: enforce `placement.mode` `singleton` and `hot-standby` across two or more nodes. On node-down the standby node starts (or promotes) the app; `hot-standby` instances learn their role through a `host-event`. Apps recover state from their sources (a SCADA app re-polls its field devices) or from `disk` buckets restored on the standby, before replicated storage (Phase 3) exists. Two nodes alone cannot tell a partition from node loss (DESIGN.md, "Two nodes cannot break a tie alone"). Leadership is a small internal interface with three modes, built in this order, without Raft:
+  1. Priority list with operator-confirmed promotion (OTP `dist_ac` level).
+  2. Independent heartbeat paths (the cluster link and a serial line owned by the node, `[cluster.heartbeat]` in node config): promote only when every path is silent. Epochs as fencing tokens.
+  3. Promotion granted by a witness (a third-site or disaster-recovery node), with a lease that stops a cut-off primary's singletons before the witness grants the standby's promotion.
+
+  Apps are deployed to each node through its own admin API; `placement.mode` decides which node runs them (cluster-wide deploy is Phase 3). Restoring `disk` buckets on the standby is left out: apps re-read their sources. Model first: spike S16 adapts HAppliance's TLA+ specifications (`docs/tla/SyncReplication.tla` and `SyncReplicationL3_Promotion.tla`: roles, epochs, witness promotion, safe and adversarial serial) without the data path, adds the lease and an app started and stopped on role changes, and checks "at most one node runs a singleton" under any single failure and under network plus serial cut together. Exit: a primary, a standby and a witness, with the primary killed, serve again within a stated time; with the network cut, nobody promotes; with network and serial cut together, at most one side runs the singleton at any moment.
 - [ ] D9 Spike S11: passivation of idle instances through the snapshot pair (snapshot, drop the Store, rebuild on the next message), for address-space headroom. Time-box 2 days.
 
 Exit: a primary and standby pair fails over on node loss (D10), and a three-node cluster passes partition and node-loss tests.
@@ -189,17 +203,36 @@ Measured so far only on one 16-core machine. Scale up (80+ cores, likely two soc
 - [ ] **G2 Raspberry Pi 5 baseline**: `baseline`, `pool_load`, `log_cost`, instances per GB with the dense profile.
 - [ ] **G3 Linux arm64 in CI.** macOS on Apple silicon covers aarch64 code generation, not Linux paths such as probes.
 - [ ] **G4 Cache compiled components** in the deploy store (wasmtime ahead-of-time compilation), so restarts and small machines do not recompile every bundle.
-- [ ] **G5 Dedicated workers** for latency-critical instances (control loops), so bulk traffic cannot delay them. Measure first, with timing inside the server: S15 saw host HTTP plus an instance call add 10–47 µs over native at one connection, which client-side timing was too noisy to explain.
+- [ ] **G5 Dedicated workers and CPU budgets** for latency-critical instances (control loops), so bulk traffic cannot delay them: priority classes per app mapped to separate worker sets, a CPU budget per period per app measured with `CallbackClock` (seL4's scheduling contexts), and a rule for priority inversion when a high-priority instance calls a normal one (QNX runs the server at the caller's priority). Measure first, with timing inside the server: S15 saw host HTTP plus an instance call add 10–47 µs over native at one connection, which client-side timing was too noisy to explain.
 
 Exit: G1 and G2 numbers in BASELINE.md, arm64 in CI, and a node restart that does not recompile.
 
+## Track H: Coordination between apps (M)
+
+How apps on one node share state and events without a message per reader (DESIGN.md, "Shared buckets and watches"). Today buckets are per app, there are no subscriptions, and publishing to many instances is a loop of casts. Single-node; the cluster versions are D4 and Phase 3.
+
+- [ ] **H1 Host-object quotas.** A cap per instance on timers, monitors, links, registered names, pending calls, and (with H2 and H4) group memberships and watches. These live in host memory outside `memory_max`; a pending timer holds its envelope (`state.rs`, `send_after`), so a guest can exhaust the node today. Manifest `limits` fields with node defaults; over quota, the operation fails or the instance crashes with a stated reason. Process core and services areas.
+- [ ] **H2 Local process groups and publish.** A `paddock:groups` package on the service pattern (so the frozen `paddock:runtime` world does not change): `join`, `leave`, `members`, and `publish`, which copies the message from the guest once and fans it out into every member's mailbox. Members leave when they exit. Manifest declares the groups an app may join; dropped publishes are counted per member as dropped casts. D4 gossips the same groups across nodes.
+- [ ] **H3 Shared buckets.** Buckets named in node config (`[buckets.<name>]`, with durability, quota and `scope = "node"`; `"cluster"` reserved for Phase 3), listed in an app's manifest as read-only or read-write and granted by operator policy. A backend boundary inside `services::keyvalue` (memory, redb, later replicated) so Phase 3 adds a backend without touching the guest interface. Writes stamp a revision per bucket.
+- [ ] **H4 Watches and compare-and-swap on revision.** A `paddock:watch` package: watch a key or prefix in a granted bucket; notices are `host-event("kv-changed", …)` with bucket, key and revision, conflated per key while one is queued, never counted as dropped; resume from a revision, or a "too old" answer that tells the subscriber to reread. Compare-and-swap against an expected revision, and an `unavailable` error case reserved for replicated buckets. SDK wrapper behind a cargo feature. Measure notice latency and the cost of a write with many watchers in BASELINE.md.
+- [ ] **H5 Ordered range scans** (ETS `ordered_set`; redb keeps keys in order), if H3's users need them.
+
+Exit: a writer app updates a shared bucket, several apps in other bundles watch it and read the latest values, a slow watcher misses intermediate values but never the latest, and a guest that creates timers in a loop is stopped by its quota.
+
 ## Phase 3
 
-From DESIGN.md's roadmap, not yet broken into tracks: placement (failover of singleton and hot-standby apps moved to D10), opt-in global names (Raft), replicated storage, sockets (after F1), native-process plugins, blue-green upgrades, more guest SDKs, fuel metering. rustbridge work for Phase 3: the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait, and the native-process runner.
+From DESIGN.md's roadmap, not yet broken into tracks: placement (failover of singleton and hot-standby apps moved to D10), opt-in global names (Raft), replicated buckets (`scope = "cluster"` on H3's buckets: Raft, or HAppliance-style synchronous replication between an HA pair with a witness, chosen then; writes forwarded to the leader, a full local copy per node for reads, watches delivered from each node's copy, linearizable reads on request, `unavailable` writes in a minority partition; later, keys owned by a pid and a `mirrored` asynchronous durability; DESIGN.md, "Shared buckets and watches"), sockets (after F1), native-process plugins, blue-green upgrades, more guest SDKs, fuel metering. rustbridge work for Phase 3: the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait, and the native-process runner.
 
 ## Parked
 
 - **DNP3 and ICCP extensions** (from F6). The mature DNP3 implementations in Rust found so far are source-available with commercial terms; no permissively licensed ICCP (TASE.2 over MMS) stack in Rust is known. Review licenses before choosing a stack or wrapping a C library.
+- **Redis or etcd bridge** as an extension (A5), for sites that already run one. Not the platform's shared buckets.
+- **Capability tokens for messaging** (seL4-style endpoint handles passed in messages), after D5's declared routes.
+- **Zero-copy large messages**: host-owned immutable blobs passed by handle (Erlang's reference-counted binaries, Fuchsia's VMOs). Only if F4's measurements show copies matter.
+- **Handing a connection to another instance** (`gen_tcp:controlling_process`, `SCM_RIGHTS`). Rare with an instance per connection.
+- **Persistent timers** (the EJB timer service, cron): scheduled work that survives restarts. Today timers live and die with their instance.
+- **Node alarms** (OTP `os_mon` and `alarm_handler`): memory, disk and storage-error alarms as host events and in the admin API.
+- **Key expiry** in keyvalue (review F18): a TTL per bucket or per `set`, next to H4's watch.
 - **rustbridge release** (deferred from Track 0 on 2026-10-07). Switch `rustbridge-bundle` from the `experiment/wasm` git branch to a crates.io release that includes bundle format 1.2. Not needed while Paddock is a private research project; required before the repo goes public or any Paddock crate is published.
 - **Spike S9: debugging guests.** Two routes exist in wasmtime 49:
   - **Native debugger (works today).** `Config::debug_info(true)` plus wasmtime's `debug-builtins` feature registers JIT code with GDB and LLDB, so breakpoints and stepping work in guest Rust source built with debug info. Best-effort: some locals are unrecoverable. Attaching pauses the whole node, so it suits a development node only.
@@ -241,3 +274,4 @@ From DESIGN.md's roadmap, not yet broken into tracks: placement (failover of sin
 | S13 | Host-owned TCP listeners and guest streams | Done: guest streams at native throughput with an instance per connection; crashes and upgrades leave the listener untouched ([spikes/s13](../spikes/s13/README.md)) |
 | S14 | Storage inside the guest versus host services; cost of a host call | Done: about 140 ns per host import; small keyvalue reads 1.2 µs over native once the blocking-pool hop goes; redb runs in a guest at 1.0–1.5x native in memory ([spikes/s14](../spikes/s14/README.md)) |
 | S15 | HTTP in the guest versus the host | Done: host-terminated HTTP plus an instance call keeps about 75% of native throughput; `wasi:http` with an instance per request about 15%; a guest-owned socket is capped at one core; `wasi:http` egress opens a connection per request ([spikes/s15](../spikes/s15/README.md)) |
+| S16 | TLA+ model of failover (from HAppliance's specifications) | Planned, D10 |

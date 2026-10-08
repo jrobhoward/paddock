@@ -131,7 +131,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   (local, dead, or another node). Process-core code that names a pid calls
   it, never the process table directly. `src/transport/`: frames between
   nodes, the `Transport` trait, and `memory`, the in-process mesh with fault
-  injection that `tests/distribution.rs` runs on.
+  injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
+  the mesh on a paused clock: targeted races and seeded random scenarios
+  (`PADDOCK_SIM_SEED=<n>` replays one).
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.
@@ -150,7 +152,10 @@ without re-running its spike.
 `LocalSet`.** In that configuration timers and the top-level future starve
 while a guest yields every epoch tick (S1). That includes tests: async tests that
 run instances use `#[tokio::test(flavor = "multi_thread")]`, never the
-default.
+default. The one exception is `paddock-host`'s `tests/simulation`, which
+needs tokio's paused clock (`current_thread` only): it runs no spinning
+guest and sets an hour-long epoch tick, and a guest that spins there would
+hang the run.
 
 **The epoch ticker is an OS thread, not a tokio task.** Guests yield only when
 the epoch advances; if every worker ran a spinning guest, a ticker task would

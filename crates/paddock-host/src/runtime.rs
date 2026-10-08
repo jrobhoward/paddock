@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
@@ -525,9 +525,17 @@ impl Ticker {
         let thread = std::thread::Builder::new()
             .name("paddock-epoch".into())
             .spawn(move || {
+                let mut next = Instant::now() + tick;
                 while !flag.load(Ordering::Relaxed) {
-                    std::thread::sleep(tick);
+                    // Parked rather than asleep, so `drop` wakes it at once
+                    // even with a long tick.
+                    let now = Instant::now();
+                    if now < next {
+                        std::thread::park_timeout(next - now);
+                        continue;
+                    }
                     engine.increment_epoch();
+                    next = now + tick;
                 }
             })?;
         Ok(Self {
@@ -541,6 +549,7 @@ impl Drop for Ticker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
+            thread.thread().unpark();
             let _ = thread.join();
         }
     }

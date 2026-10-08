@@ -116,3 +116,20 @@ opt-level = 3
 
 [profile.dev.package.salsa20]
 opt-level = 3
+
+# Tests compile guest components with Cranelift; unoptimized, it takes
+# seconds per component, which dominates the distribution and simulation tests.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+
+[profile.dev.package.regalloc2]
+opt-level = 3
+
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+
+[profile.dev.package.wasmparser]
+opt-level = 3

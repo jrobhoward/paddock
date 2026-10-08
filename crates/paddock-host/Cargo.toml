@@ -34,7 +34,7 @@ tempfile = { workspace = true }
 wat = { workspace = true }
 tracing-subscriber = { workspace = true }
 semver = { workspace = true }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
 
 [lints]
 workspace = true
