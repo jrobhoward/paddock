@@ -10,6 +10,7 @@ wasmtime::component::bindgen!({
         "../../wit/vendor/wasi-logging",
         "../../wit/vendor/wasi-config",
         "../../wit/vendor/wasi-keyvalue",
+        "../../wit/groups",
         "wit",
     ],
     world: "paddock:host/paddock-app",

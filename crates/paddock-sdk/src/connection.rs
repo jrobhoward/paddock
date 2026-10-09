@@ -57,6 +57,7 @@ pub mod bindings {
             "../../wit/vendor/wasi-keyvalue",
             "../../wit/vendor/wasi-io",
             "../../wit/connection",
+            "../../wit/groups",
             "wit",
         ],
         world: "paddock:sdk/connection",

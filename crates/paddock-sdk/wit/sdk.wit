@@ -10,6 +10,7 @@ world app {
   import wasi:keyvalue/store@0.2.0-draft;
   import wasi:keyvalue/atomics@0.2.0-draft;
   import wasi:keyvalue/batch@0.2.0-draft;
+  import paddock:groups/groups@0.1.0;
 }
 
 /// The world the SDK binds for connection handlers (feature `connection`):

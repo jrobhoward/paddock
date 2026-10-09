@@ -17,7 +17,7 @@ use paddock_bundle::manifest::{AppSpec, Bucket, Capability};
 use wasmtime::Result;
 use wasmtime::component::{Linker, Resource};
 
-use super::{Ctx, HostState, Service, ServiceCtx};
+use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 
@@ -33,6 +33,7 @@ mod bindings {
             "../../wit/vendor/wasi-logging",
             "../../wit/vendor/wasi-config",
             "../../wit/vendor/wasi-keyvalue",
+            "../../wit/groups",
             "wit",
         ],
         world: "paddock:host/keyvalue",
@@ -89,11 +90,11 @@ impl Service for KeyValue {
         KvStore::open(config.data_dir.as_deref()).map_err(HostError::Storage)
     }
 
-    fn instance(shared: &Arc<KvStore>, spec: &KeyValueSpec, granted: bool) -> Instance {
+    fn instance(shared: &Arc<KvStore>, spec: &KeyValueSpec, info: &InstanceInfo<'_>) -> Instance {
         Instance {
             store: shared.clone(),
             buckets: spec.buckets.clone(),
-            granted,
+            granted: info.granted,
         }
     }
 

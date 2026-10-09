@@ -22,3 +22,8 @@ world keyvalue {
   import wasi:keyvalue/atomics@0.2.0-draft;
   import wasi:keyvalue/batch@0.2.0-draft;
 }
+
+/// The groups service's interfaces (`src/services/groups`).
+world groups {
+  import paddock:groups/groups@0.1.0;
+}

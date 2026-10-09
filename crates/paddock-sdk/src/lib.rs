@@ -34,6 +34,8 @@
 //!   available.
 //! - `config` (cargo feature `config`): `wasi:config`.
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
+//! - `groups` (cargo feature `groups`): `paddock:groups`, process groups
+//!   on this node with publish.
 //!
 //! Connection handlers (cargo feature `connection`) implement `Connection`
 //! instead of [`App`]: one instance per connection on the app's listeners.
@@ -52,6 +54,8 @@ pub mod config;
 pub mod connection;
 mod ctx;
 mod envelope;
+#[cfg(feature = "groups")]
+pub mod groups;
 #[cfg(feature = "keyvalue")]
 pub mod kv;
 pub mod log;
@@ -69,6 +73,7 @@ pub mod bindings {
             "../../wit/vendor/wasi-keyvalue",
             "../../wit/vendor/wasi-io",
             "../../wit/connection",
+            "../../wit/groups",
             "wit",
         ],
         world: "paddock:sdk/app",

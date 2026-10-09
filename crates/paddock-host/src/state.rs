@@ -23,6 +23,7 @@ use crate::pid::Pid;
 use crate::probe;
 use crate::runtime::RuntimeInner;
 use crate::services::config::Config;
+use crate::services::groups::Groups;
 use crate::services::keyvalue::KeyValue;
 use crate::services::logging::Logging;
 use crate::services::{HostState, Service, ServiceCtx, States};
@@ -87,7 +88,13 @@ impl InstanceState {
             }
         }
         let host_objects = ctx.rt.host_objects().grant(&spec.host_objects)?;
-        let services = States::new(&ctx.rt.services, spec, &ctx.rt.extensions)?;
+        let services = States::new(
+            &ctx.rt.services,
+            spec,
+            &ctx.rt.extensions,
+            &ctx.me,
+            host_objects,
+        )?;
         Ok(Self {
             pid,
             tags,
@@ -185,6 +192,7 @@ macro_rules! host_state {
 }
 
 host_state!(Config, config);
+host_state!(Groups, groups);
 host_state!(KeyValue, keyvalue);
 host_state!(Logging, logging);
 

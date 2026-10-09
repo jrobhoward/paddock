@@ -60,6 +60,8 @@ pub enum Capability {
     Metrics,
     /// `paddock:admin`.
     Admin,
+    /// `paddock:groups`: local process groups and publish.
+    Groups,
 }
 
 impl Capability {
@@ -77,6 +79,7 @@ impl Capability {
         Self::Sql,
         Self::Metrics,
         Self::Admin,
+        Self::Groups,
     ];
 
     /// The key used under `capabilities` in the manifest and in operator
@@ -96,6 +99,7 @@ impl Capability {
             Self::Sql => "paddock:sql",
             Self::Metrics => "paddock:metrics",
             Self::Admin => "paddock:admin",
+            Self::Groups => "paddock:groups",
         }
     }
 
@@ -110,7 +114,7 @@ impl Capability {
     #[must_use]
     pub const fn phase(self) -> Option<Phase> {
         match self {
-            Self::Logging | Self::Config | Self::KeyValue | Self::Filesystem => None,
+            Self::Logging | Self::Config | Self::KeyValue | Self::Filesystem | Self::Groups => None,
             Self::Secrets | Self::HttpOutgoing | Self::HttpIncoming | Self::Metrics => {
                 Some(Phase::Phase2)
             }
@@ -136,6 +140,7 @@ impl Capability {
             Self::Sql => ("paddock:sql", None),
             Self::Metrics => ("paddock:metrics", None),
             Self::Admin => ("paddock:admin", None),
+            Self::Groups => ("paddock:groups", None),
         }
     }
 
@@ -362,6 +367,13 @@ pub struct Capabilities {
         skip_serializing_if = "Option::is_none"
     )]
     pub admin: Option<AdminScope>,
+    /// `paddock:groups`.
+    #[serde(
+        rename = "paddock:groups",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub groups: Option<GroupsScope>,
     /// Extension packages the app uses, by package name
     /// (`"example:greeting"`), each with the scope its host service reads.
     /// Served only by nodes built with that service (`paddock-host`'s
@@ -397,6 +409,7 @@ impl Capabilities {
             Capability::Sql => self.sql.is_some(),
             Capability::Metrics => self.metrics.is_some(),
             Capability::Admin => self.admin.is_some(),
+            Capability::Groups => self.groups.is_some(),
         }
     }
 
@@ -445,6 +458,12 @@ impl Capabilities {
                 format!("{}.prefix", Capability::Metrics.key()),
                 "must not be empty",
             );
+        }
+        if let Some(s) = &self.groups {
+            v.at(Capability::Groups.key(), |v| {
+                v.unique_names("join", s.join.iter().map(String::as_str));
+                v.unique_names("publish", s.publish.iter().map(String::as_str));
+            });
         }
         for (key, scope) in &self.extensions {
             if !is_extension_key(key) {
@@ -822,6 +841,34 @@ pub struct SqlScope {
 pub struct MetricsScope {
     /// Every metric the app emits is named under this prefix.
     pub prefix: String,
+}
+
+/// Scope of `paddock:groups`: the groups the app may use, by name. Groups
+/// are created by joining; nothing in node configuration binds them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GroupsScope {
+    /// Groups the app's instances may join and leave.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub join: Vec<String>,
+    /// Groups the app may publish to. Listing members is allowed for a
+    /// group in either list.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub publish: Vec<String>,
+}
+
+impl GroupsScope {
+    /// Whether the app may join `group`.
+    #[must_use]
+    pub fn may_join(&self, group: &str) -> bool {
+        self.join.iter().any(|g| g == group)
+    }
+
+    /// Whether the app may publish to `group`.
+    #[must_use]
+    pub fn may_publish(&self, group: &str) -> bool {
+        self.publish.iter().any(|g| g == group)
+    }
 }
 
 /// Scope of `paddock:admin`.

@@ -58,6 +58,10 @@ pub struct Limits {
     /// the node's value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_calls_max: Option<u32>,
+    /// Most process groups one instance is in (`paddock:groups`). Unset
+    /// uses the node's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub groups_max: Option<u32>,
 }
 
 impl Default for Limits {
@@ -76,6 +80,7 @@ impl Default for Limits {
             monitors_max: None,
             links_max: None,
             pending_calls_max: None,
+            groups_max: None,
         }
     }
 }
@@ -105,6 +110,7 @@ impl Limits {
             ("monitors_max", self.monitors_max.map(u64::from)),
             ("links_max", self.links_max.map(u64::from)),
             ("pending_calls_max", self.pending_calls_max.map(u64::from)),
+            ("groups_max", self.groups_max.map(u64::from)),
         ] {
             if value == Some(0) {
                 v.error_at(field, "must be greater than zero");

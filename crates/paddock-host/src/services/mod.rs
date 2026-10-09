@@ -39,6 +39,7 @@
 
 pub mod config;
 pub mod extension;
+pub mod groups;
 pub mod keyvalue;
 pub mod logging;
 
@@ -53,8 +54,9 @@ use std::time::Duration;
 use paddock_bundle::manifest::{AppSpec, Capability};
 use wasmtime::component::{HasData, Linker, ResourceTable};
 
-use crate::config::RuntimeConfig;
+use crate::config::{HostObjects, RuntimeConfig};
 use crate::error::HostError;
+use crate::instance::InstanceHandle;
 use crate::message::Envelope;
 use crate::output::Tags;
 use crate::pid::Pid;
@@ -86,9 +88,12 @@ pub(crate) trait Service: Sized + 'static {
     /// that cannot open.
     fn shared(config: &RuntimeConfig) -> Result<Self::Shared, HostError>;
 
-    /// State for a new instance; `granted` says whether the operator granted
-    /// [`Service::CAPABILITY`].
-    fn instance(shared: &Arc<Self::Shared>, spec: &Self::Spec, granted: bool) -> Self::Instance;
+    /// State for a new instance (or for the new Store of an upgrade).
+    fn instance(
+        shared: &Arc<Self::Shared>,
+        spec: &Self::Spec,
+        info: &InstanceInfo<'_>,
+    ) -> Self::Instance;
 
     /// Link the service's interfaces, reaching its state through `T`.
     ///
@@ -104,6 +109,20 @@ pub(crate) trait Service: Sized + 'static {
     fn announce(_state: &Self::Instance, _tags: &Tags) -> Vec<(String, Envelope)> {
         Vec::new()
     }
+
+    /// The instance `pid` exited: drop node-wide state it held. Not called
+    /// for an upgrade, which keeps the pid. Nothing by default.
+    fn exited(_shared: &Self::Shared, _pid: Pid) {}
+}
+
+/// The instance a service's per-instance state is for.
+pub(crate) struct InstanceInfo<'a> {
+    /// Whether the operator granted the service's capability.
+    pub(crate) granted: bool,
+    /// The instance's handle, for services that deliver messages to it.
+    pub(crate) handle: &'a InstanceHandle,
+    /// The instance's host-object limits.
+    pub(crate) host_objects: HostObjects,
 }
 
 /// What a service's host functions see: the service's own per-instance
@@ -195,6 +214,8 @@ impl<S: Service> HasData for Ctx<S> {
 pub struct ServiceSpecs {
     /// `wasi:config`.
     pub config: config::ConfigSpec,
+    /// `paddock:groups`.
+    pub groups: groups::GroupsSpec,
     /// `wasi:keyvalue`.
     pub keyvalue: keyvalue::KeyValueSpec,
     /// `wasi:logging`.
@@ -207,6 +228,7 @@ impl ServiceSpecs {
     pub(crate) fn from_manifest(manifest: &AppSpec) -> Self {
         Self {
             config: config::Config::spec(manifest),
+            groups: groups::Groups::spec(manifest),
             keyvalue: keyvalue::KeyValue::spec(manifest),
             logging: logging::Logging::spec(manifest),
             extensions: manifest
@@ -222,6 +244,7 @@ impl ServiceSpecs {
 /// Every service's node-wide state.
 pub(crate) struct Shared {
     config: Arc<()>,
+    groups: Arc<groups::Shared>,
     keyvalue: Arc<<keyvalue::KeyValue as Service>::Shared>,
     pub(crate) logging: Arc<logging::Shared>,
 }
@@ -230,15 +253,25 @@ impl Shared {
     pub(crate) fn new(config: &RuntimeConfig) -> Result<Self, HostError> {
         Ok(Self {
             config: Arc::new(config::Config::shared(config)?),
+            groups: Arc::new(groups::Groups::shared(config)?),
             keyvalue: Arc::new(keyvalue::KeyValue::shared(config)?),
             logging: Arc::new(logging::Logging::shared(config)?),
         })
+    }
+
+    /// Tell every service that `pid` exited.
+    pub(crate) fn exited(&self, pid: Pid) {
+        config::Config::exited(&self.config, pid);
+        groups::Groups::exited(&self.groups, pid);
+        keyvalue::KeyValue::exited(&self.keyvalue, pid);
+        logging::Logging::exited(&self.logging, pid);
     }
 }
 
 /// Every service's state for one instance.
 pub(crate) struct States {
     pub(crate) config: config::Instance,
+    pub(crate) groups: groups::Instance,
     pub(crate) keyvalue: keyvalue::Instance,
     pub(crate) logging: logging::Instance,
     pub(crate) extensions: extension::ExtensionStates,
@@ -248,6 +281,7 @@ impl States {
     /// Every service's announcements, in registry order.
     pub(crate) fn announce(&self, tags: &Tags) -> Vec<(String, Envelope)> {
         let mut events = config::Config::announce(&self.config, tags);
+        events.extend(groups::Groups::announce(&self.groups, tags));
         events.extend(keyvalue::KeyValue::announce(&self.keyvalue, tags));
         events.extend(logging::Logging::announce(&self.logging, tags));
         events
@@ -260,7 +294,14 @@ impl States {
         shared: &Shared,
         spec: &InstanceSpec,
         extensions: &[Arc<dyn Extension>],
+        handle: &InstanceHandle,
+        host_objects: HostObjects,
     ) -> Result<Self, String> {
+        let info = |capability: Capability| InstanceInfo {
+            granted: spec.granted.contains(&capability),
+            handle,
+            host_objects,
+        };
         let null = serde_json::Value::Null;
         let mut states = extension::ExtensionStates::default();
         for ext in extensions {
@@ -276,33 +317,43 @@ impl States {
                 .map_err(|e| format!("extension {}: {e}", ext.package()))?;
             states.push(state);
         }
+        let services = &spec.services;
         Ok(Self {
-            config: instance::<config::Config>(&shared.config, &spec.services.config, spec),
-            keyvalue: instance::<keyvalue::KeyValue>(
-                &shared.keyvalue,
-                &spec.services.keyvalue,
-                spec,
+            config: config::Config::instance(
+                &shared.config,
+                &services.config,
+                &info(config::Config::CAPABILITY),
             ),
-            logging: instance::<logging::Logging>(&shared.logging, &spec.services.logging, spec),
+            groups: groups::Groups::instance(
+                &shared.groups,
+                &services.groups,
+                &info(groups::Groups::CAPABILITY),
+            ),
+            keyvalue: keyvalue::KeyValue::instance(
+                &shared.keyvalue,
+                &services.keyvalue,
+                &info(keyvalue::KeyValue::CAPABILITY),
+            ),
+            logging: logging::Logging::instance(
+                &shared.logging,
+                &services.logging,
+                &info(logging::Logging::CAPABILITY),
+            ),
             extensions: states,
         })
     }
 }
 
-fn instance<S: Service>(
-    shared: &Arc<S::Shared>,
-    spec: &S::Spec,
-    instance: &InstanceSpec,
-) -> S::Instance {
-    S::instance(shared, spec, instance.granted.contains(&S::CAPABILITY))
-}
-
 /// Link every service.
 pub(crate) fn link<T>(linker: &mut Linker<T>) -> wasmtime::Result<()>
 where
-    T: HostState<config::Config> + HostState<keyvalue::KeyValue> + HostState<logging::Logging>,
+    T: HostState<config::Config>
+        + HostState<groups::Groups>
+        + HostState<keyvalue::KeyValue>
+        + HostState<logging::Logging>,
 {
     config::Config::link(linker)?;
+    groups::Groups::link(linker)?;
     keyvalue::KeyValue::link(linker)?;
     logging::Logging::link(linker)?;
     Ok(())
@@ -311,6 +362,7 @@ where
 /// The interfaces the services link, `package/interface`.
 pub(crate) const INTERFACES: &[&[&str]] = &[
     config::Config::INTERFACES,
+    groups::Groups::INTERFACES,
     keyvalue::KeyValue::INTERFACES,
     logging::Logging::INTERFACES,
 ];

@@ -36,7 +36,8 @@ impl MemoryProfile {
 /// outside `memory_max` (a pending timer holds its envelope), so each is
 /// charged to the instance that creates it. Over a limit, the instance
 /// crashes with `timer_limit`, `monitor_limit`, `link_limit` or
-/// `pending_call_limit`. Registered names need no limit: an instance may
+/// `pending_call_limit`; a `paddock:groups` join over its limit returns
+/// `limit-reached`. Registered names need no limit: an instance may
 /// hold only the names its manifest lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostObjects {
@@ -49,16 +50,19 @@ pub struct HostObjects {
     pub links: u32,
     /// Calls answered `noreply` and not yet replied to.
     pub pending_calls: u32,
+    /// Process groups joined (`paddock:groups`).
+    pub groups: u32,
 }
 
 impl Default for HostObjects {
-    /// 10,000 of each, the default `mailbox_max`.
+    /// 10,000 of each, the default `mailbox_max`, and 1,000 groups.
     fn default() -> Self {
         Self {
             timers: 10_000,
             monitors: 10_000,
             links: 10_000,
             pending_calls: 10_000,
+            groups: 1_000,
         }
     }
 }
@@ -86,6 +90,7 @@ impl HostObjects {
                 requested.pending_calls,
                 self.pending_calls,
             )?,
+            groups: pick("groups_max", requested.groups, self.groups)?,
         })
     }
 }
@@ -102,6 +107,8 @@ pub struct HostObjectRequest {
     pub links: Option<u32>,
     /// `pending_calls_max`.
     pub pending_calls: Option<u32>,
+    /// `groups_max`.
+    pub groups: Option<u32>,
 }
 
 /// Configuration for a [`Runtime`](crate::Runtime).

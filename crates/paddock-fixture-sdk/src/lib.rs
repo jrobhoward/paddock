@@ -1,5 +1,6 @@
-//! Test fixture: an app that uses `wasi:config` and `wasi:keyvalue` through
-//! `paddock-sdk`'s wrappers, for the host's tests of those wrappers.
+//! Test fixture: an app that uses `wasi:config`, `wasi:keyvalue` and
+//! `paddock:groups` through `paddock-sdk`'s wrappers, for the host's tests
+//! of those wrappers.
 //!
 //! Text commands; errors reply `err:<error>`:
 //! - `config:<key>`: the value, or `none`.
@@ -15,7 +16,12 @@
 //!   and reply `x,y`.
 //! - `point-bytes:<bucket>:<key>`: read the key as a `Point` (to provoke a
 //!   decode error).
+//! - `join:<group>`, `leave:<group>`: `ok`.
+//! - `members:<group>`: the members' pids, joined by `,`.
+//! - `publish:<group>:<text>`: how many members took it.
+//! - `received`: the text of every cast received, joined by `,`.
 
+use paddock_sdk::groups::{self, GroupError};
 use paddock_sdk::kv::{Bucket, KvError};
 use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
 use serde::{Deserialize, Serialize};
@@ -27,7 +33,25 @@ struct Point {
 }
 
 #[derive(Default)]
-struct Fixture;
+struct Fixture {
+    received: Vec<String>,
+}
+
+fn group(command: &str) -> Result<String, GroupError> {
+    let mut parts = command.splitn(3, ':');
+    let verb = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    Ok(match verb {
+        "join" => groups::join(name).map(|()| "ok".into())?,
+        "leave" => groups::leave(name).map(|()| "ok".into())?,
+        "members" => groups::members(name)?
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => groups::publish(name, Envelope::text(parts.next().unwrap_or("")))?.to_string(),
+    })
+}
 
 fn kv(command: &str) -> Result<String, KvError> {
     let mut parts = command.splitn(4, ':');
@@ -105,17 +129,32 @@ fn config(command: &str) -> Result<String, paddock_sdk::config::ConfigError> {
 
 impl App for Fixture {
     fn init(_ctx: &mut Ctx, _args: &[u8]) -> Result<Self, String> {
-        Ok(Self)
+        Ok(Self::default())
     }
 
     fn handle_call(&mut self, _ctx: &mut Ctx, _call: CallRef, msg: Envelope) -> Reply {
         let command = msg.as_text().unwrap_or("");
+        let verb = command.split(':').next().unwrap_or("");
         let reply = if command.starts_with("config") {
             config(command).unwrap_or_else(|e| format!("err:{e}"))
+        } else if verb == "received" {
+            self.received.join(",")
+        } else if ["join", "leave", "members", "publish"].contains(&verb) {
+            group(command).unwrap_or_else(|e| format!("err:{e}"))
         } else {
             kv(command).unwrap_or_else(|e| format!("err:{e}"))
         };
         Reply::Now(Envelope::text(reply))
+    }
+
+    /// Starts empty after an upgrade, for the groups upgrade test.
+    fn load_snapshot(_ctx: &mut Ctx, _from: &str, _snapshot: &[u8]) -> Result<Self, String> {
+        Ok(Self::default())
+    }
+
+    fn handle_cast(&mut self, _ctx: &mut Ctx, msg: Envelope) {
+        self.received
+            .push(msg.as_text().unwrap_or("<binary>").to_string());
     }
 }
 

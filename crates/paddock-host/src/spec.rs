@@ -119,6 +119,7 @@ impl InstanceSpec {
                 monitors: spec.limits.monitors_max,
                 links: spec.limits.links_max,
                 pending_calls: spec.limits.pending_calls_max,
+                groups: spec.limits.groups_max,
             },
         }
     }

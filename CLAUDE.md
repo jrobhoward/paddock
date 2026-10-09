@@ -108,8 +108,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.
-- `crates/paddock-fixture-sdk`: a guest that uses `wasi:config` and
-  `wasi:keyvalue` through `paddock-sdk`'s `config` and `kv` wrappers.
+- `crates/paddock-fixture-sdk`: a guest that uses `wasi:config`,
+  `wasi:keyvalue` and `paddock:groups` through `paddock-sdk`'s `config`,
+  `kv` and `groups` wrappers.
 - `crates/paddock-fixture-services`: a guest that drives logging, config,
   keyvalue, the filesystem and stdout. Its `denied` feature adds an import no
   host implements, for deny-stub tests; nodes refuse that build, so node tests
@@ -123,7 +124,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
   by `crates/paddock/tests/wit_rules.rs`. `wit/connection/`: the
   `paddock:connection` package (connection handlers), separate because it
-  uses `wasi:io` streams, which `paddock:runtime` excludes. `wit/vendor/`
+  uses `wasi:io` streams, which `paddock:runtime` excludes. `wit/groups/`:
+  the `paddock:groups` package (process groups), separate so the app world
+  stays frozen; every host bindgen lists it, since `crates/paddock-host/wit`
+  imports it. `wit/vendor/`
   holds unmodified copies of the WASI interfaces Paddock binds against
   (keyvalue, config, logging, and `wasi:io` for connections); bindings name
   each package path explicitly.

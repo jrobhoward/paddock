@@ -133,6 +133,12 @@ All notable changes are recorded here. The format follows
   for. Over a limit, the instance crashes with `timer_limit`,
   `monitor_limit`, `link_limit` or `pending_call_limit`. Timers whose message
   was dropped by a full mailbox no longer stay counted as pending.
+- Process groups on one node (`paddock:groups@0.1.0`, `wit/groups`): `join`,
+  `leave`, `members` and `publish`, which casts one copy to each member. The
+  capability's manifest scope lists the groups an app may join and publish
+  to. Instances leave their groups on exit and keep them across upgrades.
+  `limits.groups_max` and node `[limits] groups_max` (default 1,000). SDK
+  feature `groups` (`paddock_sdk::groups`).
 
 ### Changed
 

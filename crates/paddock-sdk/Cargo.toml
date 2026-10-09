@@ -16,6 +16,8 @@ config = []
 keyvalue = []
 # `paddock_sdk::connection`: connection handlers (`paddock:connection`).
 connection = []
+# `paddock_sdk::groups`: process groups and publish (`paddock:groups`).
+groups = []
 
 [dependencies]
 ciborium = { workspace = true }

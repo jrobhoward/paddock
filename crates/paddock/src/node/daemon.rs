@@ -288,6 +288,7 @@ impl Node {
                     monitors: config.limits.monitors_max,
                     links: config.limits.links_max,
                     pending_calls: config.limits.pending_calls_max,
+                    groups: config.limits.groups_max,
                 },
             },
             extensions,

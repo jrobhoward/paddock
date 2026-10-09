@@ -596,7 +596,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 | Guest language support beyond Rust | Narrow adoption | Rust first; JS and Python via componentize tools; Go via wit-bindgen-go; test each per release |
 | Address space at high instance counts | Instantiation failures | Pool sizing, guard-size tuning, alerts |
 | Split brain with two nodes | Primary and standby both promote during a partition and act on the same devices | Independent heartbeat paths (network and serial), witness-granted epochs as fencing tokens, a lease for singletons, or operator-confirmed promotion (ROADMAP D10) |
-| Host objects outside the memory cap | A guest creates timers, monitors or watches until the node runs out of memory | A quota per instance on every host object: timers, monitors, links and pending calls (ROADMAP H1); group memberships and watches with H2 and H4 |
+| Host objects outside the memory cap | A guest creates timers, monitors or watches until the node runs out of memory | A quota per instance on every host object: timers, monitors, links, pending calls (ROADMAP H1) and group memberships (H2); watches with H4 |
 
 ## Open questions
 
