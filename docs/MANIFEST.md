@@ -149,7 +149,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | --- | --- | --- |
 | `wasi:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted. | enforced |
 | `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
-| `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. | enforced |
+| `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. | enforced |
 | `paddock:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. | enforced |
 | `wasi:filesystem` | `preopens."<guest path>" = { volume, mode, quota }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`; `quota` is *not enforced*. `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
 | `paddock:secrets`, `wasi:http/outgoing-handler`, `wasi:http/incoming-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
@@ -251,7 +251,14 @@ monitors_max = 10000                   # larger value refuses the deploy)
 links_max = 10000
 pending_calls_max = 10000
 groups_max = 1000
+
+[buckets.points]                       # a shared keyvalue bucket, opened by apps that list it
+durability = "disk"                    # under wasi:keyvalue's shared and are granted it; or "memory"
+quota = "256MiB"                       # across every app writing it
+scope = "node"                         # "cluster" (replicated) is Phase 3 and refused for now
 ```
+
+A deploy is refused if the manifest lists a shared bucket the node does not configure.
 
 The operator policy (`policy`). Grants add up: the defaults, plus the app's own entry, plus the entry of each signer whose key verified the bundle.
 
@@ -261,10 +268,11 @@ grant = ["wasi:logging", "wasi:config"]
 
 [apps.orders]
 grant = ["wasi:keyvalue", "wasi:filesystem"]
+buckets = ["points"]                   # shared buckets; needs wasi:keyvalue granted too
 
 [signers.payments-team]
 key = "RWQ..."
 grant = ["wasi:keyvalue"]
 ```
 
-A `grant` list takes extension packages (`"example:greeting"`) as well as capability keys. Policy grants or withholds whole capabilities. The scope an app requests (buckets, preopens) is used as written; narrowing scopes by policy is not supported in Phase 1.
+A `grant` list takes extension packages (`"example:greeting"`) as well as capability keys. Policy grants or withholds whole capabilities, and each shared bucket by name (`buckets`, in any entry). A deploy reports shared buckets as `bucket:<name>` under `granted` or `denied`; opening a denied one returns `access-denied`. Other scopes an app requests (its own buckets, preopens) are used as written; narrowing them by policy is not supported.

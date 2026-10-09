@@ -200,6 +200,8 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "limits": { "links_max": 0 } }), "limits.links_max")]
 #[case(json!({ "limits": { "pending_calls_max": 0 } }), "limits.pending_calls_max")]
 #[case(json!({ "limits": { "groups_max": 0 } }), "limits.groups_max")]
+#[case(json!({ "capabilities": { "wasi:keyvalue": { "shared": { "Points": "ro" } } } }), "capabilities.wasi:keyvalue.shared.Points")]
+#[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "p": {} }, "shared": { "p": "rw" } } } }), "capabilities.wasi:keyvalue.shared.p")]
 #[case(json!({ "capabilities": { "paddock:groups": { "join": ["Bad Name"] } } }), "capabilities.paddock:groups.join[0]")]
 #[case(json!({ "capabilities": { "paddock:groups": { "publish": ["a", "a"] } } }), "capabilities.paddock:groups.publish[1]")]
 #[case(json!({ "lifecycle": { "init_timeout_ms": 0 } }), "lifecycle.init_timeout_ms")]

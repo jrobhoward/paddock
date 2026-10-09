@@ -1,8 +1,12 @@
 //! `wasi:keyvalue` (`store`, `atomics`, `batch`): term storage in host-owned
 //! buckets (the private `storage` module has the storage rules).
 //!
-//! An instance opens only the buckets its manifest lists. Without the
-//! capability granted, `open` returns `access-denied`. Every operation runs
+//! An instance opens only the buckets its manifest lists: its app's own
+//! buckets, and shared buckets (node configuration's `[buckets]`) that its
+//! grant includes, read-only or read-write. A write to a read-only shared
+//! bucket, or `open` without the capability granted, returns
+//! `access-denied`; a shared bucket the node does not configure returns
+//! `no-such-store`. Every operation runs
 //! in the shared store and its time counts as host time, not against the
 //! callback deadline. Paddock's own host on the vendored
 //! `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (spike S7).
@@ -13,7 +17,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use paddock_bundle::manifest::{AppSpec, Bucket, Capability};
+use paddock_bundle::manifest::{AccessMode, AppSpec, Bucket, Capability};
 use wasmtime::Result;
 use wasmtime::component::{Linker, Resource};
 
@@ -21,7 +25,7 @@ use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 
-use storage::{BucketHandle, KvStore, Op, Outcome};
+use storage::{BucketHandle, KvStore, Op, Outcome, SHARED};
 
 mod bindings {
     // Generated code carries no doc comments.
@@ -53,14 +57,19 @@ pub(crate) struct KeyValue;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct KeyValueSpec {
-    /// Buckets the instance may open, by name.
+    /// The app's own buckets, by name.
     pub buckets: BTreeMap<String, Bucket>,
+    /// Shared buckets the instance may open, by name: the manifest's list,
+    /// narrowed to the grant with
+    /// [`InstanceSpec::with_granted_buckets`](crate::InstanceSpec::with_granted_buckets).
+    pub shared: BTreeMap<String, AccessMode>,
 }
 
 /// Keyvalue state for one instance.
 pub(crate) struct Instance {
     store: Arc<KvStore>,
     buckets: BTreeMap<String, Bucket>,
+    shared: BTreeMap<String, AccessMode>,
     granted: bool,
 }
 
@@ -76,24 +85,23 @@ impl Service for KeyValue {
     type Instance = Instance;
 
     fn spec(manifest: &AppSpec) -> KeyValueSpec {
+        let scope = manifest.capabilities.keyvalue.clone().unwrap_or_default();
         KeyValueSpec {
-            buckets: manifest
-                .capabilities
-                .keyvalue
-                .as_ref()
-                .map(|kv| kv.buckets.clone())
-                .unwrap_or_default(),
+            buckets: scope.buckets,
+            shared: scope.shared,
         }
     }
 
     fn shared(config: &RuntimeConfig) -> Result<KvStore, HostError> {
-        KvStore::open(config.data_dir.as_deref()).map_err(HostError::Storage)
+        KvStore::open(config.data_dir.as_deref(), config.buckets.clone())
+            .map_err(HostError::Storage)
     }
 
     fn instance(shared: &Arc<KvStore>, spec: &KeyValueSpec, info: &InstanceInfo<'_>) -> Instance {
         Instance {
             store: shared.clone(),
             buckets: spec.buckets.clone(),
+            shared: spec.shared.clone(),
             granted: info.granted,
         }
     }
@@ -113,6 +121,9 @@ impl ServiceCtx<'_, Instance> {
         op: Op,
     ) -> Result<std::result::Result<Outcome, store::Error>> {
         let handle = self.table.get(bucket)?.clone();
+        if !handle.writable && !op.read_only() {
+            return Ok(Err(store::Error::AccessDenied));
+        }
         let started = Instant::now();
         let outcome = self.state.store.run(&handle, op).await;
         self.add_host_time(started.elapsed());
@@ -132,15 +143,29 @@ impl store::Host for ServiceCtx<'_, Instance> {
         if !self.state.granted {
             return Ok(Err(store::Error::AccessDenied));
         }
-        // Only buckets the manifest lists.
-        let Some(bucket) = self.state.buckets.get(&identifier) else {
+        // Only buckets the manifest lists (and, for shared ones, the grant
+        // includes).
+        let handle = if let Some(bucket) = self.state.buckets.get(&identifier) {
+            BucketHandle {
+                space: self.tags.app.clone(),
+                name: identifier,
+                durability: bucket.durability,
+                quota: bucket.quota.map(|q| q.bytes()),
+                writable: true,
+            }
+        } else if let Some(mode) = self.state.shared.get(&identifier) {
+            let Some(bucket) = self.state.store.shared(&identifier) else {
+                return Ok(Err(store::Error::NoSuchStore));
+            };
+            BucketHandle {
+                space: SHARED.to_string(),
+                name: identifier,
+                durability: bucket.durability,
+                quota: bucket.quota,
+                writable: *mode == AccessMode::Rw,
+            }
+        } else {
             return Ok(Err(store::Error::AccessDenied));
-        };
-        let handle = BucketHandle {
-            app: self.tags.app.clone(),
-            name: identifier,
-            durability: bucket.durability,
-            quota: bucket.quota.map(|q| q.bytes()),
         };
         Ok(Ok(self.table.push(handle)?))
     }

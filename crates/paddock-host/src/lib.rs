@@ -45,7 +45,7 @@ pub mod transport;
 mod upgrade;
 
 pub use apps::{AppDeployment, AppHandle, AppStatus, Apps, UpgradeOptions, UpgradeReport};
-pub use config::{HostObjectRequest, HostObjects, MemoryProfile, RuntimeConfig};
+pub use config::{HostObjectRequest, HostObjects, MemoryProfile, RuntimeConfig, SharedBucket};
 pub use error::HostError;
 pub use instance::{InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;

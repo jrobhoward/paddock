@@ -55,6 +55,14 @@ pub struct EffectiveGrant {
     /// Extension packages imported and declared but not granted.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub denied_extensions: BTreeSet<String>,
+    /// Shared keyvalue buckets declared and granted, with `wasi:keyvalue`
+    /// granted.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub granted_buckets: BTreeSet<String>,
+    /// Shared keyvalue buckets declared but not granted (opening one
+    /// returns `access-denied`).
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub denied_buckets: BTreeSet<String>,
 }
 
 /// Check `imports` against `spec` and compute the effective grant given the
@@ -127,10 +135,17 @@ pub fn effective_grant(
         });
     }
 
-    let (granted, denied) = imported
+    let (granted, denied): (BTreeSet<Capability>, BTreeSet<Capability>) = imported
         .iter()
         .copied()
         .partition(|c| operator_grants.contains(c));
+    let kv = granted.contains(&Capability::KeyValue);
+    let (granted_buckets, denied_buckets) = spec
+        .capabilities
+        .keyvalue
+        .iter()
+        .flat_map(|scope| scope.shared.keys().cloned())
+        .partition(|name| kv && operator.buckets.contains(name));
     Ok(EffectiveGrant {
         imports: links,
         granted,
@@ -138,6 +153,8 @@ pub fn effective_grant(
         unused: declared.difference(&imported).copied().collect(),
         granted_extensions,
         denied_extensions,
+        granted_buckets,
+        denied_buckets,
     })
 }
 

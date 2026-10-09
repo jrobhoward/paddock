@@ -24,6 +24,7 @@ fn grants(capabilities: &[Capability]) -> Granted {
     Granted {
         capabilities: capabilities.iter().copied().collect(),
         extensions: BTreeSet::new(),
+        buckets: BTreeSet::new(),
     }
 }
 
@@ -159,6 +160,7 @@ fn effective_grant____extension_declared_and_granted____linked_to_service() {
     let operator = Granted {
         capabilities: BTreeSet::new(),
         extensions: BTreeSet::from(["example:greeting".to_string()]),
+        buckets: BTreeSet::new(),
     };
 
     let grant = effective_grant(&imports(&[PROCESS, GREET]), &spec, &operator).unwrap();
@@ -200,4 +202,21 @@ fn effective_grant____extension_not_declared____refused() {
         undeclared,
         vec![format!("{GREET} (needs extensions.\"example:greeting\")")]
     );
+}
+
+#[test]
+fn effective_grant____shared_buckets____granted_only_with_keyvalue_and_policy() {
+    let spec = spec(json!({ "wasi:keyvalue": { "shared": { "points": "rw", "alarms": "ro" } } }));
+    let mut with_kv = grants(&[Capability::KeyValue]);
+    with_kv.buckets = BTreeSet::from(["points".to_string()]);
+    let mut without_kv = grants(&[]);
+    without_kv.buckets = BTreeSet::from(["points".to_string()]);
+
+    let granted = effective_grant(&imports(&[KV]), &spec, &with_kv).unwrap();
+    let no_kv = effective_grant(&imports(&[KV]), &spec, &without_kv).unwrap();
+
+    assert_eq!(granted.granted_buckets, BTreeSet::from(["points".into()]));
+    assert_eq!(granted.denied_buckets, BTreeSet::from(["alarms".into()]));
+    assert!(no_kv.granted_buckets.is_empty());
+    assert_eq!(no_kv.denied_buckets.len(), 2);
 }

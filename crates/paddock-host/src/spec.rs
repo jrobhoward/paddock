@@ -142,6 +142,17 @@ impl InstanceSpec {
         self
     }
 
+    /// Keep only the shared buckets in `granted` openable (the effective
+    /// grant's `granted_buckets`); the others return `access-denied`.
+    #[must_use]
+    pub fn with_granted_buckets(mut self, granted: &BTreeSet<String>) -> Self {
+        self.services
+            .keyvalue
+            .shared
+            .retain(|name, _| granted.contains(name));
+        self
+    }
+
     /// Set the preopens a manifest's `wasi:filesystem` scope asks for:
     /// `priv_dir` (the bundle's files) read-only at `/priv`, and each
     /// declared preopen backed by the host directory `volume` resolves its

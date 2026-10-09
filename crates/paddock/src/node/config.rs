@@ -12,6 +12,13 @@
 //! [volumes]
 //! orders-data = "/srv/paddock/volumes/orders-data"
 //!
+//! # Shared keyvalue buckets, opened by apps whose manifest lists them
+//! # and whose policy entry grants them.
+//! [buckets.points]
+//! durability = "disk"           # or "memory"
+//! quota = "256MiB"
+//! scope = "node"                # "cluster" is Phase 3
+//!
 //! # Node-level config overrides, per app, on top of the manifest defaults.
 //! [config.orders]
 //! "db.host" = "pg.internal"
@@ -34,6 +41,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use paddock_bundle::manifest::{ByteSize, Durability};
 use serde::Deserialize;
 
 use super::error::NodeError;
@@ -80,6 +88,9 @@ pub struct NodeConfig {
     /// Host directories backing volume names in manifests.
     #[serde(default)]
     pub volumes: BTreeMap<String, PathBuf>,
+    /// Shared keyvalue buckets, by name.
+    #[serde(default)]
+    pub buckets: BTreeMap<String, BucketConfig>,
     /// Config overrides per app.
     #[serde(default)]
     pub config: BTreeMap<String, BTreeMap<String, String>>,
@@ -135,6 +146,32 @@ fn default_groups() -> u32 {
 
 fn default_host_objects() -> u32 {
     10_000
+}
+
+/// A `[buckets.<name>]` entry: a shared keyvalue bucket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BucketConfig {
+    /// `memory` or `disk`.
+    #[serde(default)]
+    pub durability: Durability,
+    /// Most bytes the bucket holds, across every app writing it.
+    #[serde(default)]
+    pub quota: Option<ByteSize>,
+    /// Where the bucket's data lives.
+    #[serde(default)]
+    pub scope: BucketScope,
+}
+
+/// Where a shared bucket's data lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BucketScope {
+    /// One copy on this node.
+    #[default]
+    Node,
+    /// Replicated across the cluster. Refused until Phase 3.
+    Cluster,
 }
 
 /// What a node does in the cluster.
@@ -232,6 +269,22 @@ impl NodeConfig {
                  cluster.heartbeat_interval_ms ({}), which must be more than 0",
                 cluster.node_timeout_ms, cluster.heartbeat_interval_ms
             )));
+        }
+        for (name, bucket) in &config.buckets {
+            let problem = if bucket.scope == BucketScope::Cluster {
+                Some("scope \"cluster\" is not supported until Phase 3")
+            } else if bucket.durability == Durability::Replicated {
+                Some("durability \"replicated\" is not supported until Phase 3")
+            } else if bucket.quota.is_some_and(|q| q.bytes() == 0) {
+                Some("quota must be more than 0")
+            } else {
+                None
+            };
+            if let Some(problem) = problem {
+                return Err(NodeError::Invalid(format!(
+                    "node config: buckets.{name}: {problem}"
+                )));
+            }
         }
         let limits = &config.limits;
         for (name, value) in [

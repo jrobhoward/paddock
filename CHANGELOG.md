@@ -139,6 +139,13 @@ All notable changes are recorded here. The format follows
   to. Instances leave their groups on exit and keep them across upgrades.
   `limits.groups_max` and node `[limits] groups_max` (default 1,000). SDK
   feature `groups` (`paddock_sdk::groups`).
+- Shared keyvalue buckets: node config `[buckets.<name>]` (durability,
+  quota, `scope = "node"`), manifest `wasi:keyvalue` `shared.<name> = "ro"`
+  or `"rw"`, and policy `buckets = [...]`. Apps granted a shared bucket see
+  one copy; read-only grants refuse writes. Deploys report shared buckets as
+  `bucket:<name>` and refuse ones the node does not configure.
+- Keyvalue revisions: each change raises a bucket's revision and stamps the
+  keys written, in memory and on disk (groundwork for watches, H4).
 
 ### Changed
 

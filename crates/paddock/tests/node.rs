@@ -581,3 +581,70 @@ async fn restart____creation_raised_on_every_start() {
     assert_eq!((first.as_str(), second.as_str()), ("1", "2"));
     n.shutdown().await;
 }
+
+/// The services fixture's manifest with these shared buckets listed.
+fn shared_manifest(shared: serde_json::Value) -> serde_json::Value {
+    let mut m = services_manifest();
+    m["capabilities"]["wasi:keyvalue"]["shared"] = shared;
+    m
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_bucket____two_apps_through_policy____shared_read_only_and_kept_on_restart() {
+    let scratch = tempfile::tempdir().unwrap();
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy = policy_dir.path().join("policy.toml");
+    std::fs::write(
+        &policy,
+        "[defaults]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"board\"]\n",
+    )
+    .unwrap();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[volumes]\nscratch = {:?}\n\
+         [buckets.board]\ndurability = \"disk\"\n[buckets.alarms]\n",
+        scratch.path()
+    ))
+    .await;
+    let services = fixture("paddock_fixture_services");
+    let deploy = |name: &str, shared| {
+        bundle(
+            &n.key,
+            name,
+            "1.0.0",
+            &services,
+            shared_manifest(shared),
+            &[],
+        )
+    };
+    n.client
+        .deploy(deploy("plc", json!({ "board": "rw" })))
+        .await
+        .unwrap();
+    let hmi = n
+        .client
+        .deploy(deploy("hmi", json!({ "board": "ro", "alarms": "ro" })))
+        .await
+        .unwrap();
+    let refused = n
+        .client
+        .deploy(deploy("lost", json!({ "nowhere": "ro" })))
+        .await
+        .unwrap_err();
+
+    call(&n, "plc", "kv-set:board:pump-1:on").await;
+    let seen = call(&n, "hmi", "kv-get:board:pump-1").await;
+    let write = call(&n, "hmi", "kv-set:board:pump-1:off").await;
+    let ungranted = call(&n, "hmi", "kv-get:alarms:a1").await;
+    n.restart().await;
+    let after_restart = call(&n, "hmi", "kv-get:board:pump-1").await;
+
+    assert!(hmi.granted.contains(&"bucket:board".to_string()), "{hmi:?}");
+    assert!(hmi.denied.contains(&"bucket:alarms".to_string()), "{hmi:?}");
+    assert!(!hmi.denied.contains(&"bucket:board".to_string()), "{hmi:?}");
+    assert_eq!(kind(&refused), "invalid");
+    assert_eq!(seen, "on");
+    assert_eq!(write, "err:access-denied");
+    assert_eq!(ungranted, "err:access-denied");
+    assert_eq!(after_restart, "on");
+    n.shutdown().await;
+}

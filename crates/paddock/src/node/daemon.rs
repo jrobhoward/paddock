@@ -16,7 +16,7 @@ use paddock_host::services::Extension;
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
     InstanceSpec, Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid,
-    Role, Runtime, RuntimeConfig, UpgradeError, UpgradeOptions, UpgradeReport,
+    Role, Runtime, RuntimeConfig, SharedBucket, UpgradeError, UpgradeOptions, UpgradeReport,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -290,6 +290,17 @@ impl Node {
                     pending_calls: config.limits.pending_calls_max,
                     groups: config.limits.groups_max,
                 },
+                buckets: config
+                    .buckets
+                    .iter()
+                    .map(|(name, b)| {
+                        let bucket = SharedBucket {
+                            durability: b.durability,
+                            quota: b.quota.map(|q| q.bytes()),
+                        };
+                        (name.clone(), bucket)
+                    })
+                    .collect(),
             },
             extensions,
         )
@@ -403,7 +414,20 @@ impl Node {
         .map_err(|e| NodeError::Refused(e.to_string()))?;
         let mut spec = InstanceSpec::from_manifest(&manifest)
             .with_granted(&grant.granted)
-            .with_granted_extensions(&grant.granted_extensions);
+            .with_granted_extensions(&grant.granted_extensions)
+            .with_granted_buckets(&grant.granted_buckets);
+        if let Some(missing) = spec
+            .services
+            .keyvalue
+            .shared
+            .keys()
+            .chain(&grant.denied_buckets)
+            .find(|b| !self.config.buckets.contains_key(*b))
+        {
+            return Err(NodeError::Invalid(format!(
+                "shared bucket '{missing}' is not configured on this node"
+            )));
+        }
         if let Some(overrides) = self.config.config.get(&name) {
             spec.services.config.values.extend(overrides.clone());
         }
@@ -434,8 +458,14 @@ impl Node {
         };
         let info = DeployInfo {
             signer: manifest.provenance.signer_key.clone(),
-            granted: keys(&grant.granted, &grant.granted_extensions),
-            denied: keys(&grant.denied, &grant.denied_extensions),
+            granted: keys(&grant.granted, &grant.granted_extensions)
+                .into_iter()
+                .chain(grant.granted_buckets.iter().map(|b| format!("bucket:{b}")))
+                .collect(),
+            denied: keys(&grant.denied, &grant.denied_extensions)
+                .into_iter()
+                .chain(grant.denied_buckets.iter().map(|b| format!("bucket:{b}")))
+                .collect(),
             stubbed: match &loaded {
                 Loaded::App(app) => app.stubbed_imports().to_vec(),
                 Loaded::Connection(c) => c.stubbed_imports().to_vec(),

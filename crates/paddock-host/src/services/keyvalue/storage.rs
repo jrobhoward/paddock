@@ -1,12 +1,18 @@
 //! Term storage behind `wasi:keyvalue`.
 //!
-//! Buckets are host-owned, so their data outlives instance crashes. Each is
-//! namespaced by app: two apps opening a bucket of the same name see
-//! different data. `memory` buckets live in the runtime; `disk` buckets live
-//! in one redb file under the node's data directory and survive restarts.
+//! Buckets are host-owned, so their data outlives instance crashes. An app
+//! bucket is namespaced by app: two apps opening a bucket of the same name
+//! see different data. A shared bucket (node configuration's
+//! `[buckets.<name>]`) lives in one namespace, [`SHARED`], for every app
+//! granted it. `memory` buckets live in the runtime; `disk` buckets live in
+//! one redb file under the node's data directory and survive restarts.
 //!
 //! Every operation runs as one transaction against a [`Txn`], so both
-//! backends share the quota, counter and paging rules. Disk writes run on
+//! backends share the quota, counter, paging and revision rules. Each
+//! transaction that changes a bucket raises the bucket's revision by one
+//! and stamps every key it writes with the new revision (etcd's model), for
+//! watches and compare-and-swap (ROADMAP H4). A key deleted loses its
+//! revision; keys written before revisions existed have none. Disk writes run on
 //! tokio's blocking pool, keeping fsyncs off the workers that run guests;
 //! disk reads run on the calling worker, usually from redb's page cache.
 
@@ -17,17 +23,25 @@ use std::sync::{Arc, Mutex, PoisonError};
 use paddock_bundle::manifest::Durability;
 use redb::{ReadableDatabase, ReadableTable, TableDefinition};
 
+use crate::config::SharedBucket;
+
 /// Keys per `list-keys` page.
 pub(crate) const PAGE: usize = 256;
+
+/// The namespace of shared buckets. App names cannot start with `@`.
+pub(crate) const SHARED: &str = "@shared";
 
 /// A bucket an instance opened: the resource behind `wasi:keyvalue`'s
 /// `bucket`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BucketHandle {
-    pub(crate) app: String,
+    /// The app's name for an app bucket, [`SHARED`] for a shared one.
+    pub(crate) space: String,
     pub(crate) name: String,
     pub(crate) durability: Durability,
     pub(crate) quota: Option<u64>,
+    /// `false` for a shared bucket granted read-only.
+    pub(crate) writable: bool,
 }
 
 /// One storage operation.
@@ -42,13 +56,17 @@ pub(crate) enum Op {
     GetMany(Vec<String>),
     SetMany(Vec<(String, Vec<u8>)>),
     DeleteMany(Vec<String>),
+    /// The bucket's revision and the key's. Read by tests until
+    /// `paddock:watch` (ROADMAP H4) exposes revisions.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Revision(String),
 }
 
 impl Op {
-    fn read_only(&self) -> bool {
+    pub(crate) fn read_only(&self) -> bool {
         matches!(
             self,
-            Self::Get(_) | Self::Exists(_) | Self::Keys(_) | Self::GetMany(_)
+            Self::Get(_) | Self::Exists(_) | Self::Keys(_) | Self::GetMany(_) | Self::Revision(_)
         )
     }
 }
@@ -62,13 +80,27 @@ pub(crate) enum Outcome {
     Keys(Vec<String>, Option<u64>),
     Count(u64),
     Values(Vec<Option<(String, Vec<u8>)>>),
+    /// The bucket's revision, and the key's if it has one.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Revision {
+        bucket: u64,
+        key: Option<u64>,
+    },
 }
 
 /// The view of one bucket an operation runs against.
 pub(crate) trait Txn {
     fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, String>;
-    fn put(&mut self, key: &str, value: &[u8]) -> Result<(), String>;
+    /// Store `value` under `key`, stamped with `revision`.
+    fn put(&mut self, key: &str, value: &[u8], revision: u64) -> Result<(), String>;
+    /// Remove `key` and its revision.
     fn remove(&mut self, key: &str) -> Result<(), String>;
+    /// The bucket's revision: 0 before its first change.
+    fn revision(&mut self) -> Result<u64, String>;
+    /// Record the bucket's revision after a change.
+    fn set_revision(&mut self, revision: u64) -> Result<(), String>;
+    /// The revision `key` was last written at.
+    fn key_revision(&mut self, key: &str) -> Result<Option<u64>, String>;
     /// Keys in order, from `offset`, at most `limit`.
     fn keys(&mut self, offset: usize, limit: usize) -> Result<Vec<String>, String>;
     /// Bytes stored: the sum of key and value lengths.
@@ -87,7 +119,18 @@ pub(crate) fn apply(
     quota: Option<u64>,
 ) -> Result<(Outcome, u64), String> {
     let mut bytes = txn.bytes()?;
+    let writes = !op.read_only();
+    let revision = if writes {
+        txn.revision()?.saturating_add(1)
+    } else {
+        0
+    };
+    let mut changed = false;
     let outcome = match op {
+        Op::Revision(key) => Outcome::Revision {
+            bucket: txn.revision()?,
+            key: txn.key_revision(&key)?,
+        },
         Op::Get(key) => Outcome::Value(txn.get(&key)?),
         Op::Exists(key) => Outcome::Exists(txn.get(&key)?.is_some()),
         Op::Keys(cursor) => {
@@ -106,7 +149,8 @@ pub(crate) fn apply(
             Outcome::Values(found)
         }
         Op::Set(key, value) => {
-            bytes = set(txn, bytes, &key, &value, quota)?;
+            bytes = set(txn, bytes, &key, &value, quota, revision)?;
+            changed = true;
             Outcome::Done
         }
         Op::SetMany(pairs) => {
@@ -120,17 +164,20 @@ pub(crate) fn apply(
             }
             check_quota(after, quota)?;
             for (key, value) in &pairs {
-                bytes = set(txn, bytes, key, value, None)?;
+                bytes = set(txn, bytes, key, value, None, revision)?;
+                changed = true;
             }
             Outcome::Done
         }
         Op::Delete(key) => {
-            bytes = delete(txn, bytes, &key)?;
+            (bytes, changed) = delete(txn, bytes, &key)?;
             Outcome::Done
         }
         Op::DeleteMany(keys) => {
             for key in &keys {
-                bytes = delete(txn, bytes, key)?;
+                let removed;
+                (bytes, removed) = delete(txn, bytes, key)?;
+                changed |= removed;
             }
             Outcome::Done
         }
@@ -146,10 +193,21 @@ pub(crate) fn apply(
             let next = current
                 .checked_add(delta)
                 .ok_or_else(|| format!("incrementing '{key}' overflows"))?;
-            bytes = set(txn, bytes, &key, next.to_string().as_bytes(), quota)?;
+            bytes = set(
+                txn,
+                bytes,
+                &key,
+                next.to_string().as_bytes(),
+                quota,
+                revision,
+            )?;
+            changed = true;
             Outcome::Count(next)
         }
     };
+    if changed {
+        txn.set_revision(revision)?;
+    }
     Ok((outcome, bytes))
 }
 
@@ -166,42 +224,62 @@ fn set(
     key: &str,
     value: &[u8],
     quota: Option<u64>,
+    revision: u64,
 ) -> Result<u64, String> {
     let old = txn.get(key)?.map_or(0, |v| entry_size(key, &v));
     let after = bytes
         .saturating_sub(old)
         .saturating_add(entry_size(key, value));
     check_quota(after, quota)?;
-    txn.put(key, value)?;
+    txn.put(key, value, revision)?;
     Ok(after)
 }
 
-fn delete(txn: &mut dyn Txn, bytes: u64, key: &str) -> Result<u64, String> {
-    let old = txn.get(key)?.map_or(0, |v| entry_size(key, &v));
+/// Remove `key`; returns the new size and whether the key existed.
+fn delete(txn: &mut dyn Txn, bytes: u64, key: &str) -> Result<(u64, bool), String> {
+    let Some(old) = txn.get(key)? else {
+        return Ok((bytes, false));
+    };
     txn.remove(key)?;
-    Ok(bytes.saturating_sub(old))
+    Ok((bytes.saturating_sub(entry_size(key, &old)), true))
 }
 
 /// A memory bucket.
 #[derive(Debug, Default)]
 pub(crate) struct MemBucket {
-    entries: BTreeMap<String, Vec<u8>>,
+    /// Values, and the revision each was written at.
+    entries: BTreeMap<String, (Vec<u8>, u64)>,
     bytes: u64,
+    revision: u64,
 }
 
 impl Txn for MemBucket {
     fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(self.entries.get(key).cloned())
+        Ok(self.entries.get(key).map(|(v, _)| v.clone()))
     }
 
-    fn put(&mut self, key: &str, value: &[u8]) -> Result<(), String> {
-        self.entries.insert(key.to_string(), value.to_vec());
+    fn put(&mut self, key: &str, value: &[u8], revision: u64) -> Result<(), String> {
+        self.entries
+            .insert(key.to_string(), (value.to_vec(), revision));
         Ok(())
     }
 
     fn remove(&mut self, key: &str) -> Result<(), String> {
         self.entries.remove(key);
         Ok(())
+    }
+
+    fn revision(&mut self) -> Result<u64, String> {
+        Ok(self.revision)
+    }
+
+    fn set_revision(&mut self, revision: u64) -> Result<(), String> {
+        self.revision = revision;
+        Ok(())
+    }
+
+    fn key_revision(&mut self, key: &str) -> Result<Option<u64>, String> {
+        Ok(self.entries.get(key).map(|(_, r)| *r))
     }
 
     fn keys(&mut self, offset: usize, limit: usize) -> Result<Vec<String>, String> {
@@ -221,11 +299,32 @@ impl Txn for MemBucket {
 
 type Key = (String, String);
 
-/// Every bucket on the node.
+/// Every bucket on the node. Backends sit behind [`KvStore::run`], one per
+/// durability: [`Memory`], [`Disk`], and a replicated one in Phase 3. Each
+/// runs [`apply`] in one transaction, so guests see the same rules from
+/// all of them.
 #[derive(Debug)]
 pub(crate) struct KvStore {
-    memory: Mutex<HashMap<Key, MemBucket>>,
+    memory: Memory,
     disk: Option<Arc<Disk>>,
+    /// Shared buckets from node configuration, by name.
+    shared: BTreeMap<String, SharedBucket>,
+}
+
+/// The memory backend.
+#[derive(Debug, Default)]
+struct Memory {
+    buckets: Mutex<HashMap<Key, MemBucket>>,
+}
+
+impl Memory {
+    fn run(&self, key: Key, op: Op, quota: Option<u64>) -> Result<Outcome, String> {
+        let mut buckets = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
+        let b = buckets.entry(key).or_default();
+        let (outcome, bytes) = apply(b, op, quota)?;
+        b.bytes = bytes;
+        Ok(outcome)
+    }
 }
 
 #[derive(Debug)]
@@ -237,7 +336,19 @@ struct Disk {
 
 impl KvStore {
     /// Open the store; disk buckets need `data_dir`.
-    pub(crate) fn open(data_dir: Option<&Path>) -> Result<Self, String> {
+    pub(crate) fn open(
+        data_dir: Option<&Path>,
+        shared: BTreeMap<String, SharedBucket>,
+    ) -> Result<Self, String> {
+        if data_dir.is_none()
+            && let Some((name, _)) = shared
+                .iter()
+                .find(|(_, b)| b.durability == Durability::Disk)
+        {
+            return Err(format!(
+                "shared bucket '{name}' is on disk, and the node has no data directory"
+            ));
+        }
         let disk = match data_dir {
             None => None,
             Some(dir) => {
@@ -252,22 +363,22 @@ impl KvStore {
             }
         };
         Ok(Self {
-            memory: Mutex::default(),
+            memory: Memory::default(),
             disk,
+            shared,
         })
+    }
+
+    /// The shared bucket `name`, if the node configures it.
+    pub(crate) fn shared(&self, name: &str) -> Option<&SharedBucket> {
+        self.shared.get(name)
     }
 
     /// Run one operation against a bucket.
     pub(crate) async fn run(&self, bucket: &BucketHandle, op: Op) -> Result<Outcome, String> {
-        let key = (bucket.app.clone(), bucket.name.clone());
+        let key = (bucket.space.clone(), bucket.name.clone());
         match bucket.durability {
-            Durability::Memory => {
-                let mut memory = self.memory.lock().unwrap_or_else(PoisonError::into_inner);
-                let b = memory.entry(key).or_default();
-                let (outcome, bytes) = apply(b, op, bucket.quota)?;
-                b.bytes = bytes;
-                Ok(outcome)
-            }
+            Durability::Memory => self.memory.run(key, op, bucket.quota),
             Durability::Disk => {
                 let disk = self
                     .disk
@@ -293,10 +404,29 @@ impl KvStore {
     }
 }
 
+/// Each bucket's revision, by table name. Table names cannot clash with
+/// buckets' (`<space>/<bucket>`), which always hold a `/`.
+const REVISIONS: TableDefinition<&str, u64> = TableDefinition::new("@revisions");
+
+/// A table in a read transaction, or `None` if nothing has written it yet.
+fn open_read<K: redb::Key + 'static, V: redb::Value + 'static>(
+    txn: &redb::ReadTransaction,
+    table: TableDefinition<K, V>,
+) -> Result<Option<redb::ReadOnlyTable<K, V>>, String> {
+    match txn.open_table(table) {
+        Ok(t) => Ok(Some(t)),
+        Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
 impl Disk {
     fn run(&self, key: &Key, op: Op, quota: Option<u64>) -> Result<Outcome, String> {
+        // A bucket is two tables: values, and each key's revision.
         let name = format!("{}/{}", key.0, key.1);
+        let rev_name = format!("{name}#rev");
         let table: TableDefinition<&str, &[u8]> = TableDefinition::new(&name);
+        let revs: TableDefinition<&str, u64> = TableDefinition::new(&rev_name);
         let cached = self
             .sizes
             .lock()
@@ -306,16 +436,12 @@ impl Disk {
         let e = |err: &dyn std::fmt::Display| err.to_string();
         if op.read_only() {
             let txn = self.db.begin_read().map_err(|err| e(&err))?;
-            let mut view = match txn.open_table(table) {
-                Ok(t) => DiskRead {
-                    table: Some(t),
-                    cached,
-                },
-                Err(redb::TableError::TableDoesNotExist(_)) => DiskRead {
-                    table: None,
-                    cached,
-                },
-                Err(err) => return Err(e(&err)),
+            let mut view = DiskRead {
+                table: open_read(&txn, table)?,
+                revs: open_read(&txn, revs)?,
+                buckets: open_read(&txn, REVISIONS)?,
+                name: &name,
+                cached,
             };
             let (outcome, bytes) = apply(&mut view, op, quota)?;
             self.remember(key, bytes);
@@ -323,8 +449,13 @@ impl Disk {
         }
         let txn = self.db.begin_write().map_err(|err| e(&err))?;
         let (outcome, bytes) = {
-            let t = txn.open_table(table).map_err(|err| e(&err))?;
-            let mut view = DiskWrite { table: t, cached };
+            let mut view = DiskWrite {
+                table: txn.open_table(table).map_err(|err| e(&err))?,
+                revs: txn.open_table(revs).map_err(|err| e(&err))?,
+                buckets: txn.open_table(REVISIONS).map_err(|err| e(&err))?,
+                name: &name,
+                cached,
+            };
             apply(&mut view, op, quota)?
         };
         txn.commit().map_err(|err| e(&err))?;
@@ -367,12 +498,25 @@ fn read_keys<T: ReadableTable<&'static str, &'static [u8]>>(
     Ok(keys)
 }
 
-struct DiskRead {
+struct DiskRead<'a> {
     table: Option<redb::ReadOnlyTable<&'static str, &'static [u8]>>,
+    revs: Option<redb::ReadOnlyTable<&'static str, u64>>,
+    buckets: Option<redb::ReadOnlyTable<&'static str, u64>>,
+    name: &'a str,
     cached: Option<u64>,
 }
 
-impl Txn for DiskRead {
+fn read_u64<T: ReadableTable<&'static str, u64>>(
+    table: Option<&T>,
+    key: &str,
+) -> Result<Option<u64>, String> {
+    let Some(t) = table else {
+        return Ok(None);
+    };
+    Ok(t.get(key).map_err(|e| e.to_string())?.map(|v| v.value()))
+}
+
+impl Txn for DiskRead<'_> {
     fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, String> {
         let Some(t) = &self.table else {
             return Ok(None);
@@ -382,12 +526,24 @@ impl Txn for DiskRead {
             .map(|v| v.value().to_vec()))
     }
 
-    fn put(&mut self, _key: &str, _value: &[u8]) -> Result<(), String> {
+    fn put(&mut self, _key: &str, _value: &[u8], _revision: u64) -> Result<(), String> {
         Err("write in a read transaction".into())
     }
 
     fn remove(&mut self, _key: &str) -> Result<(), String> {
         Err("write in a read transaction".into())
+    }
+
+    fn revision(&mut self) -> Result<u64, String> {
+        Ok(read_u64(self.buckets.as_ref(), self.name)?.unwrap_or(0))
+    }
+
+    fn set_revision(&mut self, _revision: u64) -> Result<(), String> {
+        Err("write in a read transaction".into())
+    }
+
+    fn key_revision(&mut self, key: &str) -> Result<Option<u64>, String> {
+        read_u64(self.revs.as_ref(), key)
     }
 
     fn keys(&mut self, offset: usize, limit: usize) -> Result<Vec<String>, String> {
@@ -410,12 +566,15 @@ impl Txn for DiskRead {
     }
 }
 
-struct DiskWrite<'txn> {
+struct DiskWrite<'txn, 'a> {
     table: redb::Table<'txn, &'static str, &'static [u8]>,
+    revs: redb::Table<'txn, &'static str, u64>,
+    buckets: redb::Table<'txn, &'static str, u64>,
+    name: &'a str,
     cached: Option<u64>,
 }
 
-impl Txn for DiskWrite<'_> {
+impl Txn for DiskWrite<'_, '_> {
     fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, String> {
         Ok(self
             .table
@@ -424,14 +583,31 @@ impl Txn for DiskWrite<'_> {
             .map(|v| v.value().to_vec()))
     }
 
-    fn put(&mut self, key: &str, value: &[u8]) -> Result<(), String> {
+    fn put(&mut self, key: &str, value: &[u8], revision: u64) -> Result<(), String> {
         self.table.insert(key, value).map_err(|e| e.to_string())?;
+        self.revs.insert(key, revision).map_err(|e| e.to_string())?;
         Ok(())
     }
 
     fn remove(&mut self, key: &str) -> Result<(), String> {
         self.table.remove(key).map_err(|e| e.to_string())?;
+        self.revs.remove(key).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    fn revision(&mut self) -> Result<u64, String> {
+        Ok(read_u64(Some(&self.buckets), self.name)?.unwrap_or(0))
+    }
+
+    fn set_revision(&mut self, revision: u64) -> Result<(), String> {
+        self.buckets
+            .insert(self.name, revision)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn key_revision(&mut self, key: &str) -> Result<Option<u64>, String> {
+        read_u64(Some(&self.revs), key)
     }
 
     fn keys(&mut self, offset: usize, limit: usize) -> Result<Vec<String>, String> {

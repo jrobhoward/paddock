@@ -1,6 +1,9 @@
 //! Node-level runtime configuration.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+use paddock_bundle::manifest::Durability;
 use std::time::Duration;
 
 use crate::transport::membership::Role;
@@ -111,6 +114,18 @@ pub struct HostObjectRequest {
     pub groups: Option<u32>,
 }
 
+/// A shared keyvalue bucket: named in node configuration, opened by every
+/// app whose manifest lists it and whose grant includes it. Its scope is
+/// this node (a `cluster` scope is Phase 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedBucket {
+    /// `Memory` or `Disk`; `Replicated` buckets fail every operation until
+    /// Phase 3.
+    pub durability: Durability,
+    /// Most bytes the bucket may hold, across every app writing it.
+    pub quota: Option<u64>,
+}
+
 /// Configuration for a [`Runtime`](crate::Runtime).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -147,6 +162,8 @@ pub struct RuntimeConfig {
     /// Host-object limits for instances whose manifest sets none, and the
     /// most any manifest may ask for.
     pub host_objects: HostObjects,
+    /// Shared keyvalue buckets, by name.
+    pub buckets: BTreeMap<String, SharedBucket>,
 }
 
 impl Default for RuntimeConfig {
@@ -163,6 +180,7 @@ impl Default for RuntimeConfig {
             role: Role::Member,
             address: String::new(),
             host_objects: HostObjects::default(),
+            buckets: BTreeMap::new(),
         }
     }
 }

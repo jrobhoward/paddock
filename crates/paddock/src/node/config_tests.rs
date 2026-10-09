@@ -129,3 +129,43 @@ fn NodeConfig____zero_limit____refused() {
 
     assert!(err.to_string().contains("limits.links_max"), "{err}");
 }
+
+#[test]
+fn NodeConfig____buckets____read_with_defaults() {
+    let config = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[buckets.points]\ndurability = \"disk\"\nquota = \"1MiB\"\n[buckets.cache]\n",
+    )
+    .unwrap();
+
+    assert_eq!(config.buckets["points"].durability, Durability::Disk);
+    assert_eq!(config.buckets["points"].quota, Some(ByteSize::mib(1)));
+    assert_eq!(config.buckets["cache"].durability, Durability::Memory);
+    assert_eq!(config.buckets["cache"].scope, BucketScope::Node);
+}
+
+#[test]
+fn NodeConfig____unsupported_bucket____refused() {
+    let cases = [
+        ("scope = \"cluster\"", "cluster"),
+        ("durability = \"replicated\"", "replicated"),
+        ("quota = 0", "quota"),
+    ];
+
+    let errors: Vec<(String, &str)> = cases
+        .iter()
+        .map(|(line, named)| {
+            let text = format!("data_dir = \"/d\"\n[buckets.points]\n{line}\n");
+            (
+                NodeConfig::from_toml_str(&text).unwrap_err().to_string(),
+                *named,
+            )
+        })
+        .collect();
+
+    for (err, named) in errors {
+        assert!(
+            err.contains("buckets.points") && err.contains(named),
+            "{err}"
+        );
+    }
+}

@@ -553,6 +553,12 @@ pub struct SecretsScope {
 pub struct KeyValueScope {
     /// Buckets the app may open, by name. The host namespaces them per app.
     pub buckets: BTreeMap<String, Bucket>,
+    /// Shared buckets the app uses, by name, read-only or read-write. The
+    /// node's configuration defines each one (`[buckets.<name>]`) and
+    /// operator policy grants each one; apps that use the same name see the
+    /// same data.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub shared: BTreeMap<String, AccessMode>,
 }
 
 impl KeyValueScope {
@@ -562,6 +568,17 @@ impl KeyValueScope {
                 v.name(name.clone(), name);
                 if bucket.quota.is_some_and(|q| q.bytes() == 0) {
                     v.error_at(format!("{name}.quota"), "must be greater than zero");
+                }
+            });
+        }
+        for name in self.shared.keys() {
+            v.at("shared", |v| {
+                v.name(name.clone(), name);
+                if self.buckets.contains_key(name) {
+                    v.error_at(
+                        name.clone(),
+                        "is also an app bucket; a bucket name opens one or the other",
+                    );
                 }
             });
         }
