@@ -201,6 +201,15 @@ All notable changes are recorded here. The format follows
   witness with leases, heartbeat paths, an operator), `FailoverHandle`
   with the node's leadership (`may_run`) and an operator's `confirm`.
   Follows spike S16's rules; not yet wired to the node's apps.
+- `docs/tla/`: TLA+ verification of failover in HAppliance's style. Layer 1
+  is spike S16's model; layer 2 models the code with time, in rounds.
+  `VERIFICATION.md` lists configs, results, bugs found and the
+  requirements each assumption puts on the code.
+- Failover fixes found by layer 2: the primary renews through its partner
+  by an echo of its own stamp, not by a beat's arrival; a standby's
+  confirmation time is when its beats stop confirming, recorded before a
+  request leaves. The node is now a state enum with one type per standing
+  (`failover/node.rs`), its transitions named after the model's actions.
 - Heartbeats carry a payload on every path (`HeartbeatPath::beat` and
   `Runtime::heard` take it), read whatever the session it arrives in.
 - Pids print as `node.serial.incarnation@creation` (`ps`, the API, logs),

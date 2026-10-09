@@ -1,5 +1,7 @@
 # Spike S16: a TLA+ model of failover
 
+This model is now layer 1 of [docs/tla](../../docs/tla/VERIFICATION.md), which adds a timed layer 2 of the code and keeps the results current.
+
 **Question.** Can a singleton app fail over between an HA pair and a witness without ever running on both nodes, under any single failure, and when the network and the serial line fail together while both nodes live? Which rules does the implementation (ROADMAP D10) need for that?
 
 **Answer.**

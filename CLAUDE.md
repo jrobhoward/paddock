@@ -136,15 +136,18 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   in-process mesh with fault injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
   the mesh on a paused clock: targeted races and seeded random scenarios
   (`PADDOCK_SIM_SEED=<n>` replays one).
-- `crates/paddock-host/src/failover.rs`: an HA pair's roles, epochs and
-  leases, and the witness (ROADMAP D10; the rules are
-  `spikes/s16/README.md` R1 to R7, so a change there means rerunning the
-  model). `tests/simulation/failover.rs` logs `may_run` and checks that a
+- `crates/paddock-host/src/failover/`: an HA pair's roles, epochs and
+  leases (`node.rs`: one type per standing; transitions consume the state
+  and return the next, named after the actions in `docs/tla/FailoverL2.tla`)
+  and the witness (`witness.rs`). The rules are R1 to R11 in
+  `docs/tla/VERIFICATION.md`; a change to a transition means updating the
+  matching action in the model and rerunning it. `tests/simulation/failover.rs` logs `may_run` and checks that a
   singleton never runs on both nodes.
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.
-- `docs/`: design and plan.
+- `docs/`: design and plan. `docs/tla/`: TLA+ specifications of failover
+  and their results (`VERIFICATION.md`); run with TLC, not in CI.
 - `spikes/`: throwaway programs that answered design questions
   (`spikes/s16` is a TLA+ model, run with TLC; its README has the commands). Excluded from
   the main workspace, from the conventions below, and from the Definition of

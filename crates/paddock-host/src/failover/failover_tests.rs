@@ -19,6 +19,8 @@ fn Status____encode_then_decode____round_trips(
         standing,
         promoting,
         epoch,
+        stamp: epoch.wrapping_add(1),
+        echo: 42,
     };
 
     assert_eq!(Status::decode(&status.encode()), Some(status));
@@ -28,6 +30,8 @@ fn Status____encode_then_decode____round_trips(
 #[case(&[])]
 #[case(&[1, 0, 1])]
 #[case(&[9, 0, 0, 0, 0, 0, 0, 0, 0, 0])]
+#[case(&[1; 25])]
+#[case(&[1; 27])]
 fn Status____malformed____none(#[case] bytes: &[u8]) {
     assert_eq!(Status::decode(bytes), None);
 }

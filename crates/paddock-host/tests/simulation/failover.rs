@@ -392,3 +392,25 @@ fn random_faults____never_two_runners_one_after_healing() {
 
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// Beats the standby sent while still confirming are held by a stall and
+/// arrive after it was promoted: they must not renew the old primary.
+#[test]
+fn held_confirmations____released_after_promotion____do_not_renew_the_old_primary() {
+    let overlap = simulate(50, 3, |sim| async move {
+        let pair = start(&sim, witness());
+        pass(3000).await;
+
+        sim.mesh.stall(1, 2);
+        sim.mesh.cut_path(1, 2, SERIAL);
+        sim.mesh.stall(1, 3);
+        pass(4000).await;
+        assert_eq!(pair.runners(), vec![2]);
+        sim.mesh.heal(1, 2);
+        pass(2000).await;
+
+        pair.overlap()
+    });
+
+    assert_eq!(overlap, None);
+}
