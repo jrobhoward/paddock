@@ -14,9 +14,9 @@ use paddock_bundle::manifest::{AppManifest, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
 use paddock_host::services::Extension;
 use paddock_host::{
-    AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, InstanceHandle, InstanceSpec,
-    Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid, Role, Runtime,
-    RuntimeConfig, UpgradeError, UpgradeOptions, UpgradeReport,
+    AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
+    InstanceSpec, Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid,
+    Role, Runtime, RuntimeConfig, UpgradeError, UpgradeOptions, UpgradeReport,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -283,6 +283,12 @@ impl Node {
                     ClusterRole::Witness => Role::Witness,
                 },
                 address: config.cluster.address.clone().unwrap_or_default(),
+                host_objects: HostObjects {
+                    timers: config.limits.timers_max,
+                    monitors: config.limits.monitors_max,
+                    links: config.limits.links_max,
+                    pending_calls: config.limits.pending_calls_max,
+                },
             },
             extensions,
         )

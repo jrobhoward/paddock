@@ -86,6 +86,21 @@ impl LinkTable {
         true
     }
 
+    /// Whether `a` may link with `b` while holding at most `max` links: it
+    /// holds fewer, or is linked with `b` already.
+    pub(crate) fn may_link(&self, a: Pid, b: Pid, max: usize) -> bool {
+        let t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        t.links
+            .get(&a)
+            .is_none_or(|set| set.len() < max || set.contains(&b))
+    }
+
+    /// How many monitors `watcher` holds on others.
+    pub(crate) fn monitors_held(&self, watcher: Pid) -> usize {
+        let t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        t.watching.get(&watcher).map_or(0, HashMap::len)
+    }
+
     /// Remove a link in both directions. Returns whether there was one.
     pub(crate) fn unlink(&self, a: Pid, b: Pid) -> bool {
         let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);

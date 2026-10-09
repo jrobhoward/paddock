@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Capability};
 
+use crate::config::HostObjectRequest;
 use crate::services::ServiceSpecs;
 
 /// Limits, timeouts and `init` arguments for one instance.
@@ -43,6 +44,8 @@ pub struct InstanceSpec {
     pub preopens: Vec<Preopen>,
     /// What the manifest asks of each host service.
     pub services: ServiceSpecs,
+    /// Host-object limits the manifest asks for.
+    pub host_objects: HostObjectRequest,
 }
 
 /// A host directory visible to the guest.
@@ -111,6 +114,12 @@ impl InstanceSpec {
             granted: spec.capabilities.declared().into_iter().collect(),
             preopens: Vec::new(),
             services: ServiceSpecs::from_manifest(spec),
+            host_objects: HostObjectRequest {
+                timers: spec.limits.timers_max,
+                monitors: spec.limits.monitors_max,
+                links: spec.limits.links_max,
+                pending_calls: spec.limits.pending_calls_max,
+            },
         }
     }
 

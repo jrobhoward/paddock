@@ -29,6 +29,11 @@ pub enum HostError {
         limit: u64,
     },
 
+    /// The instance asks for more host objects than the node allows
+    /// ([`HostObjects`](crate::HostObjects)).
+    #[error("{0}")]
+    HostObjectsAboveNode(String),
+
     /// A supervisor spec is invalid, or the supervisor has exited.
     #[error("invalid supervisor: {0}")]
     InvalidSupervisor(String),

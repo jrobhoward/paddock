@@ -677,7 +677,7 @@ impl InstanceTask {
                             Ok(())
                         }
                         // The caller stays pending until `process.reply`.
-                        Ok(CallResult::Noreply) => Ok(()),
+                        Ok(CallResult::Noreply) => store.data().check_pending(),
                         Err(err) => Err(err),
                     }
                 }

@@ -14,6 +14,7 @@ use wasmtime::{Error, ResourceLimiter, Result};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 
 use crate::bindings::paddock::runtime::{process, types};
+use crate::config::HostObjects;
 use crate::delivery;
 use crate::instance::{InstanceHandle, Message};
 use crate::message::{Envelope, ExitReason, Info};
@@ -55,6 +56,8 @@ pub struct InstanceState {
     /// callback as well as after a `noreply`.
     pub(crate) pending: HashMap<u64, oneshot::Sender<Envelope>>,
     pub(crate) timers: Timers,
+    /// Most host objects this instance may hold.
+    pub(crate) host_objects: HostObjects,
     services: States,
 }
 
@@ -83,6 +86,7 @@ impl InstanceState {
                     .map_err(|e| format!("preopen {} -> {}: {e}", p.host.display(), p.guest))?;
             }
         }
+        let host_objects = ctx.rt.host_objects().grant(&spec.host_objects)?;
         let services = States::new(&ctx.rt.services, spec, &ctx.rt.extensions)?;
         Ok(Self {
             pid,
@@ -95,6 +99,7 @@ impl InstanceState {
             registered_names: spec.registered_names.clone(),
             pending: HashMap::new(),
             timers: Timers::default(),
+            host_objects,
             services,
         })
     }
@@ -142,6 +147,15 @@ impl InstanceState {
     pub(crate) fn await_reply(&mut self, call_ref: u64, reply: oneshot::Sender<Envelope>) {
         self.pending.retain(|_, waiting| !waiting.is_closed());
         self.pending.insert(call_ref, reply);
+    }
+
+    /// After `handle-call` returned `noreply`: an error if the instance now
+    /// holds more unanswered calls than `pending_calls_max`.
+    pub(crate) fn check_pending(&self) -> Result<()> {
+        if self.pending.len() > limit(self.host_objects.pending_calls) {
+            return Err(Error::msg(PENDING_CALL_LIMIT));
+        }
+        Ok(())
     }
 }
 
@@ -292,6 +306,16 @@ impl CallbackClock {
     }
 }
 
+/// Exit reasons (`crashed`) for an instance over a host-object limit.
+const TIMER_LIMIT: &str = "timer_limit";
+const MONITOR_LIMIT: &str = "monitor_limit";
+const LINK_LIMIT: &str = "link_limit";
+const PENDING_CALL_LIMIT: &str = "pending_call_limit";
+
+fn limit(max: u32) -> usize {
+    usize::try_from(max).unwrap_or(usize::MAX)
+}
+
 /// An instance's pending `send-after` timers. Dropping the set (when the
 /// instance exits) cancels them.
 #[derive(Debug, Default)]
@@ -301,6 +325,16 @@ pub(crate) struct Timers {
 }
 
 impl Timers {
+    /// Whether one more timer fits under `max`. Timers whose message was
+    /// dropped (a full mailbox) never fire into `fired`; they are pruned
+    /// here.
+    fn has_room(&mut self, max: usize) -> bool {
+        if self.active.len() >= max {
+            self.active.retain(|_, task| !task.is_finished());
+        }
+        self.active.len() < max
+    }
+
     fn start(
         &mut self,
         pid: Pid,
@@ -403,6 +437,10 @@ impl process::Host for InstanceState {
         if other == self.pid {
             return Ok(());
         }
+        let max = limit(self.host_objects.links);
+        if !self.ctx.rt.links.may_link(self.pid, other, max) {
+            return Err(Error::msg(LINK_LIMIT));
+        }
         if let Err(reason) = delivery::link(&self.ctx.rt, self.pid, other) {
             // Linking to a dead or unreachable pid is an immediate exit
             // signal (`noproc` or `noconnection`).
@@ -423,6 +461,9 @@ impl process::Host for InstanceState {
 
     async fn monitor(&mut self, other: types::Pid) -> Result<u64> {
         let other = Pid::from(other);
+        if self.ctx.rt.links.monitors_held(self.pid) >= limit(self.host_objects.monitors) {
+            return Err(Error::msg(MONITOR_LIMIT));
+        }
         let (reference, down) = delivery::monitor(&self.ctx.rt, self.pid, other);
         if let Some(reason) = down {
             self.ctx.me.signal(Info::Down {
@@ -459,6 +500,9 @@ impl process::Host for InstanceState {
     }
 
     async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
+        if !self.timers.has_room(limit(self.host_objects.timers)) {
+            return Err(Error::msg(TIMER_LIMIT));
+        }
         Ok(self.timers.start(
             self.pid,
             Duration::from_millis(ms.into()),

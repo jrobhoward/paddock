@@ -12,7 +12,7 @@ use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConf
 
 use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{PaddockApp, PaddockAppPre};
-use crate::config::{MemoryProfile, RuntimeConfig};
+use crate::config::{HostObjects, MemoryProfile, RuntimeConfig};
 use crate::delivery;
 use crate::deny;
 use crate::error::{HostError, describe};
@@ -70,6 +70,11 @@ impl RuntimeInner {
     /// This start of the node.
     pub(crate) fn creation(&self) -> u32 {
         self.config.creation
+    }
+
+    /// The node's host-object limits.
+    pub(crate) fn host_objects(&self) -> HostObjects {
+        self.config.host_objects
     }
 
     /// The transport to other nodes, once set.
@@ -272,7 +277,8 @@ impl Runtime {
     ///
     /// [`HostError::InstanceLimit`] when every slot is in use, and
     /// [`HostError::MemoryAboveProfile`] when `memory_max` exceeds what the
-    /// node's memory profile reserves.
+    /// node's memory profile reserves, and [`HostError::HostObjectsAboveNode`]
+    /// when a host-object limit exceeds the node's.
     pub fn spawn(&self, app: &LoadedApp, spec: InstanceSpec) -> Result<InstanceHandle, HostError> {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         self.start(app, spec, id, 1)
@@ -524,6 +530,11 @@ impl Runtime {
                 limit,
             });
         }
+        self.inner
+            .config
+            .host_objects
+            .grant(&spec.host_objects)
+            .map_err(HostError::HostObjectsAboveNode)?;
         let pid = Pid {
             node: self.inner.config.node,
             id,

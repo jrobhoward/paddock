@@ -20,6 +20,14 @@
 //! role = "member"               # or "witness": runs no apps
 //! heartbeat_interval_ms = 1000
 //! node_timeout_ms = 5000
+//!
+//! # Host objects per instance: the value for apps that set none, and the
+//! # most a manifest may ask for.
+//! [limits]
+//! timers_max = 10000
+//! monitors_max = 10000
+//! links_max = 10000
+//! pending_calls_max = 10000
 //! ```
 
 use std::collections::BTreeMap;
@@ -80,6 +88,44 @@ pub struct NodeConfig {
     /// This node's part in a cluster.
     #[serde(default)]
     pub cluster: ClusterConfig,
+    /// Host-object limits per instance.
+    #[serde(default)]
+    pub limits: NodeLimits,
+}
+
+/// The `[limits]` section: host objects per instance, as the manifest's
+/// `limits` fields of the same names. Each is the value for apps that set
+/// none and the most a manifest may ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeLimits {
+    /// Pending `send-after` timers.
+    #[serde(default = "default_host_objects")]
+    pub timers_max: u32,
+    /// Monitors held on other instances.
+    #[serde(default = "default_host_objects")]
+    pub monitors_max: u32,
+    /// Links.
+    #[serde(default = "default_host_objects")]
+    pub links_max: u32,
+    /// Calls answered `noreply` and not yet replied to.
+    #[serde(default = "default_host_objects")]
+    pub pending_calls_max: u32,
+}
+
+impl Default for NodeLimits {
+    fn default() -> Self {
+        Self {
+            timers_max: default_host_objects(),
+            monitors_max: default_host_objects(),
+            links_max: default_host_objects(),
+            pending_calls_max: default_host_objects(),
+        }
+    }
+}
+
+fn default_host_objects() -> u32 {
+    10_000
 }
 
 /// What a node does in the cluster.
@@ -177,6 +223,19 @@ impl NodeConfig {
                  cluster.heartbeat_interval_ms ({}), which must be more than 0",
                 cluster.node_timeout_ms, cluster.heartbeat_interval_ms
             )));
+        }
+        let limits = &config.limits;
+        for (name, value) in [
+            ("timers_max", limits.timers_max),
+            ("monitors_max", limits.monitors_max),
+            ("links_max", limits.links_max),
+            ("pending_calls_max", limits.pending_calls_max),
+        ] {
+            if value == 0 {
+                return Err(NodeError::Invalid(format!(
+                    "node config: limits.{name} must be more than 0"
+                )));
+            }
         }
         Ok(config)
     }

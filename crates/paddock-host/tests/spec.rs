@@ -11,7 +11,7 @@ use std::time::Duration;
 use paddock_bundle::manifest::{
     AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Durability, LogLevel, Provenance,
 };
-use paddock_host::{InstanceSpec, Preopen};
+use paddock_host::{HostObjectRequest, InstanceSpec, Preopen};
 
 fn manifest(spec: serde_json::Value) -> AppManifest {
     AppManifest {
@@ -41,7 +41,7 @@ fn manifest(spec: serde_json::Value) -> AppManifest {
 fn from_manifest____limits_and_lifecycle____carried_over() {
     let m = manifest(serde_json::json!({
         "registered_names": ["orders", { "name": "orders-global", "scope": "global" }],
-        "limits": { "memory_max": "16MiB", "table_max": 500, "callback_deadline_ms": 250, "mailbox_max": 7, "message_max_bytes": "64KiB" },
+        "limits": { "memory_max": "16MiB", "table_max": 500, "callback_deadline_ms": 250, "mailbox_max": 7, "message_max_bytes": "64KiB", "timers_max": 3, "links_max": 4 },
         "lifecycle": { "init_timeout_ms": 1500, "shutdown_timeout_ms": 900, "start_args": { "mode": "fast" } }
     }));
 
@@ -54,6 +54,14 @@ fn from_manifest____limits_and_lifecycle____carried_over() {
     assert_eq!(spec.callback_deadline, Duration::from_millis(250));
     assert_eq!(spec.mailbox_max, 7);
     assert_eq!(spec.message_max_bytes, 64 << 10);
+    assert_eq!(
+        spec.host_objects,
+        HostObjectRequest {
+            timers: Some(3),
+            links: Some(4),
+            ..HostObjectRequest::default()
+        }
+    );
     assert_eq!(spec.registered_names, vec!["orders", "orders-global"]);
     assert_eq!(spec.init_timeout, Duration::from_millis(1500));
     assert_eq!(spec.shutdown_timeout, Duration::from_millis(900));

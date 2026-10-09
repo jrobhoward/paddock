@@ -129,6 +129,10 @@ The app's root supervisor, with OTP semantics.
 | `mailbox_max` | `10000` | Most queued messages per instance. When full, casts are dropped (and counted under `DROPPED` in `paddock ps`), and calls fail at once with `overloaded`. |
 | `message_max_bytes` | `"1MiB"` | Largest body accepted; larger ones fail with `too-large`. |
 | `table_max` | engine default | Most table elements per instance. |
+| `timers_max` | node's `[limits]` (10000) | Most pending `send-after` timers per instance. One more crashes the instance with `timer_limit`. |
+| `monitors_max` | node's `[limits]` (10000) | Most monitors the instance holds on others. One more crashes it with `monitor_limit`. |
+| `links_max` | node's `[limits]` (10000) | Most links the instance holds when it links with a new instance; past it, the instance crashes with `link_limit`. Links other instances make to it are charged to them. |
+| `pending_calls_max` | node's `[limits]` (10000) | Most calls answered `noreply` and not yet replied to. One more crashes the instance with `pending_call_limit`, and its waiting callers get `exited`. |
 | `fuel_per_message`, `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
 
 ### `capabilities`
@@ -238,6 +242,12 @@ role = "member"                        # or "witness": runs no apps, refuses dep
 heartbeat_interval_ms = 1000           # how often each peer is told this node is alive
 node_timeout_ms = 5000                 # silence that ends a peer's session; more than the interval
 # address and seeds are read but not used until the QUIC transport exists
+
+[limits]                               # host objects per instance; the value for apps that
+timers_max = 10000                     # set none, and the most a manifest may ask for (a
+monitors_max = 10000                   # larger value refuses the deploy)
+links_max = 10000
+pending_calls_max = 10000
 ```
 
 The operator policy (`policy`). Grants add up: the defaults, plus the app's own entry, plus the entry of each signer whose key verified the bundle.

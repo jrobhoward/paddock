@@ -127,6 +127,12 @@ All notable changes are recorded here. The format follows
   compute) and `pool_load` (concurrent clients against a pool), with results
   in `docs/BASELINE.md`. The chaos fixture's `busy:<n>` command gives a call
   a fixed amount of guest work.
+- Host-object quotas per instance: manifest `limits.timers_max`,
+  `monitors_max`, `links_max` and `pending_calls_max`, with node defaults
+  under `[limits]` (10,000 each) that are also the most a manifest may ask
+  for. Over a limit, the instance crashes with `timer_limit`,
+  `monitor_limit`, `link_limit` or `pending_call_limit`. Timers whose message
+  was dropped by a full mailbox no longer stay counted as pending.
 
 ### Changed
 

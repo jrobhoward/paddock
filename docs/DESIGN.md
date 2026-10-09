@@ -131,7 +131,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | `lifecycle` | restart (permanent, transient, temporary), shutdown timeout, init timeout, start args | Phase 1 |
 | `supervision` | children (for supervisor apps): strategy, intensity, period | Phase 1 |
 | `instances` | count or min/max, pool routing (round-robin, hash key) | Phase 1 count; scaling later |
-| `limits` | memory_max, table_max, callback_deadline_ms, fuel_per_message, mailbox_max, message_max_bytes, storage quota, open files, outbound connections | Phase 1 memory/deadline/mailbox; rest later |
+| `limits` | memory_max, table_max, callback_deadline_ms, fuel_per_message, mailbox_max, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, storage quota, open files, outbound connections | Phase 1 memory/deadline/mailbox; host objects in Phase 2a (H1); rest later |
 | `capabilities` | requested host interfaces with scopes (table below) | Phase 1 subset |
 | `messaging_acl` | which apps or names may call/cast this app, and which it may call | Phase 2 |
 | `config` | schema for config keys, defaults, secret references (never secret values) | Phase 1 |
@@ -178,7 +178,7 @@ Every instance gets its own wasmtime `Store`, linear memory and limits, and sees
 | Network | `wasi:sockets` address check hook; `wasi:http` through a filtering proxy | Default deny. Prefer HTTP egress over raw sockets. |
 | Storage | `wasi:keyvalue` buckets with byte quotas | Host-owned, so data survives instance crashes. |
 | Host calls | Every import runs a policy check and a rate limit | Each host function is attack surface; keep the set small. |
-| Host objects | A quota per instance on timers, monitors, links, registered names, pending calls, group memberships and watches | These live in host memory, outside `memory_max` (a timer holds its envelope), so the instance that creates them is charged for them, as seL4 charges a caller for kernel objects. Over quota, the operation fails or the instance crashes with a stated reason. Not enforced yet (ROADMAP H1). |
+| Host objects | A quota per instance on timers, monitors, links, registered names, pending calls, group memberships and watches | These live in host memory, outside `memory_max` (a timer holds its envelope), so the instance that creates them is charged for them, as seL4 charges a caller for kernel objects. The `process` functions that create them return no error, so over quota the instance crashes with `timer_limit`, `monitor_limit`, `link_limit` or `pending_call_limit`; later interfaces (groups, watches) return an error instead. Node config sets each limit's default and ceiling. Registered names need no quota: an instance holds only names its manifest lists. |
 
 **Address space.** Wasm32 memories reserve large guard regions (several GB of virtual space each) to avoid bounds checks. At thousands of instances per node this is fine. Configure the pooling allocator's guard size and the max instance count together, and alert near the limit.
 
@@ -596,7 +596,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 | Guest language support beyond Rust | Narrow adoption | Rust first; JS and Python via componentize tools; Go via wit-bindgen-go; test each per release |
 | Address space at high instance counts | Instantiation failures | Pool sizing, guard-size tuning, alerts |
 | Split brain with two nodes | Primary and standby both promote during a partition and act on the same devices | Independent heartbeat paths (network and serial), witness-granted epochs as fencing tokens, a lease for singletons, or operator-confirmed promotion (ROADMAP D10) |
-| Host objects outside the memory cap | A guest creates timers, monitors or watches until the node runs out of memory | A quota per instance on every host object (ROADMAP H1) |
+| Host objects outside the memory cap | A guest creates timers, monitors or watches until the node runs out of memory | A quota per instance on every host object: timers, monitors, links and pending calls (ROADMAP H1); group memberships and watches with H2 and H4 |
 
 ## Open questions
 

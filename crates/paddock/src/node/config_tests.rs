@@ -111,3 +111,21 @@ fn NodeConfig____timeout_not_above_interval____refused() {
 
     assert!(err.to_string().contains("node_timeout_ms"), "{err}");
 }
+
+#[test]
+fn NodeConfig____limits____read_with_defaults() {
+    let default = NodeConfig::from_toml_str("data_dir = \"/d\"\n").unwrap();
+    let set = NodeConfig::from_toml_str("data_dir = \"/d\"\n[limits]\ntimers_max = 50\n").unwrap();
+
+    assert_eq!(default.limits, NodeLimits::default());
+    assert_eq!(set.limits.timers_max, 50);
+    assert_eq!(set.limits.monitors_max, 10_000);
+}
+
+#[test]
+fn NodeConfig____zero_limit____refused() {
+    let err =
+        NodeConfig::from_toml_str("data_dir = \"/d\"\n[limits]\nlinks_max = 0\n").unwrap_err();
+
+    assert!(err.to_string().contains("limits.links_max"), "{err}");
+}
