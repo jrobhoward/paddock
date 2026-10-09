@@ -155,3 +155,11 @@ fn PortRange____invalid____returns_error(#[case] s: &str) {
 fn is_valid_guest_path____cases____match(#[case] path: &str, #[case] expected: bool) {
     assert_eq!(is_valid_guest_path(path), expected);
 }
+
+#[test]
+fn classify_import____paddock_watch____needs_keyvalue() {
+    let class = classify_import("paddock:watch/watch@0.1.0");
+
+    assert_eq!(class, ImportClass::Capability(&[Capability::KeyValue]));
+    assert_eq!(Capability::ALL[KEYVALUE], Capability::KeyValue);
+}

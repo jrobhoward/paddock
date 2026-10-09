@@ -646,7 +646,11 @@ impl InstanceTask {
                     }
                     continue;
                 }
-                Some(info) = self.signals.recv() => Some(Message::Info(info)),
+                Some(info) = self.signals.recv() => match info.resolve() {
+                    Some(info) => Some(Message::Info(info)),
+                    // A withdrawn notice (an ended watch).
+                    None => continue,
+                },
                 message = self.mailbox.recv() => message,
             };
             let Some(message) = message else {

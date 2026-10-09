@@ -171,6 +171,9 @@ impl TryFrom<String> for Capability {
     }
 }
 
+/// The index of [`Capability::KeyValue`] in [`Capability::ALL`].
+const KEYVALUE: usize = 4;
+
 /// Imports granted to every app without being declared: `(package,
 /// interfaces)`, where `None` means the whole package.
 const IMPLICIT: &[(&str, Option<&[&str]>)] = &[
@@ -269,6 +272,10 @@ pub fn classify_import(name: &str) -> ImportClass {
     const HTTP_TYPES: &[Capability] = &[Capability::HttpOutgoing, Capability::HttpIncoming];
     if parsed.package == "wasi:http" && parsed.interface == Some("types") {
         return ImportClass::Capability(HTTP_TYPES);
+    }
+    // Watches and compare-and-swap reach the same buckets as keyvalue.
+    if parsed.package == "paddock:watch" {
+        return ImportClass::Capability(std::slice::from_ref(&Capability::ALL[KEYVALUE]));
     }
     Capability::ALL
         .iter()

@@ -165,6 +165,34 @@ cargo run --release -p paddock-host --example baseline --features probes -- 1 10
 
 Probes (`paddock-host`'s `probes` feature, anyprobe USDT) with no tracer attached, `baseline` on 1 worker, two runs each: empty call p50 2.30–2.35 µs without the feature and 2.36–2.40 µs with it, 763,000–770,000 casts/s against 766,000–775,000. The difference is within run-to-run variation.
 
+## 2026-10-09: keyvalue watches (roadmap H4)
+
+Same machine. `watch_cost.rs` runs `paddock-fixture-sdk` instances against a shared `memory` bucket. A writer instance sets one key 2,000 times through `wasi:keyvalue` (median per call) while 0 to 1,000 other instances watch that key, or another key, through `paddock:watch`. Write to notice: the time from starting a write until a call to the watcher returns the change, polling with calls (signals are taken before calls), median of 1,000.
+
+```sh
+cargo build --release --target wasm32-wasip2 -p paddock-fixture-sdk
+cargo run --release -p paddock-host --example watch_cost -- 4    # and 1
+```
+
+| Write, watchers | 4 workers (two runs) | 1 worker |
+| --- | --- | --- |
+| none | 4.8–5.1 µs | 4.8 µs |
+| 1 on the key | 5.1–9.7 µs | 9.9 µs |
+| 100 on the key | 157–167 µs | 241 µs |
+| 1,000 on the key | 3.34–3.36 ms | 0.68 ms |
+| 1,000 on another key | 5.2 µs | 5.0 µs |
+
+| Write to notice handled | 4 workers | 1 worker |
+| --- | --- | --- |
+| Write, then a poll that sees the change | 27.0–27.5 µs | 26.4 µs |
+| Two plain calls, for comparison | 9.2–9.9 µs | 7.8 µs |
+
+- Watches on other keys cost a write nothing measurable: exact-key watches are indexed by key, so a write looks up only its own keys (before the index, 1,000 watches on another key made a write 24 µs).
+- With watchers on the key, the writer's call time includes the watchers' callbacks, which run on the same workers: each notice wakes an instance and runs `handle-info`, about 3 µs of worker time per watcher on 4 workers. It is not the cost of queueing notices.
+- Conflation caps that work when watchers fall behind: on 1 worker the writer outpaces 1,000 watchers, later writes raise queued notices instead of adding callbacks, and a write costs less than with 4 workers.
+- A notice is handled about 17–20 µs after the write call starts, beyond two plain calls: the write, the wake-up and one `handle-info` with a JSON decode in the guest.
+- Not measured: watches on `disk` buckets (the fsync dominates the write), and resuming a prefix watch over a large bucket (it scans the bucket's keys once).
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.

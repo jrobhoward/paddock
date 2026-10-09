@@ -125,9 +125,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   by `crates/paddock/tests/wit_rules.rs`. `wit/connection/`: the
   `paddock:connection` package (connection handlers), separate because it
   uses `wasi:io` streams, which `paddock:runtime` excludes. `wit/groups/`:
-  the `paddock:groups` package (process groups), separate so the app world
-  stays frozen; every host bindgen lists it, since `crates/paddock-host/wit`
-  imports it. `wit/vendor/`
+  the `paddock:groups` package (process groups), and `wit/watch/`:
+  `paddock:watch` (keyvalue revisions, compare-and-swap, watches), separate
+  so the app world stays frozen; every host bindgen lists both, since
+  `crates/paddock-host/wit` imports them. `wit/vendor/`
   holds unmodified copies of the WASI interfaces Paddock binds against
   (keyvalue, config, logging, and `wasi:io` for connections); bindings name
   each package path explicitly.

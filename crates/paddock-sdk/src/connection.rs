@@ -58,6 +58,7 @@ pub mod bindings {
             "../../wit/vendor/wasi-io",
             "../../wit/connection",
             "../../wit/groups",
+            "../../wit/watch",
             "wit",
         ],
         world: "paddock:sdk/connection",

@@ -20,10 +20,22 @@
 //! - `members:<group>`: the members' pids, joined by `,`.
 //! - `publish:<group>:<text>`: how many members took it.
 //! - `received`: the text of every cast received, joined by `,`.
+//! - `watch:<bucket>:<key>`, `watch-prefix:<bucket>:<prefix>`: `<id>@<revision>`.
+//! - `resume:<bucket>:<key>:<after>`, `resume-prefix:<bucket>:<prefix>:<after>`:
+//!   as `watch`, replaying changes after `<after>`.
+//! - `unwatch:<id>`: `ok`.
+//! - `entry:<bucket>:<key>`: `<value>@<revision>` or `none`.
+//! - `rev:<bucket>`: the bucket's revision.
+//! - `cas:<bucket>:<key>:<expected or ->:<value>`: the new revision.
+//! - `cad:<bucket>:<key>:<expected>`: the bucket's new revision.
+//! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
+//! - `changes`: every change notice received, `<key>@<revision>`, joined
+//!   by `,`.
 
 use paddock_sdk::groups::{self, GroupError};
 use paddock_sdk::kv::{Bucket, KvError};
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use paddock_sdk::watch::{self, Change, WatchError};
+use paddock_sdk::{App, CallRef, Ctx, Envelope, Info, Reply};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,6 +47,47 @@ struct Point {
 #[derive(Default)]
 struct Fixture {
     received: Vec<String>,
+    changes: Vec<String>,
+}
+
+const WATCH_VERBS: [&str; 9] = [
+    "watch",
+    "watch-prefix",
+    "resume",
+    "resume-prefix",
+    "unwatch",
+    "entry",
+    "rev",
+    "cas",
+    "cad",
+];
+
+fn watching(command: &str) -> Result<String, WatchError> {
+    let mut parts = command.splitn(5, ':');
+    let verb = parts.next().unwrap_or("");
+    let bucket = parts.next().unwrap_or("");
+    let key = parts.next().unwrap_or("");
+    let rest = parts.next().unwrap_or("");
+    let number = |s: &str| s.parse::<u64>().unwrap_or(0);
+    let started = |s: watch::Started| format!("{}@{}", s.id, s.revision);
+    Ok(match verb {
+        "watch" => started(watch::watch(bucket, key)?),
+        "watch-prefix" => started(watch::watch_prefix(bucket, key)?),
+        "resume" => started(watch::resume(bucket, key, false, number(rest))?),
+        "resume-prefix" => started(watch::resume(bucket, key, true, number(rest))?),
+        "unwatch" => watch::unwatch(number(bucket)).map(|()| "ok".to_string())?,
+        "entry" => watch::get(bucket, key)?.map_or_else(
+            || "none".into(),
+            |e| format!("{}@{}", String::from_utf8_lossy(&e.value), e.revision),
+        ),
+        "rev" => watch::revision(bucket)?.to_string(),
+        "cas" => {
+            let expected = (rest != "-").then(|| number(rest));
+            let value = parts.next().unwrap_or("");
+            watch::compare_and_swap(bucket, key, expected, value.as_bytes())?.to_string()
+        }
+        _ => watch::compare_and_delete(bucket, key, number(rest))?.to_string(),
+    })
 }
 
 fn group(command: &str) -> Result<String, GroupError> {
@@ -139,6 +192,21 @@ impl App for Fixture {
             config(command).unwrap_or_else(|e| format!("err:{e}"))
         } else if verb == "received" {
             self.received.join(",")
+        } else if verb == "busy" {
+            let ms = command
+                .split(':')
+                .nth(1)
+                .and_then(|m| m.parse().ok())
+                .unwrap_or(0);
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+            while std::time::Instant::now() < until {
+                std::hint::spin_loop();
+            }
+            "ok".into()
+        } else if verb == "changes" {
+            self.changes.join(",")
+        } else if WATCH_VERBS.contains(&verb) {
+            watching(command).unwrap_or_else(|e| format!("err:{e}"))
         } else if ["join", "leave", "members", "publish"].contains(&verb) {
             group(command).unwrap_or_else(|e| format!("err:{e}"))
         } else {
@@ -150,6 +218,13 @@ impl App for Fixture {
     /// Starts empty after an upgrade, for the groups upgrade test.
     fn load_snapshot(_ctx: &mut Ctx, _from: &str, _snapshot: &[u8]) -> Result<Self, String> {
         Ok(Self::default())
+    }
+
+    fn handle_info(&mut self, _ctx: &mut Ctx, info: Info) {
+        if let Some(change) = Change::from_info(&info) {
+            self.changes
+                .push(format!("{}@{}", change.key, change.revision));
+        }
     }
 
     fn handle_cast(&mut self, _ctx: &mut Ctx, msg: Envelope) {

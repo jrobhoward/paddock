@@ -133,6 +133,7 @@ The app's root supervisor, with OTP semantics.
 | `monitors_max` | node's `[limits]` (10000) | Most monitors the instance holds on others. One more crashes it with `monitor_limit`. |
 | `links_max` | node's `[limits]` (10000) | Most links the instance holds when it links with a new instance; past it, the instance crashes with `link_limit`. Links other instances make to it are charged to them. |
 | `groups_max` | node's `[limits]` (1000) | Most process groups the instance is in (`paddock:groups`). One more `join` returns `limit-reached`. |
+| `watches_max` | node's `[limits]` (1000) | Most keyvalue watches the instance holds (`paddock:watch`). One more `watch` returns `limit-reached`. |
 | `pending_calls_max` | node's `[limits]` (10000) | Most calls answered `noreply` and not yet replied to. One more crashes the instance with `pending_call_limit`, and its waiting callers get `exited`. |
 | `fuel_per_message`, `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
 
@@ -149,7 +150,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | --- | --- | --- |
 | `wasi:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted. | enforced |
 | `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
-| `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. | enforced |
+| `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `paddock:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
 | `paddock:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. | enforced |
 | `wasi:filesystem` | `preopens."<guest path>" = { volume, mode, quota }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`; `quota` is *not enforced*. `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
 | `paddock:secrets`, `wasi:http/outgoing-handler`, `wasi:http/incoming-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
@@ -251,6 +252,7 @@ monitors_max = 10000                   # larger value refuses the deploy)
 links_max = 10000
 pending_calls_max = 10000
 groups_max = 1000
+watches_max = 1000
 
 [buckets.points]                       # a shared keyvalue bucket, opened by apps that list it
 durability = "disk"                    # under wasi:keyvalue's shared and are granted it; or "memory"

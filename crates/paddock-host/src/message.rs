@@ -2,6 +2,7 @@
 //! generated guest bindings.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::bindings::paddock::runtime::types as wit;
 use crate::pid::Pid;
@@ -201,6 +202,41 @@ pub(crate) enum Info {
         /// The message it was given.
         msg: Envelope,
     },
+    /// A host event whose payload is made when the instance takes it, so a
+    /// conflated notice carries the latest state (keyvalue watches).
+    Late(LateEvent),
+}
+
+/// What a [`Info::Late`] event becomes when the instance takes it.
+pub(crate) trait Late: Send + Sync + std::fmt::Debug {
+    /// The host event's name and payload, or `None` to deliver nothing (the
+    /// notice was withdrawn).
+    fn take(&self) -> Option<(String, Envelope)>;
+}
+
+/// A shared [`Late`] event. Equal only to itself.
+#[derive(Debug, Clone)]
+pub(crate) struct LateEvent(pub(crate) Arc<dyn Late>);
+
+impl PartialEq for LateEvent {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for LateEvent {}
+
+impl Info {
+    /// Resolve a [`Info::Late`] event into a host event; `None` if it was
+    /// withdrawn. Other kinds pass through.
+    pub(crate) fn resolve(self) -> Option<Self> {
+        match self {
+            Self::Late(LateEvent(late)) => {
+                late.take().map(|(name, msg)| Self::HostEvent { name, msg })
+            }
+            other => Some(other),
+        }
+    }
 }
 
 impl From<Info> for wit::Info {
@@ -214,6 +250,12 @@ impl From<Info> for wit::Info {
             } => Self::Down((reference, pid.into(), (&reason).into())),
             Info::Timer { reference, msg } => Self::Timer((reference, msg.into())),
             Info::HostEvent { name, msg } => Self::HostEvent((name, msg.into())),
+            // Resolved before delivery (`Info::resolve`); an unresolved one
+            // carries what it would resolve to now.
+            Info::Late(LateEvent(late)) => match late.take() {
+                Some((name, msg)) => Self::HostEvent((name, msg.into())),
+                None => Self::HostEvent((String::new(), Envelope::new("", "").into())),
+            },
         }
     }
 }

@@ -247,32 +247,32 @@ fn resolve_alias(resolve: &Resolve, mut id: TypeId) -> TypeId {
 }
 
 #[test]
-fn groups_package____checked____every_function_synchronous_with_access_denied() {
-    let wit = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit");
-    let mut resolve = Resolve::default();
-    resolve.push_dir(&wit).expect("wit/ parses");
-    let (pkg, _) = resolve
-        .push_dir(wit.join("groups"))
-        .expect("wit/groups parses");
+fn paddock_packages____checked____every_function_synchronous_with_access_denied() {
+    for (dir, name) in [
+        ("groups", "paddock:groups@0.1.0"),
+        ("watch", "paddock:watch@0.1.0"),
+    ] {
+        let wit = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit");
+        let mut resolve = Resolve::default();
+        resolve.push_dir(&wit).expect("wit/ parses");
+        let (pkg, _) = resolve.push_dir(wit.join(dir)).expect("package parses");
 
-    let functions: Vec<(String, Function)> = runtime_interfaces(&resolve, pkg)
-        .into_iter()
-        .flat_map(|(_, id)| resolve.interfaces[id].functions.clone())
-        .collect();
+        let functions: Vec<(String, Function)> = runtime_interfaces(&resolve, pkg)
+            .into_iter()
+            .flat_map(|(_, id)| resolve.interfaces[id].functions.clone())
+            .collect();
 
-    assert_eq!(
-        resolve.packages[pkg].name.to_string(),
-        "paddock:groups@0.1.0"
-    );
-    assert!(!functions.is_empty());
-    for (name, f) in &functions {
-        assert!(
-            matches!(f.kind, wit_parser::FunctionKind::Freestanding),
-            "{name} is not a plain synchronous function"
-        );
-        assert!(
-            returns_access_denied(&resolve, f.result.as_ref()),
-            "{name} has no access-denied error"
-        );
+        assert_eq!(resolve.packages[pkg].name.to_string(), name);
+        assert!(!functions.is_empty());
+        for (f_name, f) in &functions {
+            assert!(
+                matches!(f.kind, wit_parser::FunctionKind::Freestanding),
+                "{name}: {f_name} is not a plain synchronous function"
+            );
+            assert!(
+                returns_access_denied(&resolve, f.result.as_ref()),
+                "{name}: {f_name} has no access-denied error"
+            );
+        }
     }
 }

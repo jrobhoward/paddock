@@ -7,9 +7,95 @@ use std::collections::BTreeMap;
 use super::*;
 
 fn run(b: &mut MemBucket, op: Op, quota: Option<u64>) -> Result<Outcome, String> {
-    let (outcome, bytes) = apply(b, op, quota)?;
-    b.bytes = bytes;
-    Ok(outcome)
+    let applied = apply(b, op, quota)?;
+    b.bytes = applied.bytes;
+    Ok(applied.outcome)
+}
+
+fn swap(key: &str, expected: Option<u64>, value: &str) -> Op {
+    Op::Swap {
+        key: key.into(),
+        expected,
+        value: value.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn apply____changes____listed_once_with_the_revision() {
+    let mut b = MemBucket::default();
+
+    let set_many = apply(
+        &mut b,
+        Op::SetMany(vec![
+            ("a".into(), b"1".to_vec()),
+            ("b".into(), b"2".to_vec()),
+            ("a".into(), b"3".to_vec()),
+        ]),
+        None,
+    )
+    .unwrap();
+    let missing_delete = apply(&mut b, Op::Delete("zz".into()), None).unwrap();
+
+    assert_eq!(set_many.changed, ["a", "b"]);
+    assert_eq!(set_many.revision, Some(1));
+    assert!(missing_delete.changed.is_empty());
+    assert_eq!(missing_delete.revision, None);
+}
+
+#[test]
+fn apply____swap____writes_on_matching_revision_only() {
+    let mut b = MemBucket::default();
+
+    let created = run(&mut b, swap("k", None, "1"), None).unwrap();
+    let exists = run(&mut b, swap("k", None, "2"), None).unwrap();
+    let stale = run(&mut b, swap("k", Some(7), "2"), None).unwrap();
+    let updated = run(&mut b, swap("k", Some(1), "2"), None).unwrap();
+    let delete_stale = run(
+        &mut b,
+        Op::SwapDelete {
+            key: "k".into(),
+            expected: 1,
+        },
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(created, Outcome::Swapped(1));
+    assert_eq!(exists, Outcome::Conflict(Some(1)));
+    assert_eq!(stale, Outcome::Conflict(Some(1)));
+    assert_eq!(updated, Outcome::Swapped(2));
+    assert_eq!(delete_stale, Outcome::Conflict(Some(2)));
+    assert_eq!(revision(&mut b, "k"), (2, Some(2)));
+}
+
+#[test]
+fn apply____since____changed_keys_and_latest_delete() {
+    let mut b = MemBucket::default();
+    run(&mut b, set("p-1", "a"), None).unwrap();
+    run(&mut b, set("p-2", "a"), None).unwrap();
+    run(&mut b, set("q-1", "a"), None).unwrap();
+    run(&mut b, Op::Delete("q-1".into()), None).unwrap();
+    run(&mut b, set("p-1", "b"), None).unwrap();
+
+    let since = run(
+        &mut b,
+        Op::Since {
+            key: "p-".into(),
+            prefix: true,
+            after: 2,
+        },
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        since,
+        Outcome::Since {
+            revision: 5,
+            deleted: 4,
+            changed: vec![("p-1".into(), 5)],
+        }
+    );
 }
 
 fn set(k: &str, v: &str) -> Op {
@@ -346,4 +432,42 @@ fn KvStore____shared_disk_bucket_without_data_dir____refused() {
     let err = KvStore::open(None, shared).unwrap_err();
 
     assert!(err.contains("points"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn KvStore____disk_swap_and_delete_revision____kept_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let b = handle("app", "cas", Durability::Disk);
+    {
+        let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
+        store.run(&b, swap("k", None, "1")).await.unwrap();
+        store.run(&b, set("gone", "x")).await.unwrap();
+        store.run(&b, Op::Delete("gone".into())).await.unwrap();
+        let conflict = store.run(&b, swap("k", Some(9), "2")).await.unwrap();
+        assert_eq!(conflict, Outcome::Conflict(Some(1)));
+    }
+
+    let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
+    let entry = store.run(&b, Op::Entry("k".into())).await.unwrap();
+    let since = store
+        .run(
+            &b,
+            Op::Since {
+                key: "k".into(),
+                prefix: false,
+                after: 0,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(entry, Outcome::Entry(Some((b"1".to_vec(), 1))));
+    assert_eq!(
+        since,
+        Outcome::Since {
+            revision: 3,
+            deleted: 3,
+            changed: vec![("k".into(), 1)],
+        }
+    );
 }

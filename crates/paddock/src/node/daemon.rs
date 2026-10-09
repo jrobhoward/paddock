@@ -289,6 +289,7 @@ impl Node {
                     links: config.limits.links_max,
                     pending_calls: config.limits.pending_calls_max,
                     groups: config.limits.groups_max,
+                    watches: config.limits.watches_max,
                 },
                 buckets: config
                     .buckets

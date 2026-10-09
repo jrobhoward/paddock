@@ -146,6 +146,13 @@ All notable changes are recorded here. The format follows
   `bucket:<name>` and refuse ones the node does not configure.
 - Keyvalue revisions: each change raises a bucket's revision and stamps the
   keys written, in memory and on disk (groundwork for watches, H4).
+- `paddock:watch@0.1.0` (`wit/watch`), under the `wasi:keyvalue`
+  capability: reads with revisions, compare-and-swap and compare-and-delete
+  on a revision, and watches on a key or prefix that deliver conflated
+  `kv-changed` host events, resumable from a revision (`too-old` when the
+  bucket cannot replay). `limits.watches_max` and node `[limits]
+  watches_max` (default 1,000). SDK feature `watch` (`paddock_sdk::watch`).
+- `watch_cost` baseline harness (`paddock-host` example).
 
 ### Changed
 

@@ -39,8 +39,8 @@ impl MemoryProfile {
 /// outside `memory_max` (a pending timer holds its envelope), so each is
 /// charged to the instance that creates it. Over a limit, the instance
 /// crashes with `timer_limit`, `monitor_limit`, `link_limit` or
-/// `pending_call_limit`; a `paddock:groups` join over its limit returns
-/// `limit-reached`. Registered names need no limit: an instance may
+/// `pending_call_limit`; a `paddock:groups` join or a `paddock:watch` watch
+/// over its limit returns `limit-reached`. Registered names need no limit: an instance may
 /// hold only the names its manifest lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostObjects {
@@ -55,10 +55,13 @@ pub struct HostObjects {
     pub pending_calls: u32,
     /// Process groups joined (`paddock:groups`).
     pub groups: u32,
+    /// Keyvalue watches held (`paddock:watch`).
+    pub watches: u32,
 }
 
 impl Default for HostObjects {
-    /// 10,000 of each, the default `mailbox_max`, and 1,000 groups.
+    /// 10,000 of each, the default `mailbox_max`, and 1,000 groups and
+    /// watches.
     fn default() -> Self {
         Self {
             timers: 10_000,
@@ -66,6 +69,7 @@ impl Default for HostObjects {
             links: 10_000,
             pending_calls: 10_000,
             groups: 1_000,
+            watches: 1_000,
         }
     }
 }
@@ -94,6 +98,7 @@ impl HostObjects {
                 self.pending_calls,
             )?,
             groups: pick("groups_max", requested.groups, self.groups)?,
+            watches: pick("watches_max", requested.watches, self.watches)?,
         })
     }
 }
@@ -112,6 +117,8 @@ pub struct HostObjectRequest {
     pub pending_calls: Option<u32>,
     /// `groups_max`.
     pub groups: Option<u32>,
+    /// `watches_max`.
+    pub watches: Option<u32>,
 }
 
 /// A shared keyvalue bucket: named in node configuration, opened by every

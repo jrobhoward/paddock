@@ -62,6 +62,10 @@ pub struct Limits {
     /// uses the node's value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub groups_max: Option<u32>,
+    /// Most keyvalue watches one instance holds (`paddock:watch`). Unset
+    /// uses the node's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watches_max: Option<u32>,
 }
 
 impl Default for Limits {
@@ -81,6 +85,7 @@ impl Default for Limits {
             links_max: None,
             pending_calls_max: None,
             groups_max: None,
+            watches_max: None,
         }
     }
 }
@@ -111,6 +116,7 @@ impl Limits {
             ("links_max", self.links_max.map(u64::from)),
             ("pending_calls_max", self.pending_calls_max.map(u64::from)),
             ("groups_max", self.groups_max.map(u64::from)),
+            ("watches_max", self.watches_max.map(u64::from)),
         ] {
             if value == Some(0) {
                 v.error_at(field, "must be greater than zero");

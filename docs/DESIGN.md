@@ -442,7 +442,9 @@ A shared bucket is the bulletin board between apps: the role of a public ETS tab
 - Every write gives the key a new revision, a number that increases per bucket. Compare-and-swap takes an expected revision (as etcd's transactions do), so a writer can update a value without a lock and without comparing the value's bytes.
 - A watch subscribes an instance to a key or a key prefix. The host delivers `host-event("kv-changed", …)` with the bucket, key and revision, not the value; the subscriber reads the current value. Notices are conflated per key: while a notice for a key is waiting in the subscriber's mailbox, later writes to that key update its revision instead of adding notices. A slow subscriber misses intermediate values but always sees the latest, and watch notices never count as dropped casts.
 - A subscriber that restarts can resume from the last revision it handled; if the bucket no longer keeps changes that old, the host says so and the subscriber rereads the keys it watches. Watches end when the instance exits, like monitors.
-- `paddock:watch` is a Paddock interface next to `wasi:keyvalue` (which has no watch), with an `access-denied` error, and counts against the instance's host-object quota.
+- `paddock:watch` is a Paddock interface next to `wasi:keyvalue` (which has no watch), with an `access-denied` error, and counts against the instance's host-object quota. It is covered by the `wasi:keyvalue` capability and reaches the same buckets on the same terms (ROADMAP H4).
+- Notices travel on the instance's signal queue, not its mailbox, so a full mailbox never drops one; conflation bounds the queue by the keys a watch matches. A notice reads its key's latest revision when the instance takes it.
+- Resuming needs no change log: each key keeps its latest revision and each bucket the revision of its latest delete. A watch resuming after revision R gets a notice for every matching key with a later revision, unless a delete happened after R (or R is ahead of the bucket), in which case it gets `too-old` with the current revision and rereads. A delete anywhere in the bucket counts, even outside a prefix watch's keys.
 - Ordered range scans (ETS `ordered_set`, redb's order) and key expiry are later additions to the same interface.
 
 This is the platform's job rather than an app's: an app holding the board would serialize every read through one instance on one core, lose the board when it crashes, and turn every subscriber into a message across the network.
@@ -596,7 +598,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 | Guest language support beyond Rust | Narrow adoption | Rust first; JS and Python via componentize tools; Go via wit-bindgen-go; test each per release |
 | Address space at high instance counts | Instantiation failures | Pool sizing, guard-size tuning, alerts |
 | Split brain with two nodes | Primary and standby both promote during a partition and act on the same devices | Independent heartbeat paths (network and serial), witness-granted epochs as fencing tokens, a lease for singletons, or operator-confirmed promotion (ROADMAP D10) |
-| Host objects outside the memory cap | A guest creates timers, monitors or watches until the node runs out of memory | A quota per instance on every host object: timers, monitors, links, pending calls (ROADMAP H1) and group memberships (H2); watches with H4 |
+| Host objects outside the memory cap | A guest creates timers, monitors or watches until the node runs out of memory | A quota per instance on every host object: timers, monitors, links, pending calls (ROADMAP H1), group memberships (H2) and watches (H4) |
 
 ## Open questions
 

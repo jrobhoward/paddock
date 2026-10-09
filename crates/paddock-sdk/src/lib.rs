@@ -36,6 +36,8 @@
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
 //! - `groups` (cargo feature `groups`): `paddock:groups`, process groups
 //!   on this node with publish.
+//! - `watch` (cargo feature `watch`): `paddock:watch`, revisioned reads,
+//!   compare-and-swap and change watches on keyvalue buckets.
 //!
 //! Connection handlers (cargo feature `connection`) implement `Connection`
 //! instead of [`App`]: one instance per connection on the app's listeners.
@@ -61,6 +63,8 @@ pub mod kv;
 pub mod log;
 pub mod snapshot;
 mod types;
+#[cfg(feature = "watch")]
+pub mod watch;
 
 #[doc(hidden)]
 #[allow(missing_docs, clippy::too_many_arguments)]
@@ -74,6 +78,7 @@ pub mod bindings {
             "../../wit/vendor/wasi-io",
             "../../wit/connection",
             "../../wit/groups",
+            "../../wit/watch",
             "wit",
         ],
         world: "paddock:sdk/app",

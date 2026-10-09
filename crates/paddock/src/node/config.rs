@@ -36,6 +36,7 @@
 //! links_max = 10000
 //! pending_calls_max = 10000
 //! groups_max = 1000
+//! watches_max = 1000
 //! ```
 
 use std::collections::BTreeMap;
@@ -126,6 +127,9 @@ pub struct NodeLimits {
     /// Process groups joined.
     #[serde(default = "default_groups")]
     pub groups_max: u32,
+    /// Keyvalue watches held.
+    #[serde(default = "default_groups")]
+    pub watches_max: u32,
 }
 
 impl Default for NodeLimits {
@@ -136,6 +140,7 @@ impl Default for NodeLimits {
             links_max: default_host_objects(),
             pending_calls_max: default_host_objects(),
             groups_max: default_groups(),
+            watches_max: default_groups(),
         }
     }
 }
@@ -293,6 +298,7 @@ impl NodeConfig {
             ("links_max", limits.links_max),
             ("pending_calls_max", limits.pending_calls_max),
             ("groups_max", limits.groups_max),
+            ("watches_max", limits.watches_max),
         ] {
             if value == 0 {
                 return Err(NodeError::Invalid(format!(

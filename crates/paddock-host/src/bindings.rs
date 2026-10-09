@@ -11,6 +11,7 @@ wasmtime::component::bindgen!({
         "../../wit/vendor/wasi-config",
         "../../wit/vendor/wasi-keyvalue",
         "../../wit/groups",
+        "../../wit/watch",
         "wit",
     ],
     world: "paddock:host/paddock-app",
