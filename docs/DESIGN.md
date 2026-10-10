@@ -630,6 +630,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 - [x] Messaging ACL by app name, by registered name, or by capability token? By app name, through routes declared in the manifest (`messaging_acl.may_call`, `accept_from`), checked against the sender identity the host stamps on every message, which a guest cannot forge. This follows Fuchsia's declared `use` and `expose` routes. Capability tokens (endpoint handles passed in messages, as seL4 does) are parked (ROADMAP D5).
 - [x] Ship the server as a library (embedded in another binary) as well as a daemon? Yes, for host services: `paddock::node::run` and `Node::open_with` take extensions (ROADMAP A5).
 - [ ] How far to go with native-process plugins before Phase 3?
+- [ ] Should a member that stays silent be dropped from membership after a while? Today it stays a member, with its session ended, until it answers or leaves ("Membership"), so a node that crashed and never returns is listed forever and redialed (by the lower node id, or as a seed). Dropping it after a timeout would tidy the list and stop the redials, but a node back from a long outage would then have to rejoin through a seed instead of being redialed, and a too-short timeout would turn a network cut into a membership change. A clean leave is delivered reliably since 2026-10-09, so only crashed or retired nodes linger; an operator command to forget a node is the other option.
 
 ## Roadmap
 
