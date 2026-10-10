@@ -54,6 +54,9 @@ allow = [
     "Unicode-3.0",
     # `foldhash` (via hashbrown) is Zlib-only.
     "Zlib",
+    # `ring`, `rustls-webpki` and `untrusted` (TLS for the HTTP ingress, ROADMAP
+    # E1b). ISC is a permissive licence equivalent to MIT.
+    "ISC",
 ]
 # Not allowed, and not needed: `bzip2-1.0.6` (libbz2-rs-sys) and
 # `CC0-1.0`/`MIT-0` (ppmd-rust) come with the `zip` crate's default codecs.

@@ -36,6 +36,12 @@
 //! header_timeout_ms = 10000     # slow clients are dropped
 //! body_timeout_ms = 30000       # then 408
 //! max_response = "16MiB"        # larger app replies become 502
+//! tls = [{ cert = "/etc/paddock/shop.pem", key = "/etc/paddock/shop.key", hosts = ["shop.example"] }]
+//! tls_reload_s = 60             # check the files for changes; also SIGHUP
+//!
+//! # Prometheus scrape endpoint (GET /metrics). Unauthenticated.
+//! [metrics]
+//! address = "127.0.0.1:9100"
 //!
 //! [config.orders]
 //! "db.host" = "pg.internal"
@@ -128,6 +134,9 @@ pub struct NodeConfig {
     /// address serves every app's routes.
     #[serde(default)]
     pub http: BTreeMap<String, HttpBinding>,
+    /// Where Prometheus scrapes the node's metrics.
+    #[serde(default)]
+    pub metrics: Option<MetricsBinding>,
     /// This node's part in a cluster.
     #[serde(default)]
     pub cluster: ClusterConfig,
@@ -287,6 +296,15 @@ pub struct ListenerBinding {
     pub acceptors: usize,
 }
 
+/// `[metrics]`: an address serving `GET /metrics` in the Prometheus text
+/// format. Unauthenticated: bind it to a management network or loopback.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsBinding {
+    /// The address to bind, `ip:port`.
+    pub address: std::net::SocketAddr,
+}
+
 /// An HTTP ingress address and its limits: `[http.<name>]`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -308,6 +326,32 @@ pub struct HttpBinding {
     /// Largest reply body an app may send.
     #[serde(default = "default_max_response")]
     pub max_response: ByteSize,
+    /// Serve HTTPS with these certificates (the first is the default);
+    /// empty serves plain HTTP.
+    #[serde(default)]
+    pub tls: Vec<TlsBinding>,
+    /// How often to check the certificate files for changes and reload
+    /// them, in seconds; 0 never (reload with SIGHUP or `paddock
+    /// reload-tls`).
+    #[serde(default = "default_tls_reload_s")]
+    pub tls_reload_s: u64,
+}
+
+/// One certificate of an HTTPS ingress.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TlsBinding {
+    /// PEM certificate chain, leaf first.
+    pub cert: PathBuf,
+    /// PEM private key.
+    pub key: PathBuf,
+    /// Host names it serves, for SNI (`shop.example`, `*.example.com`).
+    #[serde(default)]
+    pub hosts: Vec<String>,
+}
+
+fn default_tls_reload_s() -> u64 {
+    60
 }
 
 fn default_http_connections() -> usize {

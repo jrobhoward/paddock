@@ -122,6 +122,59 @@ fn json<T: Serialize>(status: StatusCode, value: &T) -> Reply {
     response
 }
 
+/// Serve `GET /metrics` (and `GET /`) with `render`'s text on `listener`
+/// until `stop` turns true. Unauthenticated, like most Prometheus
+/// endpoints: bind it to loopback or a management network.
+pub(crate) async fn serve_metrics(
+    listener: tokio::net::TcpListener,
+    render: impl Fn() -> String + Send + Sync + 'static,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    let render = Arc::new(render);
+    loop {
+        let accepted = tokio::select! {
+            _ = stop.wait_for(|s| *s) => return,
+            accepted = listener.accept() => accepted,
+        };
+        let Ok((stream, _)) = accepted else {
+            continue;
+        };
+        let render = render.clone();
+        tokio::spawn(async move {
+            let service = hyper::service::service_fn(move |req: Request<Incoming>| {
+                let render = render.clone();
+                async move {
+                    let reply = match (req.method(), req.uri().path()) {
+                        (&Method::GET, "/metrics" | "/") => metrics_text(render()),
+                        _ => {
+                            let mut r =
+                                Response::new(Full::new(Bytes::from_static(b"GET /metrics\n")));
+                            *r.status_mut() = StatusCode::NOT_FOUND;
+                            r
+                        }
+                    };
+                    Ok::<_, Infallible>(reply)
+                }
+            });
+            let _ = hyper::server::conn::http1::Builder::new()
+                .timer(hyper_util::rt::TokioTimer::new())
+                .header_read_timeout(Duration::from_secs(10))
+                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                .await;
+        });
+    }
+}
+
+/// A Prometheus text body.
+pub(crate) fn metrics_text(text: String) -> Reply {
+    let mut response = Response::new(Full::new(Bytes::from(text)));
+    response.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/plain; version=0.0.4"),
+    );
+    response
+}
+
 fn error(e: &NodeError) -> Reply {
     let status = StatusCode::from_u16(e.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     json(
@@ -227,6 +280,8 @@ async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
             Err(e) => error(&e),
         },
         (&Method::GET, ["v1", "instances"]) => json(StatusCode::OK, &node.ps()),
+        (&Method::GET, ["v1", "metrics"]) => metrics_text(node.metrics()),
+        (&Method::POST, ["v1", "tls", "reload"]) => respond(node.reload_tls()),
         (&Method::POST, ["v1", "instances", pid, "kill"]) => respond(node.kill(pid).await),
         _ => error(&NodeError::NotFound(format!(
             "no route for {method} {path}"

@@ -1,6 +1,6 @@
 # Observability
 
-What an operator can see on a running node: instance stats, direct calls to one instance, and probes a tracer attaches to without a restart.
+What an operator can see on a running node: instance stats, direct calls to one instance, metrics for Prometheus, and probes a tracer attaches to without a restart.
 
 ## Instances
 
@@ -40,6 +40,28 @@ curl --unix-socket /var/lib/paddock/admin.sock -H 'content-type: text/plain' \
 ```
 
 A call through the admin API costs about 65 µs against about 4 µs inside the node ([BASELINE.md](BASELINE.md)), so it suits operators and tests, not a data path.
+
+## Metrics
+
+The node renders every app's metrics and its own in the Prometheus text format (version 0.0.4): `paddock metrics`, `GET /v1/metrics` on the admin API, and, with `[metrics] address = "127.0.0.1:9100"` in node config, `GET /metrics` on that address for a Prometheus scraper (unauthenticated; bind it to loopback or a management network). OpenTelemetry collectors can scrape the same endpoint.
+
+Apps' own metrics (`paddock:metrics`) are named `<prefix>_<name>` and carry an `app` label plus their own labels. They are per app: every instance of an app updating the same name and labels updates one series, so counters and histograms add up across a pool and survive restarts.
+
+The host's metrics, every one with an `app` label. The names and labels are an interface, like the probes below:
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `paddock_instances` | gauge | | Live instances. |
+| `paddock_memory_bytes` | gauge | | Linear memory of live instances. |
+| `paddock_mailbox_depth` | gauge | | Messages waiting in live instances' mailboxes. |
+| `paddock_callbacks_total` | counter | `kind` (`call`, `cast`, `info`) | Callbacks run. |
+| `paddock_callback_guest_seconds` | histogram | | Guest execution time per callback (10 µs to 1 s buckets). |
+| `paddock_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox. |
+| `paddock_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
+
+With an HTTP ingress, also (no labels): `paddock_http_requests_total`, `paddock_http_server_errors_total`, `paddock_http_not_found_total`, `paddock_http_refused_connections_total`.
+
+Gauges are read when the metrics are rendered; counters are kept per app from the node's start, and a counter's series starts once the app's first instance starts.
 
 ## Probes
 

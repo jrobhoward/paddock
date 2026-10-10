@@ -65,12 +65,31 @@ async fn serve(
     extensions: Vec<Arc<dyn Extension>>,
 ) -> anyhow::Result<()> {
     let node = Arc::new(Node::open_with(config, ring, extensions).await?);
+    #[cfg(unix)]
+    reload_on_hangup(node.clone());
     super::serve(node.clone(), shutdown_signal())
         .await
         .context("admin API")?;
     tracing::info!("shutting down");
     node.shutdown().await;
     Ok(())
+}
+
+/// Reload the HTTPS certificates on every SIGHUP.
+#[cfg(unix)]
+fn reload_on_hangup(node: Arc<Node>) {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Ok(mut hangup) = signal(SignalKind::hangup()) else {
+        return;
+    };
+    tokio::spawn(async move {
+        while hangup.recv().await.is_some() {
+            match node.reload_tls() {
+                Ok(done) => tracing::info!("{}", done.message),
+                Err(e) => tracing::error!(error = %e, "TLS reload failed"),
+            }
+        }
+    });
 }
 
 async fn shutdown_signal() {

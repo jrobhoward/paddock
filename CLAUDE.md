@@ -154,6 +154,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   change detection and the update format (`points`), the server.
   `examples/scada` is its demo (`points` pool, `hmi` connection handler);
   `crates/paddock/tests/scada.rs` runs it against a fake device.
+- `crates/paddock-host/src/metrics.rs`: app metrics (per app, lock-free
+  series) and the host's per-app counters, rendered as Prometheus text;
+  the `paddock:metrics` service is `src/services/metrics`. Metric names
+  are an interface listed in `docs/OBSERVABILITY.md`.
 - `crates/paddock-host/src/http.rs`: the HTTP ingress (node-level routes,
   hyper listeners, each request a call to the owning app's pool; the
   request and response envelope formats). `examples/http-counter` is its

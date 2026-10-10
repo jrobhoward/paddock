@@ -13,6 +13,7 @@ wasmtime::component::bindgen!({
         "../../wit/groups",
         "../../wit/watch",
         "../../wit/secrets",
+        "../../wit/metrics",
         "wit",
     ],
     world: "paddock:host/paddock-app",

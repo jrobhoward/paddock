@@ -235,3 +235,85 @@ async fn routes____node_without_ingress____deploy_refused() {
     );
     node.shutdown().await;
 }
+
+/// A self-signed certificate for `host` written to `cert` and `key`; its
+/// DER.
+fn write_cert(cert: &Path, key: &Path, host: &str) -> Vec<u8> {
+    let made = rcgen::generate_simple_self_signed(vec![host.to_string()]).unwrap();
+    std::fs::write(cert, made.cert.pem()).unwrap();
+    std::fs::write(key, made.signing_key.serialize_pem()).unwrap();
+    made.cert.der().to_vec()
+}
+
+/// One HTTPS GET trusting `trusted`: (the certificate served, status).
+async fn https_get(port: u16, trusted: &[&Vec<u8>], path: &str) -> (Vec<u8>, u16) {
+    let mut roots = rustls::RootCertStore::empty();
+    for der in trusted {
+        roots
+            .add(rustls_pki_types::CertificateDer::from((*der).clone()))
+            .unwrap();
+    }
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let name = rustls_pki_types::ServerName::try_from("shop.example").unwrap();
+    let mut stream = tokio_rustls::TlsConnector::from(Arc::new(config))
+        .connect(name, tcp)
+        .await
+        .unwrap();
+    let served = stream.get_ref().1.peer_certificates().unwrap()[0].to_vec();
+    stream
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nhost: shop.example\r\nconnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut raw = Vec::new();
+    let _ = stream.read_to_end(&mut raw).await;
+    let raw = String::from_utf8_lossy(&raw).into_owned();
+    (served, raw.split(' ').nth(1).unwrap().parse().unwrap())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn https____reload_tls____new_certificate_and_a_broken_one_refused() {
+    let setup = setup().await;
+    let port = free_port();
+    let cert = setup.dir.path().join("shop.pem");
+    let key = setup.dir.path().join("shop.key");
+    let first = write_cert(&cert, &key, "shop.example");
+    let (node, socket) = node(
+        &setup,
+        "tls",
+        &format!(
+            "[http.main]\naddress = \"127.0.0.1:{port}\"\ntls_reload_s = 0\n\
+             tls = [{{ cert = {cert:?}, key = {key:?}, hosts = [\"shop.example\"] }}]\n"
+        ),
+    )
+    .await;
+    let counter = bundle(&setup, "http-counter", "[{ path_prefix = \"/counter\" }]").await;
+    assert!(paddock(&socket, &["deploy", s(&counter)]).await.ok);
+
+    let (served_first, status) = https_get(port, &[&first], "/counter").await;
+    let second = write_cert(&cert, &key, "shop.example");
+    let reloaded = paddock(&socket, &["reload-tls"]).await;
+    let (served_second, _) = https_get(port, &[&first, &second], "/counter").await;
+    std::fs::write(&cert, "broken").unwrap();
+    let refused = paddock(&socket, &["reload-tls"]).await;
+    let (still, _) = https_get(port, &[&first, &second], "/counter").await;
+
+    assert_eq!((served_first, status), (first.clone(), 200));
+    assert!(reloaded.ok, "{}", reloaded.stderr);
+    assert_eq!(served_second, second);
+    assert!(!refused.ok);
+    assert!(refused.stderr.contains("http.main"), "{}", refused.stderr);
+    assert_eq!(still, second);
+    node.shutdown().await;
+}

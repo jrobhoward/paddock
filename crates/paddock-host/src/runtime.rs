@@ -20,6 +20,7 @@ use crate::instance::{self, InstanceHandle};
 use crate::links::LinkTable;
 use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
 use crate::message::{CallError, Envelope};
+use crate::metrics::Metrics;
 use crate::pid::Pid;
 use crate::pool::Pool;
 use crate::registry::Registry;
@@ -50,6 +51,8 @@ pub(crate) struct RuntimeInner {
     pub(crate) links: LinkTable,
     pools: RwLock<HashMap<String, Arc<Pool>>>,
     pub(crate) services: services::Shared,
+    /// Apps' metrics and the host's counters.
+    pub(crate) metrics: Metrics,
     pub(crate) extensions: Vec<Arc<dyn Extension>>,
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
@@ -191,6 +194,7 @@ impl Runtime {
                 links: LinkTable::new(config.node),
                 pools: RwLock::default(),
                 services,
+                metrics: Metrics::default(),
                 extensions,
                 transport: std::sync::OnceLock::new(),
                 pending_calls: PendingCalls::default(),
@@ -520,6 +524,12 @@ impl Runtime {
         self.inner.table.all()
     }
 
+    /// Every app's metrics and the host's, in the Prometheus text format.
+    #[must_use]
+    pub fn render_metrics(&self) -> String {
+        self.inner.metrics.render(&self.instances())
+    }
+
     /// Number of live instances.
     #[must_use]
     pub fn instance_count(&self) -> usize {
@@ -557,7 +567,7 @@ impl Runtime {
             id,
             incarnation,
         };
-        let (handle, task) = instance::prepare(pid, &spec);
+        let (handle, task) = instance::prepare(pid, &spec, self.inner.metrics.stats(&spec.app));
         let capacity = usize::try_from(self.inner.config.max_instances).unwrap_or(usize::MAX);
         self.inner
             .table

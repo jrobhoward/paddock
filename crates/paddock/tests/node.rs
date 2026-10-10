@@ -669,6 +669,7 @@ async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
             "wasi:config": {},
             "wasi:keyvalue": {},
             "paddock:groups": {},
+            "paddock:metrics": { "prefix": "vault" },
             "paddock:secrets": { "secrets": names }
         } }))
     };
@@ -713,5 +714,69 @@ async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
     assert_eq!(denied, "err:access denied");
     let audit = serde_json::to_string(&n.audit()).unwrap();
     assert!(!audit.contains("hunter2"), "{audit}");
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("policy.toml");
+    std::fs::write(&policy, "[apps.shop]\ngrant = [\"paddock:metrics\"]\n").unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[metrics]\naddress = \"127.0.0.1:{port}\"\n"
+    ))
+    .await;
+    let manifest = fast(json!({ "capabilities": {
+        "wasi:config": {},
+        "wasi:keyvalue": {},
+        "paddock:groups": {},
+        "paddock:secrets": { "secrets": [] },
+        "paddock:metrics": { "prefix": "shop" }
+    } }));
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "shop",
+            "1.0.0",
+            &fixture("paddock_fixture_sdk"),
+            manifest,
+            &[],
+        ))
+        .await
+        .unwrap();
+
+    let counted = call(&n, "shop", "counter:orders_total:eu:4").await;
+    let admin = n.client.metrics().await.unwrap();
+    let scraped = {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        s.write_all(b"GET /metrics HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut raw = String::new();
+        s.read_to_string(&mut raw).await.unwrap();
+        raw
+    };
+
+    assert_eq!(counted, "ok");
+    for text in [&admin, &scraped] {
+        assert!(
+            text.contains(r#"shop_orders_total{app="shop",l="eu"} 4"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"paddock_instances{app="shop"} 1"#),
+            "{text}"
+        );
+    }
+    assert!(scraped.starts_with("HTTP/1.1 200"), "{scraped}");
+    assert!(scraped.contains("text/plain; version=0.0.4"), "{scraped}");
     n.shutdown().await;
 }

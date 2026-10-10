@@ -22,6 +22,9 @@ ciborium = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+tokio-rustls = { workspace = true }
 paddock-bundle = { workspace = true }
 redb = { workspace = true }
 semver = { workspace = true }
@@ -33,6 +36,7 @@ wasmtime = { workspace = true, features = ["component-model", "async", "cranelif
 wasmtime-wasi = { workspace = true, features = ["p2"] }
 
 [dev-dependencies]
+rcgen = { workspace = true }
 rstest = { workspace = true }
 tempfile = { workspace = true }
 wat = { workspace = true }

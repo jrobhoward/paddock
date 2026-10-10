@@ -155,7 +155,8 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `wasi:filesystem` | `preopens."<guest path>" = { volume, mode, quota }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`; `quota` is *not enforced*. `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
 | `wasi:http/incoming-handler` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
 | `paddock:secrets` | `secrets = ["db-password"]`: names the app reads. Each name needs a `[secrets.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`secrets = [...]`); reading an ungranted one returns `access-denied`. | enforced |
-| `wasi:http/outgoing-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
+| `paddock:metrics` | `prefix` (required; letters, digits, `_`): every metric is exported as `<prefix>_<name>` with an `app` label. `max_series` (default 1000): most name and label combinations the app may hold; past it, registering returns `limit-reached`. | enforced |
+| `wasi:http/outgoing-handler` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
 | `wasi:sockets`, `paddock:sql` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
 | `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
 | `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
@@ -242,6 +243,9 @@ acceptors = 4                          # default 4: tasks accepting connections 
 [secrets.db-password]
 file = "/run/secrets/db-password"      # or env = "DB_PASSWORD"; read on every access
 
+[metrics]
+address = "127.0.0.1:9100"             # GET /metrics for Prometheus; unauthenticated, keep it off public networks
+
 [http.main]
 address = "0.0.0.0:8080"               # HTTP ingress: serves every app's wasi:http/incoming-handler routes
 acceptors = 4                          # default 4
@@ -249,6 +253,10 @@ max_connections = 1024                 # default 1024; more are closed on accept
 header_timeout_ms = 10000              # default 10000: time to send headers (also between kept-alive requests)
 body_timeout_ms = 30000                # default 30000: time to send a body, then 408
 max_response = "16MiB"                 # default "16MiB": larger app replies become 502
+tls = [                                # HTTPS: PEM chain and key; SNI picks by hosts; the first is the default
+  { cert = "/etc/paddock/shop.pem", key = "/etc/paddock/shop.key", hosts = ["shop.example", "*.shop.example"] },
+]
+tls_reload_s = 60                      # default 60: reload when the files change (0: only SIGHUP or `paddock reload-tls`)
 
 [config.orders]
 currency = "USD"                       # overrides the app's config.defaults

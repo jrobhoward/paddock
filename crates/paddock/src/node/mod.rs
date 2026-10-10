@@ -20,7 +20,7 @@ mod store;
 
 pub use config::{
     BucketConfig, BucketScope, ClusterConfig, ClusterRole, HttpBinding, ListenerBinding,
-    MemoryProfile, NodeConfig, SecretBinding,
+    MemoryProfile, MetricsBinding, NodeConfig, SecretBinding, TlsBinding,
 };
 pub use daemon::Node;
 pub use error::NodeError;

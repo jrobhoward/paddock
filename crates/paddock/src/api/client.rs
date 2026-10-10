@@ -235,6 +235,28 @@ impl Client {
         self.json(Method::GET, "/v1/instances", None).await
     }
 
+    /// Reload every HTTPS ingress's certificates from their files.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; an API error names each ingress that failed.
+    pub async fn reload_tls(&self) -> Result<Done, ClientError> {
+        self.json(Method::POST, "/v1/tls/reload", None).await
+    }
+
+    /// The node's metrics, in the Prometheus text format.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn metrics(&self) -> Result<String, ClientError> {
+        let (status, _, bytes) = self.send(Method::GET, "/v1/metrics", None).await?;
+        if !status.is_success() {
+            return Err(error_from(&bytes));
+        }
+        String::from_utf8(bytes).map_err(|e| ClientError::Decode(e.to_string()))
+    }
+
     /// An app's most recent log records, oldest first.
     ///
     /// # Errors

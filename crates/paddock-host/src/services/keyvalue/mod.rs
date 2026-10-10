@@ -46,6 +46,7 @@ mod bindings {
             "../../wit/groups",
             "../../wit/watch",
             "../../wit/secrets",
+            "../../wit/metrics",
             "wit",
         ],
         world: "paddock:host/keyvalue",

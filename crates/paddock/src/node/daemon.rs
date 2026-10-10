@@ -12,7 +12,7 @@ use crate::api::{
 };
 use paddock_bundle::manifest::{AppManifest, Capability, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
-use paddock_host::http::{HttpIngress, HttpRoute, IngressListen};
+use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, IngressTls, TlsCertificate};
 use paddock_host::services::{Extension, StartedExtensions};
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
@@ -47,6 +47,11 @@ pub struct Node {
     extensions: std::sync::Mutex<Option<StartedExtensions>>,
     /// HTTP ingress, if node config has `[http]` addresses.
     http: Option<HttpIngress>,
+    /// Stops background tasks: the `[metrics]` endpoint, certificate
+    /// checks.
+    stop: tokio::sync::watch::Sender<bool>,
+    /// HTTPS certificates, by ingress name.
+    certificates: Vec<(String, IngressTls)>,
 }
 
 /// A connection-handler app this node runs: its listeners, and the
@@ -325,11 +330,29 @@ impl Node {
         )
         .map_err(internal)?;
         let apps = rt.start_apps(Vec::new()).await.map_err(internal)?;
+        let mut certificates = Vec::new();
         let http = if config.http.is_empty() {
             None
         } else {
             let ingress = HttpIngress::new(apps.clone());
             for (name, binding) in &config.http {
+                let tls = if binding.tls.is_empty() {
+                    None
+                } else {
+                    let entries = binding
+                        .tls
+                        .iter()
+                        .map(|t| TlsCertificate {
+                            cert: t.cert.clone(),
+                            key: t.key.clone(),
+                            hosts: t.hosts.clone(),
+                        })
+                        .collect();
+                    let tls = IngressTls::load(entries)
+                        .map_err(|e| NodeError::Invalid(format!("http.{name}: {e}")))?;
+                    certificates.push((name.clone(), tls.clone(), binding.tls_reload_s));
+                    Some(tls)
+                };
                 let bound = ingress
                     .listen(IngressListen {
                         address: binding.address,
@@ -338,6 +361,7 @@ impl Node {
                         header_timeout: Duration::from_millis(binding.header_timeout_ms.max(1)),
                         body_timeout: Duration::from_millis(binding.body_timeout_ms.max(1)),
                         max_response: binding.max_response.bytes(),
+                        tls,
                     })
                     .await
                     .map_err(|e| NodeError::Invalid(format!("http.{name}: {e}")))?;
@@ -361,7 +385,34 @@ impl Node {
             connections: std::sync::Mutex::default(),
             extensions: std::sync::Mutex::default(),
             http,
+            stop: tokio::sync::watch::channel(false).0,
+            certificates: certificates
+                .iter()
+                .map(|(n, t, _)| (n.clone(), t.clone()))
+                .collect(),
         };
+        for (name, tls, every) in certificates {
+            if every > 0 {
+                tokio::spawn(watch_certificates(
+                    name,
+                    tls,
+                    Duration::from_secs(every),
+                    node.stop.subscribe(),
+                ));
+            }
+        }
+        if let Some(binding) = &node.config.metrics {
+            let listener = tokio::net::TcpListener::bind(binding.address)
+                .await
+                .map_err(|e| NodeError::Invalid(format!("metrics: {}: {e}", binding.address)))?;
+            let (rt, http) = (node.rt.clone(), node.http.clone());
+            let render = move || metrics_text(&rt, http.as_ref());
+            tokio::spawn(super::server::serve_metrics(
+                listener,
+                render,
+                node.stop.subscribe(),
+            ));
+        }
         node.restore().await;
         let started = match node
             .rt
@@ -1355,6 +1406,7 @@ impl Node {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         drop(started);
+        self.stop.send_replace(true);
         if let Some(http) = &self.http {
             http.stop();
         }
@@ -1365,11 +1417,100 @@ impl Node {
         self.apps.stop().await;
     }
 
+    /// Every app's metrics and the node's, in the Prometheus text format:
+    /// the runtime's, then the HTTP ingress's.
+    #[must_use]
+    pub fn metrics(&self) -> String {
+        metrics_text(&self.rt, self.http.as_ref())
+    }
+
+    /// Reload every HTTPS ingress's certificates from their files. An
+    /// ingress whose files fail keeps its old certificates.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Invalid`] naming each ingress that failed.
+    pub fn reload_tls(&self) -> Result<Done, NodeError> {
+        let failed: Vec<String> = self
+            .certificates
+            .iter()
+            .filter_map(|(name, tls)| tls.reload().err().map(|e| format!("http.{name}: {e}")))
+            .collect();
+        self.audit.record(
+            "reload_tls",
+            json!({ "ingresses": self.certificates.len(), "failed": failed }),
+        );
+        if !failed.is_empty() {
+            return Err(NodeError::Invalid(failed.join("; ")));
+        }
+        Ok(Done {
+            message: format!("reloaded {} HTTPS ingress(es)", self.certificates.len()),
+        })
+    }
+
     /// The admin socket this node's configuration names.
     #[must_use]
     pub fn socket(&self) -> std::path::PathBuf {
         self.config.socket()
     }
+}
+
+/// Reload `tls` whenever its files change, checking every `every`, until
+/// `stop`.
+async fn watch_certificates(
+    name: String,
+    tls: IngressTls,
+    every: Duration,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            _ = stop.wait_for(|s| *s) => return,
+            () = tokio::time::sleep(every) => {}
+        }
+        match tls.reload_if_changed() {
+            Ok(true) => tracing::info!(ingress = name, "TLS certificates reloaded"),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::error!(ingress = name, error = %e, "TLS reload failed; keeping the old certificates")
+            }
+        }
+    }
+}
+
+/// The runtime's metrics, then the HTTP ingress's.
+fn metrics_text(rt: &Runtime, http: Option<&HttpIngress>) -> String {
+    let mut text = rt.render_metrics();
+    if let Some(http) = http {
+        let s = http.stats();
+        for (name, help, value) in [
+            (
+                "paddock_http_requests_total",
+                "HTTP requests answered.",
+                s.requests,
+            ),
+            (
+                "paddock_http_server_errors_total",
+                "HTTP requests answered with a 5xx status.",
+                s.server_errors,
+            ),
+            (
+                "paddock_http_not_found_total",
+                "HTTP requests that matched no route.",
+                s.not_found,
+            ),
+            (
+                "paddock_http_refused_connections_total",
+                "Connections closed on accept, over max_connections.",
+                s.refused,
+            ),
+        ] {
+            text.push_str(&format!(
+                "# HELP {name} {help}\n# TYPE {name} counter\n{name} {value}\n"
+            ));
+        }
+    }
+    text
 }
 
 /// What a bundle's component compiled to.

@@ -8,12 +8,12 @@
 mod common;
 
 use std::net::SocketAddr;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use common::fixture;
 use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
-use paddock_host::http::{HttpIngress, HttpRoute, IngressListen};
+use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, IngressTls, TlsCertificate};
 use paddock_host::{AppDeployment, Apps, Runtime, RuntimeConfig};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -53,6 +53,13 @@ struct Served {
     tight: SocketAddr,
     /// One connection at a time.
     capped: SocketAddr,
+    /// HTTPS with certificates for `web.example` (the default) and
+    /// `*.shop.example`.
+    tls: SocketAddr,
+    /// The certificates' DER, to trust and to compare with what is served.
+    web_cert: Vec<u8>,
+    shop_cert: Vec<u8>,
+    _certs: tempfile::TempDir,
 }
 
 /// One runtime, the `web` app (a pool of three routed by `key`) and an
@@ -94,7 +101,11 @@ fn start() -> Served {
         }),
     );
     let routes = HttpRoute::from_manifest(&web);
-    let (apps, ingress, address, tight, capped) = tokio.block_on(async {
+    let certs = tempfile::tempdir().unwrap();
+    let (web_cert, web_entry) = cert(certs.path(), "web", &["web.example"]);
+    let (shop_cert, shop_entry) = cert(certs.path(), "shop", &["*.shop.example"]);
+    let tls_certs = IngressTls::load(vec![web_entry, shop_entry]).unwrap();
+    let (apps, ingress, address, tight, capped, tls) = tokio.block_on(async {
         let apps = rt
             .start_apps(vec![AppDeployment::new(web, app)])
             .await
@@ -120,7 +131,14 @@ fn start() -> Served {
             })
             .await
             .unwrap();
-        (apps, ingress, address, tight, capped)
+        let tls = ingress
+            .listen(IngressListen {
+                tls: Some(tls_certs),
+                ..IngressListen::new(any)
+            })
+            .await
+            .unwrap();
+        (apps, ingress, address, tight, capped, tls)
     });
     Served {
         _tokio: tokio,
@@ -130,7 +148,30 @@ fn start() -> Served {
         address,
         tight,
         capped,
+        tls,
+        web_cert,
+        shop_cert,
+        _certs: certs,
     }
+}
+
+/// A self-signed certificate for `hosts`, written to `dir`; its DER and the
+/// ingress entry for it.
+fn cert(dir: &std::path::Path, name: &str, hosts: &[&str]) -> (Vec<u8>, TlsCertificate) {
+    let made = rcgen::generate_simple_self_signed(
+        hosts.iter().map(ToString::to_string).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let cert = dir.join(format!("{name}.pem"));
+    let key = dir.join(format!("{name}.key"));
+    std::fs::write(&cert, made.cert.pem()).unwrap();
+    std::fs::write(&key, made.signing_key.serialize_pem()).unwrap();
+    let entry = TlsCertificate {
+        cert,
+        key,
+        hosts: hosts.iter().map(ToString::to_string).collect(),
+    };
+    (made.cert.der().to_vec(), entry)
 }
 
 fn route(prefix: &str) -> HttpRoute {
@@ -202,7 +243,7 @@ async fn request____on_a_route____answered_by_the_app() {
     assert_eq!(got.status, 200);
     assert!(
         got.body
-            .starts_with("POST /api/orders?y=1 key=t1 body=hi pid="),
+            .starts_with("POST /api/orders?y=1 key=t1 body=hi scheme=http pid="),
         "{}",
         got.body
     );
@@ -320,4 +361,72 @@ async fn max_connections____over_it____closed_on_accept() {
 
     assert_eq!(ended.as_deref(), Some(""));
     assert!(s.ingress.stats().refused > refused_before);
+}
+
+/// One HTTPS request with SNI `server_name`, trusting both test
+/// certificates: (the certificate served, status line, body).
+async fn https(server_name: &str, path: &str) -> (Vec<u8>, String, String) {
+    let s = served();
+    let mut roots = rustls::RootCertStore::empty();
+    for der in [&s.web_cert, &s.shop_cert] {
+        roots
+            .add(rustls_pki_types::CertificateDer::from(der.clone()))
+            .unwrap();
+    }
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let tcp = tokio::net::TcpStream::connect(s.tls).await.unwrap();
+    let name = rustls_pki_types::ServerName::try_from(server_name.to_string()).unwrap();
+    let mut stream = connector.connect(name, tcp).await.unwrap();
+    let served_cert = stream.get_ref().1.peer_certificates().unwrap()[0].to_vec();
+    stream
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nhost: {server_name}\r\nconnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut raw = Vec::new();
+    let _ = stream.read_to_end(&mut raw).await;
+    let raw = String::from_utf8_lossy(&raw).into_owned();
+    let (head, body) = raw.split_once("\r\n\r\n").unwrap();
+    (
+        served_cert,
+        head.lines().next().unwrap().to_string(),
+        body.to_string(),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tls____sni_names____matching_certificate_and_https_scheme() {
+    let s = served();
+
+    let (web, status, body) = https("web.example", "/api/x").await;
+    let (shop, _, _) = https("eu.shop.example", "/api/x").await;
+
+    assert_eq!(web, s.web_cert);
+    assert_eq!(shop, s.shop_cert);
+    assert!(status.starts_with("HTTP/1.1 200"), "{status}");
+    assert!(body.contains("scheme=https"), "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tls____plain_http_on_the_tls_port____no_response() {
+    let s = served();
+    let mut stream = tokio::net::TcpStream::connect(s.tls).await.unwrap();
+    stream
+        .write_all(b"GET /api/x HTTP/1.1\r\nhost: web.example\r\n\r\n")
+        .await
+        .unwrap();
+
+    let ended = read_until_closed(&mut stream, Duration::from_secs(5)).await;
+
+    let ended = ended.expect("the connection stayed open");
+    assert!(!ended.contains("HTTP/1.1 200"), "{ended}");
 }

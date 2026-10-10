@@ -11,7 +11,8 @@
 //!
 //! The request is a CBOR map in an `application/cbor` envelope whose
 //! `schema` is [`REQUEST_SCHEMA`]:
-//! `{ method, path, query, headers: [[name, value]], body: bytes, key }`.
+//! `{ scheme, method, path, query, headers: [[name, value]], body: bytes, key }`
+//! (`scheme` is `http` or `https`).
 //! A reply whose `schema` is [`RESPONSE_SCHEMA`] is a CBOR map
 //! `{ status, headers: [[name, value]], body: bytes }`; any other reply is
 //! sent as `200` with the envelope's content type and body.
@@ -30,6 +31,10 @@
 //! a node bug; connection handlers parse in the sandbox instead).
 //! Bodies are buffered whole; there is no streaming (S15: about 75% of
 //! native hyper's throughput through an instance call).
+
+mod tls;
+
+pub use tls::{IngressTls, TlsCertificate};
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -64,7 +69,7 @@ pub const DEFAULT_MAX_BODY: ByteSize = ByteSize::mib(1);
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One ingress address and its limits.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct IngressListen {
     /// Where to listen.
     pub address: SocketAddr,
@@ -79,6 +84,8 @@ pub struct IngressListen {
     pub body_timeout: Duration,
     /// Largest reply body from an app, in bytes (502 above it).
     pub max_response: u64,
+    /// Serve HTTPS with these certificates; `None` serves plain HTTP.
+    pub tls: Option<IngressTls>,
 }
 
 impl IngressListen {
@@ -93,6 +100,7 @@ impl IngressListen {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(30),
             max_response: 16 << 20,
+            tls: None,
         }
     }
 }
@@ -333,24 +341,51 @@ async fn accept(
         };
         let inner = inner.clone();
         let spec = spec.clone();
-        let mut stop = inner.stop.subscribe();
+        let stop = inner.stop.subscribe();
         tokio::spawn(async move {
             let _slot = slot;
-            let service = hyper::service::service_fn(|req| {
-                let inner = inner.clone();
-                let spec = spec.clone();
-                async move { Ok::<_, Infallible>(serve(&inner, &spec, req).await) }
-            });
-            let conn = hyper::server::conn::http1::Builder::new()
-                .timer(TokioTimer::new())
-                .header_read_timeout(spec.header_timeout)
-                .serve_connection(TokioIo::new(stream), service);
-            tokio::pin!(conn);
-            tokio::select! {
-                _ = conn.as_mut() => {}
-                _ = stop.wait_for(|s| *s) => conn.as_mut().graceful_shutdown(),
+            match spec.tls.clone() {
+                None => serve_connection(inner, spec, stream, "http", stop).await,
+                Some(tls) => {
+                    // The handshake counts against the header timeout.
+                    let handshake = tls.acceptor().accept(stream);
+                    match tokio::time::timeout(spec.header_timeout, handshake).await {
+                        Ok(Ok(stream)) => {
+                            serve_connection(inner, spec, stream, "https", stop).await;
+                        }
+                        Ok(Err(e)) => tracing::debug!(error = %e, "TLS handshake failed"),
+                        Err(_) => tracing::debug!("TLS handshake timed out"),
+                    }
+                }
             }
         });
+    }
+}
+
+/// Serve HTTP/1.1 on one connection, plain or TLS, until it closes or the
+/// ingress stops.
+async fn serve_connection<IO>(
+    inner: Arc<Inner>,
+    spec: Arc<IngressListen>,
+    io: IO,
+    scheme: &'static str,
+    mut stop: watch::Receiver<bool>,
+) where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let service = hyper::service::service_fn(|req| {
+        let inner = inner.clone();
+        let spec = spec.clone();
+        async move { Ok::<_, Infallible>(serve(&inner, &spec, scheme, req).await) }
+    });
+    let conn = hyper::server::conn::http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(spec.header_timeout)
+        .serve_connection(TokioIo::new(io), service);
+    tokio::pin!(conn);
+    tokio::select! {
+        _ = conn.as_mut() => {}
+        _ = stop.wait_for(|s| *s) => conn.as_mut().graceful_shutdown(),
     }
 }
 
@@ -379,8 +414,13 @@ fn pick(
         .map(|(app, r)| (app.clone(), r.clone()))
 }
 
-async fn serve(inner: &Inner, spec: &IngressListen, req: Request<Incoming>) -> Reply {
-    let reply = handle(inner, spec, req).await;
+async fn serve(
+    inner: &Inner,
+    spec: &IngressListen,
+    scheme: &'static str,
+    req: Request<Incoming>,
+) -> Reply {
+    let reply = handle(inner, spec, scheme, req).await;
     let c = &inner.counters;
     c.requests.fetch_add(1, Ordering::Relaxed);
     if reply.status().is_server_error() {
@@ -392,7 +432,12 @@ async fn serve(inner: &Inner, spec: &IngressListen, req: Request<Incoming>) -> R
     reply
 }
 
-async fn handle(inner: &Inner, spec: &IngressListen, req: Request<Incoming>) -> Reply {
+async fn handle(
+    inner: &Inner,
+    spec: &IngressListen,
+    scheme: &'static str,
+    req: Request<Incoming>,
+) -> Reply {
     let host = req
         .headers()
         .get(HOST)
@@ -445,7 +490,7 @@ async fn handle(inner: &Inner, spec: &IngressListen, req: Request<Incoming>) -> 
         }
         Ok(Err(_)) => return status(StatusCode::BAD_REQUEST, "unreadable body"),
     };
-    let msg = request_envelope(&method, &path, query, &headers, &body, key);
+    let msg = request_envelope(scheme, &method, &path, query, &headers, &body, key);
     let Some(target) = inner.apps.app(&app) else {
         return status(StatusCode::SERVICE_UNAVAILABLE, "app not running");
     };
@@ -484,6 +529,7 @@ fn text(s: &str) -> Value {
 
 /// The call a request becomes.
 fn request_envelope(
+    scheme: &str,
     method: &str,
     path: &str,
     query: Option<String>,
@@ -496,6 +542,7 @@ fn request_envelope(
         .map(|(k, v)| Value::Array(vec![text(k), text(v)]))
         .collect();
     let mut map = vec![
+        (text("scheme"), text(scheme)),
         (text("method"), text(method)),
         (text("path"), text(path)),
         (text("query"), query.map_or(Value::Null, Value::Text)),

@@ -33,6 +33,8 @@ pub const RESPONSE_SCHEMA: &str = "paddock/http-response";
 /// An HTTP request.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Request {
+    /// `http` or `https`: how the client reached the node.
+    pub scheme: String,
     /// `GET`, `POST`, ...
     pub method: String,
     /// The path, without the query.
@@ -89,6 +91,7 @@ impl Request {
                 .map(str::to_string)
         };
         Some(Self {
+            scheme: get_text("scheme").unwrap_or_else(|| "http".into()),
             method: get_text("method")?,
             path: get_text("path")?,
             query: get_text("query"),
@@ -136,6 +139,7 @@ impl Request {
             .map(|(k, v)| Value::Array(vec![text(k), text(v)]))
             .collect();
         let mut map = vec![
+            (text("scheme"), text(&self.scheme)),
             (text("method"), text(&self.method)),
             (text("path"), text(&self.path)),
             (

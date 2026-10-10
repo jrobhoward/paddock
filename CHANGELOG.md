@@ -176,6 +176,17 @@ All notable changes are recorded here. The format follows
   manifest, granted by name in policy (`secrets = [...]`), bound in node
   config to a file or environment variable (`[secrets.<name>]`), read on
   every call and never logged. SDK feature `secrets`.
+- Metrics (`paddock:metrics@0.1.0`, `wit/metrics`): app-defined counters,
+  gauges and histograms per app (`<prefix>_<name>`, `app` label,
+  `max_series`), host counters per app (callbacks, guest time, exits,
+  drops, instances, memory, mailbox depth) and HTTP ingress counters, in
+  the Prometheus text format: `paddock metrics`, `GET /v1/metrics`, and
+  `GET /metrics` on node config's `[metrics] address`. SDK feature
+  `metrics`.
+- HTTPS for the ingress: `tls = [{ cert, key, hosts }]` per `[http.<name>]`
+  (rustls on ring), certificates chosen by SNI, reloaded when their files
+  change (`tls_reload_s`), on SIGHUP, or with `paddock reload-tls`; a broken
+  file keeps the old certificates. Requests carry `scheme`.
 
 ### Changed
 

@@ -28,12 +28,15 @@
 //! - `rev:<bucket>`: the bucket's revision.
 //! - `cas:<bucket>:<key>:<expected or ->:<value>`: the new revision.
 //! - `cad:<bucket>:<key>:<expected>`: the bucket's new revision.
+//! - `counter:<name>:<label>:<n>`, `gauge:<name>:<label>:<n>`,
+//!   `observe:<name>:<label>:<n>` (a histogram with buckets 1, 10): make the
+//!   metric with label `l=<label>` and update it; `ok` or `err:<error>`.
 //! - `secret:<name>`: the secret as text, or `err:<error>`.
 //! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
 //! - HTTP requests (`paddock_sdk::http`), by the end of the path: `/plain`
 //!   replies a plain text envelope; `/status/<n>` replies status n;
 //!   `/crash` traps; `/never` never replies; `/big/<n>` replies n bytes; anything else replies 200 with
-//!   `<method> <path>?<query> key=<key> body=<body> pid=<pid>`.
+//!   `<method> <path>?<query> key=<key> body=<body> scheme=<scheme> pid=<pid>`.
 //! - `changes`: every change notice received, `<key>@<revision>`, joined
 //!   by `,`.
 
@@ -56,6 +59,22 @@ struct Fixture {
     changes: Vec<String>,
 }
 
+fn metric(command: &str) -> Result<(), paddock_sdk::metrics::MetricsError> {
+    use paddock_sdk::metrics::{Counter, Gauge, Histogram};
+    let mut parts = command.splitn(4, ':');
+    let verb = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    let label = parts.next().unwrap_or("");
+    let n: f64 = parts.next().and_then(|n| n.parse().ok()).unwrap_or(1.0);
+    let labels = [("l", label)];
+    match verb {
+        "counter" => Counter::new(name, "A fixture counter.", &labels)?.add(n),
+        "gauge" => Gauge::new(name, "A fixture gauge.", &labels)?.set(n),
+        _ => Histogram::new(name, "A fixture histogram.", &labels, &[1.0, 10.0])?.observe(n),
+    }
+    Ok(())
+}
+
 fn http(ctx: &mut Ctx, req: &Request) -> Reply {
     let path = req.path.as_str();
     if path.ends_with("/plain") {
@@ -75,12 +94,13 @@ fn http(ctx: &mut Ctx, req: &Request) -> Reply {
         return Reply::Now(Response::new(code.parse().unwrap_or(500)).into());
     }
     let echo = format!(
-        "{} {}?{} key={} body={} pid={}",
+        "{} {}?{} key={} body={} scheme={} pid={}",
         req.method,
         path,
         req.query.as_deref().unwrap_or(""),
         req.key.as_deref().unwrap_or("-"),
         req.text().unwrap_or("<binary>"),
+        req.scheme,
         ctx.pid(),
     );
     Reply::Now(Response::text(200, echo).header("x-fixture", "sdk").into())
@@ -231,6 +251,8 @@ impl App for Fixture {
             config(command).unwrap_or_else(|e| format!("err:{e}"))
         } else if verb == "received" {
             self.received.join(",")
+        } else if ["counter", "gauge", "observe"].contains(&verb) {
+            metric(command).map_or_else(|e| format!("err:{e}"), |()| "ok".into())
         } else if verb == "secret" {
             let name = command.split_once(':').map_or("", |(_, n)| n);
             paddock_sdk::secrets::get_string(name).unwrap_or_else(|e| format!("err:{e}"))

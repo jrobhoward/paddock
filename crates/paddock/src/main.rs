@@ -149,6 +149,10 @@ enum Command {
     },
     /// List running instances.
     Ps,
+    /// Print the node's metrics (Prometheus text).
+    Metrics,
+    /// Reload the HTTPS ingress certificates from their files.
+    ReloadTls,
     /// Show an instance's state (through its save-snapshot; an instance that
     /// traps there restarts).
     State {
@@ -258,6 +262,44 @@ async fn read(path: &PathBuf) -> anyhow::Result<Vec<u8>> {
         .with_context(|| format!("cannot read {}", path.display()))
 }
 
+/// `paddock bundle`: build, sign and report a bundle.
+fn make_bundle(json: bool, request: &bundle::BundleRequest<'_>) -> anyhow::Result<()> {
+    let b = bundle::bundle(request)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "path": b.path, "app": b.name, "version": b.version,
+                "signer": b.public_key, "imports": b.imports, "priv_files": b.priv_files,
+            }))?
+        );
+    } else {
+        println!(
+            "wrote {} ({} {}, {} priv file(s), signed by {})",
+            b.path.display(),
+            b.name,
+            b.version,
+            b.priv_files,
+            b.public_key
+        );
+    }
+    Ok(())
+}
+
+/// Print an admin action's outcome.
+fn done(
+    json: bool,
+    result: Result<paddock::api::Done, paddock::api::ClientError>,
+) -> anyhow::Result<()> {
+    print(json, &result?, |d| d.message.clone())
+}
+
+/// `paddock metrics`: the Prometheus text as the node renders it.
+async fn print_metrics(client: &Client) -> anyhow::Result<()> {
+    print!("{}", client.metrics().await?);
+    Ok(())
+}
+
 async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()> {
     match command {
         #[cfg(feature = "node")]
@@ -269,35 +311,17 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
             priv_dir,
             out,
             skip_import_check,
-        } => {
-            let b = bundle::bundle(&bundle::BundleRequest {
+        } => make_bundle(
+            json,
+            &bundle::BundleRequest {
                 manifest: &manifest,
                 component: &component,
                 key: &key,
                 priv_dir: priv_dir.as_deref(),
                 out: out.as_deref(),
                 skip_import_check,
-            })?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "path": b.path, "app": b.name, "version": b.version,
-                        "signer": b.public_key, "imports": b.imports, "priv_files": b.priv_files,
-                    }))?
-                );
-            } else {
-                println!(
-                    "wrote {} ({} {}, {} priv file(s), signed by {})",
-                    b.path.display(),
-                    b.name,
-                    b.version,
-                    b.priv_files,
-                    b.public_key
-                );
-            }
-            Ok(())
-        }
+            },
+        ),
         Command::Keygen {
             prefix,
             no_password,
@@ -306,6 +330,23 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
             println!("{public}");
             Ok(())
         }
+        Command::Deploy { .. }
+        | Command::List
+        | Command::Status { .. }
+        | Command::Upgrade { .. }
+        | Command::Rollback { .. }
+        | Command::Stop { .. }
+        | Command::Start { .. }
+        | Command::Remove { .. }
+        | Command::LogLevel { .. }
+        | Command::Logs { .. } => run_apps(client, json, command).await,
+        _ => run_runtime(client, json, command).await,
+    }
+}
+
+/// The commands that manage apps.
+async fn run_apps(client: &Client, json: bool, command: Command) -> anyhow::Result<()> {
+    match command {
         Command::Deploy { bundle } => {
             let r = client.deploy(read(&bundle).await?).await?;
             print(json, &r, |r| {
@@ -336,28 +377,31 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
             &client.rollback(&app, &rollout.params()).await?,
             format::upgrade,
         ),
-        Command::Stop { app } => print(json, &client.stop(&app).await?, |d| d.message.clone()),
-        Command::Start { app } => print(json, &client.start(&app).await?, |d| d.message.clone()),
-        Command::Remove { app } => print(json, &client.remove(&app).await?, |d| d.message.clone()),
-        Command::Kill { pid } => print(json, &client.kill(&pid).await?, |d| d.message.clone()),
-        Command::Ps => print(json, &client.ps().await?, |i| format::instances(i)),
-        Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
+        Command::Stop { app } => done(json, client.stop(&app).await),
+        Command::Start { app } => done(json, client.start(&app).await),
+        Command::Remove { app } => done(json, client.remove(&app).await),
         Command::LogLevel { app, level } => {
             let level = (level != "reset").then_some(level.as_str());
-            print(json, &client.set_log_level(&app, level).await?, |d| {
-                d.message.clone()
-            })
-        }
-        Command::Cast { message } => {
-            let (target, content_type, body) = message.into_parts()?;
-            print(
-                json,
-                &client.cast_to(&target, &content_type, body).await?,
-                |d| d.message.clone(),
-            )
+            done(json, client.set_log_level(&app, level).await)
         }
         Command::Logs { app, lines } => {
             print(json, &client.logs(&app, lines).await?, |l| format::logs(l))
+        }
+        _ => anyhow::bail!("not an app command"),
+    }
+}
+
+/// The commands on instances, messages and the node.
+async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::Result<()> {
+    match command {
+        Command::Kill { pid } => done(json, client.kill(&pid).await),
+        Command::Ps => print(json, &client.ps().await?, |i| format::instances(i)),
+        Command::Metrics => print_metrics(client).await,
+        Command::ReloadTls => done(json, client.reload_tls().await),
+        Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
+        Command::Cast { message } => {
+            let (target, content_type, body) = message.into_parts()?;
+            done(json, client.cast_to(&target, &content_type, body).await)
         }
         Command::Call {
             message,
@@ -370,5 +414,6 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
             println!("{}", format::reply(&reply_type, &reply));
             Ok(())
         }
+        _ => anyhow::bail!("not a runtime command"),
     }
 }

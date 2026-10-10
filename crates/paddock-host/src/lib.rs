@@ -31,6 +31,7 @@ mod lifecycle;
 mod links;
 pub mod listener;
 mod message;
+pub mod metrics;
 mod output;
 pub mod pid;
 mod pool;

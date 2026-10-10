@@ -42,6 +42,7 @@ pub mod extension;
 pub mod groups;
 pub mod keyvalue;
 pub mod logging;
+pub mod metrics;
 pub mod secrets;
 
 pub use extension::{
@@ -125,6 +126,8 @@ pub(crate) struct InstanceInfo<'a> {
     pub(crate) handle: &'a InstanceHandle,
     /// The instance's host-object limits.
     pub(crate) host_objects: HostObjects,
+    /// The node's metrics.
+    pub(crate) metrics: &'a crate::metrics::Metrics,
 }
 
 /// What a service's host functions see: the service's own per-instance
@@ -224,6 +227,8 @@ pub struct ServiceSpecs {
     pub logging: logging::LoggingSpec,
     /// `paddock:secrets`.
     pub secrets: secrets::SecretsSpec,
+    /// `paddock:metrics`.
+    pub metrics: metrics::MetricsSpec,
     /// Extensions the manifest declares, by package.
     pub extensions: BTreeMap<String, ExtensionSpec>,
 }
@@ -236,6 +241,7 @@ impl ServiceSpecs {
             keyvalue: keyvalue::KeyValue::spec(manifest),
             logging: logging::Logging::spec(manifest),
             secrets: secrets::Secrets::spec(manifest),
+            metrics: metrics::MetricsService::spec(manifest),
             extensions: manifest
                 .capabilities
                 .extensions
@@ -253,6 +259,7 @@ pub(crate) struct Shared {
     keyvalue: Arc<<keyvalue::KeyValue as Service>::Shared>,
     pub(crate) logging: Arc<logging::Shared>,
     secrets: Arc<<secrets::Secrets as Service>::Shared>,
+    metrics: Arc<()>,
 }
 
 impl Shared {
@@ -263,6 +270,7 @@ impl Shared {
             keyvalue: Arc::new(keyvalue::KeyValue::shared(config)?),
             logging: Arc::new(logging::Logging::shared(config)?),
             secrets: Arc::new(secrets::Secrets::shared(config)?),
+            metrics: Arc::new(metrics::MetricsService::shared(config)?),
         })
     }
 
@@ -273,6 +281,7 @@ impl Shared {
         keyvalue::KeyValue::exited(&self.keyvalue, pid);
         logging::Logging::exited(&self.logging, pid);
         secrets::Secrets::exited(&self.secrets, pid);
+        metrics::MetricsService::exited(&self.metrics, pid);
     }
 }
 
@@ -283,6 +292,7 @@ pub(crate) struct States {
     pub(crate) keyvalue: keyvalue::Instance,
     pub(crate) logging: logging::Instance,
     pub(crate) secrets: secrets::Instance,
+    pub(crate) metrics: metrics::Instance,
     pub(crate) extensions: extension::ExtensionStates,
 }
 
@@ -294,6 +304,7 @@ impl States {
         events.extend(keyvalue::KeyValue::announce(&self.keyvalue, tags));
         events.extend(logging::Logging::announce(&self.logging, tags));
         events.extend(secrets::Secrets::announce(&self.secrets, tags));
+        events.extend(metrics::MetricsService::announce(&self.metrics, tags));
         events
     }
 
@@ -306,11 +317,13 @@ impl States {
         extensions: &[Arc<dyn Extension>],
         handle: &InstanceHandle,
         host_objects: HostObjects,
+        metrics: &crate::metrics::Metrics,
     ) -> Result<Self, String> {
         let info = |capability: Capability| InstanceInfo {
             granted: spec.granted.contains(&capability),
             handle,
             host_objects,
+            metrics,
         };
         let null = serde_json::Value::Null;
         let mut states = extension::ExtensionStates::default();
@@ -354,6 +367,11 @@ impl States {
                 &services.secrets,
                 &info(secrets::Secrets::CAPABILITY),
             ),
+            metrics: metrics::MetricsService::instance(
+                &shared.metrics,
+                &services.metrics,
+                &info(metrics::MetricsService::CAPABILITY),
+            ),
             extensions: states,
         })
     }
@@ -366,13 +384,15 @@ where
         + HostState<groups::Groups>
         + HostState<keyvalue::KeyValue>
         + HostState<logging::Logging>
-        + HostState<secrets::Secrets>,
+        + HostState<secrets::Secrets>
+        + HostState<metrics::MetricsService>,
 {
     config::Config::link(linker)?;
     groups::Groups::link(linker)?;
     keyvalue::KeyValue::link(linker)?;
     logging::Logging::link(linker)?;
     secrets::Secrets::link(linker)?;
+    metrics::MetricsService::link(linker)?;
     Ok(())
 }
 
@@ -383,4 +403,5 @@ pub(crate) const INTERFACES: &[&[&str]] = &[
     keyvalue::KeyValue::INTERFACES,
     logging::Logging::INTERFACES,
     secrets::Secrets::INTERFACES,
+    metrics::MetricsService::INTERFACES,
 ];

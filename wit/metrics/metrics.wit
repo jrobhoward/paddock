@@ -1,0 +1,48 @@
+package paddock:metrics@0.1.0;
+
+/// App-defined counters, gauges and histograms, exported by the node with
+/// its own (Prometheus text). Declared under `capabilities."paddock:metrics"`
+/// with a `prefix`; every name is exported as `<prefix>_<name>` with an
+/// `app` label. Metrics are per app: every instance that registers the same
+/// name and labels updates the same series.
+interface metrics {
+  /// A metric's kind.
+  enum kind {
+    /// Only goes up (`add` with a value of zero or more).
+    counter,
+    /// Set, or moved either way (`set`, `add`).
+    gauge,
+    /// Observations counted into buckets (`observe`).
+    histogram,
+  }
+
+  /// Why an operation failed.
+  variant error {
+    /// `paddock:metrics` is not granted.
+    access-denied,
+    /// A bad name or label, a name already used with another kind, buckets
+    /// not increasing, an update that does not fit the kind, or a value
+    /// that is not a finite number.
+    invalid(string),
+    /// The app holds its `max_series` series already.
+    limit-reached,
+    /// No metric has this id in this instance.
+    unknown-metric,
+  }
+
+  /// The id of the series `name` with `labels`, made if new. `buckets` are
+  /// a histogram's upper bounds, increasing (empty: 0.005 to 10 seconds);
+  /// ignored for other kinds. Registering the same series again returns
+  /// the same id. Ids are this instance's own and do not survive a restart
+  /// or an upgrade; register in `init`.
+  register: func(kind: kind, name: string, help: string, labels: list<tuple<string, string>>, buckets: list<f64>) -> result<u32, error>;
+
+  /// Add `delta` to a counter or gauge.
+  add: func(metric: u32, delta: f64) -> result<_, error>;
+
+  /// Set a gauge.
+  set: func(metric: u32, value: f64) -> result<_, error>;
+
+  /// Record an observation in a histogram.
+  observe: func(metric: u32, value: f64) -> result<_, error>;
+}

@@ -47,6 +47,7 @@ fn pick____several_routes____longest_prefix_then_named_host_wins() {
 #[test]
 fn request_envelope____key_and_body____cbor_map_routable_by_key() {
     let env = request_envelope(
+        "https",
         "POST",
         "/orders",
         Some("a=1".into()),

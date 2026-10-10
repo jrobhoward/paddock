@@ -7,6 +7,7 @@ use super::*;
 #[test]
 fn Request____envelope____round_trips() {
     let req = Request {
+        scheme: "https".into(),
         method: "POST".into(),
         path: "/orders".into(),
         query: Some("a=1&b".into()),

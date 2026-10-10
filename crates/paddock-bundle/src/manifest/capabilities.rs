@@ -120,8 +120,9 @@ impl Capability {
             | Self::Filesystem
             | Self::Groups
             | Self::HttpIncoming
-            | Self::Secrets => None,
-            Self::HttpOutgoing | Self::Metrics => Some(Phase::Phase2),
+            | Self::Secrets
+            | Self::Metrics => None,
+            Self::HttpOutgoing => Some(Phase::Phase2),
             Self::Sockets | Self::Sql => Some(Phase::Phase3),
             Self::Supervisor | Self::Admin => Some(Phase::Later),
         }
@@ -470,13 +471,27 @@ impl Capabilities {
                 }
             });
         }
-        if let Some(s) = &self.metrics
-            && s.prefix.is_empty()
-        {
-            v.error_at(
-                format!("{}.prefix", Capability::Metrics.key()),
-                "must not be empty",
-            );
+        if let Some(s) = &self.metrics {
+            let valid = s
+                .prefix
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && s.prefix
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid {
+                v.error_at(
+                    format!("{}.prefix", Capability::Metrics.key()),
+                    "must be a metric name prefix (letters, digits, '_'; not starting with a digit)",
+                );
+            }
+            if s.max_series == Some(0) {
+                v.error_at(
+                    format!("{}.max_series", Capability::Metrics.key()),
+                    "must be greater than zero",
+                );
+            }
         }
         if let Some(s) = &self.groups {
             v.at(Capability::Groups.key(), |v| {
@@ -907,8 +922,13 @@ pub struct SqlScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsScope {
-    /// Every metric the app emits is named under this prefix.
+    /// Every metric the app emits is named under this prefix
+    /// (`<prefix>_<name>`).
     pub prefix: String,
+    /// Most series (a name with one set of label values) the app may hold;
+    /// unset, 1,000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_series: Option<u32>,
 }
 
 /// Scope of `paddock:groups`: the groups the app may use, by name. Groups
