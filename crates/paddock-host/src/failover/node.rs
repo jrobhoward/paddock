@@ -202,6 +202,7 @@ impl Ctx {
 
     fn down(&mut self, epoch: u64, now: Instant) -> Down {
         self.confirmed_at = now;
+        self.confirmed_by_operator = false;
         Down {
             epoch,
             asking: Asking::default(),
@@ -364,6 +365,9 @@ impl Standby {
         }
         if partner.any_live {
             self.awaiting = false;
+            // An operator's confirmation is about this silence only; a
+            // stale one would promote on a later, unrelated cut.
+            ctx.confirmed_by_operator = false;
             // `Cancel`: the witness keeps no pending request, so with none in
             // flight a standby that hears a primary again stops asking.
             if self.asking.is_some_and(|a| !a.in_flight) && partner.primary(false).is_some() {
@@ -450,6 +454,7 @@ impl Down {
             && theirs >= self.epoch
         {
             ctx.confirmed_at = now;
+            ctx.confirmed_by_operator = false;
             return State::Standby(Standby {
                 epoch: theirs,
                 asking: None,

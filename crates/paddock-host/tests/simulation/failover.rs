@@ -217,6 +217,27 @@ fn failover____network_and_serial_cut____primary_renews_at_the_witness_and_keeps
     assert_eq!(overlap, None);
 }
 
+/// An operator's confirmation given while nothing was wrong must not
+/// promote the standby on a later, unrelated cut that the witness covers.
+#[test]
+fn operator_confirm____given_while_healthy_then_network_and_serial_cut____no_second_runner() {
+    let (runners, overlap) = simulate(48, 3, |sim| async move {
+        let pair = start(&sim, witness());
+        pass(3000).await;
+        pair.handles[1].confirm();
+        pass(3000).await;
+
+        sim.mesh.stall(1, 2);
+        sim.mesh.cut_path(1, 2, SERIAL);
+        pass(6000).await;
+
+        (pair.runners(), pair.overlap())
+    });
+
+    assert_eq!(runners, vec![1]);
+    assert_eq!(overlap, None);
+}
+
 #[test]
 fn failover____network_serial_and_primary_wan_cut____hands_over_then_old_primary_rejoins() {
     let (handed, after_heal, overlap) = simulate(46, 3, |sim| async move {

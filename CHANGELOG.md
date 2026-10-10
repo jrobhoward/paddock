@@ -252,6 +252,11 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Failover: an operator's `paddock failover confirm` given while nothing
+  was wrong stayed in force, and on a later cut of network and serial line
+  promoted the standby while the primary still ran, so both ran the
+  singleton. A confirmation now lapses when the standby hears its partner
+  again, steps down or rejoins.
 - `paddock`'s `board` and `failover` tests declare the `node` feature they
   need, so the crate's tests build again without default features.
 - A node that left the cluster cleanly and restarted could not rejoin: the

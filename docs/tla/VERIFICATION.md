@@ -87,6 +87,12 @@ Random simulation (TLC `-simulate`, traces up to 400 steps):
 
 The random failover simulation found that a heartbeat discarded as belonging to an ended session still refreshed the link's "heard" time while the kept payload stayed the old "standby, confirming" one, and the primary renewed from it. Payloads now carry their own arrival time. Layer 2 models arrival-timed payloads, so this class is covered there.
 
+### 4. A stale operator confirmation promoted a second runner (reading, R4)
+
+**Problem.** `paddock failover confirm` set a flag that only a promotion cleared, and the node accepted it at any time. A confirmation given while nothing was wrong stayed set; on a later cut of network and serial, with both nodes still reaching the witness, the standby promoted itself without a lease once its own confirmations were out of date, while the primary kept renewing at the witness. Outside the model, which does not include the operator's confirmation in layer 2.
+
+**Fix.** The confirmation lapses when the standby hears its partner, steps down or rejoins (`failover/node.rs`). The simulation test `operator_confirm____given_while_healthy_then_network_and_serial_cut____no_second_runner` failed before the fix (both nodes ran) and passes after; 1,800 new random failover seeds pass. Whether to honour a confirmation while the witness is reachable at all is ROADMAP Q10.
+
 ## Implementation requirements
 
 From layer 1 (S16), with where the code meets each:
@@ -122,6 +128,38 @@ From layer 2:
 | A6 | Only the witness arbiter is modelled in layer 2 | Medium | `Paths` and `Operator` run without leases and rest on layer 1's `L1_NoLeaseSafe` or the operator's judgement |
 | A7 | A node steps and beats at most once per tick | Low | The code steps and beats once per heartbeat interval |
 | A8 | A node's process is never paused | High | Not held: a primary paused past its lease runs its singleton for about 2 ms after it continues, until its loop sees the lease has ended, while the standby already runs it. Found by `scripts/soak.sh` (`SIGSTOP`, 2026-10-10); ROADMAP Q8 |
+
+## Conformance with the code
+
+Checked by reading (ROADMAP R4, 2026-10-10): each action of `FailoverL2.tla` against `failover/node.rs`, `failover/witness.rs` and `failover/mod.rs`, and the node's gate (`crates/paddock/src/node/gate.rs`), which the model does not include.
+
+| Model | Code | Matches |
+| --- | --- | --- |
+| `Beat`: status and echo on every path | `Node::publish` sets the payload; the liveness loop sends it each interval | yes. The echo is a stamp, and a primary renews from when it set that stamp, which is no later than the model's send time |
+| `Beat`: a primary renews at the witness | `Primary::step` sends `Renew` each step | yes |
+| `RecvBeat`: renewal through the partner | `Primary::step` reads the partner's live beats (`PartnerView::confirmed`) | yes, applied at the next step rather than on arrival; the lease is computed from the stamp's time either way |
+| `StepPrimary`: fenced by a partner at a higher epoch | `Primary::step` | yes |
+| `StandbyHears`: cancel, stand-down after `Hold` | `Standby::step`, partner heard | yes |
+| `StandbySilent`, `Ask` (with `ConfirmOnSend`) | `Standby::step`, `Ctx::ask`, `Node::publish` | yes |
+| `StepDownNode`: rejoin on the link, resume after `Hold` | `Down::step`, `Ctx::waited_out` | yes |
+| `RecvAtWitness`: renew, fenced, refused, not yet, granted | `Witness::handle` | yes. The code counts the requester's confirmation from when the request arrives, not when it was sent, so it waits a little longer |
+| `RecvReply`: lease ok, fenced, granted, not yet, refused (standby, down) | `State::on_message` | yes. A granted lease runs from when the request left (the model: from the reply; see below) |
+| `Crash`, `Restart` with `PersistEpoch` | process exit; `Node::start` at the epoch the gate kept | yes, with one difference: see "Epoch kept after it is published" |
+| `WitnessCrash`, `WitnessRestart` with `ForgetRenewals` | `Witness::start` with `resume` | yes |
+| `Running(n)`: primary with a lease | `Leadership::may_run`, then the gate | yes up to `may_run`; the gate's start and stop are not modelled |
+
+Differences, and what each needs:
+
+- **Operator confirmation (fixed 2026-10-10).** Not in layer 2 (A6 covers the arbiters; R7 is layer 1's). A confirmation never lapsed: given while nothing was wrong, it promoted the standby without a lease on a later cut of network and serial while the primary still renewed at the witness, and both ran. Found by reading; reproduced by `operator_confirm____given_while_healthy_then_network_and_serial_cut____no_second_runner` in the simulation. A confirmation now lapses when the standby hears its partner, steps down or rejoins. Whether a confirmation should count while the witness is reachable is ROADMAP Q10.
+- **Stopping takes time.** The model's singleton stops the moment the lease ends; the code's stops when the gate has killed it, after the failover task wakes and publishes. The margin absorbs this in normal operation; a paused process does not (A8, ROADMAP Q8).
+- **Witness state kept after it changes.** The model's witness changes its epoch and promoted node atomically and durably. The code changes them in memory under the lock, then writes them outside it; a failed write withholds the grant but leaves memory ahead of disk, and a `Fenced` answer can carry an epoch not yet on disk. ROADMAP Q11.
+- **Epoch kept after it is published.** `PersistEpoch` keeps every epoch a node reaches. The code keeps it in the gate, after the leadership is published (so beats can carry it first) and before acting on it; a crash in between restarts the node at its previous epoch. Nothing found that this breaks, since the node never ran at the unkept epoch; a layer 2 variant with a crash between reaching and keeping would settle it.
+- **A lost answer leaves a standby asking.** In both the model and the code, a standby cancels its request only with no answer due; if the answer is lost and its partner is heard again, it keeps asking, and so never again confirms the primary's lease, which then rests on the witness alone. A liveness issue, not a safety one. ROADMAP Q12.
+- **Reply ages in the model.** `Push` sets a frame's age to 0, so `granted` and `leaseOk` lose the age they were meant to carry: the model's leases run from the reply, later than the code's (from the request or renewal). The code is the more conservative, and since `lease` feeds only `Running` and `Renew`, a shorter lease cannot make `AtMostOneRunning` fail; no rerun is needed, but the model should carry the age when it next changes.
+- **No serial line.** Nodes have no serial path yet (ROADMAP F5), so a deployment is the model with the serial line lost from the start: one of its faults already spent. The one-fault configurations then cover nothing beyond that loss, and the two-fault ones one fault more. ROADMAP V2 adds a configuration with the serial line lost at the start.
+- **The timing assumption is stated three ways**: R11 here ("message delay plus clock drift below the margin"), and "below twice the margin" in `failover/mod.rs` and `FailoverConfig::margin`. From the code's arithmetic, delays only make the witness wait longer; what the margins must cover is clock drift over a lease plus the time to stop a singleton. ROADMAP Q13 restates it once.
+
+Checking conformance mechanically (trace validation) is not adopted for now. Every modelled action matched; both defects found sit outside the model (the operator's confirmation, the gate and pauses), where a trace check against the model could not have found them. Covering those in the model comes first. Revisit if `failover/` changes often (R5).
 
 ## Running the specifications
 

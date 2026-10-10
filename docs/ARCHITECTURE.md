@@ -254,4 +254,4 @@ Found while drafting; each review decides.
 - **R3:** an incoming `Frame::Call` spawns a task with no bound on how many run at once; a peer can start as many as it sends frames.
 - **R3:** signals and host-op queues are unbounded per instance; watches conflate per key, but exit signals from many linked instances do not.
 - **R5:** `daemon.rs` is 1,860 lines and holds deploy, upgrade, rollback, connections, cluster start and failover start; it is the first candidate for splitting.
-- **R4:** the gate is outside `failover/` and outside the model: it writes the epoch, then starts or kills singletons. The model's `may_run` is the leadership's; the window between them (and Q8's pause window) is not modelled.
+- **R4 (done):** the gate is outside `failover/` and outside the model: it writes the epoch, then starts or kills singletons. The model's `may_run` is the leadership's; the window between them (and Q8's pause window) is not modelled. The review's results are in `docs/tla/VERIFICATION.md`, "Conformance with the code".

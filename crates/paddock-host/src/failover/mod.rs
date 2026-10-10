@@ -230,7 +230,9 @@ impl FailoverHandle {
     /// An operator confirms that the partner is gone: with
     /// [`Arbiter::Operator`], or with a witness that cannot be reached,
     /// the standby is promoted once the partner's lease has run out, and
-    /// runs without a lease until it meets its partner or the witness.
+    /// runs without a lease until it meets its partner or the witness. The
+    /// confirmation lapses when the standby hears its partner again, steps
+    /// down or rejoins, so it never promotes on a later silence.
     pub fn confirm(&self) {
         self.confirm.notify_one();
     }
