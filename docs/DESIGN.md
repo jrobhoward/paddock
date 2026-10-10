@@ -345,7 +345,8 @@ SCTP only wins on controlled telecom networks, so it is not worth a second trans
 - Phase 2: a static seed list in node config, like Erlang hostnames. A joining node sends a join to a seed; the seed answers with every member it knows and passes the newcomer on, and each node joins any member it had not met, so every pair is connected (Erlang's `connect_all`). Members carry their node id, creation, address and role (`member`, or `witness`: a node that runs no apps and takes part in failover decisions). Membership and liveness are separate: a member that stops answering stays a member, with its session ended, until it answers or leaves.
 - Every start of a node has a creation number, kept in its data directory and raised on each start, as Erlang's `creation`. Frames carry the sender's creation and the receiver's creation as the sender knows it, so a peer that restarted ends its old sessions everywhere and frames from or for an earlier start are discarded. The creation is also the high 24 bits of every instance id (the low 40 are a serial number), so a pid an app kept from before a node restarted never names a later instance; pids print as `node.serial.incarnation@creation`.
 - Later: DNS SRV and Kubernetes headless services. mDNS for development.
-- Node identity is the certificate subject. A cluster CA signs node certs, replacing Erlang's shared cookie. Revocation uses short-lived certs.
+- Node identity is a pinned public key, as WireGuard does, replacing Erlang's shared cookie (decided 2026-10-09, to avoid running a certificate authority). Each node holds an Ed25519 key (`paddock cluster keygen`), and a peers file on every node lists each node's public key against its id. The QUIC handshake is TLS 1.3 with raw public keys (RFC 7250): each side proves it holds its key and accepts the other only if its key is listed; after the handshake, each side's hello names its node id and the other checks the key belongs to that node. Nothing expires. Rotating a key lists the new key beside the old at every peer, then switches the node, then drops the old; adding a node adds its key to every peers file. Both files are reloaded on change, SIGHUP or `paddock reload-tls`. HAppliance chose a self-signed CA for its switched network to make rotation a single step; with a pair and a witness, three peers files are less to run than a CA, and a CA mode can be added if a site needs one.
+- The wire format is CBOR, `[version, packet]`, after a hello each way that agrees on the highest protocol version both speak; one connection per pair carries a control stream (heartbeats, membership, failover) and a data stream (messages, links, monitors), so heartbeats never wait behind a large message.
 - Node-down detection uses heartbeats between every pair of nodes (every `heartbeat_interval`, 1 s by default; a link silent for `node_timeout`, 5 s by default, ends the session, tunable like `net_ticktime`), with QUIC's idle timeout as a backstop.
 
 **Registry**
@@ -474,14 +475,14 @@ Decided 2026-10-09 (ROADMAP E1), from S15's measurements: the host terminates HT
 
 ## Security model
 
-Security rests on three hard boundaries: the Wasm sandbox around each app, mTLS between nodes, and signatures on every bundle. Policy narrows what crosses those boundaries; it never substitutes for them.
+Security rests on three hard boundaries: the Wasm sandbox around each app, mutually authenticated TLS between nodes (pinned keys), and signatures on every bundle. Policy narrows what crosses those boundaries; it never substitutes for them.
 
 **Trust levels**
 
 | Principal | Trusted for | Not trusted for |
 | --- | --- | --- |
 | Operator (admin API, signed by operator key) | Grants, deployments, cluster config | — |
-| Node (cluster CA cert) | Routing messages, holding link and registry state | Inventing messages from pids it doesn't host |
+| Node (pinned key in every peers file) | Routing messages, holding link and registry state | Inventing messages from pids it doesn't host |
 | Bundle signer (minisign key from `.rbp`) | Authorship and integrity of code | Permissions: signing doesn't grant anything |
 | App instance | Its own state and granted capabilities | Anything else |
 | Extension (native code built into a node by its operator) | Everything the node is | — |

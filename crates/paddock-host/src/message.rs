@@ -8,13 +8,14 @@ use crate::bindings::paddock::runtime::types as wit;
 use crate::pid::Pid;
 
 /// A message: opaque bytes plus how to decode them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Envelope {
     /// How to decode `body` (`application/cbor` by default).
     pub content_type: String,
     /// Schema id from the app's message catalog, if any.
     pub schema: Option<String>,
     /// The encoded message.
+    #[serde(with = "crate::transport::wire::bytes")]
     pub body: Vec<u8>,
 }
 
@@ -31,7 +32,7 @@ impl Envelope {
 }
 
 /// Why an instance stopped.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ExitReason {
     /// `init` returned, or the instance stopped itself, without error.
     Normal,
@@ -73,7 +74,7 @@ impl fmt::Display for ExitReason {
 }
 
 /// Why a call or cast failed.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum CallError {
     /// No instance has that pid.

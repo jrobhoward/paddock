@@ -7,13 +7,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{
-    AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, ListenerInfo, LogLine,
+    AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, ListenerInfo, LogLine, MemberInfo,
     RolloutParams, StateResponse, Target, UpgradeResponse,
 };
 use paddock_bundle::manifest::{AppManifest, Capability, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
 use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, IngressTls, TlsCertificate};
 use paddock_host::services::{Extension, StartedExtensions};
+use paddock_host::transport::quic::{NodeIdentity, QuicConfig, QuicTransport};
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
     InstanceSpec, Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid,
@@ -52,6 +53,8 @@ pub struct Node {
     stop: tokio::sync::watch::Sender<bool>,
     /// HTTPS certificates, by ingress name.
     certificates: Vec<(String, IngressTls)>,
+    /// The cluster transport, with `cluster.address`.
+    quic: std::sync::Mutex<Option<QuicTransport>>,
 }
 
 /// A connection-handler app this node runs: its listeners, and the
@@ -159,6 +162,8 @@ fn rollout_error(e: UpgradeError, snapshot: bool, params: &RolloutParams) -> Nod
 enum Resolved {
     App(AppHandle),
     Instance(InstanceHandle),
+    /// A pid on another node, reached through the cluster.
+    Remote(Pid),
 }
 
 /// The node error for a failed call or cast to `target`.
@@ -264,9 +269,6 @@ impl Node {
         };
         if config.trusted_keys.is_empty() {
             tracing::warn!("no trusted keys configured: every deploy will be refused");
-        }
-        if !config.cluster.seeds.is_empty() {
-            tracing::warn!("cluster.seeds is not used until the QUIC transport exists");
         }
         let desired = store.load_state()?;
         if config.cluster.role == ClusterRole::Witness && !desired.apps.is_empty() {
@@ -390,6 +392,7 @@ impl Node {
                 .iter()
                 .map(|(n, t, _)| (n.clone(), t.clone()))
                 .collect(),
+            quic: std::sync::Mutex::default(),
         };
         for (name, tls, every) in certificates {
             if every > 0 {
@@ -428,6 +431,10 @@ impl Node {
             .extensions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(started);
+        if let Err(e) = node.start_cluster() {
+            node.shutdown().await;
+            return Err(e);
+        }
         Ok(node)
     }
 
@@ -1289,6 +1296,7 @@ impl Node {
         let result = match self.resolve(target)? {
             Resolved::App(app) => app.call(msg, timeout).await,
             Resolved::Instance(h) => h.call(msg, timeout).await,
+            Resolved::Remote(pid) => self.rt.call(pid, msg, timeout).await,
         };
         result.map_err(|e| send_error("call", target, &e))
     }
@@ -1303,6 +1311,7 @@ impl Node {
         match self.resolve(target)? {
             Resolved::App(app) => app.cast(msg),
             Resolved::Instance(h) => h.cast(msg),
+            Resolved::Remote(pid) => self.rt.cast(pid, msg),
         }
         .map_err(|e| send_error("cast", target, &e))?;
         Ok(Done {
@@ -1319,6 +1328,9 @@ impl Node {
                 .ok_or_else(|| NodeError::NotFound(format!("{name} is not running"))),
             Target::Pid(pid) => {
                 let pid: Pid = pid.parse().map_err(NodeError::Invalid)?;
+                if pid.node != self.rt.node() {
+                    return Ok(Resolved::Remote(pid));
+                }
                 self.rt
                     .lookup(pid)
                     .map(Resolved::Instance)
@@ -1407,6 +1419,15 @@ impl Node {
             .take();
         drop(started);
         self.stop.send_replace(true);
+        let quic = self
+            .quic
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(quic) = quic {
+            self.rt.leave_cluster();
+            quic.shutdown_gracefully().await;
+        }
         if let Some(http) = &self.http {
             http.stop();
         }
@@ -1424,6 +1445,89 @@ impl Node {
         metrics_text(&self.rt, self.http.as_ref())
     }
 
+    /// The cluster's members as this node knows them, itself included.
+    #[must_use]
+    pub fn members(&self) -> Vec<MemberInfo> {
+        let me = self.rt.node();
+        self.rt
+            .members()
+            .into_iter()
+            .map(|m| MemberInfo {
+                reachable: m.node == me || self.rt.peer_status(m.node).is_some_and(|s| s.reachable),
+                node: m.node,
+                creation: m.creation,
+                address: m.address,
+                role: match m.role {
+                    Role::Witness => "witness".into(),
+                    _ => "member".into(),
+                },
+            })
+            .collect()
+    }
+
+    /// Start the QUIC transport on `cluster.address`, join the seeds, and
+    /// watch the identity files.
+    fn start_cluster(&self) -> Result<(), NodeError> {
+        let cluster = &self.config.cluster;
+        let (Some(address), Some(key), Some(peers)) =
+            (&cluster.address, &cluster.key, &cluster.peers)
+        else {
+            return Ok(());
+        };
+        let bind = address
+            .parse()
+            .map_err(|e| NodeError::Invalid(format!("cluster.address: {e}")))?;
+        let quic = QuicTransport::start(
+            &self.rt,
+            QuicConfig {
+                bind,
+                identity: NodeIdentity {
+                    key: key.clone(),
+                    peers: peers.clone(),
+                },
+                idle_timeout: Duration::from_millis(cluster.node_timeout_ms.max(1) * 2),
+            },
+        )
+        .map_err(|e| NodeError::Invalid(e.to_string()))?;
+        tracing::info!(%bind, "cluster transport listening");
+        for seed in &cluster.seeds {
+            let Ok(seed) = seed.parse() else {
+                continue;
+            };
+            let quic = quic.clone();
+            tokio::spawn(async move {
+                match quic.join_seed(seed).await {
+                    Ok(node) => tracing::info!(%seed, node, "joined through seed"),
+                    Err(e) => tracing::warn!(error = %e, "seed not reached yet; retrying"),
+                }
+            });
+        }
+        if cluster.identity_reload_s > 0 {
+            let (quic, every) = (quic.clone(), Duration::from_secs(cluster.identity_reload_s));
+            let mut stop = self.stop.subscribe();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = stop.wait_for(|s| *s) => return,
+                        () = tokio::time::sleep(every) => {}
+                    }
+                    match quic.reload_if_changed() {
+                        Ok(true) => tracing::info!("cluster key or peers reloaded"),
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::error!(error = %e, "cluster identity reload failed; keeping the old")
+                        }
+                    }
+                }
+            });
+        }
+        *self
+            .quic
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(quic);
+        Ok(())
+    }
+
     /// Reload every HTTPS ingress's certificates from their files. An
     /// ingress whose files fail keeps its old certificates.
     ///
@@ -1431,11 +1535,21 @@ impl Node {
     ///
     /// [`NodeError::Invalid`] naming each ingress that failed.
     pub fn reload_tls(&self) -> Result<Done, NodeError> {
-        let failed: Vec<String> = self
+        let mut failed: Vec<String> = self
             .certificates
             .iter()
             .filter_map(|(name, tls)| tls.reload().err().map(|e| format!("http.{name}: {e}")))
             .collect();
+        let quic = self
+            .quic
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(quic) = quic
+            && let Err(e) = quic.reload()
+        {
+            failed.push(format!("cluster: {e}"));
+        }
         self.audit.record(
             "reload_tls",
             json!({ "ingresses": self.certificates.len(), "failed": failed }),

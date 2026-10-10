@@ -281,6 +281,7 @@ async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
         },
         (&Method::GET, ["v1", "instances"]) => json(StatusCode::OK, &node.ps()),
         (&Method::GET, ["v1", "metrics"]) => metrics_text(node.metrics()),
+        (&Method::GET, ["v1", "cluster"]) => json(StatusCode::OK, &node.members()),
         (&Method::POST, ["v1", "tls", "reload"]) => respond(node.reload_tls()),
         (&Method::POST, ["v1", "instances", pid, "kill"]) => respond(node.kill(pid).await),
         _ => error(&NodeError::NotFound(format!(

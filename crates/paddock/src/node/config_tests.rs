@@ -78,7 +78,7 @@ data_dir = "/d"
 role = "witness"
 heartbeat_interval_ms = 200
 node_timeout_ms = 1000
-seeds = ["2@10.0.0.2:7400"]
+seeds = ["10.0.0.2:7400"]
 "#,
     )
     .unwrap();
@@ -99,7 +99,7 @@ seeds = ["2@10.0.0.2:7400"]
         ),
         (200, 1_000)
     );
-    assert_eq!(witness.cluster.seeds, ["2@10.0.0.2:7400"]);
+    assert_eq!(witness.cluster.seeds, ["10.0.0.2:7400"]);
 }
 
 #[test]

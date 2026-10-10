@@ -50,6 +50,10 @@
 //! role = "member"               # or "witness": runs no apps
 //! heartbeat_interval_ms = 1000
 //! node_timeout_ms = 5000
+//! address = "10.0.0.1:7400"     # UDP, QUIC between nodes
+//! seeds = ["10.0.0.2:7400"]
+//! key = "/etc/paddock/node.key" # paddock cluster keygen
+//! peers = "/etc/paddock/peers.toml"
 //!
 //! # Host objects per instance: the value for apps that set none, and the
 //! # most a manifest may ask for.
@@ -256,13 +260,31 @@ pub struct ClusterConfig {
     /// than `heartbeat_interval_ms`.
     #[serde(default = "default_node_timeout_ms")]
     pub node_timeout_ms: u64,
-    /// Where other nodes reach this one. Used from the QUIC transport on
-    /// (ROADMAP D1).
+    /// The UDP address (`ip:port`) this node listens on for other nodes
+    /// and tells them to reach it at. Unset runs no cluster transport.
     #[serde(default)]
     pub address: Option<String>,
-    /// Nodes to join through. Used from the QUIC transport on (ROADMAP D1).
+    /// Addresses (`ip:port`) of nodes to join through; each is redialed
+    /// whenever its connection is lost.
     #[serde(default)]
     pub seeds: Vec<String>,
+    /// This node's private key (`paddock cluster keygen`). Required with
+    /// `address`.
+    #[serde(default)]
+    pub key: Option<PathBuf>,
+    /// The peers file: every node's public key by node id. Required with
+    /// `address`.
+    #[serde(default)]
+    pub peers: Option<PathBuf>,
+    /// How often to check the key and peers files for changes and reload
+    /// them, in seconds; 0 never (SIGHUP and `paddock reload-tls` still
+    /// do).
+    #[serde(default = "default_identity_reload_s")]
+    pub identity_reload_s: u64,
+}
+
+fn default_identity_reload_s() -> u64 {
+    60
 }
 
 impl Default for ClusterConfig {
@@ -273,6 +295,9 @@ impl Default for ClusterConfig {
             node_timeout_ms: default_node_timeout_ms(),
             address: None,
             seeds: Vec::new(),
+            key: None,
+            peers: None,
+            identity_reload_s: default_identity_reload_s(),
         }
     }
 }
@@ -400,6 +425,18 @@ impl NodeConfig {
                  cluster.heartbeat_interval_ms ({}), which must be more than 0",
                 cluster.node_timeout_ms, cluster.heartbeat_interval_ms
             )));
+        }
+        if cluster.address.is_some() && (cluster.key.is_none() || cluster.peers.is_none()) {
+            return Err(NodeError::Invalid(
+                "node config: cluster.address needs cluster.key and cluster.peers".into(),
+            ));
+        }
+        for addr in cluster.address.iter().chain(&cluster.seeds) {
+            if addr.parse::<std::net::SocketAddr>().is_err() {
+                return Err(NodeError::Invalid(format!(
+                    "node config: cluster address '{addr}' is not ip:port"
+                )));
+            }
         }
         for (name, bucket) in &config.buckets {
             let problem = if bucket.scope == BucketScope::Cluster {

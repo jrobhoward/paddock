@@ -251,3 +251,19 @@ pub fn logs(lines: &[LogLine]) -> String {
 #[cfg(test)]
 #[path = "format_tests.rs"]
 mod format_tests;
+
+/// `paddock members`: one line per member.
+pub(crate) fn members(members: &[paddock::api::MemberInfo]) -> String {
+    let mut out = String::from("NODE  CREATION  ROLE     REACHABLE  ADDRESS");
+    for m in members {
+        out.push_str(&format!(
+            "\n{:<5} {:<9} {:<8} {:<10} {}",
+            m.node,
+            m.creation,
+            m.role,
+            if m.reachable { "yes" } else { "no" },
+            m.address
+        ));
+    }
+    out
+}

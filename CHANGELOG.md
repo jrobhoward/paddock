@@ -187,6 +187,14 @@ All notable changes are recorded here. The format follows
   (rustls on ring), certificates chosen by SNI, reloaded when their files
   change (`tls_reload_s`), on SIGHUP, or with `paddock reload-tls`; a broken
   file keeps the old certificates. Requests carry `scheme`.
+- QUIC between nodes (`paddock_host::transport::quic`, quinn on rustls with
+  ring): pinned Ed25519 keys instead of a certificate authority (TLS 1.3 raw
+  public keys, a peers file per node), a versioned CBOR wire format
+  (`transport::wire`), control and data streams per pair, redialing, and a
+  graceful leave. Node config `[cluster]` gains `key`, `peers` and
+  `identity_reload_s`; `seeds` are addresses. `paddock cluster keygen`,
+  `paddock cluster pubkey`, `paddock members` (`GET /v1/cluster`); calls and
+  casts by pid reach other nodes.
 
 ### Changed
 

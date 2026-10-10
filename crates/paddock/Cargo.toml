@@ -95,6 +95,10 @@ name = "http"
 required-features = ["node"]
 
 [[test]]
+name = "cluster"
+required-features = ["node"]
+
+[[test]]
 name = "scada"
 required-features = ["modbus"]
 

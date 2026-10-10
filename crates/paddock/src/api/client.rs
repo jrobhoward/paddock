@@ -6,8 +6,8 @@ use hyper::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
 use super::{
-    ApiError, AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, RolloutParams,
-    StateResponse, Target, UpgradeResponse,
+    ApiError, AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, MemberInfo,
+    RolloutParams, StateResponse, Target, UpgradeResponse,
 };
 
 /// Why a request failed.
@@ -242,6 +242,15 @@ impl Client {
     /// Any [`ClientError`]; an API error names each ingress that failed.
     pub async fn reload_tls(&self) -> Result<Done, ClientError> {
         self.json(Method::POST, "/v1/tls/reload", None).await
+    }
+
+    /// The cluster's members as the node knows them.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn members(&self) -> Result<Vec<MemberInfo>, ClientError> {
+        self.json(Method::GET, "/v1/cluster", None).await
     }
 
     /// The node's metrics, in the Prometheus text format.

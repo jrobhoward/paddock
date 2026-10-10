@@ -138,7 +138,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   nodes, the `Transport` trait, `liveness` (heartbeats and sessions; every
   node-down goes through `transport::end_session`), `membership` (joining,
   members, node creation numbers), and `memory`, the
-  in-process mesh with fault injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
+  in-process mesh with fault injection that `tests/distribution.rs` runs on;
+  `quic`, the real transport (pinned keys in `quic/identity.rs`, one
+  connection per pair, `tests/quic.rs`), and `wire`, the versioned CBOR
+  format. `tests/simulation/` runs
   the mesh on a paused clock: targeted races and seeded random scenarios
   (`PADDOCK_SIM_SEED=<n>` replays one).
 - `crates/paddock-host/src/failover/`: an HA pair's roles, epochs and

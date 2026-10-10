@@ -144,6 +144,21 @@ pub struct StateResponse {
     pub hex: Option<String>,
 }
 
+/// One member of the cluster, as the node asked knows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberInfo {
+    /// Its node id.
+    pub node: u32,
+    /// Its creation (raised on every start).
+    pub creation: u32,
+    /// Where it is reached.
+    pub address: String,
+    /// `member` or `witness`.
+    pub role: String,
+    /// Whether frames to it are sent (it is heard, or is this node).
+    pub reachable: bool,
+}
+
 /// What a deploy did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployResponse {

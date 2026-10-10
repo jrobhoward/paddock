@@ -265,7 +265,11 @@ currency = "USD"                       # overrides the app's config.defaults
 role = "member"                        # or "witness": runs no apps, refuses deploys
 heartbeat_interval_ms = 1000           # how often each peer is told this node is alive
 node_timeout_ms = 5000                 # silence that ends a peer's session; more than the interval
-# address and seeds are read but not used until the QUIC transport exists
+address = "10.0.0.1:7400"              # UDP: QUIC between nodes; unset runs no cluster transport
+seeds = ["10.0.0.2:7400"]              # nodes to join through, redialed whenever lost
+key = "/etc/paddock/node.key"          # this node's private key: paddock cluster keygen
+peers = "/etc/paddock/peers.toml"      # every node's public key: [peers] 2 = ["ed25519:..."]
+identity_reload_s = 60                 # reload key and peers on change; also SIGHUP, paddock reload-tls
 
 [limits]                               # host objects per instance; the value for apps that
 timers_max = 10000                     # set none, and the most a manifest may ask for (a

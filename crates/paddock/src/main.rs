@@ -62,6 +62,23 @@ impl Rollout {
     }
 }
 
+/// `paddock cluster` subcommands.
+#[cfg(feature = "node")]
+#[derive(Debug, Subcommand)]
+enum ClusterCommand {
+    /// Make this node's key: write the private key to PATH and print the
+    /// public key, for every other node's peers file.
+    Keygen {
+        /// Where to write the private key (must not exist).
+        path: PathBuf,
+    },
+    /// Print the public key of the private key at PATH.
+    Pubkey {
+        /// The private key.
+        path: PathBuf,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Run a node.
@@ -89,6 +106,12 @@ enum Command {
         /// Write the bundle even if the component imports undeclared interfaces.
         #[arg(long)]
         skip_import_check: bool,
+    },
+    /// A node's key for the cluster transport.
+    #[cfg(feature = "node")]
+    Cluster {
+        #[command(subcommand)]
+        action: ClusterCommand,
     },
     /// Create a minisign key pair: <prefix>.key and <prefix>.pub.
     Keygen {
@@ -151,8 +174,11 @@ enum Command {
     Ps,
     /// Print the node's metrics (Prometheus text).
     Metrics,
-    /// Reload the HTTPS ingress certificates from their files.
+    /// Reload the HTTPS ingress certificates and the cluster key and peers
+    /// files.
     ReloadTls,
+    /// List the cluster's members as the node knows them.
+    Members,
     /// Show an instance's state (through its save-snapshot; an instance that
     /// traps there restarts).
     State {
@@ -294,6 +320,17 @@ fn done(
     print(json, &result?, |d| d.message.clone())
 }
 
+/// `paddock cluster ...`.
+#[cfg(feature = "node")]
+fn cluster_command(action: ClusterCommand) -> anyhow::Result<()> {
+    let public = match action {
+        ClusterCommand::Keygen { path } => cli::cluster::keygen(&path)?,
+        ClusterCommand::Pubkey { path } => cli::cluster::pubkey(&path)?,
+    };
+    println!("{public}");
+    Ok(())
+}
+
 /// `paddock metrics`: the Prometheus text as the node renders it.
 async fn print_metrics(client: &Client) -> anyhow::Result<()> {
     print!("{}", client.metrics().await?);
@@ -330,6 +367,8 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
             println!("{public}");
             Ok(())
         }
+        #[cfg(feature = "node")]
+        Command::Cluster { action } => cluster_command(action),
         Command::Deploy { .. }
         | Command::List
         | Command::Status { .. }
@@ -398,6 +437,7 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
         Command::Ps => print(json, &client.ps().await?, |i| format::instances(i)),
         Command::Metrics => print_metrics(client).await,
         Command::ReloadTls => done(json, client.reload_tls().await),
+        Command::Members => print(json, &client.members().await?, |m| format::members(m)),
         Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
         Command::Cast { message } => {
             let (target, content_type, body) = message.into_parts()?;
