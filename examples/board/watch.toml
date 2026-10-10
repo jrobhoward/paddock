@@ -1,0 +1,21 @@
+# Watches the counter on the bulletin board and logs every change
+# (`paddock logs board-watch`). The same component as `board`, started with
+# {"watch": true}. Needs the `board` bucket in node config (see
+# paddock.toml) and in policy:
+#
+#   [apps.board-watch]
+#   grant = ["wasi:keyvalue", "wasi:logging"]
+#   buckets = ["board"]
+[app]
+name = "board-watch"
+version = "1.0.0"
+description = "Logs every change to the board's counter (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.lifecycle]
+start_args = { watch = true }
+
+[appserver.capabilities."wasi:keyvalue".shared]
+board = "ro"
+
+[appserver.capabilities."wasi:logging"]

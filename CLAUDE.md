@@ -103,6 +103,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `examples/greeter/` is an extension (a host service from outside
   Paddock): `service` depends on `paddock-host` alone, `app` calls it, and
   `node` is a node binary with it, whose test runs all three.
+  `examples/board` is the tutorial's app (a counter on a shared disk
+  bucket over HTTP; `paddock.toml` and `watch.toml`, one component), run by
+  `crates/paddock/tests/board.rs`; `examples/tutorial/` is its chapter
+  scripts (`common.sh` shared), not a crate.
   `examples/failover/` is a demo script (a witness and a pair as three
   `paddock node` processes, the primary killed), not a crate.
   `examples/tracing/` is a demo script and bpftrace scripts for the

@@ -195,6 +195,14 @@ All notable changes are recorded here. The format follows
   `identity_reload_s`; `seeds` are addresses. `paddock cluster keygen`,
   `paddock cluster pubkey`, `paddock members` (`GET /v1/cluster`); calls and
   casts by pid reach other nodes.
+- `examples/board`: a counter on a shared disk bucket over HTTP, with a
+  crash endpoint and the answering pid in every reply, plus a watcher that
+  logs each change (one component, two manifests).
+- `examples/tutorial`: chapter scripts with pauses and printed commands.
+  Chapter 1 crashes the board app and restarts its node (the count
+  survives); chapter 2 kills the primary of an HA pair (the app moves, its
+  disk bucket does not). Chapters 3 (hot standby, after D4) and 4
+  (replicated buckets) are outlined.
 - `examples/failover`: a demo script that fails a singleton over between
   three `paddock node` processes, killing the primary with SIGKILL.
 - Failover on the node: `[failover]` (partner, arbiter `witness`, `paths` or

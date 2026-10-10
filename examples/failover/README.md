@@ -35,5 +35,8 @@ The counter restarts from `init` on node 2 (`count=0`): a singleton's state
 does not cross nodes. Apps recover it from their sources or from `disk`
 buckets.
 
+`examples/tutorial` is the longer version: an app with state over HTTP,
+paused between steps, with the primary killed by hand.
+
 `crates/paddock/tests/failover.rs` runs the same steps as a test, with the
 pair started after the witness has stopped waiting for it.

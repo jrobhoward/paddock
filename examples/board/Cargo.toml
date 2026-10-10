@@ -1,0 +1,21 @@
+[package]
+name = "example-board"
+version = "0.0.0"
+description = "Paddock example: a counter on a shared bulletin board (a disk bucket), served over HTTP, that survives crashes"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["http", "keyvalue", "watch"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

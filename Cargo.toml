@@ -13,6 +13,7 @@ members = [
     "crates/paddock-modbus",
     "crates/paddock-sdk",
     "crates/paddock-sdk-macros",
+    "examples/board",
     "examples/counter",
     "examples/ping-pong",
     "examples/chaos",
