@@ -173,7 +173,7 @@ async fn compare_and_swap____expected_revisions____write_or_conflict() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn read_only_shared_bucket____watch_and_read_allowed_writes_denied() {
+async fn shared_bucket____read_only_grant____watch_and_read_allowed_writes_denied() {
     let a = up("w-ro", AccessMode::Ro);
 
     let watch = ask(&a, "watch:board:w-ro").await;

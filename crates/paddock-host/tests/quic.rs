@@ -215,7 +215,7 @@ async fn reload____peer_added_to_the_peers_file____then_accepted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn peer_restart____monitor_gets_noconnection_then_the_lower_node_redials() {
+async fn peer____restarts____monitor_gets_noconnection_then_the_lower_node_redials() {
     let dir = tempfile::tempdir().unwrap();
     let keys = Keys::new(dir.path(), &[1, 2]);
     let peers = keys.peers("peers", &[(1, 1), (2, 2)]);
@@ -259,7 +259,7 @@ async fn peer_restart____monitor_gets_noconnection_then_the_lower_node_redials()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn leave_then_restart____rejoins_through_the_seed() {
+async fn node____leaves_then_restarts____rejoins_through_the_seed() {
     let dir = tempfile::tempdir().unwrap();
     let keys = Keys::new(dir.path(), &[1, 2, 3]);
     let peers = keys.peers("peers", &[(1, 1), (2, 2), (3, 3)]);

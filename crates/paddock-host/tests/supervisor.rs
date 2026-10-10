@@ -217,7 +217,7 @@ async fn temporary____child_crashes____removed_not_restarted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn transient____normal_exit_not_restarted_but_crash_is() {
+async fn transient_child____normal_exit_then_crash____only_the_crash_restarted() {
     let (rt, _) = shared();
     let s = rt
         .start_supervisor(sup(
@@ -391,7 +391,7 @@ async fn nested____child_supervisor_escalates____parent_restarts_it() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn backoff____restart_waits_the_initial_delay() {
+async fn backoff____child_crashes____restart_waits_the_initial_delay() {
     let (rt, _) = shared();
     let mut spec = sup(
         Strategy::OneForOne,

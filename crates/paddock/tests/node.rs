@@ -101,7 +101,7 @@ async fn kill____instance____restarted_with_next_incarnation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn config_overrides_and_logs____node_values_win_and_records_are_kept() {
+async fn config_and_logs____node_and_app_both_set____node_values_win_and_records_are_kept() {
     let scratch = tempfile::tempdir().unwrap();
     let policy_dir = tempfile::tempdir().unwrap();
     let policy = policy_dir.path().join("policy.toml");
@@ -404,7 +404,7 @@ async fn restart____node_comes_back____running_apps_restored_stopped_ones_not() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stop_start_remove____lifecycle_and_dependency_guard() {
+async fn stop_start_remove____app_with_dependents____lifecycle_and_dependency_guard_hold() {
     let mut n = TestNode::start("").await;
     let chaos = fixture("paddock_fixture_chaos");
     n.client
@@ -476,7 +476,7 @@ async fn errors____unknown_app_pid_and_route____not_found_or_invalid() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn admin_socket____created_owner_only() {
+async fn admin_socket____node_starts____created_owner_only() {
     use std::os::unix::fs::PermissionsExt;
     let mut n = TestNode::start("").await;
 
@@ -513,7 +513,7 @@ async fn open____data_dir_held_by_another_node____refused() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn witness____deploy_refused_and_apps_on_disk_refuse_the_role() {
+async fn node____witness_role____deploy_refused_and_apps_on_disk_refuse_the_role() {
     let mut w = TestNode::start("[cluster]\nrole = \"witness\"\n").await;
     let refused = w
         .client
@@ -571,7 +571,7 @@ async fn witness____deploy_refused_and_apps_on_disk_refuse_the_role() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart____creation_raised_on_every_start() {
+async fn node____restarted____creation_raised_on_every_start() {
     let mut n = TestNode::start("").await;
     let first = std::fs::read_to_string(n.data().join("creation")).unwrap();
 

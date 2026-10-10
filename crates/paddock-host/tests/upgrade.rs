@@ -131,7 +131,7 @@ async fn instance_upgrade____under_concurrent_traffic____no_message_lost() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn instance_upgrade____links_survive_the_swap() {
+async fn instance_upgrade____instance_linked____links_survive_the_swap() {
     let (rt, chaos) = shared();
     let h = rt.spawn(counter_app(1), counter_spec("", &[])).unwrap();
     let peer = rt.spawn(chaos, spec("")).unwrap();
@@ -149,7 +149,7 @@ async fn instance_upgrade____links_survive_the_swap() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn instance_upgrade____timers_and_deferred_callers_carried_over() {
+async fn instance_upgrade____timers_and_deferred_callers_pending____carried_over() {
     let (rt, chaos) = shared();
     let h = rt.spawn(chaos, spec("")).unwrap();
     ask(&h, "timer:150:after-upgrade").await;
@@ -245,7 +245,7 @@ fn snapshot_mode(from: &str) -> serde_json::Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn exit_criterion_6____v1_to_v2_keeps_identity_and_broken_v3_reverts_losing_nothing() {
+async fn exit_criterion_6____v1_v2_then_broken_v3____keeps_identity_and_reverts_losing_nothing() {
     let (rt, chaos) = shared();
     let name = "ec6-counter";
     let v1 = json!({ "registered_names": [name], "lifecycle": { "start_args": format!("register:{name}") } });
@@ -519,7 +519,7 @@ async fn rollback____nothing_to_return_to____no_previous() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stale_pid_after_restart_mode_upgrade____noproc() {
+async fn call____stale_pid_after_restart_mode_upgrade____noproc() {
     let (rt, _) = shared();
     let name = "up-stale";
     let apps = rt

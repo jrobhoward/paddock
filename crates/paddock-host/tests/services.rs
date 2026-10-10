@@ -216,7 +216,7 @@ async fn log____rate_limited____excess_dropped_and_count_reported_later() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stdout_and_stderr____captured_as_tagged_records() {
+async fn stdout_and_stderr____written____captured_as_tagged_records() {
     capture();
     let (rt, app) = shared();
     let h = up(rt, app, spec("stdio", &[])).await;

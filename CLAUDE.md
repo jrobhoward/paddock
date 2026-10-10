@@ -24,6 +24,13 @@ before changing anything structural:
 ## Commands
 
 ```bash
+# Every check below as one command, one line of result per check; logs in
+# target/check/. `--quick` runs fmt, clippy, conventions and the tests; named
+# checks run alone (`--list`). CI calls the same script.
+scripts/check.sh
+scripts/check.sh --quick
+scripts/check.sh clippy guests
+
 # Build and test the main workspace
 cargo build --workspace --all-targets
 cargo test --workspace
@@ -181,7 +188,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.
-- `scripts/`: `check-secrets.sh` (run before pushing; `--help`).
+- `scripts/`: `check.sh` (every check; `--help`) and `check-secrets.sh` (run
+  before pushing; `--help`).
 - `docs/`: design and plan. `docs/tla/`: TLA+ specifications of failover
   and their results (`VERIFICATION.md`); run with TLC, not in CI.
 - `spikes/`: throwaway programs that answered design questions
@@ -372,21 +380,20 @@ sets `shell: bash`.
 
 Before considering any change to the main workspace complete:
 
-- `cargo test --workspace` passes with zero failures
-- `cargo clippy --workspace --all-targets -- -Dwarnings` is clean
-- `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` is clean
-- `cargo fmt --all -- --check` is clean
-- `cargo deny check licenses bans sources advisories` passes
-- `cargo +1.96.0 check --workspace --all-targets` (MSRV) passes
+- `scripts/check.sh` passes. It runs, each with a line of result: the tests
+  (`cargo test --workspace`), clippy with `-Dwarnings`, the CLI built
+  without the `node` feature, rustdoc with warnings as errors, `cargo fmt
+  --check`, `cargo deny`, the MSRV check, the guest builds with their
+  `wasm-tools` checks and fixture test, `scripts/check-secrets.sh`, the test
+  conventions (above), and a CHANGELOG change for any change to `crates/`,
+  `examples/` or `wit/` (a commit line `Changelog: none` when nothing a user
+  would notice changed). Its tools: the `wasm32-wasip2` target, the MSRV
+  toolchain, `cargo-deny` and `wasm-tools`
 - `Cargo.lock` is committed
-- `scripts/check-secrets.sh` finds nothing: no keys, tokens, passwords or
-  credentials in URLs, no addresses but the committer's, no local user or
-  host names, no private links. A false positive is marked on its line with
-  `secret-scan: allow`, never by loosening the script
+- A secret-scan false positive is marked on its line with `secret-scan:
+  allow`, never by loosening the script
 - No `.unwrap()` / `.expect()` / `panic!` in production code
 - New public items have doc comments
-- Guest fixtures used by the change build for `wasm32-wasip2`, and the tests
-  that load them run
 - `CHANGELOG.md` has an entry for anything a user would notice
 - If the change touches a constraint above, the matching spike or a test that
   replaces it still passes

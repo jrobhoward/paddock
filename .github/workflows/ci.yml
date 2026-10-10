@@ -50,24 +50,17 @@ jobs:
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ matrix.os }}-cargo-
 
-      # `-- -Dwarnings` applies to workspace members only, never to
-      # dependencies, so a new warning upstream cannot break CI.
+      # Each step is one check in scripts/check.sh, the same command as
+      # locally. Clippy's `-- -Dwarnings` applies to workspace members only,
+      # never to dependencies, so a new warning upstream cannot break CI.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -Dwarnings
+        run: scripts/check.sh clippy
 
-      # `paddock` without its `node` feature is the CLI and bundle tooling
-      # only; it must build, and must not pull in wasmtime.
       - name: CLI without the node
-        shell: bash
-        run: |
-          cargo clippy -p paddock --no-default-features --all-targets --locked -- -Dwarnings
-          if cargo tree -p paddock --no-default-features -e normal --locked | grep -q wasmtime; then
-            echo "paddock --no-default-features depends on wasmtime" >&2
-            exit 1
-          fi
+        run: scripts/check.sh cli-no-node
 
       - name: Test
-        run: cargo test --workspace --locked
+        run: scripts/check.sh test
 
   # Guest components are what the host runs. Build each fixture for
   # wasm32-wasip2 and confirm the result is a component exporting the
@@ -77,9 +70,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Secrets and personal data
-        run: scripts/check-secrets.sh
 
       - name: Install toolchain
         run: |
@@ -100,32 +90,11 @@ jobs:
         with:
           tool: wasm-tools
 
-      - name: Build fixtures
-        run: cargo build -p paddock-fixture-echo -p paddock-fixture-chaos -p paddock-fixture-services -p paddock-fixture-sdk -p paddock-fixture-counter -p example-counter -p example-ping-pong -p example-chaos -p example-greeter-app -p paddock-fixture-conn -p example-line-server -p example-scada-points -p example-scada-hmi -p example-http-counter -p example-board --target wasm32-wasip2 --release --locked
-
-      - name: Check component world
-        run: |
-          for name in paddock_fixture_echo paddock_fixture_chaos paddock_fixture_services paddock_fixture_sdk paddock_fixture_counter example_counter example_ping_pong example_chaos example_greeter_app example_scada_points example_http_counter example_board; do
-            wasm=target/wasm32-wasip2/release/$name.wasm
-            wasm-tools validate --features all "$wasm"
-            wasm-tools component wit "$wasm" | tee wit.txt
-            # A component imports only what its code calls (echo has no
-            # `process` import), so check the exports.
-            for f in init handle-call handle-cast handle-info terminate save-snapshot load-snapshot; do
-              grep -q "export $f: func" wit.txt || { echo "$name: missing export $f"; exit 1; }
-            done
-          done
-          # Connection handlers export `paddock:connection/handler` instead.
-          for name in paddock_fixture_conn example_line_server example_scada_hmi; do
-            wasm=target/wasm32-wasip2/release/$name.wasm
-            wasm-tools validate --features all "$wasm"
-            wasm-tools component wit "$wasm" | tee wit.txt
-            grep -q "export paddock:connection/handler@0.1.0" wit.txt || { echo "$name: missing export paddock:connection/handler"; exit 1; }
-          done
-
-      # Tests that load a built fixture are ignored in the plain test run.
-      - name: Fixture tests
-        run: cargo test -p paddock-bundle --test fixture_echo --locked -- --ignored
+      # Every workspace crate built as a cdylib, checked as a component
+      # exporting the app world or `paddock:connection/handler`, then the
+      # tests that load a built fixture.
+      - name: Guests
+        run: scripts/check.sh guests
 
   # Guards `rust-version = "1.96.0"`, wasmtime 49's floor.
   msrv:
@@ -151,7 +120,7 @@ jobs:
           restore-keys: msrv-cargo-
 
       - name: Check
-        run: cargo check --workspace --all-targets --all-features --locked
+        run: scripts/check.sh msrv
 
   # Every other job runs `--locked`, so nothing tests against newer
   # dependencies. This job resolves fresh in the runner (never committed) and
@@ -197,15 +166,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: taiki-e/install-action@v2
         with:
-          command: check licenses bans sources advisories
+          tool: cargo-deny
+
+      - name: Deny
+        run: scripts/check.sh deny
 
   lint:
-    name: fmt + docs
+    name: fmt, docs, conventions
     runs-on: ubuntu-latest
     steps:
+      # The whole history, so `changelog` finds the merge base with the PR's
+      # base branch.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install toolchain
         run: |
@@ -213,10 +189,19 @@ jobs:
           rustup default stable
 
       - name: Format
-        run: cargo fmt --all --check
+        run: scripts/check.sh fmt
 
       # Catches broken intra-doc links, which `cargo build` does not.
       - name: Docs
-        env:
-          RUSTDOCFLAGS: -Dwarnings
-        run: cargo doc --workspace --all-features --no-deps --locked
+        run: scripts/check.sh doc
+
+      # Test names, test file layout and headers.
+      - name: Conventions
+        run: scripts/check.sh conventions
+
+      - name: Secrets and personal data
+        run: scripts/check.sh secrets
+
+      - name: Changelog
+        if: github.event_name == 'pull_request'
+        run: scripts/check.sh changelog --base origin/${{ github.base_ref }}

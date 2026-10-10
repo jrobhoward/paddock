@@ -152,7 +152,7 @@ fn serial____link_silent_serial_heard____a_partition_not_a_dead_node() {
 }
 
 #[test]
-fn dropped_runtime____its_peers_find_it_silent() {
+fn liveness____runtime_dropped____its_peers_find_it_silent() {
     let events = simulate(26, 2, |mut sim| async move {
         let mut events = sim.node(1).rt.node_events();
         pass(300).await;

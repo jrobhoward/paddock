@@ -137,7 +137,7 @@ fn start____witness_names_node_1____it_runs_node_2_stands_by() {
 }
 
 #[test]
-fn primary_cut_off____standby_takes_over_within_the_bound_never_both() {
+fn failover____primary_cut_off____standby_takes_over_within_the_bound_never_both() {
     let (took, runners, overlap, epoch) = simulate(42, 3, |sim| async move {
         let pair = start(&sim, witness());
         pass(3000).await;
@@ -162,7 +162,7 @@ fn primary_cut_off____standby_takes_over_within_the_bound_never_both() {
 }
 
 #[test]
-fn primary_runtime_dropped____standby_takes_over() {
+fn failover____primary_runtime_dropped____standby_takes_over() {
     let (runners, overlap) = simulate(43, 3, |mut sim| async move {
         let pair = start(&sim, witness());
         pass(3000).await;
@@ -183,7 +183,7 @@ fn primary_runtime_dropped____standby_takes_over() {
 }
 
 #[test]
-fn network_cut_serial_up____nobody_promoted() {
+fn failover____network_cut_serial_up____nobody_promoted() {
     let (runners, two, overlap) = simulate(44, 3, |sim| async move {
         let pair = start(&sim, witness());
         pass(3000).await;
@@ -200,7 +200,7 @@ fn network_cut_serial_up____nobody_promoted() {
 }
 
 #[test]
-fn network_and_serial_cut____primary_renews_at_the_witness_and_keeps_running() {
+fn failover____network_and_serial_cut____primary_renews_at_the_witness_and_keeps_running() {
     let (runners, two, overlap) = simulate(45, 3, |sim| async move {
         let pair = start(&sim, witness());
         pass(3000).await;
@@ -218,7 +218,7 @@ fn network_and_serial_cut____primary_renews_at_the_witness_and_keeps_running() {
 }
 
 #[test]
-fn network_serial_and_primary_wan_cut____hands_over_then_old_primary_rejoins() {
+fn failover____network_serial_and_primary_wan_cut____hands_over_then_old_primary_rejoins() {
     let (handed, after_heal, overlap) = simulate(46, 3, |sim| async move {
         let pair = start(&sim, witness());
         pass(3000).await;
@@ -244,7 +244,7 @@ fn network_serial_and_primary_wan_cut____hands_over_then_old_primary_rejoins() {
 }
 
 #[test]
-fn witness_lost_then_primary_lost____no_promotion_until_an_operator_confirms() {
+fn failover____witness_lost_then_primary_lost____no_promotion_until_an_operator_confirms() {
     let (before, after, overlap) = simulate(47, 3, |sim| async move {
         let pair = start(&sim, witness());
         pass(3000).await;
@@ -266,7 +266,7 @@ fn witness_lost_then_primary_lost____no_promotion_until_an_operator_confirms() {
 }
 
 #[test]
-fn paths____node_silent_everywhere_promotes_network_cut_alone_does_not() {
+fn paths_arbiter____node_silent_or_network_cut____promotes_only_when_silent_everywhere() {
     let (network_only, everywhere) = simulate(48, 3, |sim| async move {
         let pair = start(&sim, Arbiter::Paths);
         pass(3000).await;
@@ -314,7 +314,7 @@ fn operator____partner_silent____awaits_confirmation_then_promotes() {
 /// Random faults on links, the serial line and the witness for a while,
 /// then everything healed: never two runners, and one runner at the end.
 #[test]
-fn random_faults____never_two_runners_one_after_healing() {
+fn failover____random_faults____never_two_runners_one_after_healing() {
     let seeds = std::env::var("PADDOCK_SIM_FAILOVER_SEEDS")
         .ok()
         .map_or(16, |n| n.parse().unwrap());

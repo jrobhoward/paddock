@@ -99,6 +99,14 @@ name = "cluster"
 required-features = ["node"]
 
 [[test]]
+name = "board"
+required-features = ["node"]
+
+[[test]]
+name = "failover"
+required-features = ["node"]
+
+[[test]]
 name = "scada"
 required-features = ["modbus"]
 

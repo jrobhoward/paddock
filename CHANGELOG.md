@@ -224,9 +224,17 @@ All notable changes are recorded here. The format follows
   repository's authors, the local user and host names, private links, and
   key-like, large or binary files. Run in CI and before every push; usable
   as a pre-push hook.
+- `scripts/check.sh`: every check of the Definition of Done as one command,
+  with a one-line result per check (`--quick` for fmt, clippy, conventions
+  and the tests; or named checks). Also checks what clippy does not: test
+  names, test file layout and headers, and a CHANGELOG entry for changes to
+  `crates/`, `examples/` or `wit/`. Guest crates are found from the
+  workspace instead of a list. CI runs its checks through the script.
 
 ### Fixed
 
+- `paddock`'s `board` and `failover` tests declare the `node` feature they
+  need, so the crate's tests build again without default features.
 - A node that left the cluster cleanly and restarted could not rejoin: the
   closing connection re-created the departed peer with a raised session
   number, so the new start's join was dropped as stale.
