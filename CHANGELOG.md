@@ -269,6 +269,13 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Cluster transport: a dial whose peer completed the QUIC handshake but
+  never sent its hello waited forever, since keep-alives kept the
+  connection open, and the redial loop waiting on it never tried again.
+  The soak met it when a handshake held in the network arrived after the
+  process that answered it was replaced at the same address: the node
+  never reconnected, and no node ran the singleton. The hello exchange,
+  dialing and accepting, now gives up after the idle timeout.
 - Failover: a primary paused past its lease (`SIGSTOP`, a stalled host)
   ran its singleton's callbacks for a moment after it continued, until
   the gate killed it, while the standby already ran it. Singleton

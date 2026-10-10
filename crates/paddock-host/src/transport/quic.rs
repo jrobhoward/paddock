@@ -435,7 +435,7 @@ async fn accept(inner: Arc<Inner>) {
         tokio::spawn(async move {
             match incoming.await {
                 Ok(conn) => {
-                    if let Err(e) = establish(&inner, conn, false).await {
+                    if let Err(e) = establish_within(&inner, conn, false).await {
                         tracing::debug!(error = %e, "cluster connection refused");
                     }
                 }
@@ -460,7 +460,26 @@ async fn dial(inner: &Arc<Inner>, address: SocketAddr) -> Result<u32, String> {
         .map_err(|e| e.to_string())?
         .await
         .map_err(|e| e.to_string())?;
-    establish(inner, conn, true).await
+    establish_within(inner, conn, true).await
+}
+
+/// [`establish`], given up after the idle timeout. Keep-alives stop a
+/// connection idling out while a peer that never answers the hello still
+/// holds it: a stalled or hostile peer, or a handshake held in the network
+/// and delivered after the process that answered it was replaced at the
+/// same address. Unbounded, such a dial never returns and the redial loop
+/// waiting on it never tries again.
+async fn establish_within(
+    inner: &Arc<Inner>,
+    conn: Connection,
+    dialer: bool,
+) -> Result<u32, String> {
+    let limit = inner.config.idle_timeout;
+    if let Ok(result) = tokio::time::timeout(limit, establish(inner, conn.clone(), dialer)).await {
+        return result;
+    }
+    conn.close(VarInt::from_u32(3), b"no hello in time");
+    Err(format!("no hello within {} ms", limit.as_millis()))
 }
 
 /// Exchange hellos on a new connection, check the peer, keep the
@@ -753,3 +772,7 @@ async fn dial_new_members(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "quic_tests.rs"]
+mod quic_tests;
