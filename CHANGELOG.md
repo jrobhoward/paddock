@@ -212,6 +212,10 @@ All notable changes are recorded here. The format follows
 - A node that left the cluster cleanly and restarted could not rejoin: the
   closing connection re-created the departed peer with a raised session
   number, so the new start's join was dropped as stale.
+- A graceful leave could be lost: a peer closed the connection when the
+  first of its two streams finished, discarding a `Leave` still unread on
+  the other, and kept the departed node as a member. A peer now closes once
+  both streams have finished, and the leaving node waits for that close.
 
 ### Changed
 

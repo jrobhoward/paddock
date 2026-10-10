@@ -276,10 +276,11 @@ async fn leave_then_restart____rejoins_through_the_seed() {
     })
     .await;
 
-    // A clean stop: the leave, then the connection closes. Whether a peer
-    // acts on the leave before or after the close, the next start rejoins.
+    // A clean stop: every peer reads the leave before the connection
+    // closes, so it has dropped node 1 when shutdown returns.
     n1.rt.leave_cluster();
     n1.quic.shutdown_gracefully().await;
+    let after_leave = (seed.rt.members().len(), n2.rt.members().len());
     drop(n1);
     let again = restart(1, 2, n1_address, n1_id).await;
     again.quic.join_seed(seed.address).await.unwrap();
@@ -290,6 +291,7 @@ async fn leave_then_restart____rejoins_through_the_seed() {
     })
     .await;
 
+    assert_eq!(after_leave, (2, 2));
     assert!(
         n2.rt
             .members()

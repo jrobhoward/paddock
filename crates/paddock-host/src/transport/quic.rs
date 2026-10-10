@@ -31,11 +31,14 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn::{Connection, Endpoint, RecvStream, SendStream, TransportConfig, VarInt};
+use quinn::{
+    Connection, Endpoint, ReadExactError, RecvStream, SendStream, TransportConfig, VarInt,
+};
 use rustls::client::AlwaysResolvesClientRawPublicKeys;
 use rustls::crypto::ring::default_provider;
 use rustls::server::AlwaysResolvesServerRawPublicKeys;
@@ -184,11 +187,20 @@ async fn write_frame(stream: &mut SendStream, bytes: &[u8]) -> Result<(), String
 }
 
 async fn read_frame(stream: &mut RecvStream) -> Result<Vec<u8>, String> {
+    next_frame(stream)
+        .await?
+        .ok_or_else(|| "the stream finished".to_string())
+}
+
+/// The next frame, or `None` if the peer finished the stream between
+/// frames (a graceful shutdown).
+async fn next_frame(stream: &mut RecvStream) -> Result<Option<Vec<u8>>, String> {
     let mut len = [0u8; 4];
-    stream
-        .read_exact(&mut len)
-        .await
-        .map_err(|e| e.to_string())?;
+    match stream.read_exact(&mut len).await {
+        Ok(()) => {}
+        Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    }
     let len = u32::from_be_bytes(len);
     if len > MAX_FRAME {
         return Err(format!("frame of {len} bytes"));
@@ -198,7 +210,7 @@ async fn read_frame(stream: &mut RecvStream) -> Result<Vec<u8>, String> {
         .read_exact(&mut buf)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(buf)
+    Ok(Some(buf))
 }
 
 /// Whether `frame` travels on the control stream.
@@ -336,8 +348,9 @@ impl QuicTransport {
         nodes
     }
 
-    /// Write what is queued to every peer (a [`Frame::Leave`], say), for up
-    /// to a second, then close every connection and stop listening and
+    /// Write what is queued to every peer (a [`Frame::Leave`], say) and
+    /// wait until each has read it and closed the connection, for up to a
+    /// second in all; then close every connection and stop listening and
     /// redialing.
     pub async fn shutdown_gracefully(&self) {
         self.inner.stop.send_replace(true);
@@ -349,6 +362,7 @@ impl QuicTransport {
             .drain()
             .map(|(_, p)| p)
             .collect();
+        let conns: Vec<Connection> = peers.iter().map(|p| p.conn.clone()).collect();
         let writers: Vec<_> = peers
             .into_iter()
             .flat_map(|p| {
@@ -358,9 +372,15 @@ impl QuicTransport {
                 p.writers
             })
             .collect();
+        // Wait for each peer to close the connection, which it does once it
+        // has read both streams to the end: closing first would discard
+        // frames it has received but not yet read.
         let _ = tokio::time::timeout(Duration::from_secs(1), async {
             for w in writers {
                 let _ = w.await;
+            }
+            for conn in conns {
+                conn.closed().await;
             }
         })
         .await;
@@ -536,14 +556,23 @@ async fn establish(inner: &Arc<Inner>, conn: Connection, dialer: bool) -> Result
             old.conn.close(VarInt::from_u32(2), b"replaced");
         }
     }
+    let finished = Arc::new(AtomicU8::new(0));
     tokio::spawn(reader(
         inner.clone(),
         conn.clone(),
         node,
         version,
         control_rx,
+        finished.clone(),
     ));
-    tokio::spawn(reader(inner.clone(), conn.clone(), node, version, data_rx));
+    tokio::spawn(reader(
+        inner.clone(),
+        conn.clone(),
+        node,
+        version,
+        data_rx,
+        finished,
+    ));
     tokio::spawn(watch_close(inner.clone(), conn, node));
     if let Some(rt) = inner.rt.upgrade() {
         super::join(&rt, &[node]);
@@ -565,16 +594,28 @@ async fn writer(mut stream: SendStream, mut queue: mpsc::Receiver<Vec<u8>>) {
     }
 }
 
+/// Deliver every frame on one of a connection's streams. When the peer
+/// finishes both streams (a graceful shutdown), every frame it sent, its
+/// `Leave` included, has been delivered: close the connection then, which
+/// tells the peer it may close its endpoint. Closing on the first finish
+/// would discard frames still unread on the other stream.
 async fn reader(
     inner: Arc<Inner>,
     conn: Connection,
     node: u32,
     version: u16,
     mut stream: RecvStream,
+    finished: Arc<AtomicU8>,
 ) {
     loop {
-        let bytes = match read_frame(&mut stream).await {
-            Ok(b) => b,
+        let bytes = match next_frame(&mut stream).await {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                if finished.fetch_add(1, Ordering::AcqRel) + 1 == 2 {
+                    conn.close(VarInt::from_u32(0), b"left");
+                }
+                return;
+            }
             Err(_) => {
                 conn.close(VarInt::from_u32(3), b"stream ended");
                 return;
