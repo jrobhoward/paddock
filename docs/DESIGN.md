@@ -506,6 +506,17 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mutua
 
 **Out of scope for now:** multi-tenant isolation strong enough for mutually hostile customers on shared nodes. Wasm gives a good base, but side channels (Spectre-class timing) need further mitigation before that claim. The first target is one organization's apps with mixed trust levels.
 
+## Operating a node
+
+Decided in the structure review (ROADMAP R5, 2026-10-10); stage 3 carries them out (Q1, Q2, Q3, Q7).
+
+- **Build features.** A default build has the node, the HTTP ingress with TLS, probes and SQL datasources (idle without a datasource in node config). Modbus is a cargo feature, off by default: it adds a network server with no authentication of its own (`docs/SECURITY.md`, S4), and about 0.8 MB and 8 crates, to a node that may never use it. CI builds four sets: the default, all features, the node with no optional features, and the CLI without the node.
+- **Layout.** One directory per node holds everything the node writes: `data_dir` (`/var/lib/paddock` by convention) with the deploy store, buckets, failover state, the audit log, the admin socket (as now) and, with G4, compiled components under `compiled/`. One directory is simple to back up, move or wipe, and assumes no service manager. Configuration, keys and policy stay where the operator puts them (`/etc/paddock` by convention). An upgrade keeps the current and previous bundle of an app and removes older ones, as now.
+- **Logging.** A node writes to stderr and leaves keeping and rotating the output to journald or the container runtime; Paddock keeps no log files. A JSON format is an option for collectors. Each app's volume is bounded by its logging rate limit, which captured stdout and stderr also count against (S3).
+- **Privileges.** A node runs as its own unprivileged user. The example systemd unit grants only `CAP_NET_BIND_SERVICE`, for ingress ports below 1024; serial devices are reached through the `dialout` group; attaching bpftrace to the probes still needs root, for observation only; the virtual-IP agent (D11) is a separate process with its own capabilities.
+- **Admin access.** Each node is reached through its own Unix socket. The remote admin API (D6) is HTTPS over TCP with the same routes, and logs and events stream over it as chunked HTTP responses; an interactive cluster shell (P1) builds on that. Read-only calls (`list`, `status`) do not wait behind a deploy or upgrade in progress.
+- **Code structure.** Crates stay as they are; the `Service` and `Extension` patterns hold. The node daemon (`node/daemon.rs`) splits by concern (deploy and upgrade, connection apps, cluster and failover start, queries), and the `process` host functions move out of `state.rs` into a module of their own: these files changed in nearly every feature so far.
+
 ## rustbridge integration
 
 Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and extend them. A `.rbp` bundle gains a `wasm` platform and an `appserver` manifest section. The same plugin source can then ship as a native library for Java/C#/Python hosts and as a Wasm app for the server.

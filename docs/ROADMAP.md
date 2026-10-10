@@ -45,29 +45,24 @@ Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test 
 
 ## Stage 2: Review (M)
 
-Each review writes its findings as stage 3 items and its decisions into DESIGN.md, and works from the draft [ARCHITECTURE.md](ARCHITECTURE.md) (R1, 2026-10-10), whose last section lists questions found while drafting it. W1 finishes that file.
-
-- [ ] **R2 Code and test audit.** Coverage per module (`cargo llvm-cov`), with a list of untested code that matters. A pass for what `scripts/check.sh` cannot check: test bodies (Arrange, Act, Assert), error handling, and lock use. Already known: cascading links between instances that do not trap (C3), and that removing a watch when its instance exits is not asserted (H4), and that `list` and `status` wait on the daemon's state lock behind a deploy or upgrade. Misses that keep recurring become checks in `scripts/check.sh`, CLAUDE.md rules or a project skill, for example a checklist for adding a host service.
-- [ ] **R3 Security review.** First the architecture: trust boundaries (guest and host, app and app, the admin socket, node and node, ingress clients, Modbus devices, the witness), what each side can do to the other, and what the design assumes. Then each module: the bundle, manifest and policy; linking and deny stubs; host-object quotas; each service (keyvalue, filesystem, secrets, groups, watch, metrics); listeners and connections; the HTTP ingress and TLS; the transport (wire decoding, QUIC, identity and peers files); liveness, membership, failover and the witness; the admin API and audit log; node config and the store; Modbus; the SDK. Already known: a peer's `Frame::Call`s each start a task with no bound, and an instance's signal and host-op queues are unbounded. Output: a threat model in `docs/SECURITY.md`, a list of fuzz targets (the HTTP reply decoder is one already known), and fixes as stage 3 items.
-- [ ] **R5 Structure.** Decisions, with stage 3 items for any code they change:
-  - **What changes most often**, from git history per module (`node/daemon.rs`, 1,860 lines, is the first candidate for splitting), and whether those parts are easy to change: traits or shared behavior to extract, code to move, more or fewer crates. Weigh how likely more guest languages and SDK users are, and how often capabilities are added (the `Service` and `Extension` patterns).
-  - **Feature flags.** Which capabilities can be compiled out: the HTTP ingress, TLS, Modbus (off by default, the current preference), Postgres (E5, on by default but idle without config), probes. Includes a build matrix for CI.
-  - **Node layout.** The directory tree of a node (config, keys, data, bundles by app and version, compiled components for G4, logs), the `PADDOCK_*` environment variables (today `PADDOCK_CONFIG`, `PADDOCK_SOCKET`, `PADDOCK_KEY_PASSWORD`), and how bundles are kept and pruned.
-  - **Logging.** Today the node logs with `tracing` to its output and keeps a ring for `paddock logs`. Decide between journald, files with rotation (size and age) or both, and per-app log volume limits.
-  - **Running without root.** Today root is needed only to attach bpftrace (observation) and by D11's virtual-IP agent. Also check ports below 1024 (systemd socket activation or `CAP_NET_BIND_SERVICE`), serial devices (a group, not root) and the data directory. The target: everything but observation runs unprivileged.
-  - **Reaching the cluster from a shell.** Today each node is reached through its own Unix socket. Decide whether to add a remote admin API (D6), an interactive shell, or a streaming connection for logs and events (P1).
+Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q8, Q10 to Q13); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3, Q7). W1 finishes both drafts.
 
 ## Stage 3: Rework (M–L)
 
-Filled in by stage 2; the items known already:
+From stage 2 and earlier work:
 
-- [ ] **Q1 Feature flags** as R5 decides.
-- [ ] **Q2 Node layout and bundle store** as R5 decides, with G4 (cache compiled components in the store, so a restart does not recompile) since both change the store.
-- [ ] **Q3 Logging and rotation** as R5 decides.
+- [ ] **Q1 Feature flags.** Modbus behind a cargo feature, off by default; HTTP ingress, TLS, probes and SQL on. Each optional capability compiles out cleanly. CI builds the default, all features, the node with no optional features, and the CLI without the node (DESIGN.md, "Operating a node"). README and GETTING_STARTED name the feature where they show Modbus.
+- [ ] **Q2 Node layout and bundle store**, with G4 (cache compiled components in the store, so a restart does not recompile) since both change the store. Everything a node writes stays under `data_dir`; compiled components go in `data_dir/compiled`. An example systemd unit (own user, `CAP_NET_BIND_SERVICE` only, `dialout` for serial) and a short operations page: paths, the `PADDOCK_*` variables (`PADDOCK_CONFIG`, `PADDOCK_SOCKET`, `PADDOCK_KEY_PASSWORD`), what to back up.
+- [ ] **Q3 Logging.** stderr only, kept and rotated by journald or the container runtime; a JSON format option; captured stdout and stderr counted against the app's logging rate limit (S3).
 - [ ] **Q4 Known defects.** `cargo build --workspace --all-targets` fails linking `paddock-fixture-conn` natively (a `:` in an export symbol; `cargo test` is unaffected). `crates/paddock/tests/listeners.rs`'s lifecycle test is flaky under full-suite load (also seen once on the Raspberry Pi 5, 2026-10-10; it passed three runs alone there).
-- [ ] **Q5 Test gaps** from R2.
-- [ ] **Q6 Security fixes and fuzz targets** from R3.
-- [ ] **Q7 Refactors** from R5.
+- [ ] **Q5 Test gaps** from R2 (2026-10-10: 785 tests, 88.9% of production lines in `paddock`, `paddock-host`, `paddock-bundle` and `paddock-modbus` under `cargo llvm-cov`; tests that run `paddock node` as a separate process are not counted, so `node/run.rs` shows 5%). In order:
+  - The gate (`node/gate.rs`, 53%): a singleton deployed to a node already primary, upgrade, rollback and removal of a held singleton, a start or kill that fails, an epoch that cannot be kept.
+  - Failover transitions the model checks but no Rust test reaches: a refusal from the witness to a standby and to a node that is down, stand-down after the partner says `Down` for a lease, `NotYet` to a node that is down.
+  - The Modbus guest interface (`paddock-modbus/src/lib.rs`, 32%): reads and writes on demand and the served-table setters, with their count and length checks.
+  - Links cascading along a chain of instances that do not trap (C3); a watch removed when its instance exits, asserted (H4); a secret's value absent from logs and errors.
+  - Rollback paths that ignore errors: putting the pool's template back after a reverted rollout (`apps.rs`) and an app's HTTP routes after a failed upgrade (`daemon.rs`). A failure leaves later instances on the version rolled back from, silently; log it, and report it in the upgrade's error.
+- [ ] **Q6 Security fixes and fuzz targets** from R3: S1 to S9 in `docs/SECURITY.md`, in its order (registered names claimed by two apps, log injection, stdout floods, the Modbus server's masters, failover answers from any member, then the low ones), and the fuzz targets it lists (`wire_packet`, `failover_status`, `http_reply`, `state_view`, `modbus_request`).
+- [ ] **Q7 Refactors.** Split `node/daemon.rs` by concern (deploy and upgrade, connection apps, cluster and failover start, queries); move the `process` host functions out of `state.rs`; let `list` and `status` read without waiting behind a deploy or upgrade. No new crates.
 - [ ] **Q8 A paused primary runs on after its lease.** A primary stopped past its lease (`SIGSTOP`, or any pause of the process) still runs its singleton when it continues, until its failover loop sees the lease has ended and the gate kills it; the standby was promoted meanwhile. `scripts/soak.sh` found this window in one of three 1.5-minute failover runs on 2026-10-10: about 2 ms (16-core Linux machine). A callback can run in it. Candidates: the instance loop checks the lease against the monotonic clock before each callback of a singleton (a deadline the failover task publishes and the gate hands to each singleton instance, which also bounds the gate's ordinary stop latency and an `init` that runs past the lease), or the gate holds singletons' mailboxes while the lease is not current. The fix closes or narrows assumption A8 in `docs/tla/VERIFICATION.md`; V1 applies if it changes `failover/`.
 - [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
 - [ ] **Q10 Operator confirmation with a witness.** A stale confirmation no longer promotes (fixed 2026-10-10, VERIFICATION.md bug 4). Left: with a witness arbiter the standby honours a confirmation even while the witness answers and the primary renews there, which makes two runners if the operator is wrong; decide whether a confirmation counts only while the witness is also unreachable. `awaiting_confirmation` is never set with a witness, so `paddock failover confirm` answers "nothing may change" in exactly the case it is for. Model the confirmation in layer 2 (R7 is checked at layer 1 only).
@@ -104,7 +99,7 @@ Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an 
 ## Stage 5: Platform features (L)
 
 - [ ] **E5 SQL datasources (Postgres)** (`paddock:sql`), brought forward from Phase 3. The host owns a connection pool per named datasource (`tokio-postgres`, permissive license), configured per node; the manifest requests a datasource and a connection cap; credentials come from E3's secrets. Built in by default (Q1) but idle without a datasource in node config, so a Pi without Postgres is unaffected. Tests and a tutorial chapter run against a scratch Postgres started as an ordinary user (`initdb` and `pg_ctl` in a temporary directory, or a rootless container), and are skipped when none is available. An app can also ship its own driver over `wasi:sockets` later (Phase 3 sockets).
-- [ ] **P1 Cluster shell**, as R5 decides, after D6: a `paddock` session to any node that lists members, follows logs and events, and runs admin commands; possibly over a WebSocket for streaming.
+- [ ] **P1 Cluster shell**, after D6: a `paddock` session to any node that lists members, follows logs and events, and runs admin commands; logs and events stream over D6 as chunked HTTP responses.
 - [ ] **F5 Serial extension.** Named serial ports declared by apps and bound to device paths in node config; the host owns the tty and offers a byte stream or framed messages; its own crate (A5). Then D10's serial heartbeat path on real hardware, the soak's failover runs with the serial line up and cut (network cut: nobody promotes), and Modbus RTU.
 - [ ] **E2 HTTP egress** (`wasi:http/outgoing-handler`) through a filtering proxy with an allow-list and pooled connections (S15: wasmtime's default sender opens a connection per request).
 - [ ] **F4 Batching.** Guidance and an SDK helper for sending many updates in one message (a cast costs about 1.3 µs whatever it carries); points per second end to end with `pool_load`.
@@ -186,7 +181,7 @@ Questions for later, each a spike with a time-box when scheduled.
 
 ## Code areas
 
-An area is a set of modules with a narrow interface to the rest: modules in crates with `pub(crate)` and a small `pub` surface, rather than a crate each. R5 reviews this table.
+An area is a set of modules with a narrow interface to the rest: modules in crates with `pub(crate)` and a small `pub` surface, rather than a crate each. R5 (2026-10-10) kept these areas and the crates as they are.
 
 | Area | Where | Interface to the rest |
 | --- | --- | --- |
@@ -220,6 +215,10 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | Failover | Epochs, heartbeat paths, a witness and a lease; no Raft (2026-10-08) |
 | HTTP requests | Calls to a pooled instance, node-level ingress (2026-10-09) |
 | Metrics export | Prometheus text, metrics per app (2026-10-09) |
+| Build features | Modbus off by default; HTTP, TLS, probes, SQL on (2026-10-10) |
+| Node layout | Everything a node writes under `data_dir`, admin socket and compiled components included (2026-10-10) |
+| Logging | stderr only; journald or the container runtime rotates (2026-10-10) |
+| Privileges | Unprivileged user; `CAP_NET_BIND_SERVICE` only, for ports below 1024 (2026-10-10) |
 
 ## Spikes
 

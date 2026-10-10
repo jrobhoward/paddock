@@ -18,6 +18,7 @@ before changing anything structural:
 - `docs/DESIGN.md`: the design, prior art, spike findings and risks.
 - `docs/ARCHITECTURE.md`: where things are: crates, the paths of a call, a
   deploy and a failover, threads and tasks, and where state lives.
+- `docs/SECURITY.md`: the threat model and its open findings.
 - `docs/ROADMAP.md`: open work only, in stages, with code areas, decisions
   and spike status. Keep a change inside its item's areas; record anything
   outside them in the roadmap instead of widening the change.
@@ -44,6 +45,10 @@ scripts/check.sh clippy guests
 # faults, and the chaos app, in turn; each failure keeps a run directory
 # under target/soak/ with its seed and logs.
 scripts/soak.sh --hours 1
+
+# Coverage per file (cargo install cargo-llvm-cov once). Tests that start
+# `paddock node` as its own process are not counted.
+cargo llvm-cov --workspace --no-fail-fast --summary-only
 
 # Build and test the main workspace
 cargo build --workspace --all-targets
@@ -370,6 +375,15 @@ section. These are lint gates, so none can be skipped quietly.
 
 **Errors:** `thiserror`, in each crate's `error.rs`. Public error enums are
 `#[non_exhaustive]`. `anyhow` only in binaries and examples.
+An error ignored on a cleanup or rollback path (`let _ =`) is logged at
+`error` or `warn` when it means the system is not back where it started.
+
+**A new host service** has, besides its module under `src/services/`: a
+test that an ungranted or unlisted use returns `access-denied`, a test for
+each limit it enforces, a test that what an instance holds is released when
+it exits, its manifest section in MANIFEST.md, its metric and probe names in
+OBSERVABILITY.md if any, and a line in docs/SECURITY.md's boundaries if it
+takes input from outside the node.
 
 **Logging:** `tracing` macros. The host tags every record with app, version,
 pid and node.
@@ -437,6 +451,7 @@ line to ROADMAP.md's "Doc debt" instead of rewriting it then:
 | `README.md` | What Paddock does, how to run it, caveats that change how it should be used | Link out rather than expand |
 | `docs/DESIGN.md` | Design, rationale, prior art, spike findings, risks | Update when a decision changes; not a development log |
 | `docs/ARCHITECTURE.md` | Map of the code as built: crates, data paths, threads and tasks, where state lives | Narrative; a change that leaves it wrong adds a line to ROADMAP's "Doc debt" |
+| `docs/SECURITY.md` | Threat model: what is protected, whom Paddock trusts, each boundary's controls and gaps, fuzz targets | Update when a boundary or a control changes; findings are fixed through ROADMAP items |
 | `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
 | `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
