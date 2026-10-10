@@ -82,6 +82,25 @@ says so; the script waits for it). A node still starting is `down`, and a
 window, nobody takes over until it returns. This is an open question for
 the failover protocol (DESIGN.md, "Open questions").
 
+Clients need one address that reaches whichever node is primary. With
+HTTP, a load balancer in front of both nodes does it without new
+features: the standby answers a singleton's routes with `503 app not
+running`, so a health check on the app's own route (here `GET /board`)
+marks only the primary up. For example, with HAProxy:
+
+```text
+backend board
+    option httpchk GET /board
+    http-check expect status 200
+    server node1 127.0.0.1:8081 check inter 500ms fall 2 rise 2
+    server node2 127.0.0.1:8082 check inter 500ms fall 2 rise 2
+```
+
+Cloud load balancers work the same way. A virtual IP that moves with the
+primary (as VRRP would) is planned as a separate agent driven by the
+node's leadership (ROADMAP D11). It stays outside `paddock node`, which
+then needs no network privileges.
+
 What this shows: failover moves where an app runs, not its state. The next
 chapters move the state too.
 

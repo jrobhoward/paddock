@@ -201,8 +201,9 @@ All notable changes are recorded here. The format follows
 - `examples/tutorial`: chapter scripts with pauses and printed commands.
   Chapter 1 crashes the board app and restarts its node (the count
   survives); chapter 2 kills the primary of an HA pair (the app moves, its
-  disk bucket does not). Chapters 3 (hot standby, after D4) and 4
-  (replicated buckets) are outlined.
+  disk bucket does not; a load balancer health check reaches the primary).
+  Chapters 3 (hot standby, after D4) and 4 (replicated buckets) are
+  outlined.
 - `examples/failover`: a demo script that fails a singleton over between
   three `paddock node` processes, killing the primary with SIGKILL.
 - Failover on the node: `[failover]` (partner, arbiter `witness`, `paths` or
