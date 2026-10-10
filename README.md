@@ -18,7 +18,7 @@ components, with Erlang/OTP-style semantics:
   throughput (spike S13).
 - **Isolation**: each app gets its own memory, a CPU deadline per callback,
   and only the capabilities its manifest declares and the operator grants.
-- **Distribution** runs over QUIC with mutual TLS (Phase 2).
+- **Distribution** runs over QUIC with mutual TLS, nodes trusting each other by pinned public keys (no certificate authority).
 
 ## Status
 

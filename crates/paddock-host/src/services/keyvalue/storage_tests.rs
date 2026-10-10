@@ -2,12 +2,100 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+use std::collections::BTreeMap;
+
 use super::*;
 
 fn run(b: &mut MemBucket, op: Op, quota: Option<u64>) -> Result<Outcome, String> {
-    let (outcome, bytes) = apply(b, op, quota)?;
-    b.bytes = bytes;
-    Ok(outcome)
+    let applied = apply(b, op, quota)?;
+    b.bytes = applied.bytes;
+    Ok(applied.outcome)
+}
+
+fn swap(key: &str, expected: Option<u64>, value: &str) -> Op {
+    Op::Swap {
+        key: key.into(),
+        expected,
+        value: value.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn apply____changes____listed_once_with_the_revision() {
+    let mut b = MemBucket::default();
+
+    let set_many = apply(
+        &mut b,
+        Op::SetMany(vec![
+            ("a".into(), b"1".to_vec()),
+            ("b".into(), b"2".to_vec()),
+            ("a".into(), b"3".to_vec()),
+        ]),
+        None,
+    )
+    .unwrap();
+    let missing_delete = apply(&mut b, Op::Delete("zz".into()), None).unwrap();
+
+    assert_eq!(set_many.changed, ["a", "b"]);
+    assert_eq!(set_many.revision, Some(1));
+    assert!(missing_delete.changed.is_empty());
+    assert_eq!(missing_delete.revision, None);
+}
+
+#[test]
+fn apply____swap____writes_on_matching_revision_only() {
+    let mut b = MemBucket::default();
+
+    let created = run(&mut b, swap("k", None, "1"), None).unwrap();
+    let exists = run(&mut b, swap("k", None, "2"), None).unwrap();
+    let stale = run(&mut b, swap("k", Some(7), "2"), None).unwrap();
+    let updated = run(&mut b, swap("k", Some(1), "2"), None).unwrap();
+    let delete_stale = run(
+        &mut b,
+        Op::SwapDelete {
+            key: "k".into(),
+            expected: 1,
+        },
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(created, Outcome::Swapped(1));
+    assert_eq!(exists, Outcome::Conflict(Some(1)));
+    assert_eq!(stale, Outcome::Conflict(Some(1)));
+    assert_eq!(updated, Outcome::Swapped(2));
+    assert_eq!(delete_stale, Outcome::Conflict(Some(2)));
+    assert_eq!(revision(&mut b, "k"), (2, Some(2)));
+}
+
+#[test]
+fn apply____since____changed_keys_and_latest_delete() {
+    let mut b = MemBucket::default();
+    run(&mut b, set("p-1", "a"), None).unwrap();
+    run(&mut b, set("p-2", "a"), None).unwrap();
+    run(&mut b, set("q-1", "a"), None).unwrap();
+    run(&mut b, Op::Delete("q-1".into()), None).unwrap();
+    run(&mut b, set("p-1", "b"), None).unwrap();
+
+    let since = run(
+        &mut b,
+        Op::Since {
+            key: "p-".into(),
+            prefix: true,
+            after: 2,
+        },
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        since,
+        Outcome::Since {
+            revision: 5,
+            deleted: 4,
+            changed: vec![("p-1".into(), 5)],
+        }
+    );
 }
 
 fn set(k: &str, v: &str) -> Op {
@@ -137,6 +225,62 @@ fn apply____keys_across_pages____cursor_walks_every_key_once() {
     assert!(all.windows(2).all(|w| w[0] < w[1]));
 }
 
+fn revision(b: &mut MemBucket, key: &str) -> (u64, Option<u64>) {
+    match run(b, Op::Revision(key.into()), None).unwrap() {
+        Outcome::Revision { bucket, key } => (bucket, key),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn apply____each_change____raises_bucket_revision_and_stamps_keys() {
+    let mut b = MemBucket::default();
+    let fresh = revision(&mut b, "a");
+
+    run(&mut b, set("a", "1"), None).unwrap();
+    run(&mut b, set("b", "1"), None).unwrap();
+    run(&mut b, Op::Increment("a".into(), 1), None).unwrap();
+
+    assert_eq!(fresh, (0, None));
+    assert_eq!(revision(&mut b, "a"), (3, Some(3)));
+    assert_eq!(revision(&mut b, "b"), (3, Some(2)));
+}
+
+#[test]
+fn apply____batch____one_revision_for_every_key() {
+    let mut b = MemBucket::default();
+    run(&mut b, set("x", "0"), None).unwrap();
+
+    run(
+        &mut b,
+        Op::SetMany(vec![
+            ("a".into(), b"1".to_vec()),
+            ("b".into(), b"2".to_vec()),
+        ]),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(revision(&mut b, "a"), (2, Some(2)));
+    assert_eq!(revision(&mut b, "b"), (2, Some(2)));
+    assert_eq!(revision(&mut b, "x"), (2, Some(1)));
+}
+
+#[test]
+fn apply____reads_failures_and_missing_deletes____leave_revision() {
+    let mut b = MemBucket::default();
+    run(&mut b, set("a", "1234"), Some(8)).unwrap();
+
+    run(&mut b, Op::Get("a".into()), None).unwrap();
+    run(&mut b, set("b", "1234"), Some(8)).unwrap_err();
+    run(&mut b, Op::Delete("missing".into()), None).unwrap();
+    let unchanged = revision(&mut b, "a");
+    run(&mut b, Op::Delete("a".into()), None).unwrap();
+
+    assert_eq!(unchanged, (1, Some(1)));
+    assert_eq!(revision(&mut b, "a"), (2, None));
+}
+
 #[test]
 fn apply____get_many____missing_keys_are_none() {
     let mut b = MemBucket::default();
@@ -152,16 +296,17 @@ fn apply____get_many____missing_keys_are_none() {
 
 fn handle(app: &str, name: &str, durability: Durability) -> BucketHandle {
     BucketHandle {
-        app: app.into(),
+        space: app.into(),
         name: name.into(),
         durability,
         quota: None,
+        writable: true,
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn KvStore____same_bucket_name_in_two_apps____isolated() {
-    let store = KvStore::open(None).unwrap();
+    let store = KvStore::open(None, BTreeMap::new()).unwrap();
     let a = handle("app-a", "data", Durability::Memory);
     let b = handle("app-b", "data", Durability::Memory);
 
@@ -176,13 +321,13 @@ async fn KvStore____disk_bucket____survives_reopening_the_store() {
     let dir = tempfile::tempdir().unwrap();
     let b = handle("app", "durable", Durability::Disk);
     {
-        let store = KvStore::open(Some(dir.path())).unwrap();
+        let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
         store.run(&b, set("k", "kept")).await.unwrap();
         store.run(&b, set("gone", "x")).await.unwrap();
         store.run(&b, Op::Delete("gone".into())).await.unwrap();
     }
 
-    let store = KvStore::open(Some(dir.path())).unwrap();
+    let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
     let kept = store.run(&b, Op::Get("k".into())).await.unwrap();
     let keys = store.run(&b, Op::Keys(None)).await.unwrap();
 
@@ -196,11 +341,11 @@ async fn KvStore____disk_quota_after_reopen____counts_existing_data() {
     let mut b = handle("app", "q", Durability::Disk);
     b.quota = Some(10);
     {
-        let store = KvStore::open(Some(dir.path())).unwrap();
+        let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
         store.run(&b, set("a", "12345678")).await.unwrap();
     }
 
-    let store = KvStore::open(Some(dir.path())).unwrap();
+    let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
     let result = store.run(&b, set("b", "12")).await;
 
     assert!(result.unwrap_err().contains("quota"));
@@ -208,11 +353,121 @@ async fn KvStore____disk_quota_after_reopen____counts_existing_data() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn KvStore____disk_bucket_without_data_dir____error() {
-    let store = KvStore::open(None).unwrap();
+    let store = KvStore::open(None, BTreeMap::new()).unwrap();
 
     let result = store
         .run(&handle("app", "d", Durability::Disk), Op::Get("k".into()))
         .await;
 
     assert!(result.unwrap_err().contains("not configured"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn KvStore____disk_revisions____kept_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let b = handle("app", "revs", Durability::Disk);
+    {
+        let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
+        store.run(&b, set("a", "1")).await.unwrap();
+        store.run(&b, set("b", "1")).await.unwrap();
+        store.run(&b, Op::Delete("b".into())).await.unwrap();
+    }
+
+    let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
+    let a = store.run(&b, Op::Revision("a".into())).await.unwrap();
+    let gone = store.run(&b, Op::Revision("b".into())).await.unwrap();
+    store.run(&b, set("c", "1")).await.unwrap();
+    let c = store.run(&b, Op::Revision("c".into())).await.unwrap();
+
+    assert_eq!(
+        a,
+        Outcome::Revision {
+            bucket: 3,
+            key: Some(1)
+        }
+    );
+    assert_eq!(
+        gone,
+        Outcome::Revision {
+            bucket: 3,
+            key: None
+        }
+    );
+    assert_eq!(
+        c,
+        Outcome::Revision {
+            bucket: 4,
+            key: Some(4)
+        }
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn KvStore____shared_bucket____one_namespace_for_every_app() {
+    let store = KvStore::open(None, BTreeMap::new()).unwrap();
+    let shared = handle(SHARED, "points", Durability::Memory);
+    let own = handle("app-a", "points", Durability::Memory);
+
+    store.run(&shared, set("p1", "on")).await.unwrap();
+    let again = store
+        .run(&shared.clone(), Op::Get("p1".into()))
+        .await
+        .unwrap();
+    let app_bucket = store.run(&own, Op::Get("p1".into())).await.unwrap();
+
+    assert_eq!(again, Outcome::Value(Some(b"on".to_vec())));
+    assert_eq!(app_bucket, Outcome::Value(None));
+}
+
+#[test]
+fn KvStore____shared_disk_bucket_without_data_dir____refused() {
+    let shared = BTreeMap::from([(
+        "points".to_string(),
+        SharedBucket {
+            durability: Durability::Disk,
+            quota: None,
+        },
+    )]);
+
+    let err = KvStore::open(None, shared).unwrap_err();
+
+    assert!(err.contains("points"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn KvStore____disk_swap_and_delete_revision____kept_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let b = handle("app", "cas", Durability::Disk);
+    {
+        let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
+        store.run(&b, swap("k", None, "1")).await.unwrap();
+        store.run(&b, set("gone", "x")).await.unwrap();
+        store.run(&b, Op::Delete("gone".into())).await.unwrap();
+        let conflict = store.run(&b, swap("k", Some(9), "2")).await.unwrap();
+        assert_eq!(conflict, Outcome::Conflict(Some(1)));
+    }
+
+    let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
+    let entry = store.run(&b, Op::Entry("k".into())).await.unwrap();
+    let since = store
+        .run(
+            &b,
+            Op::Since {
+                key: "k".into(),
+                prefix: false,
+                after: 0,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(entry, Outcome::Entry(Some((b"1".to_vec(), 1))));
+    assert_eq!(
+        since,
+        Outcome::Since {
+            revision: 3,
+            deleted: 3,
+            changed: vec![("k".into(), 1)],
+        }
+    );
 }

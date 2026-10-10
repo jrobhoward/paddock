@@ -19,6 +19,20 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use super::{LogRing, Node, NodeConfig, RingLayer};
 
+/// The extensions `paddock node` runs with: the Modbus TCP extension with
+/// the `modbus` feature (on by default), none otherwise.
+#[must_use]
+pub fn builtin_extensions() -> Vec<Arc<dyn Extension>> {
+    #[cfg(feature = "modbus")]
+    {
+        vec![Arc::new(paddock_modbus::Modbus::default())]
+    }
+    #[cfg(not(feature = "modbus"))]
+    {
+        Vec::new()
+    }
+}
+
 /// Run a node from its configuration file, with `extensions` (none for a
 /// plain node), until SIGTERM or Ctrl-C. Logs go to stderr, filtered by
 /// `RUST_LOG` (default `info`).
@@ -51,12 +65,31 @@ async fn serve(
     extensions: Vec<Arc<dyn Extension>>,
 ) -> anyhow::Result<()> {
     let node = Arc::new(Node::open_with(config, ring, extensions).await?);
+    #[cfg(unix)]
+    reload_on_hangup(node.clone());
     super::serve(node.clone(), shutdown_signal())
         .await
         .context("admin API")?;
     tracing::info!("shutting down");
     node.shutdown().await;
     Ok(())
+}
+
+/// Reload the HTTPS certificates on every SIGHUP.
+#[cfg(unix)]
+fn reload_on_hangup(node: Arc<Node>) {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Ok(mut hangup) = signal(SignalKind::hangup()) else {
+        return;
+    };
+    tokio::spawn(async move {
+        while hangup.recv().await.is_some() {
+            match node.reload_tls() {
+                Ok(done) => tracing::info!("{}", done.message),
+                Err(e) => tracing::error!(error = %e, "TLS reload failed"),
+            }
+        }
+    });
 }
 
 async fn shutdown_signal() {

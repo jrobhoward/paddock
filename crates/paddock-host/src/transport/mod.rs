@@ -19,6 +19,8 @@
 pub mod liveness;
 pub mod membership;
 pub mod memory;
+pub mod quic;
+pub mod wire;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
@@ -35,7 +37,7 @@ use liveness::{NodeEvent, Session};
 use membership::Member;
 
 /// A frame and the session it belongs to ([`liveness`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Packet {
     /// The sender's creation ([`membership`]).
     pub creation: u32,
@@ -49,7 +51,7 @@ pub struct Packet {
 }
 
 /// One message between nodes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum Frame {
     /// The sender is alive ([`liveness`]).
@@ -57,6 +59,7 @@ pub enum Frame {
         /// Whether the sender hears the receiving node.
         hears_you: bool,
         /// What the sender's beats carry ([`liveness`]).
+        #[serde(with = "wire::bytes")]
         payload: Vec<u8>,
     },
     /// The sender joins the cluster ([`membership`]); the receiver answers
@@ -73,7 +76,7 @@ pub enum Frame {
     /// The sender leaves the cluster.
     Leave,
     /// Between a node of an HA pair and its witness ([`crate::failover`]).
-    Failover(crate::failover::FailoverMsg),
+    Failover(#[serde(with = "wire::failover")] crate::failover::FailoverMsg),
     /// A cast to `to`.
     Cast {
         /// The sender, if an instance.

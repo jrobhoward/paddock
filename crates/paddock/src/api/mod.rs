@@ -144,6 +144,43 @@ pub struct StateResponse {
     pub hex: Option<String>,
 }
 
+/// One member of the cluster, as the node asked knows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberInfo {
+    /// Its node id.
+    pub node: u32,
+    /// Its creation (raised on every start).
+    pub creation: u32,
+    /// Where it is reached.
+    pub address: String,
+    /// `member` or `witness`.
+    pub role: String,
+    /// Whether frames to it are sent (it is heard, or is this node).
+    pub reachable: bool,
+}
+
+/// A node's failover in its HA pair.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailoverInfo {
+    /// The other node of the pair.
+    pub partner: u32,
+    /// Who promotes the standby: `witness <node>`, `paths` or `operator`.
+    pub arbiter: String,
+    /// `primary`, `standby` or `down`.
+    pub role: String,
+    /// The node's epoch, raised by every promotion.
+    pub epoch: u64,
+    /// Whether singletons run here now.
+    pub may_run: bool,
+    /// The partner looks gone and only `paddock failover confirm` would
+    /// promote this node.
+    pub awaiting_confirmation: bool,
+    /// Whether the partner is heard over the cluster transport.
+    pub partner_reachable: bool,
+    /// The singleton apps this node holds, in deploy order.
+    pub singletons: Vec<String>,
+}
+
 /// What a deploy did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployResponse {

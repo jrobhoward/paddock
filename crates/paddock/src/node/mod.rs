@@ -12,15 +12,20 @@ mod audit;
 mod config;
 mod daemon;
 mod error;
+mod gate;
 mod logring;
 mod run;
 mod server;
 mod state_view;
 mod store;
 
-pub use config::{ClusterConfig, ClusterRole, ListenerBinding, MemoryProfile, NodeConfig};
+pub use config::{
+    ArbiterKind, BucketConfig, BucketScope, ClusterConfig, ClusterRole, FailoverBinding,
+    HttpBinding, ListenerBinding, MemoryProfile, MetricsBinding, NodeConfig, SecretBinding,
+    TlsBinding, WitnessBinding,
+};
 pub use daemon::Node;
 pub use error::NodeError;
 pub use logring::{LogRing, RingLayer};
-pub use run::run;
+pub use run::{builtin_extensions, run};
 pub use server::{MAX_BODY, serve};

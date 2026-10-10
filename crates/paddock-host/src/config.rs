@@ -1,6 +1,9 @@
 //! Node-level runtime configuration.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+use paddock_bundle::manifest::Durability;
 use std::time::Duration;
 
 use crate::transport::membership::Role;
@@ -30,6 +33,114 @@ impl MemoryProfile {
             Self::Dense => 128 << 20,
         }
     }
+}
+
+/// Most host objects one instance may hold. These live in host memory,
+/// outside `memory_max` (a pending timer holds its envelope), so each is
+/// charged to the instance that creates it. Over a limit, the instance
+/// crashes with `timer_limit`, `monitor_limit`, `link_limit` or
+/// `pending_call_limit`; a `paddock:groups` join or a `paddock:watch` watch
+/// over its limit returns `limit-reached`. Registered names need no limit: an instance may
+/// hold only the names its manifest lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostObjects {
+    /// Pending `send-after` timers.
+    pub timers: u32,
+    /// Monitors held on other instances.
+    pub monitors: u32,
+    /// Links, counted when the instance links again. Links others make to
+    /// it are charged to them and never refused.
+    pub links: u32,
+    /// Calls answered `noreply` and not yet replied to.
+    pub pending_calls: u32,
+    /// Process groups joined (`paddock:groups`).
+    pub groups: u32,
+    /// Keyvalue watches held (`paddock:watch`).
+    pub watches: u32,
+}
+
+impl Default for HostObjects {
+    /// 10,000 of each, the default `mailbox_max`, and 1,000 groups and
+    /// watches.
+    fn default() -> Self {
+        Self {
+            timers: 10_000,
+            monitors: 10_000,
+            links: 10_000,
+            pending_calls: 10_000,
+            groups: 1_000,
+            watches: 1_000,
+        }
+    }
+}
+
+impl HostObjects {
+    /// What an instance asking for `requested` gets on a node whose limits
+    /// are `self`: an unset field takes the node's value.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the first field that asks for more than the node
+    /// allows.
+    pub fn grant(&self, requested: &HostObjectRequest) -> Result<Self, String> {
+        let pick = |name: &str, asked: Option<u32>, node: u32| match asked {
+            None => Ok(node),
+            Some(n) if n <= node => Ok(n),
+            Some(n) => Err(format!("{name} of {n} exceeds the node limit of {node}")),
+        };
+        Ok(Self {
+            timers: pick("timers_max", requested.timers, self.timers)?,
+            monitors: pick("monitors_max", requested.monitors, self.monitors)?,
+            links: pick("links_max", requested.links, self.links)?,
+            pending_calls: pick(
+                "pending_calls_max",
+                requested.pending_calls,
+                self.pending_calls,
+            )?,
+            groups: pick("groups_max", requested.groups, self.groups)?,
+            watches: pick("watches_max", requested.watches, self.watches)?,
+        })
+    }
+}
+
+/// The host-object limits an instance asks for (manifest `limits`); an
+/// unset field takes the node's value from [`HostObjects`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HostObjectRequest {
+    /// `timers_max`.
+    pub timers: Option<u32>,
+    /// `monitors_max`.
+    pub monitors: Option<u32>,
+    /// `links_max`.
+    pub links: Option<u32>,
+    /// `pending_calls_max`.
+    pub pending_calls: Option<u32>,
+    /// `groups_max`.
+    pub groups: Option<u32>,
+    /// `watches_max`.
+    pub watches: Option<u32>,
+}
+
+/// A shared keyvalue bucket: named in node configuration, opened by every
+/// app whose manifest lists it and whose grant includes it. Its scope is
+/// this node (a `cluster` scope is Phase 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedBucket {
+    /// `Memory` or `Disk`; `Replicated` buckets fail every operation until
+    /// Phase 3.
+    pub durability: Durability,
+    /// Most bytes the bucket may hold, across every app writing it.
+    pub quota: Option<u64>,
+}
+
+/// Where a secret's value comes from. Read on every access.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SecretSource {
+    /// A file's whole contents.
+    File(PathBuf),
+    /// An environment variable of the node process.
+    Env(String),
 }
 
 /// Configuration for a [`Runtime`](crate::Runtime).
@@ -65,6 +176,13 @@ pub struct RuntimeConfig {
     pub role: Role,
     /// Where other nodes reach this one; its meaning is the transport's.
     pub address: String,
+    /// Host-object limits for instances whose manifest sets none, and the
+    /// most any manifest may ask for.
+    pub host_objects: HostObjects,
+    /// Shared keyvalue buckets, by name.
+    pub buckets: BTreeMap<String, SharedBucket>,
+    /// Secrets, by name.
+    pub secrets: BTreeMap<String, SecretSource>,
 }
 
 impl Default for RuntimeConfig {
@@ -80,6 +198,9 @@ impl Default for RuntimeConfig {
             creation: 1,
             role: Role::Member,
             address: String::new(),
+            host_objects: HostObjects::default(),
+            buckets: BTreeMap::new(),
+            secrets: BTreeMap::new(),
         }
     }
 }

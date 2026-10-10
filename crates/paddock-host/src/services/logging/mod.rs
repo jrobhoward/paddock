@@ -21,7 +21,7 @@ use paddock_bundle::manifest::{AppSpec, Capability, LogLevel};
 use wasmtime::Result;
 use wasmtime::component::Linker;
 
-use super::{Ctx, HostState, Service, ServiceCtx};
+use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 use crate::message::Envelope;
@@ -38,6 +38,10 @@ mod bindings {
             "../../wit/vendor/wasi-logging",
             "../../wit/vendor/wasi-config",
             "../../wit/vendor/wasi-keyvalue",
+            "../../wit/groups",
+            "../../wit/watch",
+            "../../wit/secrets",
+            "../../wit/metrics",
             "wit",
         ],
         world: "paddock:host/logging",
@@ -116,11 +120,11 @@ impl Service for Logging {
         Ok(Shared::default())
     }
 
-    fn instance(shared: &Arc<Shared>, spec: &LoggingSpec, granted: bool) -> Instance {
+    fn instance(shared: &Arc<Shared>, spec: &LoggingSpec, info: &InstanceInfo<'_>) -> Instance {
         Instance {
             shared: shared.clone(),
             spec: spec.clone(),
-            granted,
+            granted: info.granted,
         }
     }
 

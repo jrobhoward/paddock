@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Capability};
 
+use crate::config::HostObjectRequest;
 use crate::services::ServiceSpecs;
 
 /// Limits, timeouts and `init` arguments for one instance.
@@ -43,6 +44,13 @@ pub struct InstanceSpec {
     pub preopens: Vec<Preopen>,
     /// What the manifest asks of each host service.
     pub services: ServiceSpecs,
+    /// Host-object limits the manifest asks for.
+    pub host_objects: HostObjectRequest,
+    /// Tell the instance its node's failover role, as
+    /// `host-event("failover-role", "primary" | "standby" | "down")`, after
+    /// `init` and on every change ([`crate::Runtime::set_failover_role`]):
+    /// a `hot-standby` app.
+    pub announce_role: bool,
 }
 
 /// A host directory visible to the guest.
@@ -111,6 +119,18 @@ impl InstanceSpec {
             granted: spec.capabilities.declared().into_iter().collect(),
             preopens: Vec::new(),
             services: ServiceSpecs::from_manifest(spec),
+            announce_role: spec
+                .placement
+                .as_ref()
+                .is_some_and(|p| p.mode == paddock_bundle::manifest::PlacementMode::HotStandby),
+            host_objects: HostObjectRequest {
+                timers: spec.limits.timers_max,
+                monitors: spec.limits.monitors_max,
+                links: spec.limits.links_max,
+                pending_calls: spec.limits.pending_calls_max,
+                groups: spec.limits.groups_max,
+                watches: spec.limits.watches_max,
+            },
         }
     }
 
@@ -129,6 +149,28 @@ impl InstanceSpec {
         for (package, ext) in &mut self.services.extensions {
             ext.granted = ext.granted && granted.contains(package);
         }
+        self
+    }
+
+    /// Keep only the secrets in `granted` readable (the effective grant's
+    /// `granted_secrets`); the others return `access-denied`.
+    #[must_use]
+    pub fn with_granted_secrets(mut self, granted: &BTreeSet<String>) -> Self {
+        self.services
+            .secrets
+            .names
+            .retain(|name| granted.contains(name));
+        self
+    }
+
+    /// Keep only the shared buckets in `granted` openable (the effective
+    /// grant's `granted_buckets`); the others return `access-denied`.
+    #[must_use]
+    pub fn with_granted_buckets(mut self, granted: &BTreeSet<String>) -> Self {
+        self.services
+            .keyvalue
+            .shared
+            .retain(|name, _| granted.contains(name));
         self
     }
 

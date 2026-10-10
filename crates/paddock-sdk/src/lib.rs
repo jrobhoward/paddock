@@ -34,6 +34,16 @@
 //!   available.
 //! - `config` (cargo feature `config`): `wasi:config`.
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
+//! - `groups` (cargo feature `groups`): `paddock:groups`, process groups
+//!   on this node with publish.
+//! - `http` (cargo feature `http`): requests from the node's HTTP ingress,
+//!   delivered as calls, and the responses to them.
+//! - `metrics` (cargo feature `metrics`): `paddock:metrics`, counters,
+//!   gauges and histograms the node exports.
+//! - `secrets` (cargo feature `secrets`): `paddock:secrets`, values the
+//!   operator binds on the node.
+//! - `watch` (cargo feature `watch`): `paddock:watch`, revisioned reads,
+//!   compare-and-swap and change watches on keyvalue buckets.
 //!
 //! Connection handlers (cargo feature `connection`) implement `Connection`
 //! instead of [`App`]: one instance per connection on the app's listeners.
@@ -52,11 +62,21 @@ pub mod config;
 pub mod connection;
 mod ctx;
 mod envelope;
+#[cfg(feature = "groups")]
+pub mod groups;
+#[cfg(feature = "http")]
+pub mod http;
 #[cfg(feature = "keyvalue")]
 pub mod kv;
 pub mod log;
+#[cfg(feature = "metrics")]
+pub mod metrics;
+#[cfg(feature = "secrets")]
+pub mod secrets;
 pub mod snapshot;
 mod types;
+#[cfg(feature = "watch")]
+pub mod watch;
 
 #[doc(hidden)]
 #[allow(missing_docs, clippy::too_many_arguments)]
@@ -69,6 +89,10 @@ pub mod bindings {
             "../../wit/vendor/wasi-keyvalue",
             "../../wit/vendor/wasi-io",
             "../../wit/connection",
+            "../../wit/groups",
+            "../../wit/watch",
+            "../../wit/secrets",
+            "../../wit/metrics",
             "wit",
         ],
         world: "paddock:sdk/app",

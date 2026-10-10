@@ -25,11 +25,13 @@ mod delivery;
 mod deny;
 mod error;
 pub mod failover;
+pub mod http;
 mod instance;
 mod lifecycle;
 mod links;
 pub mod listener;
 mod message;
+pub mod metrics;
 mod output;
 pub mod pid;
 mod pool;
@@ -45,7 +47,9 @@ pub mod transport;
 mod upgrade;
 
 pub use apps::{AppDeployment, AppHandle, AppStatus, Apps, UpgradeOptions, UpgradeReport};
-pub use config::{MemoryProfile, RuntimeConfig};
+pub use config::{
+    HostObjectRequest, HostObjects, MemoryProfile, RuntimeConfig, SecretSource, SharedBucket,
+};
 pub use error::HostError;
 pub use instance::{InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;

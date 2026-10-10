@@ -1,5 +1,6 @@
-//! Test fixture: an app that uses `wasi:config` and `wasi:keyvalue` through
-//! `paddock-sdk`'s wrappers, for the host's tests of those wrappers.
+//! Test fixture: an app that uses `wasi:config`, `wasi:keyvalue` and
+//! `paddock:groups` through `paddock-sdk`'s wrappers, for the host's tests
+//! of those wrappers.
 //!
 //! Text commands; errors reply `err:<error>`:
 //! - `config:<key>`: the value, or `none`.
@@ -15,9 +16,35 @@
 //!   and reply `x,y`.
 //! - `point-bytes:<bucket>:<key>`: read the key as a `Point` (to provoke a
 //!   decode error).
+//! - `join:<group>`, `leave:<group>`: `ok`.
+//! - `members:<group>`: the members' pids, joined by `,`.
+//! - `publish:<group>:<text>`: how many members took it.
+//! - `received`: the text of every cast received, joined by `,`.
+//! - `watch:<bucket>:<key>`, `watch-prefix:<bucket>:<prefix>`: `<id>@<revision>`.
+//! - `resume:<bucket>:<key>:<after>`, `resume-prefix:<bucket>:<prefix>:<after>`:
+//!   as `watch`, replaying changes after `<after>`.
+//! - `unwatch:<id>`: `ok`.
+//! - `entry:<bucket>:<key>`: `<value>@<revision>` or `none`.
+//! - `rev:<bucket>`: the bucket's revision.
+//! - `cas:<bucket>:<key>:<expected or ->:<value>`: the new revision.
+//! - `cad:<bucket>:<key>:<expected>`: the bucket's new revision.
+//! - `counter:<name>:<label>:<n>`, `gauge:<name>:<label>:<n>`,
+//!   `observe:<name>:<label>:<n>` (a histogram with buckets 1, 10): make the
+//!   metric with label `l=<label>` and update it; `ok` or `err:<error>`.
+//! - `secret:<name>`: the secret as text, or `err:<error>`.
+//! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
+//! - HTTP requests (`paddock_sdk::http`), by the end of the path: `/plain`
+//!   replies a plain text envelope; `/status/<n>` replies status n;
+//!   `/crash` traps; `/never` never replies; `/big/<n>` replies n bytes; anything else replies 200 with
+//!   `<method> <path>?<query> key=<key> body=<body> scheme=<scheme> pid=<pid>`.
+//! - `changes`: every change notice received, `<key>@<revision>`, joined
+//!   by `,`.
 
+use paddock_sdk::groups::{self, GroupError};
+use paddock_sdk::http::{Request, Response};
 use paddock_sdk::kv::{Bucket, KvError};
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use paddock_sdk::watch::{self, Change, WatchError};
+use paddock_sdk::{App, CallRef, Ctx, Envelope, Info, Reply};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,7 +54,113 @@ struct Point {
 }
 
 #[derive(Default)]
-struct Fixture;
+struct Fixture {
+    received: Vec<String>,
+    changes: Vec<String>,
+}
+
+fn metric(command: &str) -> Result<(), paddock_sdk::metrics::MetricsError> {
+    use paddock_sdk::metrics::{Counter, Gauge, Histogram};
+    let mut parts = command.splitn(4, ':');
+    let verb = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    let label = parts.next().unwrap_or("");
+    let n: f64 = parts.next().and_then(|n| n.parse().ok()).unwrap_or(1.0);
+    let labels = [("l", label)];
+    match verb {
+        "counter" => Counter::new(name, "A fixture counter.", &labels)?.add(n),
+        "gauge" => Gauge::new(name, "A fixture gauge.", &labels)?.set(n),
+        _ => Histogram::new(name, "A fixture histogram.", &labels, &[1.0, 10.0])?.observe(n),
+    }
+    Ok(())
+}
+
+fn http(ctx: &mut Ctx, req: &Request) -> Reply {
+    let path = req.path.as_str();
+    if path.ends_with("/plain") {
+        return Reply::Now(Envelope::text("plain"));
+    }
+    if path.ends_with("/crash") {
+        panic!("asked to crash");
+    }
+    if path.ends_with("/never") {
+        return Reply::Later;
+    }
+    if let Some((_, n)) = path.rsplit_once("/big/") {
+        let body = "x".repeat(n.parse().unwrap_or(0));
+        return Reply::Now(Response::text(200, body).into());
+    }
+    if let Some((_, code)) = path.rsplit_once("/status/") {
+        return Reply::Now(Response::new(code.parse().unwrap_or(500)).into());
+    }
+    let echo = format!(
+        "{} {}?{} key={} body={} scheme={} pid={}",
+        req.method,
+        path,
+        req.query.as_deref().unwrap_or(""),
+        req.key.as_deref().unwrap_or("-"),
+        req.text().unwrap_or("<binary>"),
+        req.scheme,
+        ctx.pid(),
+    );
+    Reply::Now(Response::text(200, echo).header("x-fixture", "sdk").into())
+}
+
+const WATCH_VERBS: [&str; 9] = [
+    "watch",
+    "watch-prefix",
+    "resume",
+    "resume-prefix",
+    "unwatch",
+    "entry",
+    "rev",
+    "cas",
+    "cad",
+];
+
+fn watching(command: &str) -> Result<String, WatchError> {
+    let mut parts = command.splitn(5, ':');
+    let verb = parts.next().unwrap_or("");
+    let bucket = parts.next().unwrap_or("");
+    let key = parts.next().unwrap_or("");
+    let rest = parts.next().unwrap_or("");
+    let number = |s: &str| s.parse::<u64>().unwrap_or(0);
+    let started = |s: watch::Started| format!("{}@{}", s.id, s.revision);
+    Ok(match verb {
+        "watch" => started(watch::watch(bucket, key)?),
+        "watch-prefix" => started(watch::watch_prefix(bucket, key)?),
+        "resume" => started(watch::resume(bucket, key, false, number(rest))?),
+        "resume-prefix" => started(watch::resume(bucket, key, true, number(rest))?),
+        "unwatch" => watch::unwatch(number(bucket)).map(|()| "ok".to_string())?,
+        "entry" => watch::get(bucket, key)?.map_or_else(
+            || "none".into(),
+            |e| format!("{}@{}", String::from_utf8_lossy(&e.value), e.revision),
+        ),
+        "rev" => watch::revision(bucket)?.to_string(),
+        "cas" => {
+            let expected = (rest != "-").then(|| number(rest));
+            let value = parts.next().unwrap_or("");
+            watch::compare_and_swap(bucket, key, expected, value.as_bytes())?.to_string()
+        }
+        _ => watch::compare_and_delete(bucket, key, number(rest))?.to_string(),
+    })
+}
+
+fn group(command: &str) -> Result<String, GroupError> {
+    let mut parts = command.splitn(3, ':');
+    let verb = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    Ok(match verb {
+        "join" => groups::join(name).map(|()| "ok".into())?,
+        "leave" => groups::leave(name).map(|()| "ok".into())?,
+        "members" => groups::members(name)?
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+        _ => groups::publish(name, Envelope::text(parts.next().unwrap_or("")))?.to_string(),
+    })
+}
 
 fn kv(command: &str) -> Result<String, KvError> {
     let mut parts = command.splitn(4, ':');
@@ -105,17 +238,62 @@ fn config(command: &str) -> Result<String, paddock_sdk::config::ConfigError> {
 
 impl App for Fixture {
     fn init(_ctx: &mut Ctx, _args: &[u8]) -> Result<Self, String> {
-        Ok(Self)
+        Ok(Self::default())
     }
 
-    fn handle_call(&mut self, _ctx: &mut Ctx, _call: CallRef, msg: Envelope) -> Reply {
+    fn handle_call(&mut self, ctx: &mut Ctx, _call: CallRef, msg: Envelope) -> Reply {
+        if let Some(req) = Request::from_envelope(&msg) {
+            return http(ctx, &req);
+        }
         let command = msg.as_text().unwrap_or("");
+        let verb = command.split(':').next().unwrap_or("");
         let reply = if command.starts_with("config") {
             config(command).unwrap_or_else(|e| format!("err:{e}"))
+        } else if verb == "received" {
+            self.received.join(",")
+        } else if ["counter", "gauge", "observe"].contains(&verb) {
+            metric(command).map_or_else(|e| format!("err:{e}"), |()| "ok".into())
+        } else if verb == "secret" {
+            let name = command.split_once(':').map_or("", |(_, n)| n);
+            paddock_sdk::secrets::get_string(name).unwrap_or_else(|e| format!("err:{e}"))
+        } else if verb == "busy" {
+            let ms = command
+                .split(':')
+                .nth(1)
+                .and_then(|m| m.parse().ok())
+                .unwrap_or(0);
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+            while std::time::Instant::now() < until {
+                std::hint::spin_loop();
+            }
+            "ok".into()
+        } else if verb == "changes" {
+            self.changes.join(",")
+        } else if WATCH_VERBS.contains(&verb) {
+            watching(command).unwrap_or_else(|e| format!("err:{e}"))
+        } else if ["join", "leave", "members", "publish"].contains(&verb) {
+            group(command).unwrap_or_else(|e| format!("err:{e}"))
         } else {
             kv(command).unwrap_or_else(|e| format!("err:{e}"))
         };
         Reply::Now(Envelope::text(reply))
+    }
+
+    /// Starts empty after an upgrade, for the groups upgrade test.
+    fn load_snapshot(_ctx: &mut Ctx, _from: &str, _snapshot: &[u8]) -> Result<Self, String> {
+        Ok(Self::default())
+    }
+
+    fn handle_info(&mut self, _ctx: &mut Ctx, info: Info) {
+        if let Some(change) = Change::from_info(&info) {
+            self.changes
+                .push(format!("{}@{}", change.key, change.revision));
+        }
+    }
+
+    fn handle_cast(&mut self, _ctx: &mut Ctx, msg: Envelope) {
+        self.received
+            .push(msg.as_text().unwrap_or("<binary>").to_string());
     }
 }
 

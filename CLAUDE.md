@@ -103,13 +103,20 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `examples/greeter/` is an extension (a host service from outside
   Paddock): `service` depends on `paddock-host` alone, `app` calls it, and
   `node` is a node binary with it, whose test runs all three.
+  `examples/board` is the tutorial's app (a counter on a shared disk
+  bucket over HTTP; `paddock.toml` and `watch.toml`, one component), run by
+  `crates/paddock/tests/board.rs`; `examples/tutorial/` is its chapter
+  scripts (`common.sh` shared), not a crate.
+  `examples/failover/` is a demo script (a witness and a pair as three
+  `paddock node` processes, the primary killed), not a crate.
   `examples/tracing/` is a demo script and bpftrace scripts for the
   probes, not a crate.
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.
-- `crates/paddock-fixture-sdk`: a guest that uses `wasi:config` and
-  `wasi:keyvalue` through `paddock-sdk`'s `config` and `kv` wrappers.
+- `crates/paddock-fixture-sdk`: a guest that uses `wasi:config`,
+  `wasi:keyvalue` and `paddock:groups` through `paddock-sdk`'s `config`,
+  `kv` and `groups` wrappers.
 - `crates/paddock-fixture-services`: a guest that drives logging, config,
   keyvalue, the filesystem and stdout. Its `denied` feature adds an import no
   host implements, for deny-stub tests; nodes refuse that build, so node tests
@@ -123,7 +130,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `wit/`: the `paddock:runtime` WIT package, versioned. Its rules are enforced
   by `crates/paddock/tests/wit_rules.rs`. `wit/connection/`: the
   `paddock:connection` package (connection handlers), separate because it
-  uses `wasi:io` streams, which `paddock:runtime` excludes. `wit/vendor/`
+  uses `wasi:io` streams, which `paddock:runtime` excludes. `wit/groups/`:
+  the `paddock:groups` package (process groups), and `wit/watch/`:
+  `paddock:watch` (keyvalue revisions, compare-and-swap, watches), separate
+  so the app world stays frozen; every host bindgen lists both, since
+  `crates/paddock-host/wit` imports them. `wit/vendor/`
   holds unmodified copies of the WASI interfaces Paddock binds against
   (keyvalue, config, logging, and `wasi:io` for connections); bindings name
   each package path explicitly.
@@ -133,7 +144,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   nodes, the `Transport` trait, `liveness` (heartbeats and sessions; every
   node-down goes through `transport::end_session`), `membership` (joining,
   members, node creation numbers), and `memory`, the
-  in-process mesh with fault injection that `tests/distribution.rs` runs on. `tests/simulation/` runs
+  in-process mesh with fault injection that `tests/distribution.rs` runs on;
+  `quic`, the real transport (pinned keys in `quic/identity.rs`, one
+  connection per pair, `tests/quic.rs`), and `wire`, the versioned CBOR
+  format. `tests/simulation/` runs
   the mesh on a paused clock: targeted races and seeded random scenarios
   (`PADDOCK_SIM_SEED=<n>` replays one).
 - `crates/paddock-host/src/failover/`: an HA pair's roles, epochs and
@@ -142,7 +156,23 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   and the witness (`witness.rs`). The rules are R1 to R11 in
   `docs/tla/VERIFICATION.md`; a change to a transition means updating the
   matching action in the model and rerunning it. `tests/simulation/failover.rs` logs `may_run` and checks that a
-  singleton never runs on both nodes.
+  singleton never runs on both nodes. On the node, `crates/paddock/src/node/gate.rs`
+  starts and kills `singleton` apps as `may_run` changes;
+  `crates/paddock/tests/failover.rs` runs a pair and a witness over QUIC.
+- `crates/paddock-modbus`: the Modbus TCP extension (`paddock-modbus:modbus`,
+  WIT in its `wit/`), depending on `paddock-host` alone; linked into
+  `paddock node` by `paddock`'s default `modbus` feature. Device tasks,
+  change detection and the update format (`points`), the server.
+  `examples/scada` is its demo (`points` pool, `hmi` connection handler);
+  `crates/paddock/tests/scada.rs` runs it against a fake device.
+- `crates/paddock-host/src/metrics.rs`: app metrics (per app, lock-free
+  series) and the host's per-app counters, rendered as Prometheus text;
+  the `paddock:metrics` service is `src/services/metrics`. Metric names
+  are an interface listed in `docs/OBSERVABILITY.md`.
+- `crates/paddock-host/src/http.rs`: the HTTP ingress (node-level routes,
+  hyper listeners, each request a call to the owning app's pool; the
+  request and response envelope formats). `examples/http-counter` is its
+  example, `crates/paddock/tests/http.rs` runs it through a node.
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.

@@ -145,3 +145,27 @@ fn detail____connection_handler____lists_listeners() {
         "{out}"
     );
 }
+
+#[test]
+fn failover____standby_waiting____says_how_to_confirm() {
+    let info = paddock::api::FailoverInfo {
+        partner: 1,
+        arbiter: "operator".into(),
+        role: "standby".into(),
+        epoch: 4,
+        may_run: false,
+        awaiting_confirmation: true,
+        partner_reachable: false,
+        singletons: vec!["leader".into()],
+    };
+
+    let out = failover(&info);
+
+    assert!(
+        out.starts_with("role:       standby\nepoch:      4\nmay run:    no"),
+        "{out}"
+    );
+    assert!(out.contains("partner:    1 (reachable: no)"), "{out}");
+    assert!(out.contains("singletons: leader"), "{out}");
+    assert!(out.contains("paddock failover confirm"), "{out}");
+}

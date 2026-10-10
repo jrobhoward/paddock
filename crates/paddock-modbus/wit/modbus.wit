@@ -1,0 +1,68 @@
+package paddock-modbus:modbus@0.1.0;
+
+/// Reads and writes on the Modbus TCP devices a node polls. Devices are
+/// named in the node's configuration; an app lists the ones it may read or
+/// write in its manifest:
+///
+/// ```toml
+/// [appserver.capabilities.extensions."paddock-modbus:modbus"]
+/// read = ["pump-1"]
+/// write = ["pump-1"]    # writing implies reading
+/// serve = true          # the `server` interface
+/// ```
+///
+/// Requests to a device share its connection with the node's polling, one
+/// at a time, and time out after the device's `timeout_ms`.
+interface client {
+  /// Why a request failed.
+  variant error {
+    /// `paddock-modbus:modbus` is not granted, or the manifest does not
+    /// list the device for this use.
+    access-denied,
+    /// The node does not configure this device.
+    no-such-device,
+    /// The device cannot be reached (not connected, timed out, closed).
+    offline(string),
+    /// The device answered with a Modbus exception code.
+    exception(u8),
+    /// The request is invalid (no values, or more than one request
+    /// carries: 125 registers or 2000 coils to read, 123 or 1968 to write).
+    invalid(string),
+  }
+
+  read-holding: func(device: string, address: u16, count: u16) -> result<list<u16>, error>;
+  read-input: func(device: string, address: u16, count: u16) -> result<list<u16>, error>;
+  read-coils: func(device: string, address: u16, count: u16) -> result<list<bool>, error>;
+  read-discrete: func(device: string, address: u16, count: u16) -> result<list<bool>, error>;
+  write-holding: func(device: string, address: u16, values: list<u16>) -> result<_, error>;
+  write-coils: func(device: string, address: u16, values: list<bool>) -> result<_, error>;
+}
+
+/// The registers the node serves as a Modbus TCP server (node config
+/// `server`). Masters read them; their writes change them and are cast to
+/// the server's `deliver_to` app.
+interface server {
+  /// Why a request failed.
+  variant error {
+    /// The capability is not granted, or the manifest does not set
+    /// `serve`.
+    access-denied,
+    /// The node runs no Modbus server.
+    not-serving,
+    /// The range runs past the table the node configures.
+    out-of-range,
+  }
+
+  set-holding: func(address: u16, values: list<u16>) -> result<_, error>;
+  set-input: func(address: u16, values: list<u16>) -> result<_, error>;
+  set-coils: func(address: u16, values: list<bool>) -> result<_, error>;
+  set-discrete: func(address: u16, values: list<bool>) -> result<_, error>;
+  get-holding: func(address: u16, count: u16) -> result<list<u16>, error>;
+  get-coils: func(address: u16, count: u16) -> result<list<bool>, error>;
+}
+
+/// What an app imports, and what the extension provides.
+world modbus {
+  import client;
+  import server;
+}

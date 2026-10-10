@@ -16,6 +16,17 @@ config = []
 keyvalue = []
 # `paddock_sdk::connection`: connection handlers (`paddock:connection`).
 connection = []
+# `paddock_sdk::groups`: process groups and publish (`paddock:groups`).
+groups = []
+# `paddock_sdk::http`: HTTP requests from the node's ingress, as calls.
+http = []
+# `paddock_sdk::secrets`: secrets the operator binds (`paddock:secrets`).
+secrets = []
+# `paddock_sdk::metrics`: counters, gauges and histograms (`paddock:metrics`).
+metrics = []
+# `paddock_sdk::watch`: revisions, compare-and-swap and watches on keyvalue
+# buckets (`paddock:watch`, under the `wasi:keyvalue` capability).
+watch = []
 
 [dependencies]
 ciborium = { workspace = true }

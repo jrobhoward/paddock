@@ -1,0 +1,19 @@
+[package]
+name = "example-scada-hmi"
+version = "0.0.0"
+description = "Paddock example: a line protocol over TCP that answers from the point table"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["connection"] }
+
+[lints]
+workspace = true

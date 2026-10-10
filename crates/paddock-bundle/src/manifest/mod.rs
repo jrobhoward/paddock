@@ -37,7 +37,7 @@ mod validate;
 pub use bytesize::{ByteSize, ParseByteSizeError};
 pub use capabilities::{
     AccessMode, AdminAccess, AdminScope, Bucket, Capabilities, Capability, ConfigScope, Durability,
-    FilesystemScope, HttpIncomingScope, HttpOutgoingScope, ImportClass, InterfaceName,
+    FilesystemScope, GroupsScope, HttpIncomingScope, HttpOutgoingScope, ImportClass, InterfaceName,
     KeyValueScope, LoggingScope, MetricsScope, PortRange, Preopen, RESERVED_NAMESPACES, Route,
     SecretsScope, SocketRule, SocketsScope, SqlScope, SupervisorScope, classify_import,
     is_extension_key, parse_cidr,

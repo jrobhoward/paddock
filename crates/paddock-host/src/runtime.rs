@@ -12,7 +12,7 @@ use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConf
 
 use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{PaddockApp, PaddockAppPre};
-use crate::config::{MemoryProfile, RuntimeConfig};
+use crate::config::{HostObjects, MemoryProfile, RuntimeConfig};
 use crate::delivery;
 use crate::deny;
 use crate::error::{HostError, describe};
@@ -20,6 +20,7 @@ use crate::instance::{self, InstanceHandle};
 use crate::links::LinkTable;
 use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
 use crate::message::{CallError, Envelope};
+use crate::metrics::Metrics;
 use crate::pid::Pid;
 use crate::pool::Pool;
 use crate::registry::Registry;
@@ -50,6 +51,10 @@ pub(crate) struct RuntimeInner {
     pub(crate) links: LinkTable,
     pools: RwLock<HashMap<String, Arc<Pool>>>,
     pub(crate) services: services::Shared,
+    /// Apps' metrics and the host's counters.
+    pub(crate) metrics: Metrics,
+    /// This node's failover role, for `hot-standby` instances.
+    failover_role: RwLock<Option<String>>,
     pub(crate) extensions: Vec<Arc<dyn Extension>>,
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
@@ -70,6 +75,19 @@ impl RuntimeInner {
     /// This start of the node.
     pub(crate) fn creation(&self) -> u32 {
         self.config.creation
+    }
+
+    /// This node's failover role, if failover runs.
+    pub(crate) fn failover_role(&self) -> Option<String> {
+        self.failover_role
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The node's host-object limits.
+    pub(crate) fn host_objects(&self) -> HostObjects {
+        self.config.host_objects
     }
 
     /// The transport to other nodes, once set.
@@ -186,6 +204,8 @@ impl Runtime {
                 links: LinkTable::new(config.node),
                 pools: RwLock::default(),
                 services,
+                metrics: Metrics::default(),
+                failover_role: RwLock::default(),
                 extensions,
                 transport: std::sync::OnceLock::new(),
                 pending_calls: PendingCalls::default(),
@@ -272,7 +292,8 @@ impl Runtime {
     ///
     /// [`HostError::InstanceLimit`] when every slot is in use, and
     /// [`HostError::MemoryAboveProfile`] when `memory_max` exceeds what the
-    /// node's memory profile reserves.
+    /// node's memory profile reserves, and [`HostError::HostObjectsAboveNode`]
+    /// when a host-object limit exceeds the node's.
     pub fn spawn(&self, app: &LoadedApp, spec: InstanceSpec) -> Result<InstanceHandle, HostError> {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         self.start(app, spec, id, 1)
@@ -341,6 +362,23 @@ impl Runtime {
     /// child naming an app that is not deployed.
     pub async fn start_apps(&self, deployments: Vec<AppDeployment>) -> Result<Apps, HostError> {
         apps::start(self, deployments).await
+    }
+
+    /// Start every extension's node-level work
+    /// ([`Extension::start`](services::Extension::start)) against `apps`,
+    /// each with its entry in `configs` (by package; null if none). Keep the
+    /// result: stopping or dropping it ends their tasks.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidApps`] for configuration naming an extension this
+    /// runtime does not have, or one an extension refuses.
+    pub fn start_extensions(
+        &self,
+        apps: &Apps,
+        configs: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Result<services::StartedExtensions, HostError> {
+        services::extension::start(&self.inner.extensions, apps, configs)
     }
 
     /// Override the log level of every instance of `app` from now on, or
@@ -497,6 +535,25 @@ impl Runtime {
         self.inner.table.all()
     }
 
+    /// Set this node's failover role (`primary`, `standby`, `down`) and tell
+    /// every `hot-standby` instance ([`InstanceSpec::announce_role`]).
+    pub fn set_failover_role(&self, role: Option<&str>) {
+        *self
+            .inner
+            .failover_role
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = role.map(str::to_string);
+        for instance in self.instances() {
+            instance.announce();
+        }
+    }
+
+    /// Every app's metrics and the host's, in the Prometheus text format.
+    #[must_use]
+    pub fn render_metrics(&self) -> String {
+        self.inner.metrics.render(&self.instances())
+    }
+
     /// Number of live instances.
     #[must_use]
     pub fn instance_count(&self) -> usize {
@@ -524,12 +581,17 @@ impl Runtime {
                 limit,
             });
         }
+        self.inner
+            .config
+            .host_objects
+            .grant(&spec.host_objects)
+            .map_err(HostError::HostObjectsAboveNode)?;
         let pid = Pid {
             node: self.inner.config.node,
             id,
             incarnation,
         };
-        let (handle, task) = instance::prepare(pid, &spec);
+        let (handle, task) = instance::prepare(pid, &spec, self.inner.metrics.stats(&spec.app));
         let capacity = usize::try_from(self.inner.config.max_instances).unwrap_or(usize::MAX);
         self.inner
             .table

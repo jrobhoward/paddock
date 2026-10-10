@@ -1,0 +1,81 @@
+package paddock:watch@0.1.0;
+
+/// Revisioned reads, compare-and-swap and change watches on keyvalue
+/// buckets. Next to `wasi:keyvalue`, which has none of these, and covered
+/// by the same capability: a bucket is reachable here exactly when
+/// `wasi:keyvalue`'s `open` would open it (the app's own buckets, and
+/// shared buckets granted to it), and writes need it writable.
+///
+/// Every change to a bucket raises the bucket's revision by one and stamps
+/// the keys it wrote with that revision; a batch is one change.
+interface watch {
+  /// Why an operation failed.
+  variant error {
+    /// The capability is not granted, the manifest does not list the
+    /// bucket, or a write was made to a read-only shared bucket.
+    access-denied,
+    /// The node does not configure this shared bucket.
+    no-such-bucket,
+    /// Watching would exceed the instance's `limits.watches_max`.
+    limit-reached,
+    /// `watch` was asked to resume after a revision the bucket can no
+    /// longer replay (a key was deleted since, or the bucket is newer than
+    /// the revision). Carries the bucket's current revision: reread the
+    /// watched keys, then watch from it.
+    too-old(u64),
+    /// Compare-and-swap found another revision: the key's current one, or
+    /// none if the key does not exist.
+    conflict(option<u64>),
+    /// The bucket cannot be reached (replicated buckets, Phase 3).
+    unavailable,
+    /// Storage failed, or a quota was exceeded.
+    other(string),
+  }
+
+  /// A value and the revision it was written at (0 for data written
+  /// before revisions existed).
+  record entry {
+    value: list<u8>,
+    revision: u64,
+  }
+
+  /// A started watch.
+  record started {
+    /// Names the watch for `unwatch`, and in its notices.
+    id: u64,
+    /// The bucket's revision when the watch started.
+    revision: u64,
+  }
+
+  /// Watch `key` in `bucket`, or every key starting with `key` when
+  /// `prefix` is true. Each change arrives as
+  /// `info.host-event("kv-changed", envelope)`, an `application/json` body
+  /// `{"watch":<id>,"bucket":"<bucket>","key":"<key>","revision":<n>}`
+  /// naming the change, not the value: read the value with `get`. Notices
+  /// are conflated per key: while one for a key is waiting, later changes
+  /// raise its revision instead of adding notices. They are never dropped
+  /// and never count as dropped casts.
+  ///
+  /// With `after`, notices are first sent for every matching key changed
+  /// after that revision, or `too-old` is returned. The watch ends with
+  /// `unwatch` or when the instance exits; an upgrade keeps it.
+  watch: func(bucket: string, key: string, prefix: bool, after: option<u64>) -> result<started, error>;
+
+  /// End a watch. Notices for it still queued are discarded. Unknown ids
+  /// are ignored.
+  unwatch: func(id: u64) -> result<_, error>;
+
+  /// The value of `key`, with its revision.
+  get: func(bucket: string, key: string) -> result<option<entry>, error>;
+
+  /// The bucket's current revision (0 before its first change).
+  revision: func(bucket: string) -> result<u64, error>;
+
+  /// Set `key` to `value` if its revision is `expected` (`none`: only if
+  /// the key does not exist). Returns the new revision.
+  compare-and-swap: func(bucket: string, key: string, expected: option<u64>, value: list<u8>) -> result<u64, error>;
+
+  /// Delete `key` if its revision is `expected`. Returns the bucket's new
+  /// revision.
+  compare-and-delete: func(bucket: string, key: string, expected: u64) -> result<u64, error>;
+}

@@ -55,6 +55,21 @@ pub struct EffectiveGrant {
     /// Extension packages imported and declared but not granted.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub denied_extensions: BTreeSet<String>,
+    /// Shared keyvalue buckets declared and granted, with `wasi:keyvalue`
+    /// granted.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub granted_buckets: BTreeSet<String>,
+    /// Shared keyvalue buckets declared but not granted (opening one
+    /// returns `access-denied`).
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub denied_buckets: BTreeSet<String>,
+    /// Secrets declared and granted, with `paddock:secrets` granted.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub granted_secrets: BTreeSet<String>,
+    /// Secrets declared but not granted (reading one returns
+    /// `access-denied`).
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub denied_secrets: BTreeSet<String>,
 }
 
 /// Check `imports` against `spec` and compute the effective grant given the
@@ -127,10 +142,31 @@ pub fn effective_grant(
         });
     }
 
-    let (granted, denied) = imported
+    // Capabilities served without imports are used whenever declared.
+    imported.extend(
+        declared
+            .iter()
+            .copied()
+            .filter(|c| crate::manifest::Capabilities::import_free(*c)),
+    );
+    let (granted, denied): (BTreeSet<Capability>, BTreeSet<Capability>) = imported
         .iter()
         .copied()
         .partition(|c| operator_grants.contains(c));
+    let kv = granted.contains(&Capability::KeyValue);
+    let (granted_buckets, denied_buckets) = spec
+        .capabilities
+        .keyvalue
+        .iter()
+        .flat_map(|scope| scope.shared.keys().cloned())
+        .partition(|name| kv && operator.buckets.contains(name));
+    let secrets_on = granted.contains(&Capability::Secrets);
+    let (granted_secrets, denied_secrets) = spec
+        .capabilities
+        .secrets
+        .iter()
+        .flat_map(|scope| scope.secrets.iter().cloned())
+        .partition(|name| secrets_on && operator.secrets.contains(name));
     Ok(EffectiveGrant {
         imports: links,
         granted,
@@ -138,6 +174,10 @@ pub fn effective_grant(
         unused: declared.difference(&imported).copied().collect(),
         granted_extensions,
         denied_extensions,
+        granted_buckets,
+        denied_buckets,
+        granted_secrets,
+        denied_secrets,
     })
 }
 

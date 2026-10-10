@@ -23,6 +23,7 @@ use crate::delivery;
 use crate::error::describe;
 use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason, Info};
+use crate::metrics::AppStats;
 use crate::pid::Pid;
 use crate::probe;
 use crate::runtime::{LoadedApp, RuntimeInner};
@@ -439,6 +440,8 @@ pub(crate) struct InstanceTask {
     control: watch::Receiver<Control>,
     state: watch::Sender<LifecycleState>,
     exit: watch::Sender<Option<ExitReason>>,
+    /// The app's host counters.
+    stats: Arc<AppStats>,
 }
 
 /// A pid's handle and process context with no mailbox behind them, for a
@@ -449,7 +452,7 @@ pub(crate) fn detached(
     spec: &InstanceSpec,
     rt: Arc<RuntimeInner>,
 ) -> (InstanceHandle, ProcessContext) {
-    let (handle, task) = prepare(pid, spec);
+    let (handle, task) = prepare(pid, spec, rt.metrics.stats(&spec.app));
     let ctx = ProcessContext {
         rt,
         me: handle.clone(),
@@ -462,7 +465,11 @@ pub(crate) fn detached(
 }
 
 /// Create the channels for a new instance.
-pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, InstanceTask) {
+pub(crate) fn prepare(
+    pid: Pid,
+    spec: &InstanceSpec,
+    stats: Arc<AppStats>,
+) -> (InstanceHandle, InstanceTask) {
     let (mailbox_tx, mailbox_rx) = mpsc::channel(spec.mailbox_max.max(1));
     let (control_tx, control_rx) = watch::channel(Control::Run);
     let (state_tx, state_rx) = watch::channel(LifecycleState::Starting);
@@ -490,6 +497,7 @@ pub(crate) fn prepare(pid: Pid, spec: &InstanceSpec) -> (InstanceHandle, Instanc
         }),
     };
     let task = InstanceTask {
+        stats,
         pid,
         me: handle.clone(),
         mailbox: mailbox_rx,
@@ -540,6 +548,10 @@ impl InstanceTask {
             }
         }
         probe::instance_exit(self.pid, &reason);
+        self.stats.exited(&reason);
+        self.stats
+            .dropped
+            .fetch_add(self.dropped.load(Ordering::Relaxed), Ordering::Relaxed);
         delivery::notify_exit(&rt, self.pid, &reason);
         let _enter = span.enter();
         if reason.is_normal() {
@@ -646,7 +658,11 @@ impl InstanceTask {
                     }
                     continue;
                 }
-                Some(info) = self.signals.recv() => Some(Message::Info(info)),
+                Some(info) = self.signals.recv() => match info.resolve() {
+                    Some(info) => Some(Message::Info(info)),
+                    // A withdrawn notice (an ended watch).
+                    None => continue,
+                },
                 message = self.mailbox.recv() => message,
             };
             let Some(message) = message else {
@@ -677,7 +693,7 @@ impl InstanceTask {
                             Ok(())
                         }
                         // The caller stays pending until `process.reply`.
-                        Ok(CallResult::Noreply) => Ok(()),
+                        Ok(CallResult::Noreply) => store.data().check_pending(),
                         Err(err) => Err(err),
                     }
                 }
@@ -695,8 +711,9 @@ impl InstanceTask {
                     killable(&mut self.control, handle).await?
                 }
             };
+            let guest = store.data().clock.guest_time();
+            self.stats.callback(kind, guest);
             if probe::callback_done_enabled() {
-                let guest = store.data().clock.guest_time();
                 let guest_ns = u64::try_from(guest.as_nanos()).unwrap_or(u64::MAX);
                 probe::callback_done(self.pid, kind, guest_ns, outcome.is_ok());
             }

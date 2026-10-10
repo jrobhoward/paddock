@@ -7,6 +7,8 @@
 //! ├── priv/<app>/<version>/...   files the app sees at /priv
 //! ├── kv/                        keyvalue disk buckets
 //! ├── tmp/                       uploads being verified
+//! ├── failover-epoch             the highest failover epoch reached
+//! ├── witness-state              a witness's epoch and the node it promoted
 //! ├── node.lock                  held while a node has the directory open
 //! └── audit.log                  one JSON object per line
 //! ```
@@ -102,6 +104,47 @@ impl Store {
         Ok(next)
     }
 
+    /// The highest failover epoch this node reached; 0 before any.
+    pub(crate) fn load_epoch(&self) -> Result<u64, NodeError> {
+        let path = self.root.join("failover-epoch");
+        Ok(read_optional(&path)?
+            .map(|text| text.trim().parse::<u64>())
+            .transpose()
+            .map_err(|e| NodeError::Internal(format!("{}: {e}", path.display())))?
+            .unwrap_or(0))
+    }
+
+    /// Keeps an epoch on disk, written and synced, before this node acts
+    /// at it.
+    pub(crate) fn epoch_saver(&self) -> impl Fn(u64) -> Result<(), NodeError> + Send + 'static {
+        let root = self.root.clone();
+        move |epoch: u64| write_durable(&root, "failover-epoch", &epoch.to_string())
+    }
+
+    /// A witness's epoch and the node it promoted at it, if it ever
+    /// granted one.
+    pub(crate) fn load_witness(&self) -> Result<Option<(u64, u32)>, NodeError> {
+        let path = self.root.join("witness-state");
+        let Some(text) = read_optional(&path)? else {
+            return Ok(None);
+        };
+        let bad = || NodeError::Internal(format!("{}: not \"<epoch> <node>\"", path.display()));
+        let mut parts = text.split_whitespace();
+        let epoch = parts.next().and_then(|e| e.parse().ok()).ok_or_else(bad)?;
+        let node = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
+        Ok(Some((epoch, node)))
+    }
+
+    /// What the witness's grants keep: written and synced to disk before
+    /// each grant is answered.
+    pub(crate) fn witness_persist(&self) -> paddock_host::failover::WitnessPersist {
+        let root = self.root.clone();
+        std::sync::Arc::new(move |epoch, node| {
+            write_durable(&root, "witness-state", &format!("{epoch} {node}"))
+                .map_err(|e| e.to_string())
+        })
+    }
+
     pub(crate) fn kv_dir(&self) -> PathBuf {
         self.root.join("kv")
     }
@@ -176,6 +219,37 @@ impl Store {
         std::fs::write(&tmp, json).map_err(internal)?;
         std::fs::rename(&tmp, &path).map_err(internal)
     }
+}
+
+/// A file's text, or `None` if it does not exist.
+fn read_optional(path: &Path) -> Result<Option<String>, NodeError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(NodeError::Internal(format!("{}: {e}", path.display()))),
+    }
+}
+
+/// Replace `root/name` with `text` so that a crash leaves the old or the
+/// new value, and the new one survives power loss once this returns: write
+/// and sync a temporary file, rename it, sync the directory.
+fn write_durable(root: &Path, name: &str, text: &str) -> Result<(), NodeError> {
+    use std::io::Write;
+    let path = root.join(name);
+    let tmp = root.join("tmp").join(name);
+    let fail = |e: std::io::Error| NodeError::Internal(format!("{}: {e}", path.display()));
+    let mut file = std::fs::File::create(&tmp).map_err(fail)?;
+    file.write_all(text.as_bytes()).map_err(fail)?;
+    file.sync_all().map_err(fail)?;
+    drop(file);
+    std::fs::rename(&tmp, &path).map_err(fail)?;
+    // Directories cannot be opened as files on Windows; the rename is
+    // durable there once MoveFileEx returns.
+    #[cfg(unix)]
+    std::fs::File::open(root)
+        .and_then(|d| d.sync_all())
+        .map_err(fail)?;
+    Ok(())
 }
 
 #[cfg(test)]

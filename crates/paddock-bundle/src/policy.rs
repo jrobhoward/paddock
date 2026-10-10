@@ -11,6 +11,8 @@
 //! # Granted to one app, by name.
 //! [apps.orders]
 //! grant = ["wasi:keyvalue", "wasi:filesystem"]
+//! buckets = ["points"]          # shared buckets, from the node's [buckets]
+//! secrets = ["db-password"]     # secrets, from the node's [secrets]
 //!
 //! # Granted to every app signed by this key.
 //! [signers.payments-team]
@@ -21,9 +23,11 @@
 //! A `grant` list holds capability keys and extension package names
 //! (`"example:greeting"`) alike.
 //!
-//! Policy grants or withholds whole capabilities. The scope an app requests
-//! (buckets, preopens, hosts) is used as written; narrowing scopes by policy
-//! is not supported in Phase 1.
+//! Policy grants or withholds whole capabilities, each shared keyvalue
+//! bucket by name (`buckets`; it needs `wasi:keyvalue` granted too), and
+//! each secret by name (`secrets`; it needs `paddock:secrets` granted too). Other
+//! scopes an app requests (its own buckets, preopens, hosts) are used as
+//! written; narrowing them by policy is not supported.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -52,6 +56,10 @@ pub struct Grants {
     /// Capabilities and extensions granted, by key (`wasi:keyvalue`,
     /// `example:greeting`).
     pub grant: Granted,
+    /// Shared keyvalue buckets granted, by name.
+    pub buckets: BTreeSet<String>,
+    /// Secrets granted, by name.
+    pub secrets: BTreeSet<String>,
 }
 
 /// Capabilities granted to apps signed by one key.
@@ -63,6 +71,12 @@ pub struct SignerGrants {
     /// Capabilities and extensions granted, by key.
     #[serde(default)]
     pub grant: Granted,
+    /// Shared keyvalue buckets granted, by name.
+    #[serde(default)]
+    pub buckets: BTreeSet<String>,
+    /// Secrets granted, by name.
+    #[serde(default)]
+    pub secrets: BTreeSet<String>,
 }
 
 /// Granted capabilities and extension packages. Written in policy as one
@@ -74,12 +88,18 @@ pub struct Granted {
     pub capabilities: BTreeSet<Capability>,
     /// Extension packages (`example:greeting`).
     pub extensions: BTreeSet<String>,
+    /// Shared keyvalue buckets, from the policy's `buckets` lists.
+    pub buckets: BTreeSet<String>,
+    /// Secrets, from the policy's `secrets` lists.
+    pub secrets: BTreeSet<String>,
 }
 
 impl Granted {
-    fn extend(&mut self, other: &Self) {
+    fn extend(&mut self, other: &Self, buckets: &BTreeSet<String>, secrets: &BTreeSet<String>) {
         self.capabilities.extend(&other.capabilities);
         self.extensions.extend(other.extensions.iter().cloned());
+        self.buckets.extend(buckets.iter().cloned());
+        self.secrets.extend(secrets.iter().cloned());
     }
 }
 
@@ -129,12 +149,17 @@ impl OperatorPolicy {
     /// `signer_key`.
     #[must_use]
     pub fn granted(&self, app: &str, signer_key: &str) -> Granted {
-        let mut granted = self.defaults.grant.clone();
+        let mut granted = Granted::default();
+        granted.extend(
+            &self.defaults.grant,
+            &self.defaults.buckets,
+            &self.defaults.secrets,
+        );
         if let Some(entry) = self.apps.get(app) {
-            granted.extend(&entry.grant);
+            granted.extend(&entry.grant, &entry.buckets, &entry.secrets);
         }
         for signer in self.signers.values().filter(|s| s.key == signer_key) {
-            granted.extend(&signer.grant);
+            granted.extend(&signer.grant, &signer.buckets, &signer.secrets);
         }
         granted
     }

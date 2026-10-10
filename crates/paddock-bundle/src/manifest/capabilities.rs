@@ -60,6 +60,8 @@ pub enum Capability {
     Metrics,
     /// `paddock:admin`.
     Admin,
+    /// `paddock:groups`: local process groups and publish.
+    Groups,
 }
 
 impl Capability {
@@ -77,6 +79,7 @@ impl Capability {
         Self::Sql,
         Self::Metrics,
         Self::Admin,
+        Self::Groups,
     ];
 
     /// The key used under `capabilities` in the manifest and in operator
@@ -96,6 +99,7 @@ impl Capability {
             Self::Sql => "paddock:sql",
             Self::Metrics => "paddock:metrics",
             Self::Admin => "paddock:admin",
+            Self::Groups => "paddock:groups",
         }
     }
 
@@ -110,10 +114,15 @@ impl Capability {
     #[must_use]
     pub const fn phase(self) -> Option<Phase> {
         match self {
-            Self::Logging | Self::Config | Self::KeyValue | Self::Filesystem => None,
-            Self::Secrets | Self::HttpOutgoing | Self::HttpIncoming | Self::Metrics => {
-                Some(Phase::Phase2)
-            }
+            Self::Logging
+            | Self::Config
+            | Self::KeyValue
+            | Self::Filesystem
+            | Self::Groups
+            | Self::HttpIncoming
+            | Self::Secrets
+            | Self::Metrics => None,
+            Self::HttpOutgoing => Some(Phase::Phase2),
             Self::Sockets | Self::Sql => Some(Phase::Phase3),
             Self::Supervisor | Self::Admin => Some(Phase::Later),
         }
@@ -136,6 +145,7 @@ impl Capability {
             Self::Sql => ("paddock:sql", None),
             Self::Metrics => ("paddock:metrics", None),
             Self::Admin => ("paddock:admin", None),
+            Self::Groups => ("paddock:groups", None),
         }
     }
 
@@ -165,6 +175,9 @@ impl TryFrom<String> for Capability {
         Self::from_key(&key).ok_or_else(|| format!("unknown capability '{key}'"))
     }
 }
+
+/// The index of [`Capability::KeyValue`] in [`Capability::ALL`].
+const KEYVALUE: usize = 4;
 
 /// Imports granted to every app without being declared: `(package,
 /// interfaces)`, where `None` means the whole package.
@@ -265,6 +278,10 @@ pub fn classify_import(name: &str) -> ImportClass {
     if parsed.package == "wasi:http" && parsed.interface == Some("types") {
         return ImportClass::Capability(HTTP_TYPES);
     }
+    // Watches and compare-and-swap reach the same buckets as keyvalue.
+    if parsed.package == "paddock:watch" {
+        return ImportClass::Capability(std::slice::from_ref(&Capability::ALL[KEYVALUE]));
+    }
     Capability::ALL
         .iter()
         .position(|c| c.covers(&parsed))
@@ -362,6 +379,13 @@ pub struct Capabilities {
         skip_serializing_if = "Option::is_none"
     )]
     pub admin: Option<AdminScope>,
+    /// `paddock:groups`.
+    #[serde(
+        rename = "paddock:groups",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub groups: Option<GroupsScope>,
     /// Extension packages the app uses, by package name
     /// (`"example:greeting"`), each with the scope its host service reads.
     /// Served only by nodes built with that service (`paddock-host`'s
@@ -381,6 +405,14 @@ impl Capabilities {
             .collect()
     }
 
+    /// Whether `capability` serves the app without any import: HTTP
+    /// ingress delivers requests as calls (`wasi:http/incoming-handler`'s
+    /// routes), so its grant cannot be read from the component's imports.
+    #[must_use]
+    pub const fn import_free(capability: Capability) -> bool {
+        matches!(capability, Capability::HttpIncoming)
+    }
+
     /// Whether `capability` is declared.
     #[must_use]
     pub fn is_declared(&self, capability: Capability) -> bool {
@@ -397,6 +429,7 @@ impl Capabilities {
             Capability::Sql => self.sql.is_some(),
             Capability::Metrics => self.metrics.is_some(),
             Capability::Admin => self.admin.is_some(),
+            Capability::Groups => self.groups.is_some(),
         }
     }
 
@@ -438,13 +471,33 @@ impl Capabilities {
                 }
             });
         }
-        if let Some(s) = &self.metrics
-            && s.prefix.is_empty()
-        {
-            v.error_at(
-                format!("{}.prefix", Capability::Metrics.key()),
-                "must not be empty",
-            );
+        if let Some(s) = &self.metrics {
+            let valid = s
+                .prefix
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && s.prefix
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !valid {
+                v.error_at(
+                    format!("{}.prefix", Capability::Metrics.key()),
+                    "must be a metric name prefix (letters, digits, '_'; not starting with a digit)",
+                );
+            }
+            if s.max_series == Some(0) {
+                v.error_at(
+                    format!("{}.max_series", Capability::Metrics.key()),
+                    "must be greater than zero",
+                );
+            }
+        }
+        if let Some(s) = &self.groups {
+            v.at(Capability::Groups.key(), |v| {
+                v.unique_names("join", s.join.iter().map(String::as_str));
+                v.unique_names("publish", s.publish.iter().map(String::as_str));
+            });
         }
         for (key, scope) in &self.extensions {
             if !is_extension_key(key) {
@@ -534,6 +587,12 @@ pub struct SecretsScope {
 pub struct KeyValueScope {
     /// Buckets the app may open, by name. The host namespaces them per app.
     pub buckets: BTreeMap<String, Bucket>,
+    /// Shared buckets the app uses, by name, read-only or read-write. The
+    /// node's configuration defines each one (`[buckets.<name>]`) and
+    /// operator policy grants each one; apps that use the same name see the
+    /// same data.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub shared: BTreeMap<String, AccessMode>,
 }
 
 impl KeyValueScope {
@@ -543,6 +602,17 @@ impl KeyValueScope {
                 v.name(name.clone(), name);
                 if bucket.quota.is_some_and(|q| q.bytes() == 0) {
                     v.error_at(format!("{name}.quota"), "must be greater than zero");
+                }
+            });
+        }
+        for name in self.shared.keys() {
+            v.at("shared", |v| {
+                v.name(name.clone(), name);
+                if self.buckets.contains_key(name) {
+                    v.error_at(
+                        name.clone(),
+                        "is also an app bucket; a bucket name opens one or the other",
+                    );
                 }
             });
         }
@@ -673,15 +743,21 @@ impl HttpOutgoingScope {
     }
 }
 
-/// Scope of `wasi:http/incoming-handler`.
+/// Scope of `wasi:http/incoming-handler`: the routes the node's HTTP
+/// ingress sends to the app, each request as a call.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HttpIncomingScope {
     /// Requests routed to the app.
     pub routes: Vec<Route>,
-    /// Largest request body accepted.
+    /// Largest request body accepted (default 1 MiB, and never more than
+    /// `limits.message_max_bytes` allows).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_body: Option<ByteSize>,
+    /// Time a request may wait for the app's reply before the client gets
+    /// 504 (default 30000).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 impl HttpIncomingScope {
@@ -690,6 +766,26 @@ impl HttpIncomingScope {
             if !route.path_prefix.starts_with('/') {
                 v.error_at(format!("routes[{i}].path_prefix"), "must start with '/'");
             }
+            if let Some(h) = &route.hash_header
+                && (h.is_empty()
+                    || !h
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)))
+            {
+                v.error_at(
+                    format!("routes[{i}].hash_header"),
+                    "must be a header name (letters, digits, '-' and '_')",
+                );
+            }
+        }
+        if self.routes.is_empty() {
+            v.error_at("routes", "must list at least one route");
+        }
+        if self.max_body.is_some_and(|b| b.bytes() == 0) {
+            v.error_at("max_body", "must be greater than zero");
+        }
+        if self.timeout_ms == Some(0) {
+            v.error_at("timeout_ms", "must be greater than zero");
         }
     }
 }
@@ -701,8 +797,14 @@ pub struct Route {
     /// Host to match. Unset matches any host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
-    /// Path prefix to match (`/orders`).
+    /// Path prefix to match (`/orders`), on segment boundaries: `/orders`
+    /// matches `/orders` and `/orders/7`, not `/ordersx`.
     pub path_prefix: String,
+    /// A request header whose value becomes the request's `key` field, for
+    /// a pool routed with `hash:key` (a tenant or customer id). Unset sends
+    /// requests round-robin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash_header: Option<String>,
 }
 
 /// Scope of `wasi:sockets`. Bind and connect have separate rules: Rust's
@@ -820,8 +922,41 @@ pub struct SqlScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsScope {
-    /// Every metric the app emits is named under this prefix.
+    /// Every metric the app emits is named under this prefix
+    /// (`<prefix>_<name>`).
     pub prefix: String,
+    /// Most series (a name with one set of label values) the app may hold;
+    /// unset, 1,000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_series: Option<u32>,
+}
+
+/// Scope of `paddock:groups`: the groups the app may use, by name. Groups
+/// are created by joining; nothing in node configuration binds them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GroupsScope {
+    /// Groups the app's instances may join and leave.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub join: Vec<String>,
+    /// Groups the app may publish to. Listing members is allowed for a
+    /// group in either list.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub publish: Vec<String>,
+}
+
+impl GroupsScope {
+    /// Whether the app may join `group`.
+    #[must_use]
+    pub fn may_join(&self, group: &str) -> bool {
+        self.join.iter().any(|g| g == group)
+    }
+
+    /// Whether the app may publish to `group`.
+    #[must_use]
+    pub fn may_publish(&self, group: &str) -> bool {
+        self.publish.iter().any(|g| g == group)
+    }
 }
 
 /// Scope of `paddock:admin`.

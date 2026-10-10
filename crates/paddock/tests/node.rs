@@ -581,3 +581,202 @@ async fn restart____creation_raised_on_every_start() {
     assert_eq!((first.as_str(), second.as_str()), ("1", "2"));
     n.shutdown().await;
 }
+
+/// The services fixture's manifest with these shared buckets listed.
+fn shared_manifest(shared: serde_json::Value) -> serde_json::Value {
+    let mut m = services_manifest();
+    m["capabilities"]["wasi:keyvalue"]["shared"] = shared;
+    m
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_bucket____two_apps_through_policy____shared_read_only_and_kept_on_restart() {
+    let scratch = tempfile::tempdir().unwrap();
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy = policy_dir.path().join("policy.toml");
+    std::fs::write(
+        &policy,
+        "[defaults]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"board\"]\n",
+    )
+    .unwrap();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[volumes]\nscratch = {:?}\n\
+         [buckets.board]\ndurability = \"disk\"\n[buckets.alarms]\n",
+        scratch.path()
+    ))
+    .await;
+    let services = fixture("paddock_fixture_services");
+    let deploy = |name: &str, shared| {
+        bundle(
+            &n.key,
+            name,
+            "1.0.0",
+            &services,
+            shared_manifest(shared),
+            &[],
+        )
+    };
+    n.client
+        .deploy(deploy("plc", json!({ "board": "rw" })))
+        .await
+        .unwrap();
+    let hmi = n
+        .client
+        .deploy(deploy("hmi", json!({ "board": "ro", "alarms": "ro" })))
+        .await
+        .unwrap();
+    let refused = n
+        .client
+        .deploy(deploy("lost", json!({ "nowhere": "ro" })))
+        .await
+        .unwrap_err();
+
+    call(&n, "plc", "kv-set:board:pump-1:on").await;
+    let seen = call(&n, "hmi", "kv-get:board:pump-1").await;
+    let write = call(&n, "hmi", "kv-set:board:pump-1:off").await;
+    let ungranted = call(&n, "hmi", "kv-get:alarms:a1").await;
+    n.restart().await;
+    let after_restart = call(&n, "hmi", "kv-get:board:pump-1").await;
+
+    assert!(hmi.granted.contains(&"bucket:board".to_string()), "{hmi:?}");
+    assert!(hmi.denied.contains(&"bucket:alarms".to_string()), "{hmi:?}");
+    assert!(!hmi.denied.contains(&"bucket:board".to_string()), "{hmi:?}");
+    assert_eq!(kind(&refused), "invalid");
+    assert_eq!(seen, "on");
+    assert_eq!(write, "err:access-denied");
+    assert_eq!(ungranted, "err:access-denied");
+    assert_eq!(after_restart, "on");
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let secret = dir.path().join("db");
+    std::fs::write(&secret, "hunter2").unwrap();
+    let policy = dir.path().join("policy.toml");
+    std::fs::write(
+        &policy,
+        "[apps.vault]\ngrant = [\"paddock:secrets\"]\nsecrets = [\"db\"]\n",
+    )
+    .unwrap();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[secrets.db]\nfile = {secret:?}\n[secrets.other]\nenv = \"PADDOCK_UNSET_FOR_TEST\"\n"
+    ))
+    .await;
+    let manifest = |names: serde_json::Value| {
+        fast(json!({ "capabilities": {
+            "wasi:config": {},
+            "wasi:keyvalue": {},
+            "paddock:groups": {},
+            "paddock:metrics": { "prefix": "vault" },
+            "paddock:secrets": { "secrets": names }
+        } }))
+    };
+    let sdk = fixture("paddock_fixture_sdk");
+
+    let unbound = n
+        .client
+        .deploy(bundle(
+            &n.key,
+            "vault",
+            "1.0.0",
+            &sdk,
+            manifest(json!(["db", "nowhere"])),
+            &[],
+        ))
+        .await;
+    let deployed = n
+        .client
+        .deploy(bundle(
+            &n.key,
+            "vault",
+            "1.0.0",
+            &sdk,
+            manifest(json!(["db", "other"])),
+            &[],
+        ))
+        .await
+        .unwrap();
+    let value = call(&n, "vault", "secret:db").await;
+    let denied = call(&n, "vault", "secret:other").await;
+
+    assert_eq!(kind(&unbound.unwrap_err()), "invalid");
+    assert!(
+        deployed.granted.contains(&"secret:db".to_string()),
+        "{deployed:?}"
+    );
+    assert!(
+        deployed.denied.contains(&"secret:other".to_string()),
+        "{deployed:?}"
+    );
+    assert_eq!(value, "hunter2");
+    assert_eq!(denied, "err:access denied");
+    let audit = serde_json::to_string(&n.audit()).unwrap();
+    assert!(!audit.contains("hunter2"), "{audit}");
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("policy.toml");
+    std::fs::write(&policy, "[apps.shop]\ngrant = [\"paddock:metrics\"]\n").unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[metrics]\naddress = \"127.0.0.1:{port}\"\n"
+    ))
+    .await;
+    let manifest = fast(json!({ "capabilities": {
+        "wasi:config": {},
+        "wasi:keyvalue": {},
+        "paddock:groups": {},
+        "paddock:secrets": { "secrets": [] },
+        "paddock:metrics": { "prefix": "shop" }
+    } }));
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "shop",
+            "1.0.0",
+            &fixture("paddock_fixture_sdk"),
+            manifest,
+            &[],
+        ))
+        .await
+        .unwrap();
+
+    let counted = call(&n, "shop", "counter:orders_total:eu:4").await;
+    let admin = n.client.metrics().await.unwrap();
+    let scraped = {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        s.write_all(b"GET /metrics HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut raw = String::new();
+        s.read_to_string(&mut raw).await.unwrap();
+        raw
+    };
+
+    assert_eq!(counted, "ok");
+    for text in [&admin, &scraped] {
+        assert!(
+            text.contains(r#"shop_orders_total{app="shop",l="eu"} 4"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"paddock_instances{app="shop"} 1"#),
+            "{text}"
+        );
+    }
+    assert!(scraped.starts_with("HTTP/1.1 200"), "{scraped}");
+    assert!(scraped.contains("text/plain; version=0.0.4"), "{scraped}");
+    n.shutdown().await;
+}

@@ -7,23 +7,28 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{
-    AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, ListenerInfo, LogLine,
-    RolloutParams, StateResponse, Target, UpgradeResponse,
+    AppDetail, AppSummary, DeployResponse, Done, FailoverInfo, InstanceInfo, ListenerInfo, LogLine,
+    MemberInfo, RolloutParams, StateResponse, Target, UpgradeResponse,
 };
-use paddock_bundle::manifest::{AppManifest, UpgradeMode};
+use paddock_bundle::manifest::{AppManifest, Capability, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
-use paddock_host::services::Extension;
+use paddock_host::failover::{Arbiter, FailoverConfig, FailoverHandle, WitnessConfig};
+use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, IngressTls, TlsCertificate};
+use paddock_host::services::{Extension, StartedExtensions};
+use paddock_host::transport::quic::{NodeIdentity, QuicConfig, QuicTransport};
 use paddock_host::{
-    AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, InstanceHandle, InstanceSpec,
-    Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid, Role, Runtime,
-    RuntimeConfig, UpgradeError, UpgradeOptions, UpgradeReport,
+    AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
+    InstanceSpec, Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid,
+    Role, Runtime, RuntimeConfig, SecretSource, SharedBucket, UpgradeError, UpgradeOptions,
+    UpgradeReport,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
 
 use super::audit::Audit;
-use super::config::{ClusterRole, MemoryProfile, NodeConfig};
+use super::config::{ArbiterKind, ClusterRole, MemoryProfile, NodeConfig};
 use super::error::{NodeError, internal};
+use super::gate::{self, Gate};
 use super::logring::LogRing;
 use super::store::{AppState, State, Store};
 
@@ -41,6 +46,21 @@ pub struct Node {
     /// Running connection-handler apps, by name. Locked only briefly,
     /// never across an await.
     connections: std::sync::Mutex<HashMap<String, ConnectionApp>>,
+    /// Extensions' node-level work, stopped on shutdown.
+    extensions: std::sync::Mutex<Option<StartedExtensions>>,
+    /// HTTP ingress, if node config has `[http]` addresses.
+    http: Option<HttpIngress>,
+    /// Stops background tasks: the `[metrics]` endpoint, certificate
+    /// checks.
+    stop: tokio::sync::watch::Sender<bool>,
+    /// HTTPS certificates, by ingress name.
+    certificates: Vec<(String, IngressTls)>,
+    /// The cluster transport, with `cluster.address`.
+    quic: std::sync::Mutex<Option<QuicTransport>>,
+    /// The singletons, with `[failover]`.
+    gate: Option<Arc<Gate>>,
+    /// This node's failover, once started.
+    failover: std::sync::OnceLock<FailoverHandle>,
 }
 
 /// A connection-handler app this node runs: its listeners, and the
@@ -148,6 +168,8 @@ fn rollout_error(e: UpgradeError, snapshot: bool, params: &RolloutParams) -> Nod
 enum Resolved {
     App(AppHandle),
     Instance(InstanceHandle),
+    /// A pid on another node, reached through the cluster.
+    Remote(Pid),
 }
 
 /// The node error for a failed call or cast to `target`.
@@ -254,9 +276,6 @@ impl Node {
         if config.trusted_keys.is_empty() {
             tracing::warn!("no trusted keys configured: every deploy will be refused");
         }
-        if !config.cluster.seeds.is_empty() {
-            tracing::warn!("cluster.seeds is not used until the QUIC transport exists");
-        }
         let desired = store.load_state()?;
         if config.cluster.role == ClusterRole::Witness && !desired.apps.is_empty() {
             return Err(NodeError::Invalid(format!(
@@ -283,14 +302,87 @@ impl Node {
                     ClusterRole::Witness => Role::Witness,
                 },
                 address: config.cluster.address.clone().unwrap_or_default(),
+                host_objects: HostObjects {
+                    timers: config.limits.timers_max,
+                    monitors: config.limits.monitors_max,
+                    links: config.limits.links_max,
+                    pending_calls: config.limits.pending_calls_max,
+                    groups: config.limits.groups_max,
+                    watches: config.limits.watches_max,
+                },
+                secrets: config
+                    .secrets
+                    .iter()
+                    .filter_map(|(name, s)| {
+                        let source = match (&s.file, &s.env) {
+                            (Some(f), _) => SecretSource::File(f.clone()),
+                            (None, Some(v)) => SecretSource::Env(v.clone()),
+                            (None, None) => return None,
+                        };
+                        Some((name.clone(), source))
+                    })
+                    .collect(),
+                buckets: config
+                    .buckets
+                    .iter()
+                    .map(|(name, b)| {
+                        let bucket = SharedBucket {
+                            durability: b.durability,
+                            quota: b.quota.map(|q| q.bytes()),
+                        };
+                        (name.clone(), bucket)
+                    })
+                    .collect(),
             },
             extensions,
         )
         .map_err(internal)?;
         let apps = rt.start_apps(Vec::new()).await.map_err(internal)?;
+        let mut certificates = Vec::new();
+        let http = if config.http.is_empty() {
+            None
+        } else {
+            let ingress = HttpIngress::new(apps.clone());
+            for (name, binding) in &config.http {
+                let tls = if binding.tls.is_empty() {
+                    None
+                } else {
+                    let entries = binding
+                        .tls
+                        .iter()
+                        .map(|t| TlsCertificate {
+                            cert: t.cert.clone(),
+                            key: t.key.clone(),
+                            hosts: t.hosts.clone(),
+                        })
+                        .collect();
+                    let tls = IngressTls::load(entries)
+                        .map_err(|e| NodeError::Invalid(format!("http.{name}: {e}")))?;
+                    certificates.push((name.clone(), tls.clone(), binding.tls_reload_s));
+                    Some(tls)
+                };
+                let bound = ingress
+                    .listen(IngressListen {
+                        address: binding.address,
+                        acceptors: binding.acceptors,
+                        max_connections: binding.max_connections,
+                        header_timeout: Duration::from_millis(binding.header_timeout_ms.max(1)),
+                        body_timeout: Duration::from_millis(binding.body_timeout_ms.max(1)),
+                        max_response: binding.max_response.bytes(),
+                        tls,
+                    })
+                    .await
+                    .map_err(|e| NodeError::Invalid(format!("http.{name}: {e}")))?;
+                tracing::info!(name, %bound, "HTTP ingress listening");
+            }
+            Some(ingress)
+        };
         let audit = Audit::new(store.audit_path());
+        let gate = config
+            .failover
+            .is_some()
+            .then(|| Arc::new(Gate::new(apps.clone())));
         let node = Self {
-            config,
             rt,
             apps,
             store,
@@ -302,8 +394,59 @@ impl Node {
                 ..NodeState::default()
             }),
             connections: std::sync::Mutex::default(),
+            extensions: std::sync::Mutex::default(),
+            http,
+            stop: tokio::sync::watch::channel(false).0,
+            certificates: certificates
+                .iter()
+                .map(|(n, t, _)| (n.clone(), t.clone()))
+                .collect(),
+            quic: std::sync::Mutex::default(),
+            gate,
+            failover: std::sync::OnceLock::new(),
+            config,
         };
+        for (name, tls, every) in certificates {
+            if every > 0 {
+                tokio::spawn(watch_certificates(
+                    name,
+                    tls,
+                    Duration::from_secs(every),
+                    node.stop.subscribe(),
+                ));
+            }
+        }
+        if let Some(binding) = &node.config.metrics {
+            let listener = tokio::net::TcpListener::bind(binding.address)
+                .await
+                .map_err(|e| NodeError::Invalid(format!("metrics: {}: {e}", binding.address)))?;
+            let (rt, http) = (node.rt.clone(), node.http.clone());
+            let render = move || metrics_text(&rt, http.as_ref());
+            tokio::spawn(super::server::serve_metrics(
+                listener,
+                render,
+                node.stop.subscribe(),
+            ));
+        }
         node.restore().await;
+        let started = match node
+            .rt
+            .start_extensions(&node.apps, &node.config.extensions)
+        {
+            Ok(started) => started,
+            Err(e) => {
+                node.shutdown().await;
+                return Err(NodeError::Invalid(e.to_string()));
+            }
+        };
+        *node
+            .extensions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(started);
+        if let Err(e) = node.start_cluster().and_then(|()| node.start_failover()) {
+            node.shutdown().await;
+            return Err(e);
+        }
         Ok(node)
     }
 
@@ -355,6 +498,11 @@ impl Node {
             let prev = self.build(&self.store.bundle_path(name, previous)).await?;
             match (handle, prev.run) {
                 (Some(handle), Runnable::App(d)) => handle.set_previous(Some(d)),
+                (None, Runnable::App(d)) => {
+                    if let Some(gate) = &self.gate {
+                        gate.set_previous(name, d);
+                    }
+                }
                 (None, Runnable::Connection(c)) => {
                     if let Some(app) = self.connection_apps().get_mut(name) {
                         app.previous = Some(c);
@@ -396,7 +544,31 @@ impl Node {
         .map_err(|e| NodeError::Refused(e.to_string()))?;
         let mut spec = InstanceSpec::from_manifest(&manifest)
             .with_granted(&grant.granted)
-            .with_granted_extensions(&grant.granted_extensions);
+            .with_granted_extensions(&grant.granted_extensions)
+            .with_granted_buckets(&grant.granted_buckets)
+            .with_granted_secrets(&grant.granted_secrets);
+        if let Some(missing) = grant
+            .granted_secrets
+            .iter()
+            .chain(&grant.denied_secrets)
+            .find(|s| !self.config.secrets.contains_key(*s))
+        {
+            return Err(NodeError::Invalid(format!(
+                "secret '{missing}' is not configured on this node"
+            )));
+        }
+        if let Some(missing) = spec
+            .services
+            .keyvalue
+            .shared
+            .keys()
+            .chain(&grant.denied_buckets)
+            .find(|b| !self.config.buckets.contains_key(*b))
+        {
+            return Err(NodeError::Invalid(format!(
+                "shared bucket '{missing}' is not configured on this node"
+            )));
+        }
         if let Some(overrides) = self.config.config.get(&name) {
             spec.services.config.values.extend(overrides.clone());
         }
@@ -427,8 +599,16 @@ impl Node {
         };
         let info = DeployInfo {
             signer: manifest.provenance.signer_key.clone(),
-            granted: keys(&grant.granted, &grant.granted_extensions),
-            denied: keys(&grant.denied, &grant.denied_extensions),
+            granted: keys(&grant.granted, &grant.granted_extensions)
+                .into_iter()
+                .chain(grant.granted_buckets.iter().map(|b| format!("bucket:{b}")))
+                .chain(grant.granted_secrets.iter().map(|s| format!("secret:{s}")))
+                .collect(),
+            denied: keys(&grant.denied, &grant.denied_extensions)
+                .into_iter()
+                .chain(grant.denied_buckets.iter().map(|b| format!("bucket:{b}")))
+                .chain(grant.denied_secrets.iter().map(|s| format!("secret:{s}")))
+                .collect(),
             stubbed: match &loaded {
                 Loaded::App(app) => app.stubbed_imports().to_vec(),
                 Loaded::Connection(c) => c.stubbed_imports().to_vec(),
@@ -465,12 +645,35 @@ impl Node {
     /// the supervised app's handle.
     async fn run(&self, name: &str, run: Runnable) -> Result<Option<AppHandle>, NodeError> {
         match run {
-            Runnable::App(deployment) => self
-                .apps
-                .add(deployment)
-                .await
-                .map(Some)
-                .map_err(|e| NodeError::Invalid(e.to_string())),
+            Runnable::App(deployment) => {
+                if let Some(gate) = &self.gate
+                    && !gate::is_singleton(&deployment)
+                    && let Some(dep) = deployment
+                        .manifest
+                        .spec
+                        .dependencies
+                        .iter()
+                        .find(|d| gate.holds(&d.app))
+                {
+                    return Err(NodeError::Invalid(format!(
+                        "{name} depends on {}, a singleton, which runs on one node of the pair only; \
+                         make {name} a singleton too",
+                        dep.app
+                    )));
+                }
+                self.set_routes(name, &deployment)?;
+                let added = match &self.gate {
+                    Some(gate) if gate::is_singleton(&deployment) => {
+                        gate.hold(name, deployment).await
+                    }
+                    _ => self.apps.add(deployment).await.map(Some),
+                }
+                .map_err(|e| NodeError::Invalid(e.to_string()));
+                if added.is_err() {
+                    self.remove_routes(name);
+                }
+                added
+            }
             Runnable::Connection(build) => {
                 let listeners = self.listen(&build)?;
                 self.connection_apps().insert(
@@ -483,6 +686,31 @@ impl Node {
                 );
                 Ok(None)
             }
+        }
+    }
+
+    /// Give `name` the HTTP routes `deployment` declares, if the operator
+    /// granted them (none otherwise).
+    fn set_routes(&self, name: &str, deployment: &AppDeployment) -> Result<(), NodeError> {
+        let routes = if deployment.spec.granted.contains(&Capability::HttpIncoming) {
+            HttpRoute::from_manifest(&deployment.manifest)
+        } else {
+            Vec::new()
+        };
+        match &self.http {
+            Some(ingress) => ingress
+                .set_routes(name, routes)
+                .map_err(|e| NodeError::Conflict(e.to_string())),
+            None if routes.is_empty() => Ok(()),
+            None => Err(NodeError::Invalid(format!(
+                "{name} declares HTTP routes, and this node has no HTTP ingress ([http.<name>] in node config)"
+            ))),
+        }
+    }
+
+    fn remove_routes(&self, name: &str) {
+        if let Some(ingress) = &self.http {
+            ingress.remove_routes(name);
         }
     }
 
@@ -533,7 +761,34 @@ impl Node {
 
     /// Whether `name` runs now, under a supervisor or on listeners.
     fn running(&self, name: &str) -> bool {
-        self.apps.app(name).is_some() || self.connection_apps().contains_key(name)
+        self.apps.app(name).is_some()
+            || self.connection_apps().contains_key(name)
+            || self.held(name)
+    }
+
+    /// Whether `name` is a singleton this node holds, running or not.
+    fn held(&self, name: &str) -> bool {
+        self.gate.as_ref().is_some_and(|g| g.holds(name))
+    }
+
+    /// Stop running `name`, if it runs: a singleton, a supervised app or a
+    /// connection handler.
+    async fn stop_running(&self, name: &str) -> Result<(), NodeError> {
+        if let Some(gate) = &self.gate
+            && gate
+                .release(name)
+                .await
+                .map_err(|e| NodeError::Conflict(e.to_string()))?
+        {
+            return Ok(());
+        }
+        if !self.stop_connections(name) && self.apps.app(name).is_some() {
+            self.apps
+                .remove(name)
+                .await
+                .map_err(|e| NodeError::Conflict(e.to_string()))?;
+        }
+        Ok(())
     }
 
     fn summary(&self, name: &str, app: &AppState, restore_error: Option<&String>) -> AppSummary {
@@ -545,6 +800,10 @@ impl Node {
         let (status, reason) = match (&handle, connections, restore_error) {
             (Some(h), _, _) => status_text(&h.status()),
             (None, Some(_), _) => ("running".into(), None),
+            (None, None, _) if self.held(name) => (
+                "standby".into(),
+                Some("a singleton; runs while this node is primary".into()),
+            ),
             (None, None, Some(e)) => ("failed".into(), Some(e.clone())),
             (None, None, None) => ("stopped".into(), None),
         };
@@ -692,13 +951,33 @@ impl Node {
             Runnable::Connection(build) => self
                 .upgrade_connections(name, build, params)
                 .map_err(|e| (e, false)),
+            Runnable::App(deployment) if self.held(name) && self.apps.app(name).is_none() => {
+                self.upgrade_held(name, deployment, params)
+            }
             Runnable::App(deployment) => {
                 let snapshot = deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
-                self.apps
-                    .upgrade(name, deployment, &options(params))
-                    .await
-                    .map(|r| upgrade_response(&r))
-                    .map_err(|e| (rollout_error(e, snapshot, params), true))
+                let before = self.http.as_ref().map(|h| h.routes(name));
+                match self.set_routes(name, &deployment) {
+                    Err(e) => Err((e, false)),
+                    Ok(()) => {
+                        let upgraded = self
+                            .apps
+                            .upgrade(name, deployment, &options(params))
+                            .await
+                            .map(|r| upgrade_response(&r))
+                            .map_err(|e| (rollout_error(e, snapshot, params), true));
+                        if upgraded.is_err()
+                            && let (Some(http), Some(before)) = (&self.http, before)
+                        {
+                            // The old version keeps running with its routes.
+                            let _ = http.set_routes(name, before);
+                        }
+                        if let Some(gate) = &self.gate {
+                            gate.sync(name);
+                        }
+                        upgraded
+                    }
+                }
             }
         };
         match result {
@@ -725,6 +1004,46 @@ impl Node {
                 Err(e)
             }
         }
+    }
+
+    /// Upgrade a singleton this node holds but does not run: a promotion
+    /// starts the new version.
+    fn upgrade_held(
+        &self,
+        name: &str,
+        deployment: AppDeployment,
+        params: &RolloutParams,
+    ) -> Result<UpgradeResponse, (NodeError, bool)> {
+        let gate = self
+            .gate
+            .as_ref()
+            .ok_or_else(|| (internal("no failover"), false))?;
+        let to = deployment.manifest.app.version.to_string();
+        let (from, approved) = gate
+            .upgrade_held(name, deployment, params.approve)
+            .map_err(|e| (upgrade_error(e), false))?;
+        Ok(UpgradeResponse {
+            from,
+            to,
+            mode: "held".into(),
+            instances: Vec::new(),
+            pauses_us: Vec::new(),
+            approved,
+        })
+    }
+
+    /// Roll back a singleton this node holds but does not run.
+    fn rollback_held(&self, name: &str) -> Result<UpgradeResponse, NodeError> {
+        let gate = self.gate.as_ref().ok_or_else(|| internal("no failover"))?;
+        let (from, to) = gate.rollback_held(name).map_err(upgrade_error)?;
+        Ok(UpgradeResponse {
+            from,
+            to,
+            mode: "held".into(),
+            instances: Vec::new(),
+            pauses_us: Vec::new(),
+            approved: Vec::new(),
+        })
     }
 
     /// Upgrade a connection handler: new connections get `build`; open ones
@@ -815,14 +1134,26 @@ impl Node {
         }
         let result = match self.rollback_connections(name) {
             Some(result) => result,
+            None if self.held(name) && self.apps.app(name).is_none() => self.rollback_held(name),
             None => {
                 let snapshot = self.apps.app(name).and_then(|a| a.rollback_mode())
                     == Some(UpgradeMode::Snapshot);
-                self.apps
+                let rolled = self
+                    .apps
                     .rollback(name, &options(params))
                     .await
                     .map(|r| upgrade_response_from(&r))
-                    .map_err(|e| rollout_error(e, snapshot, params))
+                    .map_err(|e| rollout_error(e, snapshot, params));
+                if rolled.is_ok()
+                    && let Some(app) = self.apps.app(name)
+                    && let Err(e) = self.set_routes(name, &app.deployment())
+                {
+                    tracing::warn!(app = name, error = %e, "routes after rollback");
+                }
+                if let Some(gate) = &self.gate {
+                    gate.sync(name);
+                }
+                rolled
             }
         };
         match &result {
@@ -869,12 +1200,8 @@ impl Node {
         if !app.running {
             return Err(NodeError::Conflict(format!("{name} is already stopped")));
         }
-        if !self.stop_connections(name) && self.apps.app(name).is_some() {
-            self.apps
-                .remove(name)
-                .await
-                .map_err(|e| NodeError::Conflict(e.to_string()))?;
-        }
+        self.stop_running(name).await?;
+        self.remove_routes(name);
         app.running = false;
         st.restore_errors.remove(name);
         self.store.save_state(&st.desired)?;
@@ -932,12 +1259,8 @@ impl Node {
         if !st.desired.apps.contains_key(name) {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
         }
-        if !self.stop_connections(name) && self.apps.app(name).is_some() {
-            self.apps
-                .remove(name)
-                .await
-                .map_err(|e| NodeError::Conflict(e.to_string()))?;
-        }
+        self.stop_running(name).await?;
+        self.remove_routes(name);
         self.store.remove_app(name);
         st.desired.apps.remove(name);
         st.desired.order.retain(|n| n != name);
@@ -1077,6 +1400,7 @@ impl Node {
         let result = match self.resolve(target)? {
             Resolved::App(app) => app.call(msg, timeout).await,
             Resolved::Instance(h) => h.call(msg, timeout).await,
+            Resolved::Remote(pid) => self.rt.call(pid, msg, timeout).await,
         };
         result.map_err(|e| send_error("call", target, &e))
     }
@@ -1091,6 +1415,7 @@ impl Node {
         match self.resolve(target)? {
             Resolved::App(app) => app.cast(msg),
             Resolved::Instance(h) => h.cast(msg),
+            Resolved::Remote(pid) => self.rt.cast(pid, msg),
         }
         .map_err(|e| send_error("cast", target, &e))?;
         Ok(Done {
@@ -1107,6 +1432,9 @@ impl Node {
                 .ok_or_else(|| NodeError::NotFound(format!("{name} is not running"))),
             Target::Pid(pid) => {
                 let pid: Pid = pid.parse().map_err(NodeError::Invalid)?;
+                if pid.node != self.rt.node() {
+                    return Ok(Resolved::Remote(pid));
+                }
                 self.rt
                     .lookup(pid)
                     .map(Resolved::Instance)
@@ -1188,6 +1516,28 @@ impl Node {
 
     /// Stop every app, in reverse start order.
     pub async fn shutdown(&self) {
+        let started = self
+            .extensions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(started);
+        self.stop.send_replace(true);
+        if let Some(gate) = &self.gate {
+            gate.close().await;
+        }
+        let quic = self
+            .quic
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(quic) = quic {
+            self.rt.leave_cluster();
+            quic.shutdown_gracefully().await;
+        }
+        if let Some(http) = &self.http {
+            http.stop();
+        }
         let names: Vec<String> = self.connection_apps().keys().cloned().collect();
         for name in names {
             self.stop_connections(&name);
@@ -1195,11 +1545,293 @@ impl Node {
         self.apps.stop().await;
     }
 
+    /// Every app's metrics and the node's, in the Prometheus text format:
+    /// the runtime's, then the HTTP ingress's.
+    #[must_use]
+    pub fn metrics(&self) -> String {
+        metrics_text(&self.rt, self.http.as_ref())
+    }
+
+    /// The cluster's members as this node knows them, itself included.
+    #[must_use]
+    pub fn members(&self) -> Vec<MemberInfo> {
+        let me = self.rt.node();
+        self.rt
+            .members()
+            .into_iter()
+            .map(|m| MemberInfo {
+                reachable: m.node == me || self.rt.peer_status(m.node).is_some_and(|s| s.reachable),
+                node: m.node,
+                creation: m.creation,
+                address: m.address,
+                role: match m.role {
+                    Role::Witness => "witness".into(),
+                    _ => "member".into(),
+                },
+            })
+            .collect()
+    }
+
+    /// Start the QUIC transport on `cluster.address`, join the seeds, and
+    /// watch the identity files.
+    fn start_cluster(&self) -> Result<(), NodeError> {
+        let cluster = &self.config.cluster;
+        let (Some(address), Some(key), Some(peers)) =
+            (&cluster.address, &cluster.key, &cluster.peers)
+        else {
+            return Ok(());
+        };
+        let bind = address
+            .parse()
+            .map_err(|e| NodeError::Invalid(format!("cluster.address: {e}")))?;
+        let quic = QuicTransport::start(
+            &self.rt,
+            QuicConfig {
+                bind,
+                identity: NodeIdentity {
+                    key: key.clone(),
+                    peers: peers.clone(),
+                },
+                idle_timeout: Duration::from_millis(cluster.node_timeout_ms.max(1) * 2),
+            },
+        )
+        .map_err(|e| NodeError::Invalid(e.to_string()))?;
+        tracing::info!(%bind, "cluster transport listening");
+        for seed in &cluster.seeds {
+            let Ok(seed) = seed.parse() else {
+                continue;
+            };
+            let quic = quic.clone();
+            tokio::spawn(async move {
+                match quic.join_seed(seed).await {
+                    Ok(node) => tracing::info!(%seed, node, "joined through seed"),
+                    Err(e) => tracing::warn!(error = %e, "seed not reached yet; retrying"),
+                }
+            });
+        }
+        if cluster.identity_reload_s > 0 {
+            let (quic, every) = (quic.clone(), Duration::from_secs(cluster.identity_reload_s));
+            let mut stop = self.stop.subscribe();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = stop.wait_for(|s| *s) => return,
+                        () = tokio::time::sleep(every) => {}
+                    }
+                    match quic.reload_if_changed() {
+                        Ok(true) => tracing::info!("cluster key or peers reloaded"),
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::error!(error = %e, "cluster identity reload failed; keeping the old")
+                        }
+                    }
+                }
+            });
+        }
+        *self
+            .quic
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(quic);
+        Ok(())
+    }
+
+    /// Start `[failover]` at the epoch kept on disk and follow its
+    /// leadership, or serve `[witness]` from its kept state.
+    fn start_failover(&self) -> Result<(), NodeError> {
+        if let Some(w) = &self.config.witness {
+            let mut cfg = WitnessConfig::new(w.pair, w.first);
+            cfg.lease = Duration::from_millis(w.lease_ms);
+            cfg.margin = Duration::from_millis(w.margin_ms);
+            cfg.resume = self.store.load_witness()?;
+            self.rt
+                .serve_witness_kept(cfg, Some(self.store.witness_persist()))
+                .map_err(|e| NodeError::Invalid(format!("witness: {e}")))?;
+            tracing::info!(pair = ?w.pair, "serving as witness");
+        }
+        let (Some(f), Some(gate)) = (&self.config.failover, &self.gate) else {
+            return Ok(());
+        };
+        let arbiter = match (f.arbiter, f.witness) {
+            (ArbiterKind::Witness, Some(w)) => Arbiter::Witness(w),
+            (ArbiterKind::Operator, _) => Arbiter::Operator,
+            _ => Arbiter::Paths,
+        };
+        let epoch = self.store.load_epoch()?;
+        let mut cfg = FailoverConfig::new(f.partner, arbiter);
+        cfg.lease = Duration::from_millis(f.lease_ms);
+        cfg.margin = Duration::from_millis(f.margin_ms);
+        cfg.epoch = epoch;
+        let handle = self
+            .rt
+            .start_failover(cfg)
+            .map_err(|e| NodeError::Invalid(format!("failover: {e}")))?;
+        tracing::info!(partner = f.partner, epoch, "failover started");
+        tokio::spawn(gate::follow(
+            gate.clone(),
+            self.rt.clone(),
+            self.store.epoch_saver(),
+            epoch,
+            handle.subscribe(),
+            self.stop.subscribe(),
+        ));
+        let _ = self.failover.set(handle);
+        Ok(())
+    }
+
+    /// This node's failover standing.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] without `[failover]`.
+    pub fn failover(&self) -> Result<FailoverInfo, NodeError> {
+        let (Some(f), Some(handle)) = (&self.config.failover, self.failover.get()) else {
+            return Err(NodeError::NotFound(
+                "this node has no [failover] in its config".into(),
+            ));
+        };
+        let now = handle.leadership();
+        let singletons = self.gate.as_ref().map(|g| g.names()).unwrap_or_default();
+        Ok(FailoverInfo {
+            partner: f.partner,
+            arbiter: match f.arbiter {
+                ArbiterKind::Witness => format!("witness {}", f.witness.unwrap_or_default()),
+                ArbiterKind::Paths => "paths".into(),
+                ArbiterKind::Operator => "operator".into(),
+            },
+            role: gate::role_name(now.standing).into(),
+            epoch: now.epoch,
+            may_run: now.may_run,
+            awaiting_confirmation: now.awaiting_confirmation,
+            partner_reachable: self.rt.peer_status(f.partner).is_some_and(|s| s.reachable),
+            singletons,
+        })
+    }
+
+    /// An operator confirms that the partner is gone, so the standby may
+    /// promote itself (`paddock_host::failover::FailoverHandle::confirm`).
+    /// Safe only if the partner is down or cut off: with
+    /// `arbiter = "operator"`, or a witness that cannot be reached.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] without `[failover]`.
+    pub fn confirm_failover(&self) -> Result<Done, NodeError> {
+        let handle = self.failover.get().ok_or_else(|| {
+            NodeError::NotFound("this node has no [failover] in its config".into())
+        })?;
+        let now = handle.leadership();
+        handle.confirm();
+        self.audit.record(
+            "failover_confirm",
+            json!({ "epoch": now.epoch, "awaiting": now.awaiting_confirmation }),
+        );
+        Ok(Done {
+            message: if now.awaiting_confirmation {
+                "confirmed: this node is promoted once the partner's lease has run out".into()
+            } else {
+                "confirmed; this node was not waiting for confirmation, so nothing may change"
+                    .into()
+            },
+        })
+    }
+
+    /// Reload every HTTPS ingress's certificates from their files. An
+    /// ingress whose files fail keeps its old certificates.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Invalid`] naming each ingress that failed.
+    pub fn reload_tls(&self) -> Result<Done, NodeError> {
+        let mut failed: Vec<String> = self
+            .certificates
+            .iter()
+            .filter_map(|(name, tls)| tls.reload().err().map(|e| format!("http.{name}: {e}")))
+            .collect();
+        let quic = self
+            .quic
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(quic) = quic
+            && let Err(e) = quic.reload()
+        {
+            failed.push(format!("cluster: {e}"));
+        }
+        self.audit.record(
+            "reload_tls",
+            json!({ "ingresses": self.certificates.len(), "failed": failed }),
+        );
+        if !failed.is_empty() {
+            return Err(NodeError::Invalid(failed.join("; ")));
+        }
+        Ok(Done {
+            message: format!("reloaded {} HTTPS ingress(es)", self.certificates.len()),
+        })
+    }
+
     /// The admin socket this node's configuration names.
     #[must_use]
     pub fn socket(&self) -> std::path::PathBuf {
         self.config.socket()
     }
+}
+
+/// Reload `tls` whenever its files change, checking every `every`, until
+/// `stop`.
+async fn watch_certificates(
+    name: String,
+    tls: IngressTls,
+    every: Duration,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            _ = stop.wait_for(|s| *s) => return,
+            () = tokio::time::sleep(every) => {}
+        }
+        match tls.reload_if_changed() {
+            Ok(true) => tracing::info!(ingress = name, "TLS certificates reloaded"),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::error!(ingress = name, error = %e, "TLS reload failed; keeping the old certificates")
+            }
+        }
+    }
+}
+
+/// The runtime's metrics, then the HTTP ingress's.
+fn metrics_text(rt: &Runtime, http: Option<&HttpIngress>) -> String {
+    let mut text = rt.render_metrics();
+    if let Some(http) = http {
+        let s = http.stats();
+        for (name, help, value) in [
+            (
+                "paddock_http_requests_total",
+                "HTTP requests answered.",
+                s.requests,
+            ),
+            (
+                "paddock_http_server_errors_total",
+                "HTTP requests answered with a 5xx status.",
+                s.server_errors,
+            ),
+            (
+                "paddock_http_not_found_total",
+                "HTTP requests that matched no route.",
+                s.not_found,
+            ),
+            (
+                "paddock_http_refused_connections_total",
+                "Connections closed on accept, over max_connections.",
+                s.refused,
+            ),
+        ] {
+            text.push_str(&format!(
+                "# HELP {name} {help}\n# TYPE {name} counter\n{name} {value}\n"
+            ));
+        }
+    }
+    text
 }
 
 /// What a bundle's component compiled to.

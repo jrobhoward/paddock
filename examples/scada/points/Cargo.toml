@@ -1,0 +1,21 @@
+[package]
+name = "example-scada-points"
+version = "0.0.0"
+description = "Paddock example: a pool that keeps Modbus point updates in a shared bucket"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["keyvalue"] }
+serde = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

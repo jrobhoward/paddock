@@ -1,0 +1,31 @@
+# A counter on the bulletin board: the node's shared `board` bucket, on
+# disk. Needs, in node config:
+#
+#   [http.main]
+#   address = "127.0.0.1:8080"
+#
+#   [buckets.board]
+#   durability = "disk"
+#
+# and in policy:
+#
+#   [apps.board]
+#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
+#   buckets = ["board"]
+#
+# examples/tutorial walks through it.
+[app]
+name = "board"
+version = "1.0.0"
+description = "A counter on a shared disk bucket, over HTTP (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.capabilities."wasi:http/incoming-handler"]
+routes = [{ path_prefix = "/board" }]
+max_body = "1KiB"
+timeout_ms = 5000
+
+[appserver.capabilities."wasi:keyvalue".shared]
+board = "rw"
+
+[appserver.capabilities."wasi:logging"]

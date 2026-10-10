@@ -42,6 +42,30 @@ pub struct Limits {
     /// Most concurrent outbound connections. Not enforced in Phase 1.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outbound_connections: Option<u32>,
+    /// Most pending `send-after` timers per instance. Unset uses the node's
+    /// value, which is also the most a manifest may ask for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timers_max: Option<u32>,
+    /// Most monitors one instance holds on others. Unset uses the node's
+    /// value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monitors_max: Option<u32>,
+    /// Most links one instance may hold when it links again. Unset uses the
+    /// node's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub links_max: Option<u32>,
+    /// Most calls one instance holds unanswered after `noreply`. Unset uses
+    /// the node's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_calls_max: Option<u32>,
+    /// Most process groups one instance is in (`paddock:groups`). Unset
+    /// uses the node's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub groups_max: Option<u32>,
+    /// Most keyvalue watches one instance holds (`paddock:watch`). Unset
+    /// uses the node's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watches_max: Option<u32>,
 }
 
 impl Default for Limits {
@@ -56,6 +80,12 @@ impl Default for Limits {
             storage_quota: None,
             open_files: None,
             outbound_connections: None,
+            timers_max: None,
+            monitors_max: None,
+            links_max: None,
+            pending_calls_max: None,
+            groups_max: None,
+            watches_max: None,
         }
     }
 }
@@ -79,8 +109,18 @@ impl Limits {
         if self.message_max_bytes.bytes() == 0 {
             v.error_at("message_max_bytes", "must be greater than zero");
         }
-        if self.fuel_per_message == Some(0) {
-            v.error_at("fuel_per_message", "must be greater than zero");
+        for (field, value) in [
+            ("fuel_per_message", self.fuel_per_message),
+            ("timers_max", self.timers_max.map(u64::from)),
+            ("monitors_max", self.monitors_max.map(u64::from)),
+            ("links_max", self.links_max.map(u64::from)),
+            ("pending_calls_max", self.pending_calls_max.map(u64::from)),
+            ("groups_max", self.groups_max.map(u64::from)),
+            ("watches_max", self.watches_max.map(u64::from)),
+        ] {
+            if value == Some(0) {
+                v.error_at(field, "must be greater than zero");
+            }
         }
     }
 }

@@ -195,6 +195,16 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "limits": { "memory_max": "5GiB" } }), "limits.memory_max")]
 #[case(json!({ "limits": { "callback_deadline_ms": 0 } }), "limits.callback_deadline_ms")]
 #[case(json!({ "limits": { "mailbox_max": 0 } }), "limits.mailbox_max")]
+#[case(json!({ "limits": { "timers_max": 0 } }), "limits.timers_max")]
+#[case(json!({ "limits": { "monitors_max": 0 } }), "limits.monitors_max")]
+#[case(json!({ "limits": { "links_max": 0 } }), "limits.links_max")]
+#[case(json!({ "limits": { "pending_calls_max": 0 } }), "limits.pending_calls_max")]
+#[case(json!({ "limits": { "groups_max": 0 } }), "limits.groups_max")]
+#[case(json!({ "limits": { "watches_max": 0 } }), "limits.watches_max")]
+#[case(json!({ "capabilities": { "wasi:keyvalue": { "shared": { "Points": "ro" } } } }), "capabilities.wasi:keyvalue.shared.Points")]
+#[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "p": {} }, "shared": { "p": "rw" } } } }), "capabilities.wasi:keyvalue.shared.p")]
+#[case(json!({ "capabilities": { "paddock:groups": { "join": ["Bad Name"] } } }), "capabilities.paddock:groups.join[0]")]
+#[case(json!({ "capabilities": { "paddock:groups": { "publish": ["a", "a"] } } }), "capabilities.paddock:groups.publish[1]")]
 #[case(json!({ "lifecycle": { "init_timeout_ms": 0 } }), "lifecycle.init_timeout_ms")]
 #[case(json!({ "instances": { "count": 2, "max": 4 } }), "instances.count")]
 #[case(json!({ "instances": { "min": 4, "max": 2 } }), "instances.max")]
@@ -214,6 +224,9 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/33" }] } } }), "capabilities.wasi:sockets.connect[0].cidr")]
 #[case(json!({ "capabilities": { "wasi:http/outgoing-handler": { "allow": ["x"], "methods": ["get"] } } }), "capabilities.wasi:http/outgoing-handler.methods[0]")]
 #[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "orders" }] } } }), "capabilities.wasi:http/incoming-handler.routes[0].path_prefix")]
+#[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [] } } }), "capabilities.wasi:http/incoming-handler.routes")]
+#[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/", "hash_header": "x tenant" }] } } }), "capabilities.wasi:http/incoming-handler.routes[0].hash_header")]
+#[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/" }], "timeout_ms": 0 } } }), "capabilities.wasi:http/incoming-handler.timeout_ms")]
 #[case(json!({ "capabilities": { "wasi:logging": { "rate_limit_per_sec": 0 } } }), "capabilities.wasi:logging.rate_limit_per_sec")]
 #[case(json!({ "api": { "messages": [{ "name": "ping", "pattern": "cast", "response_schema": "s.json" }] } }), "api.messages[0].response_schema")]
 #[case(json!({ "api": { "messages": [{ "name": "a", "pattern": "call" }, { "name": "a", "pattern": "cast" }] } }), "api.messages[1].name")]
@@ -325,7 +338,7 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             "wasi:keyvalue": { "buckets": { "r": { "durability": "replicated" } } }
         },
         "upgrade": { "mode": "blue-green" },
-        "placement": { "mode": "hot-standby" },
+        "placement": { "mode": "all-nodes", "required_labels": { "zone": "a" }, "spread": "zone" },
         "health": {},
         "observability": { "metrics": true, "trace_sampling": 0.1 }
     }))
@@ -356,7 +369,9 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
                 Phase::Phase3
             ),
             ("upgrade.mode".into(), Phase::Later),
-            ("placement".into(), Phase::Phase3),
+            ("placement.mode".into(), Phase::Phase3),
+            ("placement.required_labels".into(), Phase::Phase3),
+            ("placement.spread".into(), Phase::Phase3),
             ("health".into(), Phase::Phase2),
             ("observability.metrics".into(), Phase::Phase2),
             ("observability.trace_sampling".into(), Phase::Phase2),

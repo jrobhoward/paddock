@@ -271,7 +271,12 @@ impl Liveness {
         node: u32,
         now: Instant,
     ) -> &'a mut Peer {
-        peers.entry(node).or_insert_with(|| Peer {
+        peers.entry(node).or_insert_with(|| self.fresh(now))
+    }
+
+    /// A peer as if just heard: reachable, at session 0.
+    fn fresh(&self, now: Instant) -> Peer {
+        Peer {
             creation: None,
             session: 0,
             link: PathState::new(now),
@@ -282,7 +287,7 @@ impl Liveness {
                 .into_iter()
                 .map(|name| (name, PathState::new(now)))
                 .collect(),
-        })
+        }
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<NodeEvent> {
@@ -362,10 +367,15 @@ impl Liveness {
         })
     }
 
-    /// Raise the session with `node` and return the new number.
+    /// Raise the session with `node` and return the new number. A node no
+    /// longer watched (it left) stays unwatched: recreating it here, with a
+    /// raised number and no creation, would make the first frames of its
+    /// next start look stale, and its join would be dropped.
     pub(crate) fn end(&self, node: u32) -> u64 {
         let mut peers = self.peers();
-        let peer = self.peer(&mut peers, node, Instant::now());
+        let Some(peer) = peers.get_mut(&node) else {
+            return 0;
+        };
         peer.session += 1;
         peer.session
     }
@@ -387,16 +397,28 @@ impl Liveness {
                     path: LINK.to_string(),
                 });
             }
-            if let Some(known) = peer.creation
-                && creation != known
-            {
-                if creation < known {
-                    Session::Stale
-                } else {
-                    peer.creation = Some(creation);
-                    peer.session = session;
+            if peer.creation.is_some_and(|known| creation < known) {
+                Session::Stale
+            } else if peer.creation != Some(creation) {
+                // The first frame from this start of the node (a restart,
+                // or a node watched before it was ever heard): what was
+                // known of it belongs to an earlier start, its being
+                // unreachable included, which would refuse every reply to
+                // its join. Start over as for a node never seen.
+                // A restart ends the old session; a first start has no
+                // session to end, and its numbering is adopted.
+                let result = if peer.creation.is_some() {
                     Session::Newer(session)
+                } else {
+                    Session::Current
+                };
+                if !peer.reachable {
+                    events.push(NodeEvent::Reachable { node });
                 }
+                *peer = self.fresh(Instant::now());
+                peer.creation = Some(creation);
+                peer.session = session;
+                result
             } else if session < peer.session {
                 peer.creation = Some(creation);
                 Session::Stale

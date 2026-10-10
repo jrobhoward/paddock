@@ -31,7 +31,6 @@
 //! Timing assumption, from S16: message delay plus clock drift stays below
 //! twice `margin`.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -74,10 +73,15 @@ pub struct FailoverConfig {
     /// the witness waits this long after. More than half of the worst
     /// message delay plus clock drift.
     pub margin: Duration,
+    /// The epoch to start at: the highest this node reached before it
+    /// stopped, kept on disk, so epochs (fencing tokens) never go back. 0
+    /// for a node's first start.
+    pub epoch: u64,
 }
 
 impl FailoverConfig {
-    /// A configuration with a 3 s lease and a 500 ms margin.
+    /// A configuration with a 3 s lease and a 500 ms margin, starting at
+    /// epoch 0.
     #[must_use]
     pub fn new(partner: u32, arbiter: Arbiter) -> Self {
         Self {
@@ -85,9 +89,15 @@ impl FailoverConfig {
             arbiter,
             lease: Duration::from_secs(3),
             margin: Duration::from_millis(500),
+            epoch: 0,
         }
     }
 }
+
+/// Keeps the witness's state durable: called with the new epoch and the
+/// node promoted at it before a grant is answered. An error withholds the
+/// grant (the requester asks again).
+pub type WitnessPersist = Arc<dyn Fn(u64, u32) -> Result<(), String> + Send + Sync>;
 
 /// How the witness arbitrates one pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +111,9 @@ pub struct WitnessConfig {
     pub lease: Duration,
     /// As in [`FailoverConfig`]; both must agree.
     pub margin: Duration,
+    /// The epoch and the node promoted at it, as last kept on disk, for a
+    /// witness that restarts; `None` starts at epoch 1 with `first`.
+    pub resume: Option<(u64, u32)>,
 }
 
 impl WitnessConfig {
@@ -112,6 +125,7 @@ impl WitnessConfig {
             first,
             lease: Duration::from_secs(3),
             margin: Duration::from_millis(500),
+            resume: None,
         }
     }
 }
@@ -223,10 +237,17 @@ impl FailoverHandle {
 }
 
 /// Failover state on a runtime: a node's inbox, or the witness.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct Shared {
     inbox: Mutex<Option<mpsc::UnboundedSender<FailoverMsg>>>,
     witness: Mutex<Option<Witness>>,
+    persist: Mutex<Option<WitnessPersist>>,
+}
+
+impl std::fmt::Debug for Shared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Shared").finish_non_exhaustive()
+    }
 }
 
 impl Shared {
@@ -234,10 +255,26 @@ impl Shared {
     pub(crate) fn deliver(&self, rt: &RuntimeInner, from: u32, msg: FailoverMsg) {
         let reply = {
             let mut witness = self.witness.lock().unwrap_or_else(PoisonError::into_inner);
-            witness.as_mut().map(|w| w.handle(from, msg.clone()))
+            witness.as_mut().map(|w| {
+                w.handle(from, msg.clone())
+                    .map(|r| (r, w.epoch, w.promoted))
+            })
         };
         match reply {
-            Some(Some(reply)) => {
+            Some(Some((reply, epoch, promoted))) => {
+                if matches!(reply, FailoverMsg::Granted { .. }) {
+                    let persist = self
+                        .persist
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clone();
+                    if let Some(persist) = persist
+                        && let Err(e) = persist(epoch, promoted)
+                    {
+                        tracing::error!(error = %e, "witness state not kept; grant withheld");
+                        return;
+                    }
+                }
                 transport::send(rt, from, Frame::Failover(reply));
             }
             Some(None) => {}
@@ -392,7 +429,7 @@ impl Runtime {
         }
         let initial = Leadership {
             standing: Standing::Down,
-            epoch: 0,
+            epoch: cfg.epoch,
             may_run: false,
             awaiting_confirmation: false,
         };
@@ -419,6 +456,20 @@ impl Runtime {
     /// [`HostError::Engine`] if this node already serves as a witness, or
     /// `first` is not in the pair.
     pub fn serve_witness(&self, cfg: WitnessConfig) -> Result<(), HostError> {
+        self.serve_witness_kept(cfg, None)
+    }
+
+    /// [`Runtime::serve_witness`], keeping its state with `persist` before
+    /// each grant.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Runtime::serve_witness`].
+    pub fn serve_witness_kept(
+        &self,
+        cfg: WitnessConfig,
+        persist: Option<WitnessPersist>,
+    ) -> Result<(), HostError> {
         if !cfg.pair.contains(&cfg.first) {
             return Err(HostError::Engine(format!(
                 "node {} is not in the pair {:?}",
@@ -437,12 +488,11 @@ impl Runtime {
         for node in cfg.pair {
             self.add_peer(node);
         }
-        *slot = Some(Witness {
-            epoch: 1,
-            promoted: cfg.first,
-            renewed: HashMap::new(),
-            cfg,
-        });
+        *rt.failover
+            .persist
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = persist;
+        *slot = Some(Witness::start(cfg));
         Ok(())
     }
 }

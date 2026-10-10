@@ -127,6 +127,110 @@ All notable changes are recorded here. The format follows
   compute) and `pool_load` (concurrent clients against a pool), with results
   in `docs/BASELINE.md`. The chaos fixture's `busy:<n>` command gives a call
   a fixed amount of guest work.
+- Host-object quotas per instance: manifest `limits.timers_max`,
+  `monitors_max`, `links_max` and `pending_calls_max`, with node defaults
+  under `[limits]` (10,000 each) that are also the most a manifest may ask
+  for. Over a limit, the instance crashes with `timer_limit`,
+  `monitor_limit`, `link_limit` or `pending_call_limit`. Timers whose message
+  was dropped by a full mailbox no longer stay counted as pending.
+- Process groups on one node (`paddock:groups@0.1.0`, `wit/groups`): `join`,
+  `leave`, `members` and `publish`, which casts one copy to each member. The
+  capability's manifest scope lists the groups an app may join and publish
+  to. Instances leave their groups on exit and keep them across upgrades.
+  `limits.groups_max` and node `[limits] groups_max` (default 1,000). SDK
+  feature `groups` (`paddock_sdk::groups`).
+- Shared keyvalue buckets: node config `[buckets.<name>]` (durability,
+  quota, `scope = "node"`), manifest `wasi:keyvalue` `shared.<name> = "ro"`
+  or `"rw"`, and policy `buckets = [...]`. Apps granted a shared bucket see
+  one copy; read-only grants refuse writes. Deploys report shared buckets as
+  `bucket:<name>` and refuse ones the node does not configure.
+- Keyvalue revisions: each change raises a bucket's revision and stamps the
+  keys written, in memory and on disk (groundwork for watches, H4).
+- `paddock:watch@0.1.0` (`wit/watch`), under the `wasi:keyvalue`
+  capability: reads with revisions, compare-and-swap and compare-and-delete
+  on a revision, and watches on a key or prefix that deliver conflated
+  `kv-changed` host events, resumable from a revision (`too-old` when the
+  bucket cannot replay). `limits.watches_max` and node `[limits]
+  watches_max` (default 1,000). SDK feature `watch` (`paddock_sdk::watch`).
+- `watch_cost` baseline harness (`paddock-host` example).
+- Extensions can run node-level work: `Extension::start` with an
+  `ExtensionNode` (node config from `[extensions."<package>"]`, casts to
+  apps by pool routing, a stop signal); `Runtime::start_extensions`.
+- Modbus TCP extension (`crates/paddock-modbus`, `paddock-modbus:modbus`),
+  in `paddock node` by default (`modbus` feature): polls devices from node
+  config and casts changed points per device and scan to an app, reports
+  devices offline, lets apps read and write listed devices, and serves
+  registers to Modbus masters. `modbus_load` throughput harness.
+- `examples/scada`: a hash-routed `points` pool keeping Modbus points in a
+  shared bucket, and an `hmi` connection handler answering over a listener.
+- HTTP ingress (`paddock_host::http`, node config `[http.<name>]`): apps'
+  `wasi:http/incoming-handler` routes (host, path prefix, `hash_header`,
+  `max_body`, `timeout_ms`) receive each request as a call, granted by
+  policy without an import; failures map to 404, 413, 502, 503 and 504.
+  SDK feature `http` (`paddock_sdk::http::{Request, Response}`);
+  `examples/http-counter`. Each `[http.<name>]` address caps connections
+  (`max_connections`) and the time to send headers (`header_timeout_ms`)
+  and a body (`body_timeout_ms`, 408), and refuses app replies over
+  `max_response` (502).
+- Secrets (`paddock:secrets@0.1.0`, `wit/secrets`): names listed in the
+  manifest, granted by name in policy (`secrets = [...]`), bound in node
+  config to a file or environment variable (`[secrets.<name>]`), read on
+  every call and never logged. SDK feature `secrets`.
+- Metrics (`paddock:metrics@0.1.0`, `wit/metrics`): app-defined counters,
+  gauges and histograms per app (`<prefix>_<name>`, `app` label,
+  `max_series`), host counters per app (callbacks, guest time, exits,
+  drops, instances, memory, mailbox depth) and HTTP ingress counters, in
+  the Prometheus text format: `paddock metrics`, `GET /v1/metrics`, and
+  `GET /metrics` on node config's `[metrics] address`. SDK feature
+  `metrics`.
+- HTTPS for the ingress: `tls = [{ cert, key, hosts }]` per `[http.<name>]`
+  (rustls on ring), certificates chosen by SNI, reloaded when their files
+  change (`tls_reload_s`), on SIGHUP, or with `paddock reload-tls`; a broken
+  file keeps the old certificates. Requests carry `scheme`.
+- QUIC between nodes (`paddock_host::transport::quic`, quinn on rustls with
+  ring): pinned Ed25519 keys instead of a certificate authority (TLS 1.3 raw
+  public keys, a peers file per node), a versioned CBOR wire format
+  (`transport::wire`), control and data streams per pair, redialing, and a
+  graceful leave. Node config `[cluster]` gains `key`, `peers` and
+  `identity_reload_s`; `seeds` are addresses. `paddock cluster keygen`,
+  `paddock cluster pubkey`, `paddock members` (`GET /v1/cluster`); calls and
+  casts by pid reach other nodes.
+- `examples/board`: a counter on a shared disk bucket over HTTP, with a
+  crash endpoint and the answering pid in every reply, plus a watcher that
+  logs each change (one component, two manifests).
+- `examples/tutorial`: chapter scripts with pauses and printed commands.
+  Chapter 1 crashes the board app and restarts its node (the count
+  survives); chapter 2 kills the primary of an HA pair (the app moves, its
+  disk bucket does not; a load balancer health check reaches the primary).
+  Chapters 3 (hot standby, after D4) and 4 (replicated buckets) are
+  outlined.
+- `examples/failover`: a demo script that fails a singleton over between
+  three `paddock node` processes, killing the primary with SIGKILL.
+- Failover on the node: `[failover]` (partner, arbiter `witness`, `paths` or
+  `operator`, lease and margin) makes a node one of an HA pair, and
+  `[witness]` (on a node with cluster role `witness`) arbitrates one.
+  `placement.mode = "singleton"` apps run only on the primary while it may
+  run them, start from `init` on promotion and are killed at once when it
+  may not; `hot-standby` apps run on both nodes and receive
+  `host-event("failover-role", "primary" | "standby" | "down")`. The epoch
+  and the witness's state are synced to disk before they are acted on.
+  `paddock failover` (`GET /v1/failover`) and `paddock failover confirm`
+  (`POST /v1/failover/confirm`). Deploy warnings now name only the placement
+  fields still unenforced (`all-nodes`, labels, `spread`).
+
+### Fixed
+
+- A node that left the cluster cleanly and restarted could not rejoin: the
+  closing connection re-created the departed peer with a raised session
+  number, so the new start's join was dropped as stale.
+- A node that restarted after a crash, or started after a peer had stopped
+  waiting for it, never rejoined: the peer still marked it unreachable and
+  refused every reply to its join. The first frame from a new start of a
+  node now resets what was known of it.
+- A graceful leave could be lost: a peer closed the connection when the
+  first of its two streams finished, discarding a `Leave` still unread on
+  the other, and kept the departed node as a member. A peer now closes once
+  both streams have finished, and the leaving node waits for that close.
 
 ### Changed
 
@@ -204,7 +308,9 @@ All notable changes are recorded here. The format follows
 - `docs/tla/`: TLA+ verification of failover in HAppliance's style. Layer 1
   is spike S16's model; layer 2 models the code with time, in rounds.
   `VERIFICATION.md` lists configs, results, bugs found and the
-  requirements each assumption puts on the code.
+  requirements each assumption puts on the code. Layer 2 models kept
+  epochs (`PersistEpoch`) and a witness that restarts without its renewal
+  record (`ForgetRenewals`), as the node now runs.
 - Failover fixes found by layer 2: the primary renews through its partner
   by an echo of its own stamp, not by a beat's arrival; a standby's
   confirmation time is when its beats stop confirming, recorded before a

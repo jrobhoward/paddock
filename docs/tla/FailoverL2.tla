@@ -22,8 +22,9 @@
  *     with EchoLease, else by arrival) and at the witness (by the renewal's
  *     send time). Its singleton runs while its lease countdown is positive.
  *   - The witness answers each request at once (Granted, NotYet with a wait,
- *     Refused) and keeps no pending request. Its epoch, last promotion and
- *     renewal record survive its crashes.
+ *     Refused) and keeps no pending request. Its epoch and last promotion
+ *     survive its crashes; its renewal record too, unless ForgetRenewals: then
+ *     it restarts counting the node it promoted as just renewed (the code).
  *   - A standby asks when it hears its partner on no path; it stops asking
  *     if it hears a primary again with no request in flight (cancel); it
  *     steps down after hearing its partner Down for a lease (stand-down).
@@ -48,6 +49,9 @@ CONSTANTS A, B, W
 CONSTANTS Lease, Margin, Timeout, Delay, MaxEpoch, QueueLen, MaxFaults
 \* Design switches: TRUE is the current code, FALSE the code before the fix.
 CONSTANTS EchoLease, ConfirmOnSend, PersistEpoch
+\* Whether the witness's renewal record is lost when it crashes (FALSE before
+\* the record was dropped from what it keeps on disk).
+CONSTANT ForgetRenewals
 \* Which faults the environment may inject.
 CONSTANTS LanFaults, SerialFaults, WanFaults, Crashes, WitnessCrashes
 \* Whether links can hold frames (else only lose them).
@@ -216,10 +220,16 @@ WitnessCrash ==
     /\ faults' = faults + 1
     /\ UNCHANGED <<nodeVars, wEpoch, wPromoted, wRenewedAge, chan, q>>
 
+\* With ForgetRenewals the record is lost: the node last promoted counts as
+\* renewed at the restart, never earlier than its true last renewal; the
+\* other has no record.
 WitnessRestart ==
     /\ ~wAlive
     /\ wAlive' = TRUE
-    /\ UNCHANGED <<nodeVars, wEpoch, wPromoted, wRenewedAge, chan, q, faults>>
+    /\ wRenewedAge' = IF ForgetRenewals
+                       THEN [n \in Pair |-> IF n = wPromoted THEN 0 ELSE Cap]
+                       ELSE wRenewedAge
+    /\ UNCHANGED <<nodeVars, wEpoch, wPromoted, chan, q, faults>>
 
 \* ------------------------------------------------------------------ beats
 

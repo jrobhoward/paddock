@@ -1,0 +1,35 @@
+# The point table: a pool routed by device. The node's Modbus extension
+# casts each device's updates here (`deliver_to = "points"`), and each
+# instance writes them into the shared `points` bucket. Needs, in node
+# config:
+#
+#   [buckets.points]
+#   durability = "memory"
+#
+#   [extensions."paddock-modbus:modbus".devices.pump-1]
+#   address = "10.0.0.5:502"
+#   deliver_to = "points"
+#   holding = [{ start = 0, count = 10 }]
+#
+# and in policy: grant = ["wasi:keyvalue", "paddock-modbus:modbus"],
+# buckets = ["points"].
+[app]
+name = "points"
+version = "1.0.0"
+description = "Modbus point table in a shared bucket (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver]
+registered_names = ["points-api"]
+
+[appserver.instances]
+count = 4
+routing = "hash:device"
+
+[appserver.capabilities."wasi:logging"]
+
+[appserver.capabilities."wasi:keyvalue".shared]
+points = "rw"
+
+[appserver.capabilities.extensions."paddock-modbus:modbus"]
+write = ["pump-1"]

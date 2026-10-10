@@ -176,6 +176,7 @@ pub(crate) fn demonitor(rt: &RuntimeInner, watcher: Pid, reference: u64) {
 /// Tell `pid`'s linked instances and monitors that it exited, on any node,
 /// and drop the monitors it held on other nodes.
 pub(crate) fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
+    rt.services.exited(pid);
     let notices = rt.links.on_exit(pid);
     for other in notices.linked {
         match route(rt, other) {

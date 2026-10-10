@@ -15,13 +15,14 @@ The method follows HAppliance's (`HAppliance/docs/tla/VERIFICATION.md`): layered
 
 Layer 2 keeps every time as an age or a countdown, capped where larger values change nothing, so its state space is finite. It runs in rounds: each tick has phases (faults, delivery of every frame due in a fixed link order, one node's turn and then the other's, either node first), and in its turn a node may beat, step, both in either order, or neither. A frame sent in one round arrives in the next unless its link holds or loses it. The rounds keep the interleavings that change the outcome (which node acts first, beat before or after step, skipped beats) and drop those that only reorder independent deliveries within a tick; the Rust simulation (`crates/paddock-host/tests/simulation/failover.rs`) runs on real interleavings and covers what rounds drop.
 
-Layer 2 has three design switches, so that each fix can be checked on its own:
+Layer 2 has four design switches, so that each fix or change can be checked on its own:
 
 | Switch | `FALSE` (the code before the fix) | `TRUE` (the code now) |
 | --- | --- | --- |
 | `EchoLease` | the primary renews from the arrival time of a confirming beat | it renews from when it set the stamp the standby echoes |
 | `ConfirmOnSend` | the standby refreshes its "last confirmed" time on each step that hears its partner | the time is when its beats stop confirming, recorded before any request leaves |
 | `PersistEpoch` | a restarted node comes back at epoch 0 | it keeps its epoch |
+| `ForgetRenewals` | the witness's renewal record survives its crashes | a restarted witness counts the node it promoted as renewed at the restart, and has no record of the other |
 
 ## Results
 
@@ -40,18 +41,20 @@ Run from 2026-10-08 to 2026-10-10: TLC 2026.02.28, OpenJDK 21, 16 cores, 62 GB. 
 
 ### Layer 2
 
-Exhaustive runs (breadth first, every reachable state), from 2026-10-08 to 2026-10-10. A fault is a crash, a witness crash, or a link lost or held; restarts and heals are free, so one fault is a whole failure and recovery.
+Exhaustive runs (breadth first, every reachable state), from 2026-10-08 to 2026-10-10, with every switch as in the code now except where noted. A fault is a crash, a witness crash, or a link lost or held; restarts and heals are free, so one fault is a whole failure and recovery.
 
 | Config | Faults | Distinct states | Depth | Time | Result |
 | --- | --- | --- | --- | --- | --- |
-| `L2_Crashes_Fixed1` | one crash, witness crash or lost link | 154,064,875 | 310 | 19 min (8 workers) | pass |
-| `L2_Crashes_Fixed` | up to two of the same | 8,367,682,206 | 364 | 19 h 40 min | pass (see below) |
+| `L2_Crashes_Fixed1` | one crash, witness crash or lost link | 149,712,184 | 310 | 17 min 30 s (12 workers) | pass |
+| `L2_Crashes_Fixed` | up to two of the same | 8,367,682,206 | 364 | 19 h 40 min | pass, before the last two switches (see below) |
 | `L2_Links_Fixed_loss2` | up to two links lost, nothing held; includes LAN and serial both cut | 4,675,991,758 | 362 | 9 h 54 min (8 workers) | pass (see below) |
 | `L2_Links_Fixed_holds1` | one link held or lost | 908,291,071 | 349 | 2 h 18 min (8 workers) | pass |
 
+`PersistEpoch` and `ForgetRenewals` act only when a node or the witness restarts, so the Links configurations, which have neither, are the same with either setting. The crash configurations were run again with both on (2026-10-10), except the two-fault `L2_Crashes_Fixed`: its exhaustive result above is with both off (epochs lost on restart, the renewal record kept), and with both on it has passed random simulation only.
+
 `L2_Links_Fixed` (up to three faults, holds allowed) is too large to finish: with two faults it had 335 million states at depth 53 and a growing queue when stopped. Holds are what make it large, so it is split into the two configurations above.
 
-TLC stores each state as a 64-bit fingerprint, and two states with the same fingerprint count as one. For `L2_Crashes_Fixed1` it puts the chance of such a collision at 0.0015, for `L2_Links_Fixed_holds1` at 0.08; for `L2_Links_Fixed_loss2` (4.7 billion states) and `L2_Crashes_Fixed` (8.4 billion), at about 1, so in each run a state or two (and any reached only through them) were most likely not checked. A second run with another fingerprint seed (`-fp`) would close this; the random simulations below cover the same configurations independently.
+TLC stores each state as a 64-bit fingerprint, and two states with the same fingerprint count as one. For `L2_Crashes_Fixed1` it puts the chance of such a collision at 0.006, for `L2_Links_Fixed_holds1` at 0.08; for `L2_Links_Fixed_loss2` (4.7 billion states) and `L2_Crashes_Fixed` (8.4 billion), at about 1, so in each run a state or two (and any reached only through them) were most likely not checked. A second run with another fingerprint seed (`-fp`) would close this; the random simulations below cover the same configurations independently.
 
 Random simulation (TLC `-simulate`, traces up to 400 steps):
 
@@ -60,7 +63,8 @@ Random simulation (TLC `-simulate`, traces up to 400 steps):
 | `L2_Code` | 11 | `AtMostOneRunning` violated (bug 1) |
 | `L2_Crashes_Code` | 10 | `AtMostOneRunning` violated |
 | `L2_Links_Code` | 8 | `AtMostOneRunning` violated |
-| `L2_Crashes_Fixed` | 21,728 | pass |
+| `L2_Fixed` | 243,045 | pass |
+| `L2_Crashes_Fixed` | 270,012 | pass |
 | `L2_Links_Fixed` | 19,947 | pass |
 
 ## Bugs found
@@ -103,7 +107,7 @@ From layer 2:
 | --- | --- | --- | --- |
 | R8 | `EchoLease` | Renewal through the partner is timed by the primary's own stamp, echoed | `node::Primary::step` |
 | R9 | `ConfirmOnSend` | The confirmation time is when the payload stops confirming, recorded before a request leaves | `node::Ctx::ask`, `node::Node::publish` |
-| R10 | The witness's epoch, last promotion and renewal record survive its crashes | Kept on disk and synced before a grant is answered | Not yet: the witness's state is in memory (ROADMAP D10, node wiring) |
+| R10 | The witness's epoch and last promotion survive its crashes; its renewal record does not (`ForgetRenewals`) | Kept on disk and synced before a grant is answered | The epoch and promoted node: `data_dir/witness-state`, synced before a grant (`serve_witness_kept`). The renewal record is not kept: a restarted witness counts its promoted node as renewed at the restart (`witness::Witness::start`), which is never earlier than the true record |
 | R11 | Every frame a witness answers was sent at most `Delay` before (on an up link) | Message delay plus clock drift stays below the margin | Deployment: margin 500 ms by default |
 
 ## Assumptions not tested

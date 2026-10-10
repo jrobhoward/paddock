@@ -13,7 +13,9 @@ use std::fmt;
 /// from before a node restarted never reaches an instance started after
 /// ([`crate::transport::membership`]). Pids print as
 /// `<node.serial.incarnation@creation>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct Pid {
     /// Node hosting the instance.
     pub node: u32,

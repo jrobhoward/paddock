@@ -1,0 +1,20 @@
+[package]
+name = "example-http-counter"
+version = "0.0.0"
+description = "Paddock example: a counter served over HTTP through the node's ingress"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["http"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

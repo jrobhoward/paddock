@@ -24,13 +24,25 @@
 //! ([`crate::services`]): fail softly when not granted, count time spent
 //! waiting as host time ([`ServiceCtx::add_host_time`]), and read named
 //! resources from the scope rather than host paths.
+//!
+//! An extension that works on its own schedule (polling devices, serving a
+//! port) does it from [`Extension::start`], which runs once the node's apps
+//! are up: it gets its node configuration (`[extensions."<package>"]`) and
+//! an [`ExtensionNode`] to send messages to apps, and stops its tasks when
+//! [`ExtensionNode::stopped`] completes.
 
 use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
+use tokio::sync::watch;
 use wasmtime::component::{HasData, Linker};
 
 use super::ServiceCtx;
+use crate::apps::Apps;
+use crate::error::HostError;
+use crate::message::{CallError, Envelope};
 use crate::state::InstanceState;
 
 /// The data every instance's Store holds. Opaque: an extension reaches its
@@ -60,6 +72,110 @@ pub trait Extension: Send + Sync + 'static {
     ///
     /// A message if the scope is invalid; the instance then fails to start.
     fn instance(&self, app: &ExtensionApp<'_>) -> Result<Box<dyn Any + Send>, String>;
+
+    /// Start node-level work: called once, after the node's apps start,
+    /// with the extension's node configuration. Tasks it spawns end when
+    /// [`ExtensionNode::stopped`] completes. Nothing by default.
+    ///
+    /// # Errors
+    ///
+    /// A message if the configuration is invalid; the node then refuses to
+    /// start.
+    fn start(&self, node: ExtensionNode) -> Result<(), String> {
+        let _ = node;
+        Ok(())
+    }
+}
+
+/// What an extension's node-level work reaches: its configuration, the
+/// node's apps, and a stop signal. Cheap to clone.
+#[derive(Debug, Clone)]
+pub struct ExtensionNode {
+    config: serde_json::Value,
+    apps: Apps,
+    stop: watch::Receiver<bool>,
+}
+
+impl ExtensionNode {
+    /// The extension's node configuration (null if the node has none).
+    #[must_use]
+    pub fn config(&self) -> &serde_json::Value {
+        &self.config
+    }
+
+    /// Cast `msg` to the app named `app`, picking an instance by the app's
+    /// `instances.routing` (a `hash:<field>` pool keeps each key on one
+    /// instance).
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Noproc`] if no such app runs, and the target's errors
+    /// (`overloaded` for a full mailbox, `too-large`).
+    pub fn cast(&self, app: &str, msg: Envelope) -> Result<(), CallError> {
+        self.apps.app(app).ok_or(CallError::Noproc)?.cast(msg)
+    }
+
+    /// Completes when the node stops; end the extension's tasks then.
+    pub async fn stopped(&self) {
+        let mut stop = self.stop.clone();
+        let _ = stop.wait_for(|stopped| *stopped).await;
+    }
+
+    /// Whether the node has stopped.
+    #[must_use]
+    pub fn is_stopped(&self) -> bool {
+        *self.stop.borrow()
+    }
+}
+
+/// Started extensions; [`StartedExtensions::stop`] (or dropping it) tells
+/// their tasks to end.
+#[derive(Debug)]
+pub struct StartedExtensions {
+    stop: watch::Sender<bool>,
+}
+
+impl StartedExtensions {
+    /// Tell every extension's tasks to end.
+    pub fn stop(&self) {
+        self.stop.send_replace(true);
+    }
+}
+
+impl Drop for StartedExtensions {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Start every extension with its entry in `configs` (by package).
+pub(crate) fn start(
+    extensions: &[Arc<dyn Extension>],
+    apps: &Apps,
+    configs: &BTreeMap<String, serde_json::Value>,
+) -> Result<StartedExtensions, HostError> {
+    if let Some(unknown) = configs
+        .keys()
+        .find(|k| !extensions.iter().any(|e| e.package() == k.as_str()))
+    {
+        return Err(HostError::InvalidApps(format!(
+            "configuration for extension '{unknown}', which this node does not have"
+        )));
+    }
+    let (stop, stopped) = watch::channel(false);
+    for ext in extensions {
+        let node = ExtensionNode {
+            config: configs
+                .get(ext.package())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            apps: apps.clone(),
+            stop: stopped.clone(),
+        };
+        ext.start(node)
+            .map_err(|e| HostError::InvalidApps(format!("extension {}: {e}", ext.package())))?;
+    }
+    Ok(StartedExtensions { stop })
 }
 
 /// What an extension knows about an instance when it builds its state.

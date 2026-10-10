@@ -1,0 +1,40 @@
+package paddock:groups@0.1.0;
+
+/// Process groups on one node, with publish. Separate from
+/// `paddock:runtime` so the frozen app world does not change; an app
+/// imports it only if it calls it.
+///
+/// An app declares the groups it may join and publish to in its manifest
+/// (`capabilities."paddock:groups"`), and the operator grants the
+/// capability. Every function returns `access-denied` without the grant, or
+/// for a group the manifest does not list for that use.
+interface groups {
+  use paddock:runtime/types@0.1.0.{pid, envelope};
+
+  /// Why a group operation failed.
+  variant error {
+    /// The capability is not granted, or the manifest does not list the
+    /// group for this use (`join` for join and leave, `join` or `publish`
+    /// for members, `publish` for publish).
+    access-denied,
+    /// Joining would exceed the instance's `limits.groups_max`.
+    limit-reached,
+  }
+
+  /// Join a group. Joining a group the instance is in already does
+  /// nothing. The instance leaves every group when it exits; an upgrade
+  /// keeps its groups.
+  join: func(group: string) -> result<_, error>;
+
+  /// Leave a group. Leaving a group the instance is not in does nothing.
+  leave: func(group: string) -> result<_, error>;
+
+  /// The group's members on this node, ordered by pid.
+  members: func(group: string) -> result<list<pid>, error>;
+
+  /// Cast `msg` to every member, including the publisher if it is one.
+  /// Returns how many members' mailboxes took it. A member whose mailbox is
+  /// full drops it and counts it as a dropped cast; a member whose
+  /// `message_max_bytes` is smaller than the body does not receive it.
+  publish: func(group: string, msg: envelope) -> result<u32, error>;
+}
