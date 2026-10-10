@@ -28,8 +28,11 @@ fn bound(port: u16) -> String {
     format!("[listeners.lines]\naddress = \"127.0.0.1:{port}\"\n")
 }
 
+/// The idle timeout is long because a connection held open across an
+/// upgrade sits idle while the new version compiles, which under a loaded
+/// debug test run can take several seconds.
 fn manifest() -> serde_json::Value {
-    json!({ "listeners": [{ "name": "lines", "idle_timeout_ms": 5000 }] })
+    json!({ "listeners": [{ "name": "lines", "idle_timeout_ms": 60_000 }] })
 }
 
 /// A line connection.

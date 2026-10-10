@@ -22,6 +22,8 @@
 # Checks:
 #   fmt          cargo fmt --check
 #   clippy       clippy on every target and feature, -Dwarnings
+#   build        cargo build --workspace --all-targets: links what clippy and
+#                the tests do not (the guest crates' native cdylibs)
 #   cli-no-node  paddock without its `node` feature builds and has no wasmtime
 #   test         cargo test --workspace (needs the wasm32-wasip2 target)
 #   doc          rustdoc with warnings as errors
@@ -44,7 +46,7 @@ set -uo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
-all_checks="fmt clippy cli-no-node test doc deny msrv guests secrets conventions changelog"
+all_checks="fmt clippy build cli-no-node test doc deny msrv guests secrets conventions changelog"
 quick_checks="fmt clippy conventions test"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -113,6 +115,10 @@ check_fmt() {
 
 check_clippy() {
     cargo clippy --workspace --all-targets --all-features --locked -- -Dwarnings
+}
+
+check_build() {
+    cargo build --workspace --all-targets --locked
 }
 
 # `paddock` without its `node` feature is the CLI and bundle tooling only; it

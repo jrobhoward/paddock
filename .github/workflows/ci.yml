@@ -56,6 +56,9 @@ jobs:
       - name: Clippy
         run: scripts/check.sh clippy
 
+      - name: Build every target
+        run: scripts/check.sh build
+
       - name: CLI without the node
         run: scripts/check.sh cli-no-node
 

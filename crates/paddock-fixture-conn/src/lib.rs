@@ -98,4 +98,6 @@ impl Guest for Handler {
     }
 }
 
+// Wasm only: native linkers refuse the `:` in the export's symbol.
+#[cfg(target_family = "wasm")]
 bindings::export!(Handler with_types_in bindings);

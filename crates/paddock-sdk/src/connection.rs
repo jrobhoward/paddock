@@ -175,9 +175,27 @@ macro_rules! connection {
             }
         }
 
+        // The export's symbol (`paddock:connection/handler@...#serve`) has a
+        // `:`, which native linkers refuse in a version script; it only
+        // means anything in a Wasm component.
+        #[cfg(target_family = "wasm")]
         $crate::connection::bindings::export_connection!(
             __PaddockConnection with_types_in $crate::connection::bindings
         );
+
+        /// Keeps the handler reachable in native builds, which have no
+        /// export, so it is still compiled and linted there.
+        #[cfg(not(target_family = "wasm"))]
+        #[doc(hidden)]
+        pub fn __paddock_connection_serve(
+            info: $crate::connection::bindings::exports::paddock::connection::handler::ConnectionInfo,
+            input: $crate::connection::bindings::wasi::io::streams::InputStream,
+            output: $crate::connection::bindings::wasi::io::streams::OutputStream,
+        ) -> ::core::result::Result<(), ::std::string::String> {
+            <__PaddockConnection as $crate::connection::bindings::exports::paddock::connection::handler::Guest>::serve(
+                info, input, output,
+            )
+        }
     };
 }
 

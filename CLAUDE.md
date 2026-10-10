@@ -418,7 +418,8 @@ sets `shell: bash`.
 Before considering any change to the main workspace complete:
 
 - `scripts/check.sh` passes. It runs, each with a line of result: the tests
-  (`cargo test --workspace`), clippy with `-Dwarnings`, the CLI built
+  (`cargo test --workspace`), clippy with `-Dwarnings`, a native build of
+  every target, the CLI built
   without the `node` feature, rustdoc with warnings as errors, `cargo fmt
   --check`, `cargo deny`, the MSRV check, the guest builds with their
   `wasm-tools` checks and fixture test, `scripts/check-secrets.sh`, the test

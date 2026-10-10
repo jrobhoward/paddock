@@ -252,6 +252,10 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- `paddock_sdk::connection!` and the connection fixture export the handler
+  only in Wasm builds, so `cargo build --workspace --all-targets` links on
+  the host: the export's symbol has a `:`, which native linkers refuse.
+  `scripts/check.sh` gains a `build` check, run in CI on every OS.
 - Failover: an operator's `paddock failover confirm` given while nothing
   was wrong stayed in force, and on a later cut of network and serial line
   promoted the standby while the primary still ran, so both ran the
