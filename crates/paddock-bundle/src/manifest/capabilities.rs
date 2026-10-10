@@ -663,8 +663,12 @@ impl FilesystemScope {
                         );
                     }
                     v.name("volume", &preopen.volume);
-                    if preopen.quota.is_some_and(|q| q.bytes() == 0) {
-                        v.error_at("quota", "must be greater than zero");
+                    if preopen.quota.is_some() {
+                        v.error_at(
+                            "quota",
+                            "is not enforced on a volume; the operator sets a \
+                             filesystem quota on the volume's directory instead",
+                        );
                     }
                 });
             });
@@ -691,7 +695,11 @@ pub struct Preopen {
     /// Read-only or read-write.
     #[serde(default)]
     pub mode: AccessMode,
-    /// Most bytes the volume may hold. Not enforced in Phase 1.
+    /// Refused when set: Paddock cannot enforce a byte quota on a
+    /// preopened directory, so the operator sets a filesystem quota on the
+    /// volume's directory instead (a ZFS dataset quota, an XFS project
+    /// quota, a mount of its own). Kept so a manifest that sets it gets
+    /// that error rather than an unknown field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota: Option<ByteSize>,
 }

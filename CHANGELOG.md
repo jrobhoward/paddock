@@ -311,6 +311,9 @@ All notable changes are recorded here. The format follows
   refused if their group or others may access them, as ssh does:
   `chmod 600` them. Keys written by `paddock keygen` and `paddock cluster
   keygen` already are.
+- A manifest `quota` on a `wasi:filesystem` preopen is refused; it was
+  accepted with a warning and never enforced. Give a writable volume a
+  filesystem quota instead (MANIFEST.md).
 - A bundle with a `priv/` path that is not plain relative names (`..`,
   `.`, a root, an empty part, `:` or a backslash) is refused by Paddock
   itself, on open and again on extraction, not only by rustbridge-bundle.

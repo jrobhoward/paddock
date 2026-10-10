@@ -153,7 +153,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | Clocks, random | `wasi:clocks`, `wasi:random` | always granted |
 | WASI plumbing | `wasi:io`, `wasi:cli` | always granted; Rust's standard library imports them. Stdout and stderr become tagged logs, and the environment holds only what the host sets |
 | Term storage | `wasi:keyvalue` | buckets, durability (memory, disk, replicated), quota bytes |
-| Files | `wasi:filesystem` | preopens: guest path → host volume, read-only or read-write, quota |
+| Files | `wasi:filesystem` | preopens: guest path → host volume, read-only or read-write |
 | HTTP out | `wasi:http/outgoing-handler` | allowed hosts and ports, methods, max concurrent |
 | HTTP in | `wasi:http/incoming-handler` | routes (host, path prefix), max body size |
 | Sockets | `wasi:sockets` | allowed CIDRs and ports, listen yes/no |
@@ -174,7 +174,7 @@ Every instance gets its own wasmtime `Store`, linear memory and limits, and sees
 | CPU, deterministic | Fuel per message (optional) | Costs more. Use for untrusted tenants or metering. |
 | Threads | Host-owned tokio pool; instances are single-threaded | Wasm threads support in WASI is unsettled, so don't depend on it. Scale with instance pools. |
 | Mailbox | mailbox_max per instance; message_max_bytes | When full: cast is dropped and counted, call fails fast with `overloaded`. |
-| Filesystem | WASI preopens per manifest grant; read-only or read-write | cap-std stops path escapes. Quotas need a custom `wasi:filesystem` backend or OS quotas per volume. |
+| Filesystem | WASI preopens per manifest grant; read-only or read-write | cap-std stops path escapes. No byte quota: that needs a custom `wasi:filesystem` backend, so a manifest `quota` on a preopen is refused and the operator sets a filesystem quota per volume (SECURITY.md, S6). |
 | Network | `wasi:sockets` address check hook; `wasi:http` through a filtering proxy | Default deny. Prefer HTTP egress over raw sockets. |
 | Storage | `wasi:keyvalue` buckets with byte quotas | Host-owned, so data survives instance crashes. |
 | Host calls | Every import runs a policy check and a rate limit | Each host function is attack surface; keep the set small. |
@@ -559,7 +559,7 @@ Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and
       "wasi:logging": { "max_level": "info" },
       "wasi:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1GiB" } } },
       "wasi:http/outgoing-handler": { "allow": ["https://payments.internal"] },
-      "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw", "quota": "5GiB" } } }
+      "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } }
     },
     "messaging_acl": { "accept_from": ["web", "billing"] },
     "upgrade": { "mode": "snapshot", "snapshot_version": 3, "from_versions": [">=1.2 <1.4"] },

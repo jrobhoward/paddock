@@ -20,7 +20,7 @@ const DESIGN_EXAMPLE: &str = r#"{
       "wasi:logging": { "max_level": "info" },
       "wasi:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1GiB" } } },
       "wasi:http/outgoing-handler": { "allow": ["https://payments.internal"] },
-      "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw", "quota": "5GiB" } } }
+      "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } }
     },
     "messaging_acl": { "accept_from": ["web", "billing"] },
     "upgrade": { "mode": "snapshot", "snapshot_version": 3, "from_versions": [">=1.2, <1.4"] },
@@ -221,6 +221,8 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "b": { "quota": 0 } } } } }), "capabilities.wasi:keyvalue.buckets.b.quota")]
 #[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "data": { "volume": "v" } } } } }), "capabilities.wasi:filesystem.preopens.data")]
 #[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data/../etc": { "volume": "v" } } } } }), "capabilities.wasi:filesystem.preopens./data/../etc")]
+#[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "v", "mode": "rw", "quota": "5GiB" } } } } }), "capabilities.wasi:filesystem.preopens./data.quota")]
+#[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "v", "quota": "1MiB" } } } } }), "capabilities.wasi:filesystem.preopens./data.quota")]
 #[case(json!({ "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/33" }] } } }), "capabilities.wasi:sockets.connect[0].cidr")]
 #[case(json!({ "capabilities": { "wasi:http/outgoing-handler": { "allow": ["x"], "methods": ["get"] } } }), "capabilities.wasi:http/outgoing-handler.methods[0]")]
 #[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "orders" }] } } }), "capabilities.wasi:http/incoming-handler.routes[0].path_prefix")]
@@ -317,7 +319,6 @@ fn unenforced_fields____design_example____lists_later_phase_fields() {
         fields,
         vec![
             "capabilities.wasi:http/outgoing-handler is not enforced until Phase 2",
-            "capabilities.wasi:filesystem.preopens./data.quota is not enforced until a later phase",
             "messaging_acl is not enforced until Phase 2",
             "config.secrets is not enforced until Phase 2",
         ]

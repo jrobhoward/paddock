@@ -108,18 +108,6 @@ impl AppSpec {
                 );
             }
         }
-        if let Some(fs) = &self.capabilities.filesystem {
-            for (path, preopen) in &fs.preopens {
-                out.add_if(
-                    preopen.quota.is_some(),
-                    format!(
-                        "capabilities.{}.preopens.{path}.quota",
-                        Capability::Filesystem.key()
-                    ),
-                    Phase::Later,
-                );
-            }
-        }
     }
 
     /// `messaging_acl`, `config`, `upgrade`, `placement`, `health` and

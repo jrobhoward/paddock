@@ -152,7 +152,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
 | `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `paddock:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
 | `paddock:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. | enforced |
-| `wasi:filesystem` | `preopens."<guest path>" = { volume, mode, quota }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`; `quota` is *not enforced*. `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
+| `wasi:filesystem` | `preopens."<guest path>" = { volume, mode }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`. Paddock enforces no byte quota on a volume and refuses `quota` here: give each writable volume a filesystem quota of its own (a ZFS dataset quota, an XFS project quota, or a separate mount). `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
 | `wasi:http/incoming-handler` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
 | `paddock:secrets` | `secrets = ["db-password"]`: names the app reads. Each name needs a `[secrets.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`secrets = [...]`); reading an ungranted one returns `access-denied`. | enforced |
 | `paddock:metrics` | `prefix` (required; letters, digits, `_`): every metric is exported as `<prefix>_<name>` with an `app` label. `max_series` (default 1000): most name and label combinations the app may hold; past it, registering returns `limit-reached`. | enforced |
@@ -234,7 +234,7 @@ memory_profile = "standard"            # or "dense": 128 MiB cap per instance, m
 epoch_tick_ms = 2                      # granularity of callback deadlines and preemption
 
 [volumes]
-orders-data = "/srv/paddock/orders"    # backs manifest preopens with volume = "orders-data"
+orders-data = "/srv/paddock/orders"    # backs manifest preopens with volume = "orders-data"; give it a filesystem quota
 
 [listeners.lines]
 address = "0.0.0.0:7070"               # binds a manifest listener named "lines"

@@ -31,7 +31,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Guest and host
 
 - **Controls.** wasmtime's sandbox with a pooling allocator; `memory_max`, table and instance limits; the callback deadline enforced at epoch ticks; bounded mailboxes and `message_max_bytes`; host-object limits (timers, monitors, links, pending calls, groups, watches); deny stubs for ungranted imports; imports checked against the manifest at deploy. Exit signals into an instance are bounded by the node's instance count, timers and watch notices by their own limits.
-- **Gaps.** S6 (volume quota). S2 and S3 are fixed.
+- **Gaps.** None found; S2, S3 and S6 are fixed. A writable volume is bounded only by the filesystem quota the operator gives it.
 
 ### App and app
 
@@ -84,7 +84,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 | S3 | medium, fixed 2026-10-10 | Guest stdout and stderr became log records with no rate limit, and an app's own `rate_limit_per_sec` was optional, so one app could flood the node's log. | Fixed: every app has a budget, the node's `[limits] log_records_per_sec` (default 1000) or its own lower rate, shared by its log records and its stdout and stderr lines. |
 | S4 | medium, fixed 2026-10-10 | The Modbus server accepted reads and writes from any master that reached its address; a write changes the served table and is cast to the `deliver_to` app. | Fixed: `server.allow` lists the masters' addresses or networks, loopback only by default; MANIFEST.md says to bind it to the SCADA interface. A cap on connections is still to do (tokio-modbus's server gives no hook for it). |
 | S5 | low, fixed 2026-10-10 | A pair node took failover answers (`Granted`, `LeaseOk`, `Fenced`, `NotYet`, `Refused`) from any member, not only its witness: a faulty member's `Granted` promotes the standby. | Fixed: answers from any node but the configured witness are dropped and logged. |
-| S6 | low | A volume's `quota` is not enforced (documented): an app with a writable volume can fill the disk. | Enforce the quota, or refuse `rw` volumes without a filesystem-level quota. |
+| S6 | low, fixed 2026-10-10 | A volume's `quota` was accepted but not enforced (documented): an app with a writable volume can fill the disk. | Fixed: a manifest `quota` on a preopen is refused, since wasmtime-wasi offers no place to enforce one; MANIFEST.md tells operators to give each writable volume a filesystem quota. |
 | S7 | low, fixed 2026-10-10 | `priv/` extraction relied on rustbridge-bundle for path safety. | Fixed: Paddock refuses a bundle with a `priv/` path that is not plain relative names (`..`, `.`, a root, an empty part, `:` or a backslash), on open and again on extraction. |
 | S8 | low, fixed 2026-10-10 | Each incoming `Frame::Call` started a task with no bound; an honest peer is bounded by its instances' `pending_calls_max`, a faulty one was not. | Fixed: at most `[cluster] incoming_calls_max` (default 10,000) calls from one peer run at once; beyond it a call is answered `overloaded`, with one warning until the peer is back to half the limit. |
 | S9 | low, fixed 2026-10-10 | The cluster key and signer keys were loaded without checking their permissions. | Fixed: a key its group or others may access is refused, with a message to `chmod 600` it. |
