@@ -128,7 +128,7 @@ check_cli_no_node() {
 # The host tests build the guest fixtures themselves, so they need the target.
 check_test() {
     need_target wasm32-wasip2 || return 1
-    cargo test --workspace --locked
+    cargo test --workspace --locked --no-fail-fast
 }
 
 check_doc() {

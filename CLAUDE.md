@@ -21,6 +21,13 @@ before changing anything structural:
   outside them in the roadmap instead of widening the change.
 - `spikes/*/README.md`: what each spike measured and what it changed.
 
+## Local machines
+
+Details of the machines this checkout tests on (the Raspberry Pi 5 for T3,
+G2 and F5: host, logins, toolchain) are in `CLAUDE.local.md`, which is
+gitignored. Read it before work on real hardware. Never copy hostnames,
+logins or addresses from it into tracked files or commit messages.
+
 ## Commands
 
 ```bash

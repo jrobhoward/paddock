@@ -41,7 +41,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Stage 1: Tooling (S)
 
-- [ ] **T3 Raspberry Pi 5 build.** Cross-build for `aarch64-unknown-linux-gnu`, then build and run the tests on the Pi once. Problems found here, such as address space or memory defaults, go to stage 3 rather than being found after the benchmarks. G2 measures later.
+Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test run on the Raspberry Pi 5 (CHANGELOG). What the Pi run found is Q4 and Q9.
 
 ## Stage 2: Review (M)
 
@@ -66,11 +66,12 @@ Filled in by stage 2; the items known already:
 - [ ] **Q1 Feature flags** as R5 decides.
 - [ ] **Q2 Node layout and bundle store** as R5 decides, with G4 (cache compiled components in the store, so a restart does not recompile) since both change the store.
 - [ ] **Q3 Logging and rotation** as R5 decides.
-- [ ] **Q4 Known defects.** `cargo build --workspace --all-targets` fails linking `paddock-fixture-conn` natively (a `:` in an export symbol; `cargo test` is unaffected). `crates/paddock/tests/listeners.rs`'s lifecycle test is flaky under full-suite load.
+- [ ] **Q4 Known defects.** `cargo build --workspace --all-targets` fails linking `paddock-fixture-conn` natively (a `:` in an export symbol; `cargo test` is unaffected). `crates/paddock/tests/listeners.rs`'s lifecycle test is flaky under full-suite load (also seen once on the Raspberry Pi 5, 2026-10-10; it passed three runs alone there).
 - [ ] **Q5 Test gaps** from R2.
 - [ ] **Q6 Security fixes and fuzz targets** from R3.
 - [ ] **Q7 Refactors** from R5.
 - [ ] **Q8 A paused primary runs on after its lease.** A primary stopped past its lease (`SIGSTOP`, or any pause of the process) still runs its singleton when it continues, until its failover loop sees the lease has ended and the gate kills it; the standby was promoted meanwhile. `scripts/soak.sh` found this window in one of three 1.5-minute failover runs on 2026-10-10: about 2 ms (16-core Linux machine). A callback can run in it. Candidates: the instance loop checks the lease against the monotonic clock before each callback of a singleton, or the gate holds singletons' mailboxes while the lease is not current. The fix closes or narrows assumption A8 in `docs/tla/VERIFICATION.md`; V1 applies if it changes `failover/`.
+- [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
 
 ### Verification of failover
 
