@@ -25,7 +25,7 @@ Layer 2 has three design switches, so that each fix can be checked on its own:
 
 ## Results
 
-Run on 2026-10-08 and 2026-10-09: TLC 2026.02.28, OpenJDK 21, 16 cores, 62 GB. `Lease = 3`, `Margin = 1`, `Timeout = 2`, `Delay = 1` ticks, `MaxEpoch = 3`, one frame per link direction.
+Run from 2026-10-08 to 2026-10-10: TLC 2026.02.28, OpenJDK 21, 16 cores, 62 GB. `Lease = 3`, `Margin = 1`, `Timeout = 2`, `Delay = 1` ticks, `MaxEpoch = 3`, one frame per link direction.
 
 ### Layer 1
 
@@ -40,18 +40,18 @@ Run on 2026-10-08 and 2026-10-09: TLC 2026.02.28, OpenJDK 21, 16 cores, 62 GB. `
 
 ### Layer 2
 
-Exhaustive runs (breadth first, every reachable state), on 2026-10-08 and 2026-10-09. A fault is a crash, a witness crash, or a link lost or held; restarts and heals are free, so one fault is a whole failure and recovery.
+Exhaustive runs (breadth first, every reachable state), from 2026-10-08 to 2026-10-10. A fault is a crash, a witness crash, or a link lost or held; restarts and heals are free, so one fault is a whole failure and recovery.
 
 | Config | Faults | Distinct states | Depth | Time | Result |
 | --- | --- | --- | --- | --- | --- |
 | `L2_Crashes_Fixed1` | one crash, witness crash or lost link | 154,064,875 | 310 | 19 min (8 workers) | pass |
 | `L2_Crashes_Fixed` | up to two of the same | 8,367,682,206 | 364 | 19 h 40 min | pass (see below) |
-| `L2_Links_Fixed_loss2` | up to two links lost, nothing held; includes LAN and serial both cut | running | | | |
-| `L2_Links_Fixed_holds1` | one link held or lost | running | | | |
+| `L2_Links_Fixed_loss2` | up to two links lost, nothing held; includes LAN and serial both cut | 4,675,991,758 | 362 | 9 h 54 min (8 workers) | pass (see below) |
+| `L2_Links_Fixed_holds1` | one link held or lost | 908,291,071 | 349 | 2 h 18 min (8 workers) | pass |
 
 `L2_Links_Fixed` (up to three faults, holds allowed) is too large to finish: with two faults it had 335 million states at depth 53 and a growing queue when stopped. Holds are what make it large, so it is split into the two configurations above.
 
-TLC stores each state as a 64-bit fingerprint, and two states with the same fingerprint count as one. For `L2_Crashes_Fixed1` it puts the chance of such a collision at 0.0015; for `L2_Crashes_Fixed`, at 8.4 billion states, at about 1, so one or two states (and any reached only through them) were most likely not checked. A second run with another fingerprint seed (`-fp`) would close this; the random simulations below cover the same configuration independently.
+TLC stores each state as a 64-bit fingerprint, and two states with the same fingerprint count as one. For `L2_Crashes_Fixed1` it puts the chance of such a collision at 0.0015, for `L2_Links_Fixed_holds1` at 0.08; for `L2_Links_Fixed_loss2` (4.7 billion states) and `L2_Crashes_Fixed` (8.4 billion), at about 1, so in each run a state or two (and any reached only through them) were most likely not checked. A second run with another fingerprint seed (`-fp`) would close this; the random simulations below cover the same configurations independently.
 
 Random simulation (TLC `-simulate`, traces up to 400 steps):
 
