@@ -283,9 +283,15 @@ pub struct ClusterConfig {
     #[serde(default = "default_node_timeout_ms")]
     pub node_timeout_ms: u64,
     /// The UDP address (`ip:port`) this node listens on for other nodes
-    /// and tells them to reach it at. Unset runs no cluster transport.
+    /// and, without `advertise`, tells them to reach it at. Unset runs no
+    /// cluster transport.
     #[serde(default)]
     pub address: Option<String>,
+    /// The address (`ip:port`) other nodes reach this node at, when it is
+    /// not `address`: behind NAT, port forwarding or a proxy. Needs
+    /// `address`.
+    #[serde(default)]
+    pub advertise: Option<String>,
     /// Addresses (`ip:port`) of nodes to join through; each is redialed
     /// whenever its connection is lost.
     #[serde(default)]
@@ -316,6 +322,7 @@ impl Default for ClusterConfig {
             heartbeat_interval_ms: default_heartbeat_ms(),
             node_timeout_ms: default_node_timeout_ms(),
             address: None,
+            advertise: None,
             seeds: Vec::new(),
             key: None,
             peers: None,
@@ -510,7 +517,17 @@ impl NodeConfig {
                 "node config: cluster.address needs cluster.key and cluster.peers".into(),
             ));
         }
-        for addr in cluster.address.iter().chain(&cluster.seeds) {
+        if cluster.advertise.is_some() && cluster.address.is_none() {
+            return Err(NodeError::Invalid(
+                "node config: cluster.advertise needs cluster.address".into(),
+            ));
+        }
+        for addr in cluster
+            .address
+            .iter()
+            .chain(&cluster.advertise)
+            .chain(&cluster.seeds)
+        {
             if addr.parse::<std::net::SocketAddr>().is_err() {
                 return Err(NodeError::Invalid(format!(
                     "node config: cluster address '{addr}' is not ip:port"

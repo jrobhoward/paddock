@@ -121,6 +121,7 @@ From layer 2:
 | A5 | Bounded faults per run (two, exhaustively; one where frames are held), epochs up to 3, one frame per link direction | Medium | Typical of model checking; random simulation allows three faults with holds |
 | A6 | Only the witness arbiter is modelled in layer 2 | Medium | `Paths` and `Operator` run without leases and rest on layer 1's `L1_NoLeaseSafe` or the operator's judgement |
 | A7 | A node steps and beats at most once per tick | Low | The code steps and beats once per heartbeat interval |
+| A8 | A node's process is never paused | High | Not held: a primary paused past its lease runs its singleton for about 2 ms after it continues, until its loop sees the lease has ended, while the standby already runs it. Found by `scripts/soak.sh` (`SIGSTOP`, 2026-10-10); ROADMAP Q8 |
 
 ## Running the specifications
 

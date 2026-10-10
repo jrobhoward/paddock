@@ -266,6 +266,7 @@ role = "member"                        # or "witness": runs no apps, refuses dep
 heartbeat_interval_ms = 1000           # how often each peer is told this node is alive
 node_timeout_ms = 5000                 # silence that ends a peer's session; more than the interval
 address = "10.0.0.1:7400"              # UDP: QUIC between nodes; unset runs no cluster transport
+advertise = "192.0.2.7:7400"           # optional: where peers reach this node (NAT, a proxy); default address
 seeds = ["10.0.0.2:7400"]              # nodes to join through, redialed whenever lost
 key = "/etc/paddock/node.key"          # this node's private key: paddock cluster keygen
 peers = "/etc/paddock/peers.toml"      # every node's public key: [peers] 2 = ["ed25519:..."]

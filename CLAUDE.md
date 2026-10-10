@@ -31,6 +31,11 @@ scripts/check.sh
 scripts/check.sh --quick
 scripts/check.sh clippy guests
 
+# Soak (not in CI): simulation seeds, failover between node processes under
+# faults, and the chaos app, in turn; each failure keeps a run directory
+# under target/soak/ with its seed and logs.
+scripts/soak.sh --hours 1
+
 # Build and test the main workspace
 cargo build --workspace --all-targets
 cargo test --workspace
@@ -188,8 +193,17 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.
-- `scripts/`: `check.sh` (every check; `--help`) and `check-secrets.sh` (run
-  before pushing; `--help`).
+- `crates/paddock-soak`: the `paddock-soak` binary behind `scripts/soak.sh`
+  (Unix only): `failover` runs a witness and a pair as `paddock node`
+  processes behind UDP proxies (each node binds `cluster.address` and
+  advertises its proxy's) under seeded faults, `chaos` the chaos example on
+  one node, and `check` reads a failover run's events and node logs for
+  any moment when both nodes ran the singleton. It reads the gate's
+  `singleton starting` and `singleton killed` log records; changing their
+  wording breaks the check (its tests hold sample lines).
+- `scripts/`: `check.sh` (every check; `--help`), `check-secrets.sh` (run
+  before pushing; `--help`) and `soak.sh` (hours of fault injection, not in
+  CI; `--help`).
 - `docs/`: design and plan. `docs/tla/`: TLA+ specifications of failover
   and their results (`VERIFICATION.md`); run with TLC, not in CI.
 - `spikes/`: throwaway programs that answered design questions

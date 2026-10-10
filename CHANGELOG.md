@@ -230,6 +230,20 @@ All notable changes are recorded here. The format follows
   names, test file layout and headers, and a CHANGELOG entry for changes to
   `crates/`, `examples/` or `wit/`. Guest crates are found from the
   workspace instead of a list. CI runs its checks through the script.
+- `scripts/soak.sh --hours N` and `paddock-soak`: hours of fault injection,
+  not run in CI. Each round runs the simulation's random scenarios and
+  failover schedules from new seeds; a witness and a pair as `paddock node`
+  processes behind user-space UDP proxies that cut, hold or drop each
+  direction, with `SIGKILL` and `SIGSTOP` of nodes, failing on any moment
+  when both nodes ran the singleton or a heal after which other than one
+  runs it; and the chaos example on a node, which must stay responsive with
+  bounded memory. A failed run keeps its seed and logs.
+- Node config `cluster.advertise`: the address other nodes reach this node
+  at, when it is not `cluster.address` (NAT, port forwarding, a proxy).
+- A node logs `singleton starting` before a singleton's `init` runs, also
+  when it starts at deploy, and `cannot start singleton` when that fails.
+- The failover simulation's random schedules start from
+  `PADDOCK_SIM_FAILOVER_FIRST_SEED` (default 0).
 
 ### Fixed
 

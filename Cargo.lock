@@ -1722,6 +1722,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "paddock-soak"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "paddock",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "pbkdf2"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -301,7 +301,12 @@ impl Node {
                     ClusterRole::Member => Role::Member,
                     ClusterRole::Witness => Role::Witness,
                 },
-                address: config.cluster.address.clone().unwrap_or_default(),
+                address: config
+                    .cluster
+                    .advertise
+                    .clone()
+                    .or_else(|| config.cluster.address.clone())
+                    .unwrap_or_default(),
                 host_objects: HostObjects {
                     timers: config.limits.timers_max,
                     monitors: config.limits.monitors_max,

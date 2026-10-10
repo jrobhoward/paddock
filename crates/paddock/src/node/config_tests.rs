@@ -190,6 +190,32 @@ fn NodeConfig____secrets____one_source_each() {
 const CLUSTERED: &str = "data_dir = \"/d\"\nnode = 1\n[cluster]\naddress = \"10.0.0.1:7400\"\nkey = \"/k\"\npeers = \"/p\"\n";
 
 #[test]
+fn NodeConfig____advertise_set____read_beside_address() {
+    let config =
+        NodeConfig::from_toml_str(&format!("{CLUSTERED}advertise = \"192.0.2.7:9400\"\n")).unwrap();
+
+    assert_eq!(config.cluster.address.as_deref(), Some("10.0.0.1:7400"));
+    assert_eq!(config.cluster.advertise.as_deref(), Some("192.0.2.7:9400"));
+}
+
+#[test]
+fn NodeConfig____advertise_without_address____refused() {
+    let err =
+        NodeConfig::from_toml_str("data_dir = \"/d\"\n[cluster]\nadvertise = \"192.0.2.7:9400\"\n")
+            .unwrap_err();
+
+    assert!(err.to_string().contains("needs cluster.address"), "{err}");
+}
+
+#[test]
+fn NodeConfig____advertise_not_ip_port____refused() {
+    let err =
+        NodeConfig::from_toml_str(&format!("{CLUSTERED}advertise = \"proxy\"\n")).unwrap_err();
+
+    assert!(err.to_string().contains("'proxy' is not ip:port"), "{err}");
+}
+
+#[test]
 fn NodeConfig____failover____read_with_defaults() {
     let config = NodeConfig::from_toml_str(&format!(
         "{CLUSTERED}[failover]\npartner = 2\narbiter = \"witness\"\nwitness = 3\n"

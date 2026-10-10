@@ -21,7 +21,7 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | Phase | Exit | Left |
 | --- | --- | --- |
 | 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Throughput and baseline numbers on an idle machine and the Pi (B7, G2) |
-| 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | D10's fault-injection exit (T2), C4, D3 to D9, D11 |
+| 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | D10 (the soak passes once Q8 is fixed), C4, D3 to D9, D11 |
 | 3: application server | One real workload runs a full release cycle with zero downtime | See "Phase 3" |
 
 The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md)), apart from one rerun (V2).
@@ -41,12 +41,6 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Stage 1: Tooling (S)
 
-- [ ] **T2 Soak runner and fault injection between processes.** `scripts/soak.sh --hours N`, not run in CI. It runs, from random starting seeds:
-  - the simulation tests' random scenarios and random failover schedules;
-  - a witness and a pair as `paddock node` processes, with a user-space UDP proxy between each pair of nodes (QUIC is UDP; no root) that cuts, holds or drops each direction, plus `SIGKILL` and `SIGSTOP` of nodes and the witness. A checker reads the singleton's start and stop records and fails on any overlap. This closes D10's remaining exit criteria (network cut: nobody promotes; network and serial cut: at most one runner);
-  - the chaos fixture on a node.
-
-  Every failure leaves its seed and logs in a run directory. The three-node partition tests for Phase 2b's exit (after D3) are added to the same runner.
 - [ ] **T3 Raspberry Pi 5 build.** Cross-build for `aarch64-unknown-linux-gnu`, then build and run the tests on the Pi once. Problems found here, such as address space or memory defaults, go to stage 3 rather than being found after the benchmarks. G2 measures later.
 
 ## Stage 2: Review (M)
@@ -76,6 +70,7 @@ Filled in by stage 2; the items known already:
 - [ ] **Q5 Test gaps** from R2.
 - [ ] **Q6 Security fixes and fuzz targets** from R3.
 - [ ] **Q7 Refactors** from R5.
+- [ ] **Q8 A paused primary runs on after its lease.** A primary stopped past its lease (`SIGSTOP`, or any pause of the process) still runs its singleton when it continues, until its failover loop sees the lease has ended and the gate kills it; the standby was promoted meanwhile. `scripts/soak.sh` found this window in one of three 1.5-minute failover runs on 2026-10-10: about 2 ms (16-core Linux machine). A callback can run in it. Candidates: the instance loop checks the lease against the monotonic clock before each callback of a singleton, or the gate holds singletons' mailboxes while the lease is not current. The fix closes or narrows assumption A8 in `docs/tla/VERIFICATION.md`; V1 applies if it changes `failover/`.
 
 ### Verification of failover
 
@@ -86,10 +81,10 @@ Filled in by stage 2; the items known already:
 
 DESIGN.md "Distribution", on the transport, membership and failover that exist. No item needs consensus; Raft (or HAppliance-style replication) comes with Phase 3's replicated buckets.
 
-- [ ] **D10 Failover: what is left.** The exit criteria under fault injection between processes (T2). The serial heartbeat path on real hardware moves to F5.
+- [ ] **D10 Failover: what is left.** An hour of `scripts/soak.sh --only failover` passes, which needs Q8. The criterion with the serial line up (network cut: nobody promotes) needs a serial path between processes, so it moves to F5 with the serial heartbeat on real hardware.
 - [ ] **D10b Planned switchover.** `paddock failover switchover`: the primary stands down and the standby takes over without waiting for a node timeout, for maintenance and to swap roles between hot-standby instances on purpose. A new transition, so V1 applies; the model gains the action first.
 - [ ] **C4 Spike S12.** A TLA+ model of remote links, monitors and `noconnection` with pid incarnations and C5's sessions (numbers on frames, `hears_you`, ending on either side), checked with a safe and an adversarial network. Time-box 3 days. If a rule does not hold, narrow Phase 2's guarantees to what the model shows. Before D3.
-- [ ] **D3 Remote pids, calls, casts, links and monitors between processes**, on the QUIC transport and the versioned wire format (D1). Instance ids hold the node's creation (settled 2026-10-08). From D1: QUIC over loopback in the simulation harness, and a throughput figure between nodes (B7).
+- [ ] **D3 Remote pids, calls, casts, links and monitors between processes**, on the QUIC transport and the versioned wire format (D1). Instance ids hold the node's creation (settled 2026-10-08). From D1: QUIC over loopback in the simulation harness, and a throughput figure between nodes (B7). Three-node partition runs for Phase 2b's exit join `scripts/soak.sh` (`paddock-soak`).
 - [ ] **D7 Health exports** (manifest `health`).
 - [ ] **D8 Backpressure between nodes**: what a sender sees when the link to a remote node is congested (DESIGN.md defines only full mailboxes).
 - [ ] **D5 Messaging ACLs** (`messaging_acl`): declared routes by app name (`may_call`, `accept_from`) checked against the host-stamped sender, local and remote. Capability tokens are parked.
@@ -101,13 +96,13 @@ DESIGN.md "Distribution", on the transport, membership and failover that exist. 
   3. A way to follow leadership from outside the node (`paddock failover --watch`, streaming), so an external virtual-IP agent (`ip addr` and `arping` with `CAP_NET_ADMIN` and `CAP_NET_RAW` only, or a cloud provider's API) can move an address. Only for sites that need one address; `paddock node` itself never gets network privileges. keepalived following Paddock's role is documented as a fallback.
 - [ ] **D9 Spike S11: passivation** of idle instances through the snapshot pair (snapshot, drop the Store, rebuild on the next message), for address-space headroom. Time-box 2 days. Shares the mechanism of S17.
 
-Exit (Phase 2b): T2's three-node partition and node-loss runs pass for an hour, and D10's exit criteria hold under T2.
+Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an hour, and D10's exit criteria hold under it.
 
 ## Stage 5: Platform features (L)
 
 - [ ] **E5 SQL datasources (Postgres)** (`paddock:sql`), brought forward from Phase 3. The host owns a connection pool per named datasource (`tokio-postgres`, permissive license), configured per node; the manifest requests a datasource and a connection cap; credentials come from E3's secrets. Built in by default (Q1) but idle without a datasource in node config, so a Pi without Postgres is unaffected. Tests and a tutorial chapter run against a scratch Postgres started as an ordinary user (`initdb` and `pg_ctl` in a temporary directory, or a rootless container), and are skipped when none is available. An app can also ship its own driver over `wasi:sockets` later (Phase 3 sockets).
 - [ ] **P1 Cluster shell**, as R5 decides, after D6: a `paddock` session to any node that lists members, follows logs and events, and runs admin commands; possibly over a WebSocket for streaming.
-- [ ] **F5 Serial extension.** Named serial ports declared by apps and bound to device paths in node config; the host owns the tty and offers a byte stream or framed messages; its own crate (A5). Then D10's serial heartbeat path on real hardware, and Modbus RTU.
+- [ ] **F5 Serial extension.** Named serial ports declared by apps and bound to device paths in node config; the host owns the tty and offers a byte stream or framed messages; its own crate (A5). Then D10's serial heartbeat path on real hardware, the soak's failover runs with the serial line up and cut (network cut: nobody promotes), and Modbus RTU.
 - [ ] **E2 HTTP egress** (`wasi:http/outgoing-handler`) through a filtering proxy with an allow-list and pooled connections (S15: wasmtime's default sender opens a connection per request).
 - [ ] **F4 Batching.** Guidance and an SDK helper for sending many updates in one message (a cast costs about 1.3 µs whatever it carries); points per second end to end with `pool_load`.
 - [ ] **H5 Ordered range scans** (ETS `ordered_set`), if shared-bucket users need them.
@@ -203,6 +198,7 @@ An area is a set of modules with a narrow interface to the rest: modules in crat
 | Node and admin | `paddock` (`node`, `api`, `cli`) | Admin API routes under `/v1`, the CLI, node config |
 | Guest SDK | `paddock-sdk`, `paddock-sdk-macros` | `App`, `Ctx`, envelopes, snapshots; services by cargo feature |
 | Fixtures and examples | `crates/paddock-fixture-*`, `examples/` | Guest components and demos |
+| Soak | `paddock-soak`, `scripts/soak.sh` | `paddock node` processes through their config, admin API and logs; reads the gate's `singleton starting` and `singleton killed` records |
 
 Crates meant for publishing (all `publish = false` while the project is private): `paddock-sdk`, `paddock-sdk-macros`, `paddock-bundle`, `paddock-host`, `paddock` and `paddock-modbus`. App developers depend on the SDK only; extension developers on `paddock-host` only. Fewer crates are preferred.
 

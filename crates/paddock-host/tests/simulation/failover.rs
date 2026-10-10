@@ -313,13 +313,19 @@ fn operator____partner_silent____awaits_confirmation_then_promotes() {
 
 /// Random faults on links, the serial line and the witness for a while,
 /// then everything healed: never two runners, and one runner at the end.
+/// `PADDOCK_SIM_FAILOVER_SEEDS` seeds (default 16) from
+/// `PADDOCK_SIM_FAILOVER_FIRST_SEED` (default 0).
 #[test]
 fn failover____random_faults____never_two_runners_one_after_healing() {
-    let seeds = std::env::var("PADDOCK_SIM_FAILOVER_SEEDS")
-        .ok()
-        .map_or(16, |n| n.parse().unwrap());
+    let number = |name: &str, default: u64| {
+        std::env::var(name)
+            .ok()
+            .map_or(default, |n| n.parse().unwrap())
+    };
+    let first = number("PADDOCK_SIM_FAILOVER_FIRST_SEED", 0);
+    let seeds = number("PADDOCK_SIM_FAILOVER_SEEDS", 16);
     let mut failures = Vec::new();
-    for seed in 0..seeds {
+    for seed in first..first + seeds {
         let (overlap, runners, trace) = simulate(seed, 3, move |sim| async move {
             let pair = start(&sim, witness());
             pass(3000).await;

@@ -5,6 +5,11 @@
 //! The gate holds every singleton the node would run, in deploy order. A
 //! leadership with `may_run` starts them from `init`; one without kills
 //! them at once (no `terminate`: the lease may be ending).
+//!
+//! Each start logs `singleton starting` before the app's `init` runs and
+//! `singleton started` or `cannot start singleton` after; each kill logs
+//! `singleton killed` once it is done. `scripts/soak.sh` reads these
+//! records to check that no two nodes run a singleton at once.
 
 use std::sync::Mutex;
 use std::sync::PoisonError;
@@ -96,8 +101,10 @@ impl Gate {
         if !self.may_run.load(Ordering::Relaxed) {
             return Ok(None);
         }
+        tracing::info!(app = %name, "singleton starting: this node is primary");
         let added = self.apps.add(deployment).await;
-        if added.is_err() {
+        if let Err(e) = &added {
+            tracing::error!(app = %name, error = %e, "cannot start singleton");
             self.held().retain(|h| h.name != name);
         }
         added.map(Some)
@@ -192,6 +199,7 @@ impl Gate {
                 if self.apps.app(&name).is_some() {
                     continue;
                 }
+                tracing::info!(app = %name, "singleton starting: this node is primary");
                 match self.apps.add(current).await {
                     Ok(app) => {
                         app.set_previous(previous);
