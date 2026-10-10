@@ -120,6 +120,53 @@ pub(crate) fn handle(
     })
 }
 
+/// For the fuzz targets in `fuzz/` only: answer one request against
+/// tables of `sizes` (holding, input, coils, discrete). `function` picks
+/// the request: 0 to 3 read holding, input, coils and discrete with
+/// `count`; 4 and 5 write one register and many (`values`); 6 and 7 one
+/// coil and many (`values` non-zero). Returns the number of items read or
+/// written and the addresses of the points a write changed, or `None` for
+/// an exception.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+#[must_use]
+pub fn fuzz_request(
+    sizes: [u16; 4],
+    function: u8,
+    address: u16,
+    count: u16,
+    values: &[u16],
+) -> Option<(usize, Vec<u16>)> {
+    let mut tables = Tables {
+        holding: vec![0; usize::from(sizes[0])],
+        input: vec![0; usize::from(sizes[1])],
+        coils: vec![false; usize::from(sizes[2])],
+        discrete: vec![false; usize::from(sizes[3])],
+    };
+    let first = values.first().copied().unwrap_or_default();
+    let bits: Vec<bool> = values.iter().map(|&v| v != 0).collect();
+    let request = match function % 8 {
+        0 => Request::ReadHoldingRegisters(address, count),
+        1 => Request::ReadInputRegisters(address, count),
+        2 => Request::ReadCoils(address, count),
+        3 => Request::ReadDiscreteInputs(address, count),
+        4 => Request::WriteSingleRegister(address, first),
+        5 => Request::WriteMultipleRegisters(address, values.into()),
+        6 => Request::WriteSingleCoil(address, first != 0),
+        _ => Request::WriteMultipleCoils(address, bits.into()),
+    };
+    let (response, written) = handle(&mut tables, request).ok()?;
+    let items = match response {
+        Response::ReadHoldingRegisters(v) | Response::ReadInputRegisters(v) => v.len(),
+        Response::ReadCoils(v) | Response::ReadDiscreteInputs(v) => v.len(),
+        Response::WriteMultipleRegisters(_, n) | Response::WriteMultipleCoils(_, n) => {
+            usize::from(n)
+        }
+        _ => 1,
+    };
+    Some((items, written.iter().map(|p| p.address).collect()))
+}
+
 /// The served tables, shared by the server and guests.
 #[derive(Debug)]
 pub(crate) struct Served {

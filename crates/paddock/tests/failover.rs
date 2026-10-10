@@ -10,6 +10,7 @@
 
 mod common;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -30,7 +31,9 @@ fn keys(dir: &Path) -> std::path::PathBuf {
     let mut peers = String::from("[peers]\n");
     for n in [1, 2, 3] {
         let (private, public) = generate_key().unwrap();
-        std::fs::write(dir.join(format!("node-{n}.key")), private).unwrap();
+        let key = dir.join(format!("node-{n}.key"));
+        std::fs::write(&key, private).unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
         peers.push_str(&format!("{n} = [\"{public}\"]\n"));
     }
     let path = dir.join("peers.toml");

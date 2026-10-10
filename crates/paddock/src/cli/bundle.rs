@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use minisign::{KeyPair, PublicKey, SecretKey, SecretKeyBox};
+use paddock_bundle::check_key_permissions;
 use paddock_bundle::manifest::{AppSpec, is_valid_name};
 use rustbridge_bundle::{BundleBuilder, Manifest, Platform};
 use serde::Deserialize;
@@ -87,9 +88,11 @@ pub struct Bundled {
     pub priv_files: usize,
 }
 
-/// Read a minisign secret key, decrypting it with `PADDOCK_KEY_PASSWORD`
+/// Read a minisign secret key (refused if its group or others may read
+/// it, as ssh does), decrypting it with `PADDOCK_KEY_PASSWORD`
 /// when set (minisign prompts on the terminal otherwise).
 fn load_key(path: &Path) -> anyhow::Result<(String, SecretKey)> {
+    check_key_permissions(path)?;
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("cannot read key {}", path.display()))?;
     let parse = || {

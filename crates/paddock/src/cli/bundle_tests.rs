@@ -159,3 +159,18 @@ fn keygen____existing_files____refused() {
 
     assert!(again.is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn bundle____key_readable_by_others____refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let setup = Setup::new(KV_APP, &["wasi:keyvalue/store@0.2.0-draft"]);
+    let key = setup.path("signer.key");
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+    let result = setup.bundle(None, false);
+
+    let error = format!("{:#}", result.err().unwrap());
+    assert!(error.contains("chmod 600"), "{error}");
+    assert!(!setup.path("out.rbp").exists());
+}

@@ -17,7 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [bundle_open, manifest, parse, routing_key, process_ops]
+        target:
+          [bundle_open, manifest, parse, routing_key, process_ops,
+           wire_packet, failover_status, http_reply, state_view, modbus_request]
     steps:
       - uses: actions/checkout@v4
 

@@ -29,12 +29,15 @@ struct Node {
 
 impl Node {
     fn new(node: u32) -> Self {
-        let rt = Runtime::new(RuntimeConfig {
+        Self::with(RuntimeConfig {
             node,
             max_instances: 16,
             ..RuntimeConfig::default()
         })
-        .unwrap();
+    }
+
+    fn with(config: RuntimeConfig) -> Self {
+        let rt = Runtime::new(config).unwrap();
         let app = rt.load(chaos()).unwrap();
         Self { rt, app }
     }
@@ -78,6 +81,61 @@ async fn remote____call_and_cast____reach_the_other_node() {
     assert_eq!(to_dead, "err:noproc");
     a.kill();
     b.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote____calls_from_a_peer_at_its_limit____overloaded_until_one_ends() {
+    let n1 = Node::new(1);
+    let n2 = Node::with(RuntimeConfig {
+        node: 2,
+        max_instances: 16,
+        incoming_calls_per_peer: 2,
+        ..RuntimeConfig::default()
+    });
+    let mesh = Mesh::new(11);
+    mesh.join(&n1.rt).unwrap();
+    mesh.join(&n2.rt).unwrap();
+    let c = n2.spawn("");
+    let held: Vec<_> = (0..2)
+        .map(|_| {
+            let (rt, pid) = (n1.rt.clone(), c.pid());
+            // A probe below can take a place first; try again until held.
+            tokio::spawn(async move {
+                loop {
+                    let r = rt.call(pid, text("defer"), LONG).await;
+                    if r != Err(CallError::Overloaded) {
+                        break r;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+        })
+        .collect();
+    // Both held calls are in progress once a third is refused.
+    let started = Instant::now();
+    let over = loop {
+        let r = n1.rt.call(c.pid(), text("echo:x"), LONG).await;
+        if r.is_err() || started.elapsed() > LONG {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+
+    let local = n2.rt.call(c.pid(), text("echo:local"), LONG).await;
+    n2.rt.cast(c.pid(), text("answer:done")).unwrap();
+    let mut answered = Vec::new();
+    for h in held {
+        answered.push(h.await.unwrap());
+    }
+    let after = n1.rt.call(c.pid(), text("echo:after"), LONG).await;
+
+    assert_eq!(over, Err(CallError::Overloaded));
+    assert_eq!(body(&local.unwrap()), "local");
+    for a in answered {
+        assert_eq!(body(&a.unwrap()), "done");
+    }
+    assert_eq!(body(&after.unwrap()), "after");
+    c.kill();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

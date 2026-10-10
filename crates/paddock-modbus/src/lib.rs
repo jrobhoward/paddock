@@ -44,6 +44,11 @@ mod device;
 pub mod points;
 mod server;
 
+/// The server's request handling, for the fuzz targets in `fuzz/` only.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub use server::fuzz_request;
+
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;

@@ -322,7 +322,7 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub seeds: Vec<String>,
     /// This node's private key (`paddock cluster keygen`). Required with
-    /// `address`.
+    /// `address`. Refused if its group or others may access it.
     #[serde(default)]
     pub key: Option<PathBuf>,
     /// The peers file: every node's public key by node id. Required with
@@ -334,6 +334,14 @@ pub struct ClusterConfig {
     /// do).
     #[serde(default = "default_identity_reload_s")]
     pub identity_reload_s: u64,
+    /// Most calls from one other node handled at once; beyond it a call
+    /// is answered `overloaded`. 0 for no limit.
+    #[serde(default = "default_incoming_calls_max")]
+    pub incoming_calls_max: u32,
+}
+
+fn default_incoming_calls_max() -> u32 {
+    10_000
 }
 
 fn default_identity_reload_s() -> u64 {
@@ -352,6 +360,7 @@ impl Default for ClusterConfig {
             key: None,
             peers: None,
             identity_reload_s: default_identity_reload_s(),
+            incoming_calls_max: default_incoming_calls_max(),
         }
     }
 }

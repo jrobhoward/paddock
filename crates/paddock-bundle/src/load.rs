@@ -1,6 +1,6 @@
 //! Opening a bundle and verifying it against operator-trusted keys.
 
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crate::manifest::{
     AppInfo, AppManifest, AppSpec, ComponentRef, Kind, ManifestError, Provenance, SECTION,
@@ -71,6 +71,9 @@ impl VerifiedBundle {
             };
             if relative.is_empty() || path.ends_with('/') {
                 continue; // a directory entry
+            }
+            if !is_safe_priv_path(relative) {
+                return Err(BundleError::UnsafePath(relative.to_string()));
             }
             let bytes = loader.read_file_verified(&path)?;
             priv_files.push((relative.to_string(), bytes));
@@ -154,12 +157,16 @@ impl VerifiedBundle {
     ///
     /// # Errors
     ///
-    /// [`BundleError::Unreadable`] wrapping the I/O error.
+    /// [`BundleError::UnsafePath`] for a path that could leave `dir` (checked
+    /// again here, since `priv_files` is public), [`BundleError::Unreadable`]
+    /// wrapping an I/O error.
     pub fn extract_priv(&self, dir: &Path) -> Result<(), BundleError> {
         let io = |e: std::io::Error| BundleError::Unreadable(rustbridge_bundle::BundleError::Io(e));
+        if let Some((bad, _)) = self.priv_files.iter().find(|(p, _)| !is_safe_priv_path(p)) {
+            return Err(BundleError::UnsafePath(bad.clone()));
+        }
         std::fs::create_dir_all(dir).map_err(io)?;
         for (relative, bytes) in &self.priv_files {
-            // rustbridge refuses absolute paths and `..` in the files map.
             let target = dir.join(relative);
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(io)?;
@@ -224,3 +231,24 @@ fn prefix_section(err: ManifestError) -> ManifestError {
         ),
     }
 }
+
+/// Whether `relative`, a path under `priv/`, stays inside the directory it
+/// is extracted into: only plain names separated by `/`, none of them `.`
+/// or `..`, no root, and no `:` or backslash (a drive and a separator on
+/// Windows).
+/// rustbridge-bundle refuses such paths too; this check does not rely on it.
+pub(crate) fn is_safe_priv_path(relative: &str) -> bool {
+    !relative.is_empty()
+        && !relative.contains('\\')
+        && !relative.contains(':')
+        && relative
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+        && Path::new(relative)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+}
+
+#[cfg(test)]
+#[path = "load_tests.rs"]
+mod load_tests;

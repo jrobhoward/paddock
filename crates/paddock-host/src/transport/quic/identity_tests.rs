@@ -17,6 +17,17 @@ fn PublicKey____text_form____round_trips_and_rejects_junk() {
     assert!("rsa:AAAA".parse::<PublicKey>().is_err());
 }
 
+/// Make `path` readable by its owner only, as `load` requires.
+fn owner_only(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 #[test]
 fn load____key_and_peers_files____own_key_and_peer_keys() {
     let dir = tempfile::tempdir().unwrap();
@@ -25,6 +36,7 @@ fn load____key_and_peers_files____own_key_and_peer_keys() {
     let key = dir.path().join("node.key");
     let peers = dir.path().join("peers.toml");
     std::fs::write(&key, private).unwrap();
+    owner_only(&key);
     std::fs::write(&peers, format!("[peers]\n2 = [\"{other}\"]\n")).unwrap();
 
     let loaded = NodeIdentity {
@@ -53,4 +65,27 @@ fn parse_peers____bad_id_or_key____refused() {
             .contains("peers.1")
     );
     assert!(parse_peers("[peer]\n").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn load____key_readable_by_others____refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (private, _) = generate_key().unwrap();
+    let key = dir.path().join("node.key");
+    let peers = dir.path().join("peers.toml");
+    std::fs::write(&key, private).unwrap();
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::write(&peers, "[peers]\n").unwrap();
+
+    let result = NodeIdentity {
+        key: key.clone(),
+        peers,
+    }
+    .load();
+
+    let error = result.err().unwrap().to_string();
+    assert!(error.contains("chmod 600"), "{error}");
+    assert!(public_key_of(&key).is_err());
 }

@@ -59,6 +59,11 @@ pub enum BundleError {
         unknown: Vec<String>,
     },
 
+    /// A file under `priv/` has a path that could leave the directory it is
+    /// extracted into: absolute, with `..`, or not a plain relative path.
+    #[error("bundle file 'priv/{0}' has an unsafe path (absolute, '..' or a drive)")]
+    UnsafePath(String),
+
     /// The operator policy file could not be read or parsed.
     #[error("invalid operator policy: {0}")]
     Policy(String),

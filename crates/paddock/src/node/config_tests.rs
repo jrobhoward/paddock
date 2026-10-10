@@ -352,3 +352,13 @@ fn NodeConfig____log_records_per_sec____1000_by_default() {
 
     assert_eq!(config.limits.log_records_per_sec, 1000);
 }
+
+#[test]
+fn NodeConfig____incoming_calls_max____10000_by_default_and_settable() {
+    let default = NodeConfig::from_toml_str("data_dir = \"/d\"\n").unwrap();
+    let set = NodeConfig::from_toml_str("data_dir = \"/d\"\n[cluster]\nincoming_calls_max = 50\n")
+        .unwrap();
+
+    assert_eq!(default.cluster.incoming_calls_max, 10_000);
+    assert_eq!(set.cluster.incoming_calls_max, 50);
+}

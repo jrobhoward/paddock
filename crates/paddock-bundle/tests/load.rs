@@ -6,10 +6,11 @@
 
 mod common;
 
-use common::{Spec, WORLD, appserver, rewrite};
+use common::{Spec, WORLD, append, appserver, rewrite};
 use minisign::KeyPair;
 use paddock_bundle::manifest::{Capability, ManifestError};
 use paddock_bundle::{BundleError, ImportLink, OperatorPolicy, VerifiedBundle};
+use rstest::rstest;
 use rustbridge_bundle::{BundleBuilder, Manifest, Platform, builder::compute_sha256};
 use serde_json::json;
 use tempfile::TempDir;
@@ -479,4 +480,44 @@ fn open____priv_file_changed_after_signing____refused_corrupt() {
     let result = VerifiedBundle::open(&tampered, &[spec.public_key()]);
 
     assert!(matches!(result, Err(BundleError::Corrupt(_))), "{result:?}");
+}
+
+#[rstest]
+#[case("priv/../escaped.txt")]
+#[case("priv/config/../../escaped.txt")]
+#[case("priv//etc/escaped.txt")]
+#[case("priv/./escaped.txt")]
+fn open____priv_path_leaving_the_directory____refused_unsafe_path(#[case] path: &str) {
+    let dir = TempDir::new().unwrap();
+    let spec = Spec::default();
+    let bundle = dir.path().join("evil.rbp");
+    append(&spec.write(&dir), &bundle, path, b"x");
+
+    let result = VerifiedBundle::open(&bundle, &[spec.public_key()]);
+
+    assert!(
+        matches!(&result, Err(BundleError::UnsafePath(_))),
+        "{path}: {result:?}"
+    );
+}
+
+#[test]
+fn extract_priv____unsafe_path_in_priv_files____refused_nothing_written() {
+    let dir = TempDir::new().unwrap();
+    let spec = Spec::default();
+    let mut bundle = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap();
+    bundle.priv_files = vec![
+        ("ok.txt".to_string(), b"x".to_vec()),
+        ("../escaped.txt".to_string(), b"x".to_vec()),
+    ];
+    let out = dir.path().join("extracted");
+
+    let result = bundle.extract_priv(&out);
+
+    assert!(
+        matches!(&result, Err(BundleError::UnsafePath(p)) if p == "../escaped.txt"),
+        "{result:?}"
+    );
+    assert!(!out.exists());
+    assert!(!dir.path().join("escaped.txt").exists());
 }

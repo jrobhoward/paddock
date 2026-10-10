@@ -372,6 +372,15 @@ impl Status {
     }
 }
 
+/// For the fuzz targets in `fuzz/` only: decode a heartbeat's status
+/// payload and, if it is one, encode it again.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+#[must_use]
+pub fn fuzz_status(bytes: &[u8]) -> Option<Vec<u8>> {
+    Status::decode(bytes).map(Status::encode)
+}
+
 /// The partner's latest status on each live path, and whether any path is
 /// live.
 struct PartnerView {

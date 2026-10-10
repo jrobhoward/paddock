@@ -35,6 +35,7 @@
 mod error;
 mod grant;
 mod imports;
+mod key_file;
 mod load;
 pub mod manifest;
 mod policy;
@@ -42,5 +43,6 @@ mod policy;
 pub use error::BundleError;
 pub use grant::{EffectiveGrant, ImportLink, effective_grant};
 pub use imports::{component_imports, component_world};
+pub use key_file::check_key_permissions;
 pub use load::{APP_WORLD, CONNECTION_WORLD, PRIV_DIR, SUPPORTED_WORLDS, VerifiedBundle};
 pub use policy::{Granted, Grants, OperatorPolicy, SignerGrants};

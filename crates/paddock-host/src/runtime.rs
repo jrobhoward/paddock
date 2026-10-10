@@ -31,7 +31,7 @@ use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
 use crate::transport::liveness::{HeartbeatPath, Liveness, NodeEvent, PeerStatus};
 use crate::transport::membership::{Member, Membership};
-use crate::transport::{self, Packet, PendingCalls, Transport};
+use crate::transport::{self, IncomingCalls, Packet, PendingCalls, Transport};
 use paddock_bundle::manifest::LogLevel;
 
 /// Hosts instances on one node.
@@ -58,6 +58,7 @@ pub(crate) struct RuntimeInner {
     pub(crate) extensions: Vec<Arc<dyn Extension>>,
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
+    pub(crate) incoming_calls: IncomingCalls,
     pub(crate) liveness: Liveness,
     pub(crate) membership: Membership,
     pub(crate) failover: crate::failover::Shared,
@@ -209,6 +210,7 @@ impl Runtime {
                 extensions,
                 transport: std::sync::OnceLock::new(),
                 pending_calls: PendingCalls::default(),
+                incoming_calls: IncomingCalls::new(config.incoming_calls_per_peer),
                 liveness: Liveness::new(config.heartbeat_interval, config.node_timeout),
                 membership: Membership::new(Member::new(
                     config.node,

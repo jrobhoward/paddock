@@ -332,6 +332,7 @@ impl Node {
                     watches: config.limits.watches_max,
                 },
                 log_records_per_sec: config.limits.log_records_per_sec,
+                incoming_calls_per_peer: config.cluster.incoming_calls_max,
                 secrets: config
                     .secrets
                     .iter()

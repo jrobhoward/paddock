@@ -29,3 +29,8 @@ pub use error::NodeError;
 pub use logring::{LogRing, RingLayer};
 pub use run::{builtin_extensions, run};
 pub use server::{MAX_BODY, serve};
+/// The snapshot reader behind `paddock state`, for the fuzz targets in
+/// `fuzz/` only.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub use state_view::describe;

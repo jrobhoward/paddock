@@ -258,6 +258,13 @@ All notable changes are recorded here. The format follows
   together. An app's `rate_limit_per_sec` can only lower it.
 - The failover simulation's random schedules start from
   `PADDOCK_SIM_FAILOVER_FIRST_SEED` (default 0).
+- Node config `[cluster] incoming_calls_max` (default 10000): the most
+  calls from one peer handled at once; beyond it a call is answered
+  `overloaded` (`RuntimeConfig::incoming_calls_per_peer`).
+- `paddock_bundle::check_key_permissions`, and the `UnsafePath` bundle
+  error.
+- Fuzz targets `wire_packet`, `failover_status`, `http_reply`,
+  `state_view` and `modbus_request`, run nightly with the others.
 
 ### Fixed
 
@@ -300,6 +307,13 @@ All notable changes are recorded here. The format follows
 
 - The Modbus server accepts masters from loopback only unless
   `server.allow` lists their networks.
+- The node's cluster key and the signer key `paddock bundle` reads are
+  refused if their group or others may access them, as ssh does:
+  `chmod 600` them. Keys written by `paddock keygen` and `paddock cluster
+  keygen` already are.
+- A bundle with a `priv/` path that is not plain relative names (`..`,
+  `.`, a root, an empty part, `:` or a backslash) is refused by Paddock
+  itself, on open and again on extraction, not only by rustbridge-bundle.
 - `paddock-bundle`: `OperatorPolicy::granted` returns `Granted`
   (capabilities and extension packages), `effective_grant` takes it, and
   `EffectiveGrant` reports `granted_extensions` and `denied_extensions`.

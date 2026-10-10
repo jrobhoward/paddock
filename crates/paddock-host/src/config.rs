@@ -187,6 +187,11 @@ pub struct RuntimeConfig {
     /// captured stdout and stderr lines together; an app's own
     /// `rate_limit_per_sec` can only lower it. 0 for no ceiling.
     pub log_records_per_sec: u32,
+    /// Most calls from one other node handled at once; a call beyond it is
+    /// answered `overloaded` at once. An honest peer is bounded by its
+    /// instances' `pending_calls_max`; this bounds a faulty one. 0 for no
+    /// limit.
+    pub incoming_calls_per_peer: u32,
 }
 
 impl Default for RuntimeConfig {
@@ -206,6 +211,7 @@ impl Default for RuntimeConfig {
             buckets: BTreeMap::new(),
             secrets: BTreeMap::new(),
             log_records_per_sec: 1_000,
+            incoming_calls_per_peer: 10_000,
         }
     }
 }

@@ -23,7 +23,7 @@ pub mod quic;
 pub mod wire;
 
 use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::sync::oneshot;
@@ -228,6 +228,135 @@ impl PendingCalls {
     }
 }
 
+/// Calls from other nodes being handled, per node, against a limit per
+/// node (`incoming_calls_per_peer`; 0 for none).
+#[derive(Debug)]
+pub(crate) struct IncomingCalls {
+    max: u32,
+    running: Mutex<HashMap<u32, Running>>,
+}
+
+#[derive(Debug, Default)]
+struct Running {
+    count: u32,
+    /// A call was refused since the count was last at half the limit or
+    /// below, so the warning has been logged; a peer held at the limit is
+    /// not logged once per call.
+    refusing: bool,
+}
+
+/// Why a call from another node was not started.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Refused {
+    /// The first refusal since the node was last at half the limit or
+    /// below.
+    First,
+    /// The node was already being refused.
+    Again,
+}
+
+impl IncomingCalls {
+    pub(crate) fn new(max: u32) -> Self {
+        Self {
+            max,
+            running: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Count a call from `node` as started, unless `max` are running.
+    pub(crate) fn start(&self, node: u32) -> Result<(), Refused> {
+        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        let entry = running.entry(node).or_default();
+        if self.max != 0 && entry.count >= self.max {
+            return Err(if std::mem::replace(&mut entry.refusing, true) {
+                Refused::Again
+            } else {
+                Refused::First
+            });
+        }
+        entry.count += 1;
+        Ok(())
+    }
+
+    /// Count a call from `node` as finished.
+    pub(crate) fn finish(&self, node: u32) {
+        let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(entry) = running.get_mut(&node) {
+            entry.count = entry.count.saturating_sub(1);
+            if entry.count <= self.max / 2 {
+                entry.refusing = false;
+            }
+            if entry.count == 0 {
+                running.remove(&node);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn running(&self, node: u32) -> u32 {
+        let running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        running.get(&node).map_or(0, |r| r.count)
+    }
+}
+
+/// A call from another node counted in [`IncomingCalls`] until dropped, so
+/// a task that ends any way releases its place.
+struct IncomingCall {
+    rt: Arc<RuntimeInner>,
+    node: u32,
+}
+
+impl Drop for IncomingCall {
+    fn drop(&mut self) {
+        self.rt.incoming_calls.finish(self.node);
+    }
+}
+
+/// Handle a call from `from_node`: run it in a task of its own and send the
+/// reply, or answer `overloaded` at once if that node has as many calls
+/// running as it may.
+fn incoming_call(
+    rt: &Arc<RuntimeInner>,
+    from_node: u32,
+    id: u64,
+    from: Option<Pid>,
+    to: Pid,
+    msg: Envelope,
+    timeout_ms: u64,
+) {
+    match rt.incoming_calls.start(from_node) {
+        Ok(()) => {
+            let slot = IncomingCall {
+                rt: rt.clone(),
+                node: from_node,
+            };
+            tokio::spawn(async move {
+                let rt = &slot.rt;
+                let timeout = Duration::from_millis(timeout_ms);
+                let result = delivery::call(rt, from, to, msg, timeout).await;
+                send(rt, from_node, Frame::Reply { id, result });
+            });
+        }
+        Err(refused) => {
+            if refused == Refused::First {
+                tracing::warn!(
+                    node = from_node,
+                    limit = rt.incoming_calls.max,
+                    "calls from a node at their limit; answering overloaded"
+                );
+            }
+            send(
+                rt,
+                from_node,
+                Frame::Reply {
+                    id,
+                    result: Err(CallError::Overloaded),
+                },
+            );
+        }
+    }
+}
+
 /// Send to `node`, in the current session, if a transport is set and
 /// `node` is reachable.
 pub(crate) fn send(rt: &RuntimeInner, node: u32, frame: Frame) -> bool {
@@ -355,14 +484,7 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
             to,
             msg,
             timeout_ms,
-        } => {
-            let rt = rt.clone();
-            tokio::spawn(async move {
-                let timeout = Duration::from_millis(timeout_ms);
-                let result = delivery::call(&rt, from, to, msg, timeout).await;
-                send(&rt, from_node, Frame::Reply { id, result });
-            });
-        }
+        } => incoming_call(rt, from_node, id, from, to, msg, timeout_ms),
         Frame::Reply { id, result } => {
             if let Some(tx) = rt.pending_calls.take(id) {
                 let _ = tx.send(result);
@@ -514,3 +636,7 @@ fn ended(rt: &RuntimeInner, node: u32, session: u64) {
     probe::node_down(node, session);
     rt.liveness.announce(NodeEvent::Down { node, session });
 }
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod transport_tests;

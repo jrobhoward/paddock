@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use paddock_bundle::check_key_permissions;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::ring::{default_provider, sign::any_supported_type};
 use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls13_signature_with_raw_key};
@@ -109,7 +110,8 @@ fn certify(key: &PrivateKeyDer<'_>) -> Result<(Arc<CertifiedKey>, PublicKey), Ho
 ///
 /// # Errors
 ///
-/// [`HostError::Listen`] if the file cannot be read or holds no usable key.
+/// [`HostError::Listen`] if the file cannot be read, its group or others
+/// may access it, or it holds no usable key.
 pub fn public_key_of(path: &Path) -> Result<PublicKey, HostError> {
     Ok(load_key(path)?.1)
 }
@@ -135,6 +137,7 @@ fn identity_error(e: impl std::fmt::Display) -> HostError {
 }
 
 fn load_key(path: &Path) -> Result<(Arc<CertifiedKey>, PublicKey), HostError> {
+    check_key_permissions(path).map_err(identity_error)?;
     let key = PrivateKeyDer::from_pem_file(path)
         .map_err(|e| identity_error(format!("{}: {e}", path.display())))?;
     certify(&key)

@@ -577,6 +577,15 @@ fn response(reply: Envelope) -> Reply {
     }
 }
 
+/// For the fuzz targets in `fuzz/` only: read an app's reply envelope
+/// body as an HTTP response; the status code if it is one.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+#[must_use]
+pub fn fuzz_response(body: &[u8]) -> Option<u16> {
+    parse_response(body).map(|r| r.status().as_u16())
+}
+
 fn parse_response(body: &[u8]) -> Option<Reply> {
     let value: Value = ciborium::from_reader(body).ok()?;
     let map = value.as_map()?;

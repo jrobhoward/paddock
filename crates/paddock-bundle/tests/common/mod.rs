@@ -107,3 +107,20 @@ pub fn rewrite(src: &Path, dst: &Path, edit: impl Fn(&str, Vec<u8>) -> Vec<u8>) 
     }
     out.finish().unwrap();
 }
+
+/// Copy the bundle at `src` to `dst` with one more file, `name`, added to
+/// the archive as is: no checksum, and no check of its path, which
+/// rustbridge's builder would refuse.
+pub fn append(src: &Path, dst: &Path, name: &str, contents: &[u8]) {
+    rewrite(src, dst, |_, c| c);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dst)
+        .unwrap();
+    let mut out = zip::ZipWriter::new_append(file).unwrap();
+    out.start_file(name, zip::write::SimpleFileOptions::default())
+        .unwrap();
+    out.write_all(contents).unwrap();
+    out.finish().unwrap();
+}

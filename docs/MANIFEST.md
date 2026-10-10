@@ -268,9 +268,10 @@ node_timeout_ms = 5000                 # silence that ends a peer's session; mor
 address = "10.0.0.1:7400"              # UDP: QUIC between nodes; unset runs no cluster transport
 advertise = "192.0.2.7:7400"           # optional: where peers reach this node (NAT, a proxy); default address
 seeds = ["10.0.0.2:7400"]              # nodes to join through, redialed whenever lost
-key = "/etc/paddock/node.key"          # this node's private key: paddock cluster keygen
+key = "/etc/paddock/node.key"          # this node's private key: paddock cluster keygen; mode 0600
 peers = "/etc/paddock/peers.toml"      # every node's public key: [peers] 2 = ["ed25519:..."]
 identity_reload_s = 60                 # reload key and peers on change; also SIGHUP, paddock reload-tls
+incoming_calls_max = 10000             # calls from one peer handled at once; beyond: overloaded; 0: no limit
 
 [limits]                               # host objects per instance; the value for apps that
 timers_max = 10000                     # set none, and the most a manifest may ask for (a

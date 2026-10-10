@@ -25,6 +25,16 @@ fn chaos() -> &'static [u8] {
     BYTES.get_or_init(|| fixture("paddock_fixture_chaos"))
 }
 
+/// Write a private key readable by its owner only, as the node requires.
+fn write_key(path: &Path, private: &str) {
+    std::fs::write(path, private).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
 /// Keys for nodes, written to `dir`, and a peers file listing `listed`.
 struct Keys {
     dir: PathBuf,
@@ -36,7 +46,7 @@ impl Keys {
         let mut public = BTreeMap::new();
         for &n in nodes {
             let (private, key) = generate_key().unwrap();
-            std::fs::write(dir.join(format!("node-{n}.key")), private).unwrap();
+            write_key(&dir.join(format!("node-{n}.key")), &private);
             public.insert(n, key);
         }
         Self {

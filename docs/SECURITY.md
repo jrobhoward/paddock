@@ -46,7 +46,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Node and node
 
 - **Controls.** QUIC with TLS 1.3 and raw public keys pinned per node id; a hello naming the node id, checked against its key; frames of at most 64 MiB; a versioned CBOR wire format; sessions that discard frames from an ended session or an earlier start.
-- **Gaps.** S8 (unbounded tasks for incoming calls); S5 is fixed. Wire decoding is not fuzzed (see below).
+- **Gaps.** None beyond the trust above; S5 and S8 are fixed. Calls from one peer in progress at once are capped (`[cluster] incoming_calls_max`).
 
 ### Ingress clients
 
@@ -67,13 +67,13 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### Bundles, manifests and policy
 
-- **Controls.** Signatures checked against operator keys only (never the key inside the bundle); checksums; manifest validation; the effective grant computed from the manifest and policy; `priv/` paths checked by rustbridge-bundle (no absolute paths, no `..`).
-- **Gaps.** S7 (path safety rests on a dependency).
+- **Controls.** Signatures checked against operator keys only (never the key inside the bundle); checksums; manifest validation; the effective grant computed from the manifest and policy; `priv/` paths checked by Paddock on open and again on extraction (plain relative names only), as well as by rustbridge-bundle.
+- **Gaps.** None found; S7 is fixed.
 
 ### Secrets and keys
 
-- **Controls.** Secret values are read on each access and never printed: errors name the secret, and `Debug` shows only the source. Keys are written with mode 0600.
-- **Gaps.** S9 (key permissions not checked on load). No test asserts that a secret's value stays out of logs and errors (ROADMAP Q5).
+- **Controls.** Secret values are read on each access and never printed: errors name the secret, and `Debug` shows only the source. Keys are written with mode 0600, and the cluster key and signer keys are refused on load if their group or others may access them, as ssh does.
+- **Gaps.** S9 is fixed. No test asserts that a secret's value stays out of logs and errors (ROADMAP Q5).
 
 ## Findings
 
@@ -85,15 +85,13 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 | S4 | medium, fixed 2026-10-10 | The Modbus server accepted reads and writes from any master that reached its address; a write changes the served table and is cast to the `deliver_to` app. | Fixed: `server.allow` lists the masters' addresses or networks, loopback only by default; MANIFEST.md says to bind it to the SCADA interface. A cap on connections is still to do (tokio-modbus's server gives no hook for it). |
 | S5 | low, fixed 2026-10-10 | A pair node took failover answers (`Granted`, `LeaseOk`, `Fenced`, `NotYet`, `Refused`) from any member, not only its witness: a faulty member's `Granted` promotes the standby. | Fixed: answers from any node but the configured witness are dropped and logged. |
 | S6 | low | A volume's `quota` is not enforced (documented): an app with a writable volume can fill the disk. | Enforce the quota, or refuse `rw` volumes without a filesystem-level quota. |
-| S7 | low | `priv/` extraction relies on rustbridge-bundle for path safety. | Check each path in Paddock as well (normal components only), with a test bundle that tries `..` and absolute paths. |
-| S8 | low | Each incoming `Frame::Call` starts a task with no bound; an honest peer is bounded by its instances' `pending_calls_max`, a faulty one is not. | A limit per peer on calls in progress. |
-| S9 | low | The cluster key and signer keys are loaded without checking their permissions. | Refuse or warn on a key readable by group or others, as ssh does. |
+| S7 | low, fixed 2026-10-10 | `priv/` extraction relied on rustbridge-bundle for path safety. | Fixed: Paddock refuses a bundle with a `priv/` path that is not plain relative names (`..`, `.`, a root, an empty part, `:` or a backslash), on open and again on extraction. |
+| S8 | low, fixed 2026-10-10 | Each incoming `Frame::Call` started a task with no bound; an honest peer is bounded by its instances' `pending_calls_max`, a faulty one was not. | Fixed: at most `[cluster] incoming_calls_max` (default 10,000) calls from one peer run at once; beyond it a call is answered `overloaded`, with one warning until the peer is back to half the limit. |
+| S9 | low, fixed 2026-10-10 | The cluster key and signer keys were loaded without checking their permissions. | Fixed: a key its group or others may access is refused, with a message to `chmod 600` it. |
 
 ## Fuzz targets
 
-Existing (`fuzz/`, nightly, five minutes each): `bundle_open`, `manifest`, `parse` (the small parsers: pids, sizes, routing, port ranges, CIDRs, capability keys, import names), `routing_key`, `process_ops`.
-
-To add, by who controls the input:
+In `fuzz/`, run nightly for five minutes each: `bundle_open`, `manifest`, `parse` (the small parsers: pids, sizes, routing, port ranges, CIDRs, capability keys, import names), `routing_key`, `process_ops`, and these, by who controls the input:
 
 | Target | Input from | Function |
 | --- | --- | --- |
