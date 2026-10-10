@@ -183,6 +183,10 @@ pub struct RuntimeConfig {
     pub buckets: BTreeMap<String, SharedBucket>,
     /// Secrets, by name.
     pub secrets: BTreeMap<String, SecretSource>,
+    /// Most log records per second per app, `wasi:logging` records and
+    /// captured stdout and stderr lines together; an app's own
+    /// `rate_limit_per_sec` can only lower it. 0 for no ceiling.
+    pub log_records_per_sec: u32,
 }
 
 impl Default for RuntimeConfig {
@@ -201,6 +205,7 @@ impl Default for RuntimeConfig {
             host_objects: HostObjects::default(),
             buckets: BTreeMap::new(),
             secrets: BTreeMap::new(),
+            log_records_per_sec: 1_000,
         }
     }
 }

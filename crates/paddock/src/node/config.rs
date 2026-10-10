@@ -129,6 +129,9 @@ pub struct NodeConfig {
     /// Epoch tick, in milliseconds.
     #[serde(default = "default_tick")]
     pub epoch_tick_ms: u64,
+    /// How the node writes its log to stderr.
+    #[serde(default)]
+    pub log_format: LogFormat,
     /// Host directories backing volume names in manifests.
     #[serde(default)]
     pub volumes: BTreeMap<String, PathBuf>,
@@ -171,6 +174,18 @@ pub struct NodeConfig {
     pub limits: NodeLimits,
 }
 
+/// How a node writes its log to stderr: `text` for people (colour only on
+/// a terminal) or `json`, one object per line, for collectors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    /// Human-readable lines.
+    #[default]
+    Text,
+    /// One JSON object per line.
+    Json,
+}
+
 /// The `[limits]` section: host objects per instance, as the manifest's
 /// `limits` fields of the same names. Each is the value for apps that set
 /// none and the most a manifest may ask for.
@@ -195,6 +210,11 @@ pub struct NodeLimits {
     /// Keyvalue watches held.
     #[serde(default = "default_groups")]
     pub watches_max: u32,
+    /// Log records per second per app, `wasi:logging` records and captured
+    /// stdout and stderr lines together. An app's `rate_limit_per_sec` can
+    /// only lower it; 0 for no ceiling.
+    #[serde(default = "default_log_records")]
+    pub log_records_per_sec: u32,
 }
 
 impl Default for NodeLimits {
@@ -206,8 +226,13 @@ impl Default for NodeLimits {
             pending_calls_max: default_host_objects(),
             groups_max: default_groups(),
             watches_max: default_groups(),
+            log_records_per_sec: default_log_records(),
         }
     }
+}
+
+fn default_log_records() -> u32 {
+    1_000
 }
 
 fn default_groups() -> u32 {

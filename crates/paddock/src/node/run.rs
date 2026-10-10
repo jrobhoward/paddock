@@ -9,6 +9,7 @@
 //! }
 //! ```
 
+use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use paddock_host::services::Extension;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use super::{LogRing, Node, NodeConfig, RingLayer};
+use super::{LogFormat, LogRing, Node, NodeConfig, RingLayer};
 
 /// The extensions `paddock node` runs with: the Modbus TCP extension with
 /// the `modbus` feature (on by default), none otherwise.
@@ -44,11 +45,31 @@ pub fn builtin_extensions() -> Vec<Arc<dyn Extension>> {
 pub fn run(config: &Path, extensions: Vec<Arc<dyn Extension>>) -> anyhow::Result<()> {
     let config = NodeConfig::from_file(config)?;
     let ring = LogRing::new(10_000);
+    // Colour only on a terminal: journald and files get plain text.
+    let (text, json) = match config.log_format {
+        LogFormat::Text => (
+            Some(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_ansi(std::io::stderr().is_terminal()),
+            ),
+            None,
+        ),
+        LogFormat::Json => (
+            None,
+            Some(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_writer(std::io::stderr),
+            ),
+        ),
+    };
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(text)
+        .with(json)
         .with(RingLayer::new(ring.clone()))
         .init();
     // Multi-threaded: instances must never run on a current-thread runtime.

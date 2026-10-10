@@ -315,6 +315,7 @@ impl Node {
                     groups: config.limits.groups_max,
                     watches: config.limits.watches_max,
                 },
+                log_records_per_sec: config.limits.log_records_per_sec,
                 secrets: config
                     .secrets
                     .iter()

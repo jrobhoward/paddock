@@ -68,7 +68,8 @@ impl fmt::Display for ExitReason {
             Self::Noproc => f.write_str("noproc"),
             Self::Noconnection => f.write_str("noconnection"),
             Self::Timeout => f.write_str("timeout"),
-            Self::Crashed(why) => write!(f, "crashed: {why}"),
+            // The reason can carry guest text; keep it on one line.
+            Self::Crashed(why) => write!(f, "crashed: {}", crate::output::escape_control(why)),
         }
     }
 }

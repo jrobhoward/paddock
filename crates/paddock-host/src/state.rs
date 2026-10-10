@@ -25,7 +25,7 @@ use crate::runtime::RuntimeInner;
 use crate::services::config::Config;
 use crate::services::groups::Groups;
 use crate::services::keyvalue::KeyValue;
-use crate::services::logging::Logging;
+use crate::services::logging::{LogRate, Logging};
 use crate::services::metrics::MetricsService;
 use crate::services::secrets::Secrets;
 use crate::services::{HostState, Service, ServiceCtx, States};
@@ -78,8 +78,12 @@ impl InstanceState {
         });
         // No environment and no sockets; stdout and stderr become logs.
         let mut wasi = WasiCtx::builder();
-        wasi.stdout(CapturedOutput::new(tags.clone(), "stdout"))
-            .stderr(CapturedOutput::new(tags.clone(), "stderr"));
+        let rate = LogRate::new(
+            ctx.rt.services.logging.clone(),
+            spec.services.logging.rate_limit,
+        );
+        wasi.stdout(CapturedOutput::new(tags.clone(), "stdout", rate.clone()))
+            .stderr(CapturedOutput::new(tags.clone(), "stderr", rate));
         if spec.granted.contains(&Capability::Filesystem) {
             for p in &spec.preopens {
                 let perms = if p.writable {

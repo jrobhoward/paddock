@@ -31,7 +31,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Guest and host
 
 - **Controls.** wasmtime's sandbox with a pooling allocator; `memory_max`, table and instance limits; the callback deadline enforced at epoch ticks; bounded mailboxes and `message_max_bytes`; host-object limits (timers, monitors, links, pending calls, groups, watches); deny stubs for ungranted imports; imports checked against the manifest at deploy. Exit signals into an instance are bounded by the node's instance count, timers and watch notices by their own limits.
-- **Gaps.** S2 (log injection), S3 (stdout floods), S6 (volume quota).
+- **Gaps.** S6 (volume quota). S2 and S3 are fixed.
 
 ### App and app
 
@@ -80,8 +80,8 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 | # | Severity | Finding | Fix |
 | --- | --- | --- | --- |
 | S1 | medium | Two deployed apps may list the same registered name. The first instance to register it holds it; names are released when the holder exits, so each restart is a race the other app can win and receive the messages meant for the first. | Refuse a deploy that lists a name another deployed app lists. |
-| S2 | medium | Guest log messages and contexts are written as given. A newline starts what looks like a new host record, with any timestamp and target: checked with tracing-subscriber 0.3.23, which escapes ANSI sequences but not newlines. Operators' logs, and the soak's checker, which reads the gate's records, can be fooled. | Escape control characters in guest text (log message and context; carriage returns in stdout lines). |
-| S3 | medium | Guest stdout and stderr become log records with no level filter and no rate limit, so one app can flood the node's log. | Count captured lines against the app's logging rate limit. |
+| S2 | medium, fixed 2026-10-10 | Guest log messages and contexts were written as given. A newline starts what looks like a new host record, with any timestamp and target: checked with tracing-subscriber 0.3.23, which escapes ANSI sequences but not newlines. Operators' logs, and the soak's checker, which reads the gate's records, can be fooled. | Fixed: control characters in guest text (log messages and contexts, stdout and stderr lines, crash reasons) are escaped. |
+| S3 | medium, fixed 2026-10-10 | Guest stdout and stderr became log records with no rate limit, and an app's own `rate_limit_per_sec` was optional, so one app could flood the node's log. | Fixed: every app has a budget, the node's `[limits] log_records_per_sec` (default 1000) or its own lower rate, shared by its log records and its stdout and stderr lines. |
 | S4 | medium | The Modbus server accepts reads and writes from any master that reaches its address; a write changes the served table and is cast to the `deliver_to` app. | An allow-list of master addresses and a connection cap in node config; say in MANIFEST.md to bind it to a private interface. |
 | S5 | low | A pair node takes failover answers (`Granted`, `LeaseOk`, `Fenced`, `NotYet`, `Refused`) from any member, not only its witness: a faulty member's `Granted` promotes the standby. | Drop answers whose sender is not the configured witness. |
 | S6 | low | A volume's `quota` is not enforced (documented): an app with a writable volume can fill the disk. | Enforce the quota, or refuse `rw` volumes without a filesystem-level quota. |

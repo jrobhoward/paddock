@@ -247,11 +247,23 @@ All notable changes are recorded here. The format follows
   at, when it is not `cluster.address` (NAT, port forwarding, a proxy).
 - A node logs `singleton starting` before a singleton's `init` runs, also
   when it starts at deploy, and `cannot start singleton` when that fails.
+- Node config `log_format = "json"`: one JSON object per line on stderr,
+  for log collectors. Text output has colour only on a terminal.
+- Node config `[limits] log_records_per_sec` (default 1000): every app's
+  log budget, `wasi:logging` records and captured stdout and stderr lines
+  together. An app's `rate_limit_per_sec` can only lower it.
 - The failover simulation's random schedules start from
   `PADDOCK_SIM_FAILOVER_FIRST_SEED` (default 0).
 
 ### Fixed
 
+- Guest text written to the node's log is escaped: a newline or other
+  control character in a log message or context, a stdout or stderr line,
+  or a crash reason no longer starts what looks like a new host record.
+- A guest's stdout and stderr had no rate limit; they now count against
+  the app's log budget.
+- The node's text log no longer carries colour codes into journald or a
+  file.
 - `paddock_sdk::connection!` and the connection fixture export the handler
   only in Wasm builds, so `cargo build --workspace --all-targets` links on
   the host: the export's symbol has a `:`, which native linkers refuse.

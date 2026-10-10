@@ -216,6 +216,54 @@ async fn log____rate_limited____excess_dropped_and_count_reported_later() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn log____newline_in_message____one_record_with_it_escaped() {
+    capture();
+    let (rt, app) = shared();
+    let h = up(rt, app, spec("log-inject", &[Capability::Logging])).await;
+
+    ask(
+        &h,
+        "log:info:first\n2026-10-10T12:00:00Z  INFO paddock::node::gate: forged",
+    )
+    .await;
+    let found = records("log-inject", 1).await;
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].fields["message"],
+        "first\\n2026-10-10T12:00:00Z  INFO paddock::node::gate: forged"
+    );
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdout____over_the_apps_log_rate____excess_dropped_and_counted() {
+    capture();
+    let (rt, app) = shared();
+    let mut s = spec("stdout-rate", &[]);
+    s.services.logging.rate_limit = Some(2);
+    let h = up(rt, app, s).await;
+
+    for i in 0..5 {
+        ask(&h, &format!("print:burst-{i}")).await;
+    }
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    ask(&h, "print:after").await;
+    let found = records("stdout-rate", 4).await;
+
+    let summary: Vec<String> = found
+        .iter()
+        .map(|r| {
+            r.fields
+                .get("dropped")
+                .map_or_else(|| r.fields["message"].clone(), |d| format!("dropped={d}"))
+        })
+        .collect();
+    assert_eq!(summary, vec!["burst-0", "burst-1", "dropped=3", "after"]);
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stdout_and_stderr____written____captured_as_tagged_records() {
     capture();
     let (rt, app) = shared();

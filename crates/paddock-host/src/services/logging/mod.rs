@@ -25,7 +25,7 @@ use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 use crate::message::Envelope;
-use crate::output::Tags;
+use crate::output::{Tags, escape_control};
 use limits::{Admit, LogLimits};
 
 mod bindings {
@@ -69,9 +69,47 @@ pub struct LoggingSpec {
 pub(crate) struct Shared {
     limits: LogLimits,
     overrides: RwLock<HashMap<String, LogLevel>>,
+    /// The node's ceiling on any app's records per second; `None` for none.
+    node_rate: Option<u32>,
+}
+
+/// One app's log budget: its `rate_limit_per_sec`, under the node's
+/// ceiling, shared by its `wasi:logging` records and captured output.
+#[derive(Debug, Clone)]
+pub(crate) struct LogRate {
+    shared: Arc<Shared>,
+    app_rate: Option<u32>,
+}
+
+impl LogRate {
+    pub(crate) fn new(shared: Arc<Shared>, app_rate: Option<u32>) -> Self {
+        Self { shared, app_rate }
+    }
+
+    /// `Some(dropped)` if a record may be emitted now, with how many were
+    /// dropped since the last one; `None` to drop it.
+    pub(crate) fn admit(&self, app: &str) -> Option<u64> {
+        match self
+            .shared
+            .limits
+            .admit(app, self.shared.rate(self.app_rate))
+        {
+            Admit::Emit { dropped } => Some(dropped),
+            Admit::Drop => None,
+        }
+    }
 }
 
 impl Shared {
+    /// An app's effective rate: the lower of its own and the node's.
+    pub(crate) fn rate(&self, app_rate: Option<u32>) -> Option<u32> {
+        let app_rate = app_rate.filter(|r| *r > 0);
+        match (app_rate, self.node_rate) {
+            (Some(a), Some(n)) => Some(a.min(n)),
+            (a, n) => a.or(n),
+        }
+    }
+
     /// Override `app`'s level, or remove the override with `None`.
     pub(crate) fn set_override(&self, app: &str, level: Option<LogLevel>) {
         let mut levels = self
@@ -116,8 +154,11 @@ impl Service for Logging {
         }
     }
 
-    fn shared(_config: &RuntimeConfig) -> Result<Shared, HostError> {
-        Ok(Shared::default())
+    fn shared(config: &RuntimeConfig) -> Result<Shared, HostError> {
+        Ok(Shared {
+            node_rate: Some(config.log_records_per_sec).filter(|r| *r > 0),
+            ..Shared::default()
+        })
     }
 
     fn instance(shared: &Arc<Shared>, spec: &LoggingSpec, info: &InstanceInfo<'_>) -> Instance {
@@ -187,13 +228,19 @@ impl logging::Host for ServiceCtx<'_, Instance> {
         if level < cap {
             return Ok(());
         }
-        match me.shared.limits.admit(&t.app, me.spec.rate_limit) {
+        match me
+            .shared
+            .limits
+            .admit(&t.app, me.shared.rate(me.spec.rate_limit))
+        {
             Admit::Drop => return Ok(()),
             Admit::Emit { dropped: 0 } => {}
             Admit::Emit { dropped } => {
                 tracing::warn!(target: "paddock::guest", app = %t.app, version = %t.version, pid = %t.pid, dropped, "log records dropped by the rate limit");
             }
         }
+        let (context, message) = (escape_control(&context), escape_control(&message));
+        let context = context.as_ref();
         let pid = t.pid.to_string();
         let (app, version) = (t.app.as_str(), t.version.as_str());
         match level {
@@ -219,3 +266,7 @@ impl logging::Host for ServiceCtx<'_, Instance> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "logging_tests.rs"]
+mod logging_tests;

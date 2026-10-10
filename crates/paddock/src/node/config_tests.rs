@@ -334,3 +334,21 @@ fn NodeConfig____witness_pair_or_first_wrong____refused() {
         assert!(err.contains(named), "{err}");
     }
 }
+
+#[test]
+fn NodeConfig____log_format____text_by_default_json_when_set() {
+    let default = NodeConfig::from_toml_str("data_dir = \"/d\"\n").unwrap();
+    let json = NodeConfig::from_toml_str("data_dir = \"/d\"\nlog_format = \"json\"\n").unwrap();
+    let bad = NodeConfig::from_toml_str("data_dir = \"/d\"\nlog_format = \"xml\"\n");
+
+    assert_eq!(default.log_format, LogFormat::Text);
+    assert_eq!(json.log_format, LogFormat::Json);
+    assert!(bad.is_err());
+}
+
+#[test]
+fn NodeConfig____log_records_per_sec____1000_by_default() {
+    let config = NodeConfig::from_toml_str("data_dir = \"/d\"\n").unwrap();
+
+    assert_eq!(config.limits.log_records_per_sec, 1000);
+}

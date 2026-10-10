@@ -100,7 +100,7 @@ anyprobe = { git = "https://github.com/jrobhoward/anyprobe", branch = "main", de
 
 # Test-only
 minisign = "0.9"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi", "json"] }
 proptest = "1"
 rstest = "0.26"
 tempfile = "3"

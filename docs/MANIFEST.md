@@ -148,7 +148,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 
 | Key | Scope fields | Phase 1 |
 | --- | --- | --- |
-| `wasi:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted. | enforced |
+| `wasi:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted; it can only lower the node's `[limits] log_records_per_sec` (default 1000), and captured stdout and stderr lines count against the same budget. Control characters in the text are escaped, so a record stays on one line. | enforced |
 | `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
 | `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `paddock:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
 | `paddock:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. | enforced |
@@ -279,6 +279,7 @@ links_max = 10000
 pending_calls_max = 10000
 groups_max = 1000
 watches_max = 1000
+log_records_per_sec = 1000             # per app, logging records and stdout/stderr lines together; 0: none
 
 [buckets.points]                       # a shared keyvalue bucket, opened by apps that list it
 durability = "disk"                    # under wasi:keyvalue's shared and are granted it; or "memory"
