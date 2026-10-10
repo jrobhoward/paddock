@@ -41,7 +41,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Stage 1: Tooling (S)
 
-- [ ] **T1 Checks as a script.** `scripts/check.sh`, with a non-zero exit and a one-line summary per check. `--quick` runs fmt, clippy and the tests; the default adds rustdoc, cargo-deny, MSRV, the guest builds and `wasm-tools` checks. Conventions that clippy does not cover are checked here too: test names (`subject____condition____result`), tests in `*_tests.rs` files registered with `#[path]`, the `#![allow]` header on each test file, no inline `mod tests` blocks, and a CHANGELOG change in the diff. CI runs the same script. CLAUDE.md's Definition of Done points to it.
+- [ ] **T1 Checks as a script.** `scripts/check.sh`, with a non-zero exit and a one-line summary per check. `--quick` runs fmt, clippy and the tests; the default adds rustdoc, cargo-deny, MSRV, the guest builds, `wasm-tools` checks and `scripts/check-secrets.sh` (keys, tokens, passwords, personal data; written 2026-10-10). Conventions that clippy does not cover are checked here too: test names (`subject____condition____result`), tests in `*_tests.rs` files registered with `#[path]`, the `#![allow]` header on each test file, no inline `mod tests` blocks, and a CHANGELOG change in the diff. CI runs the same script. CLAUDE.md's Definition of Done points to it.
 - [ ] **T2 Soak runner and fault injection between processes.** `scripts/soak.sh --hours N`, not run in CI. It runs, from random starting seeds:
   - the simulation tests' random scenarios and random failover schedules;
   - a witness and a pair as `paddock node` processes, with a user-space UDP proxy between each pair of nodes (QUIC is UDP; no root) that cuts, holds or drops each direction, plus `SIGKILL` and `SIGSTOP` of nodes and the witness. A checker reads the singleton's start and stop records and fails on any overlap. This closes D10's remaining exit criteria (network cut: nobody promotes; network and serial cut: at most one runner);
@@ -135,7 +135,7 @@ On an idle machine only.
 
 ## Stage 7: Docs (M)
 
-- [ ] **W1 Docs against the code.** Check every doc against what was built, rewrite where needed, and clear "Doc debt". Finish `docs/ARCHITECTURE.md` (R1) and `docs/SECURITY.md` (R3). Add a platform capabilities overview (each service, its manifest section and node config, or a section of MANIFEST.md), a guest development guide (WRITING_APPS.md refreshed: SDK features, testing an app, bundles), and `docs/GLOSSARY.md` (frame, packet, session, creation, guest, instance, app, pool, standing, epoch, lease, witness, and so on). Tutorial chapters: a hot upgrade (counter v1 to v2 with state, a broken v3 reverted, `rollback --restart`; today this is covered only by tests) and Postgres (E5). `docs/REVIEW_HAPPLIANCE_OTP.md` leaves the tree (git keeps it): its adopted items are in DESIGN.md and this plan.
+- [ ] **W1 Docs against the code.** Check every doc against what was built, rewrite where needed, and clear "Doc debt". Finish `docs/ARCHITECTURE.md` (R1) and `docs/SECURITY.md` (R3). Add a platform capabilities overview (each service, its manifest section and node config, or a section of MANIFEST.md), a guest development guide (WRITING_APPS.md refreshed: SDK features, testing an app, bundles), and `docs/GLOSSARY.md` (frame, packet, session, creation, guest, instance, app, pool, standing, epoch, lease, witness, and so on). Tutorial chapters: a hot upgrade (counter v1 to v2 with state, a broken v3 reverted, `rollback --restart`; today this is covered only by tests) and Postgres (E5). `docs/REVIEW_HAPPLIANCE_OTP.md` leaves the tree (git keeps it): its adopted items are in DESIGN.md and this plan. HAppliance is a private project, so W1 also removes the description of its design and code from the rest of the tree (DESIGN.md, this plan, CHANGELOG.md, `docs/tla`, `spikes/s10` and `spikes/s16`): what Paddock adopted is stated as Paddock's own design. Done when `git grep -i happliance` matches only a one-line prior-art entry in DESIGN.md.
 
 ## Doc debt
 
@@ -144,6 +144,7 @@ Docs known to be out of date, cleared by W1:
 - README, GETTING_STARTED and WRITING_APPS were not reviewed as Tracks D, E, F and H landed.
 - DESIGN.md places SQL datasources in Phase 3; E5 is now in stage 5.
 - DESIGN.md's roadmap section repeats parts of this plan.
+- DESIGN.md, `docs/REVIEW_HAPPLIANCE_OTP.md`, `docs/tla` and `spikes/s16` describe HAppliance, a private project, in detail (see W1).
 - DESIGN.md, WRITING_APPS.md and BASELINE.md cite finished roadmap items by id (A5, A6, E1, E1b, F2, F3, F6, H1 to H4, 0.5). Those ids are no longer in this file and the CHANGELOG does not use them; W1 replaces each with the feature's name.
 
 ## Phase 3

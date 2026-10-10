@@ -1,6 +1,6 @@
 # Paddock: Design
 
-2026-10-05 · Living version: https://claude.ai/code/artifact/095fba1a-7b9a-4585-96f3-e2e43d26628d
+2026-10-05
 
 
 ## Summary

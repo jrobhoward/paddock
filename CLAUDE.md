@@ -39,6 +39,11 @@ cargo fmt --all -- --check
 # only, never in a shared `env:` block (see "Never set RUSTFLAGS" below).
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
+# Secrets and personal data: tracked files, plus (--push) the lines added by
+# commits not yet pushed. Run before every push. Optional pre-push hook:
+#   ln -s ../../scripts/check-secrets.sh .git/hooks/pre-push
+scripts/check-secrets.sh --push
+
 # Supply chain: run before adding or updating any dependency.
 cargo deny check licenses bans sources advisories
 
@@ -176,6 +181,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.
+- `scripts/`: `check-secrets.sh` (run before pushing; `--help`).
 - `docs/`: design and plan. `docs/tla/`: TLA+ specifications of failover
   and their results (`VERIFICATION.md`); run with TLC, not in CI.
 - `spikes/`: throwaway programs that answered design questions
@@ -373,6 +379,10 @@ Before considering any change to the main workspace complete:
 - `cargo deny check licenses bans sources advisories` passes
 - `cargo +1.96.0 check --workspace --all-targets` (MSRV) passes
 - `Cargo.lock` is committed
+- `scripts/check-secrets.sh` finds nothing: no keys, tokens, passwords or
+  credentials in URLs, no addresses but the committer's, no local user or
+  host names, no private links. A false positive is marked on its line with
+  `secret-scan: allow`, never by loosening the script
 - No `.unwrap()` / `.expect()` / `panic!` in production code
 - New public items have doc comments
 - Guest fixtures used by the change build for `wasm32-wasip2`, and the tests

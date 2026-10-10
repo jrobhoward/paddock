@@ -218,6 +218,13 @@ All notable changes are recorded here. The format follows
   (`POST /v1/failover/confirm`). Deploy warnings now name only the placement
   fields still unenforced (`all-nodes`, labels, `spread`).
 
+- `scripts/check-secrets.sh`: scans tracked files, and with `--push` the
+  lines added by unpushed commits, for private keys, access tokens,
+  passwords, credentials in URLs, email addresses other than the
+  repository's authors, the local user and host names, private links, and
+  key-like, large or binary files. Run in CI and before every push; usable
+  as a pre-push hook.
+
 ### Fixed
 
 - A node that left the cluster cleanly and restarted could not rejoin: the
