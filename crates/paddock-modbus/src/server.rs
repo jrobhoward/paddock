@@ -7,8 +7,8 @@ use std::future::{Ready, ready};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use paddock_host::Envelope;
 use paddock_host::services::ExtensionNode;
+use paddock_host::{Envelope, cidr_contains};
 use tokio::net::TcpListener;
 use tokio_modbus::server::tcp::{Server, accept_tcp_connection};
 use tokio_modbus::{ExceptionCode, Request, Response};
@@ -191,6 +191,7 @@ pub(crate) fn start(
     std_listener.set_nonblocking(true).map_err(cannot)?;
     let listener = TcpListener::from_std(std_listener).map_err(cannot)?;
     let bound = listener.local_addr().map_err(|e| e.to_string())?;
+    let allowed = config.allowed();
     let config = Arc::new(config);
     let stop = node.clone();
     tokio::spawn(async move {
@@ -200,7 +201,11 @@ pub(crate) fn start(
                 config: config.clone(),
                 node: node.clone(),
             };
-            async move { accept_tcp_connection(stream, addr, |_| Ok(Some(service.clone()))) }
+            let admitted = allowed.iter().any(|net| cidr_contains(*net, addr.ip()));
+            if !admitted {
+                tracing::warn!(master = %addr, "modbus master not in server.allow; refused");
+            }
+            async move { accept_tcp_connection(stream, addr, |_| Ok(admitted.then(|| service.clone()))) }
         };
         let on_error = |e| tracing::debug!(error = %e, "modbus server connection failed");
         let stopped = async move { stop.stopped().await };

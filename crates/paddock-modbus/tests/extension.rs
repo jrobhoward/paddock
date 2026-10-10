@@ -51,6 +51,35 @@ async fn server____modbus_client____reads_and_writes_the_tables() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn server____master_not_in_allow____refused() {
+    let modbus = Modbus::default();
+    let rt = runtime(&modbus);
+    let apps = rt.start_apps(Vec::new()).await.unwrap();
+    let config = json!({ "server": {
+        "listen": "127.0.0.1:0", "holding": 4, "allow": ["10.0.0.0/8"]
+    } });
+    let started = rt
+        .start_extensions(&apps, &BTreeMap::from([(PACKAGE.to_string(), config)]))
+        .unwrap();
+    let address = modbus.server_address().unwrap();
+
+    let read = match tokio_modbus::client::tcp::connect_slave(address, Slave(1)).await {
+        Ok(mut client) => tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.read_holding_registers(0, 1),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .and_then(Result::ok),
+        Err(_) => None,
+    };
+
+    assert_eq!(read, None);
+    started.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start____bad_configuration____refused() {
     let modbus = Modbus::default();
     let rt = runtime(&modbus);
@@ -62,6 +91,10 @@ async fn start____bad_configuration____refused() {
     };
 
     let unknown_field = start(PACKAGE, json!({ "devcies": {} }));
+    let bad_allow = start(
+        PACKAGE,
+        json!({ "server": { "listen": "127.0.0.1:0", "allow": ["10.0.0.0/33"] } }),
+    );
     let unknown_extension = start("other:ext", json!({}));
     let no_target = start(
         PACKAGE,
@@ -71,6 +104,7 @@ async fn start____bad_configuration____refused() {
     );
 
     assert!(unknown_field.unwrap_err().contains("devcies"));
+    assert!(bad_allow.unwrap_err().contains("server.allow"));
     assert!(unknown_extension.unwrap_err().contains("other:ext"));
     assert!(no_target.unwrap_err().contains("deliver_to"));
 }

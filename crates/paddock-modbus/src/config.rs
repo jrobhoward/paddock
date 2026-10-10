@@ -100,6 +100,32 @@ pub struct ServerConfig {
     /// Discrete inputs served.
     #[serde(default)]
     pub discrete: u16,
+    /// Masters allowed to connect: addresses (`10.0.0.5`) or networks
+    /// (`10.0.0.0/24`). Modbus has no authentication of its own, so the
+    /// default is loopback only; list the SCADA network to serve it.
+    #[serde(default = "default_allow")]
+    pub allow: Vec<String>,
+}
+
+fn default_allow() -> Vec<String> {
+    vec!["127.0.0.0/8".into(), "::1/128".into()]
+}
+
+impl ServerConfig {
+    /// The `allow` list as networks. Entries are checked by
+    /// [`Config::from_json`], so none is dropped here.
+    #[must_use]
+    pub fn allowed(&self) -> Vec<(std::net::IpAddr, u8)> {
+        self.allow.iter().filter_map(|a| network(a)).collect()
+    }
+}
+
+/// An address or a network, as a network.
+fn network(entry: &str) -> Option<(std::net::IpAddr, u8)> {
+    match entry.parse::<std::net::IpAddr>() {
+        Ok(ip) => Some((ip, if ip.is_ipv4() { 32 } else { 128 })),
+        Err(_) => paddock_host::parse_cidr(entry),
+    }
 }
 
 fn default_unit() -> u8 {
@@ -172,6 +198,13 @@ impl Config {
                     "devices.{name}: polls registers but names no deliver_to app"
                 ));
             }
+        }
+        if let Some(server) = &config.server
+            && let Some(bad) = server.allow.iter().find(|a| network(a).is_none())
+        {
+            return Err(format!(
+                "server.allow: '{bad}' is not an address or a network (10.0.0.0/24)"
+            ));
         }
         Ok(config)
     }

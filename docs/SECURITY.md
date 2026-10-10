@@ -36,7 +36,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### App and app
 
 - **Controls.** Buckets namespaced by app; shared buckets by grant, read-only or read-write; secrets by name and grant; groups by manifest scope; registered names limited to those the manifest lists.
-- **Gaps.** S1 (two apps may declare one name). Any app may call or cast any pid or registered name on the node; messaging ACLs are D5.
+- **Gaps.** S1 is fixed. Any app may call or cast any pid or registered name on the node; messaging ACLs are D5.
 
 ### The admin socket
 
@@ -46,7 +46,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Node and node
 
 - **Controls.** QUIC with TLS 1.3 and raw public keys pinned per node id; a hello naming the node id, checked against its key; frames of at most 64 MiB; a versioned CBOR wire format; sessions that discard frames from an ended session or an earlier start.
-- **Gaps.** S5 (failover answers from any member), S8 (unbounded tasks for incoming calls). Wire decoding is not fuzzed (see below).
+- **Gaps.** S8 (unbounded tasks for incoming calls); S5 is fixed. Wire decoding is not fuzzed (see below).
 
 ### Ingress clients
 
@@ -57,13 +57,13 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Modbus
 
 - **Devices** are polled with a timeout per request; responses are parsed by tokio-modbus.
-- **The server** answers any master that reaches its address: Modbus has no authentication.
-- **Gaps.** S4 (no allow-list of masters).
+- **The server** answers only masters in `server.allow` (loopback by default): Modbus has no authentication of its own.
+- **Gaps.** S4 is fixed but for a connection cap.
 
 ### Liveness, membership and failover
 
 - **Controls.** As for node and node; the failover rules R1 to R11 and their model (`docs/tla/VERIFICATION.md`).
-- **Gaps.** S5; Q8, Q10, Q11 in the roadmap.
+- **Gaps.** Q8, Q10, Q11 in the roadmap; S5 is fixed.
 
 ### Bundles, manifests and policy
 
@@ -79,11 +79,11 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 | # | Severity | Finding | Fix |
 | --- | --- | --- | --- |
-| S1 | medium | Two deployed apps may list the same registered name. The first instance to register it holds it; names are released when the holder exits, so each restart is a race the other app can win and receive the messages meant for the first. | Refuse a deploy that lists a name another deployed app lists. |
+| S1 | medium, fixed 2026-10-10 | Two deployed apps could list the same registered name. The first instance to register it holds it; names are released when the holder exits, so each restart is a race the other app can win and receive the messages meant for the first. | Fixed: a deploy, upgrade or rollback that lists a name another deployed app lists, running or stopped, is refused (`conflict`). |
 | S2 | medium, fixed 2026-10-10 | Guest log messages and contexts were written as given. A newline starts what looks like a new host record, with any timestamp and target: checked with tracing-subscriber 0.3.23, which escapes ANSI sequences but not newlines. Operators' logs, and the soak's checker, which reads the gate's records, can be fooled. | Fixed: control characters in guest text (log messages and contexts, stdout and stderr lines, crash reasons) are escaped. |
 | S3 | medium, fixed 2026-10-10 | Guest stdout and stderr became log records with no rate limit, and an app's own `rate_limit_per_sec` was optional, so one app could flood the node's log. | Fixed: every app has a budget, the node's `[limits] log_records_per_sec` (default 1000) or its own lower rate, shared by its log records and its stdout and stderr lines. |
-| S4 | medium | The Modbus server accepts reads and writes from any master that reaches its address; a write changes the served table and is cast to the `deliver_to` app. | An allow-list of master addresses and a connection cap in node config; say in MANIFEST.md to bind it to a private interface. |
-| S5 | low | A pair node takes failover answers (`Granted`, `LeaseOk`, `Fenced`, `NotYet`, `Refused`) from any member, not only its witness: a faulty member's `Granted` promotes the standby. | Drop answers whose sender is not the configured witness. |
+| S4 | medium, fixed 2026-10-10 | The Modbus server accepted reads and writes from any master that reached its address; a write changes the served table and is cast to the `deliver_to` app. | Fixed: `server.allow` lists the masters' addresses or networks, loopback only by default; MANIFEST.md says to bind it to the SCADA interface. A cap on connections is still to do (tokio-modbus's server gives no hook for it). |
+| S5 | low, fixed 2026-10-10 | A pair node took failover answers (`Granted`, `LeaseOk`, `Fenced`, `NotYet`, `Refused`) from any member, not only its witness: a faulty member's `Granted` promotes the standby. | Fixed: answers from any node but the configured witness are dropped and logged. |
 | S6 | low | A volume's `quota` is not enforced (documented): an app with a writable volume can fill the disk. | Enforce the quota, or refuse `rw` volumes without a filesystem-level quota. |
 | S7 | low | `priv/` extraction relies on rustbridge-bundle for path safety. | Check each path in Paddock as well (normal components only), with a test bundle that tries `..` and absolute paths. |
 | S8 | low | Each incoming `Frame::Call` starts a task with no bound; an honest peer is bounded by its instances' `pending_calls_max`, a faulty one is not. | A limit per peer on calls in progress. |

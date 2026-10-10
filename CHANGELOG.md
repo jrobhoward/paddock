@@ -247,6 +247,10 @@ All notable changes are recorded here. The format follows
   at, when it is not `cluster.address` (NAT, port forwarding, a proxy).
 - A node logs `singleton starting` before a singleton's `init` runs, also
   when it starts at deploy, and `cannot start singleton` when that fails.
+- Modbus server `allow`: the masters' addresses or networks it accepts,
+  loopback only by default. A master not listed is refused.
+- `paddock_host::{parse_cidr, cidr_contains}` for extensions' node
+  configuration.
 - Node config `log_format = "json"`: one JSON object per line on stderr,
   for log collectors. Text output has colour only on a terminal.
 - Node config `[limits] log_records_per_sec` (default 1000): every app's
@@ -257,6 +261,11 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A deploy, upgrade or rollback that lists a registered name another
+  deployed app lists is refused; before, the first instance to register a
+  shared name got the other app's messages.
+- A node of an HA pair takes failover answers only from its configured
+  witness; before, any cluster member's `Granted` promoted it.
 - Guest text written to the node's log is escaped: a newline or other
   control character in a log message or context, a stdout or stderr line,
   or a crash reason no longer starts what looks like a new host record.
@@ -289,6 +298,8 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- The Modbus server accepts masters from loopback only unless
+  `server.allow` lists their networks.
 - `paddock-bundle`: `OperatorPolicy::granted` returns `Granted`
   (capabilities and extension packages), `effective_grant` takes it, and
   `EffectiveGrant` reports `granted_extensions` and `denied_extensions`.

@@ -238,10 +238,18 @@ impl FailoverHandle {
     }
 }
 
+/// A pair node's inbox for its witness's answers.
+struct Inbox {
+    /// The only node whose answers are taken: the configured witness, or
+    /// none with another arbiter.
+    witness: Option<u32>,
+    tx: mpsc::UnboundedSender<FailoverMsg>,
+}
+
 /// Failover state on a runtime: a node's inbox, or the witness.
 #[derive(Default)]
 pub(crate) struct Shared {
-    inbox: Mutex<Option<mpsc::UnboundedSender<FailoverMsg>>>,
+    inbox: Mutex<Option<Inbox>>,
     witness: Mutex<Option<Witness>>,
     persist: Mutex<Option<WitnessPersist>>,
 }
@@ -280,16 +288,30 @@ impl Shared {
                 transport::send(rt, from, Frame::Failover(reply));
             }
             Some(None) => {}
-            None => {
-                if let Some(inbox) = self
-                    .inbox
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .as_ref()
-                {
-                    let _ = inbox.send(msg);
-                }
-            }
+            None => self.forward(from, msg),
+        }
+    }
+
+    /// Hand an answer from `from` to this pair node, if `from` is its
+    /// witness. Any other member's answer is dropped: a `Granted` from a
+    /// node that is not the witness must not promote anyone.
+    fn forward(&self, from: u32, msg: FailoverMsg) {
+        let (witness, tx) = {
+            let inbox = self.inbox.lock().unwrap_or_else(PoisonError::into_inner);
+            let Some(inbox) = inbox.as_ref() else {
+                return;
+            };
+            (inbox.witness, inbox.tx.clone())
+        };
+        if witness == Some(from) {
+            let _ = tx.send(msg);
+        } else {
+            tracing::warn!(
+                from,
+                ?witness,
+                ?msg,
+                "failover answer from a node that is not this pair's witness; dropped"
+            );
         }
     }
 }
@@ -423,7 +445,14 @@ impl Runtime {
             if slot.is_some() {
                 return Err(HostError::Engine("failover is already started".into()));
             }
-            *slot = Some(inbox_tx);
+            let witness = match cfg.arbiter {
+                Arbiter::Witness(w) => Some(w),
+                Arbiter::Paths | Arbiter::Operator => None,
+            };
+            *slot = Some(Inbox {
+                witness,
+                tx: inbox_tx,
+            });
         }
         self.add_peer(cfg.partner);
         if let Arbiter::Witness(witness) = cfg.arbiter {

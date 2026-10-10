@@ -780,3 +780,61 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
     assert!(scraped.contains("text/plain; version=0.0.4"), "{scraped}");
     n.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn registered_names____listed_by_another_app____deploy_and_upgrade_refused() {
+    let n = TestNode::start("").await;
+    let chaos = fixture("paddock_fixture_chaos");
+    let named = |app: &str, version: &str, names: &[&str]| {
+        bundle(
+            &n.key,
+            app,
+            version,
+            &chaos,
+            fast(json!({ "registered_names": names })),
+            &[],
+        )
+    };
+    n.client
+        .deploy(named("first", "1.0.0", &["orders"]))
+        .await
+        .unwrap();
+
+    let taken = n
+        .client
+        .deploy(named("second", "1.0.0", &["orders"]))
+        .await
+        .unwrap_err();
+    let other = n
+        .client
+        .deploy(named("second", "1.0.0", &["billing"]))
+        .await;
+    let upgrade = n
+        .client
+        .upgrade(
+            "second",
+            named("second", "2.0.0", &["billing", "orders"]),
+            &RolloutParams::default(),
+        )
+        .await
+        .unwrap_err();
+    let own = n
+        .client
+        .upgrade(
+            "first",
+            named("first", "2.0.0", &["orders"]),
+            &RolloutParams::default(),
+        )
+        .await;
+
+    assert_eq!(kind(&taken), "conflict");
+    assert!(
+        taken
+            .to_string()
+            .contains("'orders' is already listed by first"),
+        "{taken}"
+    );
+    assert!(other.is_ok(), "{other:?}");
+    assert_eq!(kind(&upgrade), "conflict");
+    assert!(own.is_ok(), "{own:?}");
+}

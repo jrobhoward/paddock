@@ -163,3 +163,23 @@ fn classify_import____paddock_watch____needs_keyvalue() {
     assert_eq!(class, ImportClass::Capability(&[Capability::KeyValue]));
     assert_eq!(Capability::ALL[KEYVALUE], Capability::KeyValue);
 }
+
+#[rstest]
+#[case("10.0.0.0/24", "10.0.0.17", true)]
+#[case("10.0.0.0/24", "10.0.1.17", false)]
+#[case("127.0.0.1/32", "127.0.0.1", true)]
+#[case("0.0.0.0/0", "192.0.2.1", true)]
+#[case("fd00::/8", "fd12::1", true)]
+#[case("fd00::/8", "fe80::1", false)]
+#[case("10.0.0.0/8", "::ffff:10.0.0.1", false)]
+fn cidr_contains____address____inside_or_not(
+    #[case] net: &str,
+    #[case] ip: &str,
+    #[case] inside: bool,
+) {
+    let net = parse_cidr(net).unwrap();
+
+    let found = cidr_contains(net, ip.parse().unwrap());
+
+    assert_eq!(found, inside);
+}

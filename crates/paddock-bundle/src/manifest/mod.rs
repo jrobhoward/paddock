@@ -39,8 +39,8 @@ pub use capabilities::{
     AccessMode, AdminAccess, AdminScope, Bucket, Capabilities, Capability, ConfigScope, Durability,
     FilesystemScope, GroupsScope, HttpIncomingScope, HttpOutgoingScope, ImportClass, InterfaceName,
     KeyValueScope, LoggingScope, MetricsScope, PortRange, Preopen, RESERVED_NAMESPACES, Route,
-    SecretsScope, SocketRule, SocketsScope, SqlScope, SupervisorScope, classify_import,
-    is_extension_key, parse_cidr,
+    SecretsScope, SocketRule, SocketsScope, SqlScope, SupervisorScope, cidr_contains,
+    classify_import, is_extension_key, parse_cidr,
 };
 pub use error::{ManifestError, ValidationError};
 pub use lifecycle::{

@@ -112,6 +112,22 @@ struct DeployInfo {
     denied: Vec<String>,
     stubbed: Vec<String>,
     warnings: Vec<String>,
+    /// The registered names the manifest lists, reserved for this app.
+    names: Vec<String>,
+}
+
+/// Refuse `app` listing a registered name another deployed app lists,
+/// running or stopped: names are node-wide, and whichever instance
+/// registered first would get the other app's messages (SECURITY.md, S1).
+fn check_names(st: &NodeState, app: &str, names: &[String]) -> Result<(), NodeError> {
+    for (other, info) in st.info.iter().filter(|(other, _)| *other != app) {
+        if let Some(name) = names.iter().find(|n| info.names.contains(n)) {
+            return Err(NodeError::Conflict(format!(
+                "registered name '{name}' is already listed by {other}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A verified, compiled bundle ready to run.
@@ -604,6 +620,12 @@ impl Node {
                 .collect::<Vec<_>>()
         };
         let info = DeployInfo {
+            names: manifest
+                .spec
+                .registered_names
+                .iter()
+                .map(|n| n.name.clone())
+                .collect(),
             signer: manifest.provenance.signer_key.clone(),
             granted: keys(&grant.granted, &grant.granted_extensions)
                 .into_iter()
@@ -862,6 +884,7 @@ impl Node {
                 "{name} is already deployed; upgrade it instead"
             )));
         }
+        check_names(st, &name, &built.info.names)?;
         built
             .bundle
             .extract_priv(&self.store.priv_dir(&name, &version))
@@ -947,6 +970,7 @@ impl Node {
                 "{name} {version} is already running"
             )));
         }
+        check_names(st, name, &built.info.names)?;
         built
             .bundle
             .extract_priv(&self.store.priv_dir(name, &version))
@@ -1137,6 +1161,9 @@ impl Node {
         let mut st = self.state.lock().await;
         if !st.desired.apps.contains_key(name) {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
+        }
+        if let Some(previous) = st.previous_info.get(name) {
+            check_names(&st, name, &previous.names)?;
         }
         let result = match self.rollback_connections(name) {
             Some(result) => result,

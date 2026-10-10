@@ -859,6 +859,28 @@ pub fn parse_cidr(s: &str) -> Option<(IpAddr, u8)> {
     (prefix <= max).then_some((addr, prefix))
 }
 
+/// Whether `ip` is inside the network `net` (as [`parse_cidr`] returns it).
+/// An IPv4 network never contains an IPv6 address, nor the reverse.
+#[must_use]
+pub fn cidr_contains(net: (IpAddr, u8), ip: IpAddr) -> bool {
+    let (base, prefix) = net;
+    match (base, ip) {
+        (IpAddr::V4(b), IpAddr::V4(a)) => {
+            let mask = u32::MAX
+                .checked_shl(32 - u32::from(prefix.min(32)))
+                .unwrap_or(0);
+            u32::from(b) & mask == u32::from(a) & mask
+        }
+        (IpAddr::V6(b), IpAddr::V6(a)) => {
+            let mask = u128::MAX
+                .checked_shl(128 - u32::from(prefix.min(128)))
+                .unwrap_or(0);
+            u128::from(b) & mask == u128::from(a) & mask
+        }
+        _ => false,
+    }
+}
+
 /// An inclusive port range, written `"443"` or `"8000-8100"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

@@ -56,6 +56,8 @@ pub use lifecycle::LifecycleState;
 pub use listener::{CONNECTION_WORLD, Listener, ListenerSpec, ListenerStats, LoadedConnection};
 pub use message::{CallError, Envelope, ExitReason};
 pub use paddock_bundle::manifest::{RestartType, Strategy};
+/// Address networks (`10.0.0.0/24`), for extensions' node configuration.
+pub use paddock_bundle::manifest::{cidr_contains, parse_cidr};
 pub use pid::Pid;
 /// Hash routing's key reader, for the fuzz targets in `fuzz/` only.
 #[cfg(fuzzing)]
