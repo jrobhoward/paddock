@@ -269,6 +269,14 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Failover witness: a grant is now written to disk before the witness
+  applies it. Before, the epoch and promoted node changed in memory first,
+  so a failed write left memory ahead of disk and a `Fenced` answer could
+  carry an epoch a restart would lose. While a grant is being written the
+  witness answers nothing from the pair.
+- Failover: a standby whose request's answer was lost, and which then
+  heard its primary again, kept asking and never again confirmed the
+  primary's lease. A request past its retry time now counts as answered.
 - Cluster transport: a dial whose peer completed the QUIC handshake but
   never sent its hello waited forever, since keep-alives kept the
   connection open, and the redial loop waiting on it never tried again.

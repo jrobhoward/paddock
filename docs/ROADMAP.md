@@ -45,7 +45,7 @@ Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test 
 
 ## Stage 2: Review (M)
 
-Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q10 to Q13; its Q8 is fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3, Q7). W1 finishes both drafts.
+Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q10; Q8, Q11 to Q13 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3, Q7). W1 finishes both drafts.
 
 ## Stage 3: Rework (M–L)
 
@@ -63,9 +63,7 @@ From stage 2 and earlier work:
 - [ ] **Q7 Refactors.** Split `node/daemon.rs` by concern (deploy and upgrade, connection apps, cluster and failover start, queries); move the `process` host functions out of `state.rs`; let `list` and `status` read without waiting behind a deploy or upgrade. No new crates.
 - [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
 - [ ] **Q10 Operator confirmation with a witness.** A stale confirmation no longer promotes (fixed 2026-10-10, VERIFICATION.md bug 4). Left: with a witness arbiter the standby honours a confirmation even while the witness answers and the primary renews there, which makes two runners if the operator is wrong; decide whether a confirmation counts only while the witness is also unreachable. `awaiting_confirmation` is never set with a witness, so `paddock failover confirm` answers "nothing may change" in exactly the case it is for. Model the confirmation in layer 2 (R7 is checked at layer 1 only).
-- [ ] **Q11 Witness state written before it changes.** The witness changes its epoch and promoted node in memory, under its lock, then writes them outside it: a failed write leaves memory ahead of disk (the requester is later refused), and a `Fenced` answer can carry an epoch not yet on disk. Write first, then apply, keeping one request at a time (R5, R10). VERIFICATION.md, "Conformance with the code".
-- [ ] **Q12 A lost answer leaves a standby asking.** If the witness's answer is lost and the partner is heard again, the standby keeps asking and never again confirms the primary's lease (model and code alike). Count a request whose retry time has passed as answered. Liveness only; V1 applies.
-- [ ] **Q13 One statement of the timing assumption.** R11 says delay plus drift below the margin; `failover/mod.rs` and `FailoverConfig::margin` say below twice the margin. Derive it once from the code (delays only make the witness wait longer; the margins cover clock drift over a lease and the time to stop a singleton: since singleton instances check the lease themselves, one epoch tick of guest execution and a host call in flight) and use it in all three.
+- [ ] **Q14 A late grant starts the lease too late.** A standby asks again a lease after its request; a `Granted` for the earlier request that arrives after the retry starts the lease from the retry's send time, later than the witness counts it, so the timing assumption needs every answer within a lease (R11). Start a grant's lease from the first request since the node began asking (kept across retries, conservative), which removes that bound; V1 applies.
 
 ### Verification of failover
 

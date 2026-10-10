@@ -1,5 +1,12 @@
 //! The witness: grants promotions and resumes, waiting out the other
 //! node's lease (R3), one request at a time (R5).
+//!
+//! A grant is decided, kept on disk, then applied (R10): the epoch and
+//! promoted node in memory never run ahead of disk, so no answer carries
+//! an epoch a restart could lose. While a grant is being kept, the witness
+//! answers nothing from the pair: a renewal of the node being replaced
+//! could otherwise extend its lease after the grant was decided, and a
+//! second request would break R5. Unanswered, both are as if lost.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -15,6 +22,28 @@ pub(super) struct Witness {
     pub(super) promoted: u32,
     /// The last renewal the witness granted each node.
     pub(super) renewed: HashMap<u32, Instant>,
+    /// A grant decided and being kept on disk.
+    granting: bool,
+}
+
+/// What the witness does with a message.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Decision {
+    /// Answer at once.
+    Answer(FailoverMsg),
+    /// Grant: keep `epoch` and `promoted` on disk, then [`Witness::apply`].
+    Grant(Grant),
+}
+
+/// A grant decided and not yet applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Grant {
+    /// The node granted.
+    pub(super) to: u32,
+    /// The epoch it is granted at.
+    pub(super) epoch: u64,
+    /// The node promoted at that epoch.
+    pub(super) promoted: u32,
 }
 
 impl Witness {
@@ -34,6 +63,7 @@ impl Witness {
             epoch,
             promoted,
             renewed,
+            granting: false,
         }
     }
 
@@ -45,17 +75,21 @@ impl Witness {
         }
     }
 
-    pub(super) fn handle(&mut self, from: u32, msg: FailoverMsg) -> Option<FailoverMsg> {
+    pub(super) fn handle(&mut self, from: u32, msg: FailoverMsg) -> Option<Decision> {
         let partner = self.partner(from)?;
+        if self.granting {
+            return None;
+        }
         let now = Instant::now();
         let hold = self.cfg.lease + self.cfg.margin;
+        let answer = |msg| Some(Decision::Answer(msg));
         match msg {
             FailoverMsg::Renew { seq, epoch } => {
                 if epoch == self.epoch && from == self.promoted {
                     self.renewed.insert(from, now);
-                    Some(FailoverMsg::LeaseOk { seq })
+                    answer(FailoverMsg::LeaseOk { seq })
                 } else {
-                    Some(FailoverMsg::Fenced { epoch: self.epoch })
+                    answer(FailoverMsg::Fenced { epoch: self.epoch })
                 }
             }
             FailoverMsg::Request {
@@ -69,7 +103,7 @@ impl Witness {
                     epoch + 1 > self.epoch
                 };
                 if !allowed {
-                    return Some(FailoverMsg::Refused { epoch: self.epoch });
+                    return answer(FailoverMsg::Refused { epoch: self.epoch });
                 }
                 // The partner's lease is gone by the witness's record of
                 // renewals and by the requester's last confirmation (R3).
@@ -82,20 +116,44 @@ impl Witness {
                 }
                 if now < gone_at {
                     let wait = gone_at.duration_since(now);
-                    return Some(FailoverMsg::NotYet {
+                    return answer(FailoverMsg::NotYet {
                         wait_ms: u64::try_from(wait.as_millis()).unwrap_or(u64::MAX) + 1,
                     });
                 }
-                if !resume {
-                    self.epoch = epoch + 1;
-                    self.promoted = from;
-                }
-                self.renewed.remove(&partner);
-                self.renewed.insert(from, now);
-                Some(FailoverMsg::Granted { epoch: self.epoch })
+                self.granting = true;
+                Some(Decision::Grant(if resume {
+                    Grant {
+                        to: from,
+                        epoch: self.epoch,
+                        promoted: self.promoted,
+                    }
+                } else {
+                    Grant {
+                        to: from,
+                        epoch: epoch + 1,
+                        promoted: from,
+                    }
+                }))
             }
             _ => None,
         }
+    }
+
+    /// Apply `grant`, now kept on disk, and return the answer to send.
+    pub(super) fn apply(&mut self, grant: Grant) -> FailoverMsg {
+        self.granting = false;
+        self.epoch = grant.epoch;
+        self.promoted = grant.promoted;
+        if let Some(partner) = self.partner(grant.to) {
+            self.renewed.remove(&partner);
+        }
+        self.renewed.insert(grant.to, Instant::now());
+        FailoverMsg::Granted { epoch: grant.epoch }
+    }
+
+    /// Drop a grant that could not be kept; the requester asks again.
+    pub(super) fn abandon(&mut self) {
+        self.granting = false;
     }
 }
 

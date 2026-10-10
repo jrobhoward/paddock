@@ -28,8 +28,16 @@
 //! primary it hears, or, with a witness, resumes as primary if the witness
 //! last promoted it.
 //!
-//! Timing assumption, from S16: message delay plus clock drift stays below
-//! twice `margin`.
+//! Timing assumption (R11 in `docs/tla/VERIFICATION.md`): over one lease,
+//! the clocks of the pair and the witness drift apart by less than twice
+//! `margin` less the time a node takes to stop its singletons once its
+//! lease ends (an epoch tick of guest code and a host call in flight; see
+//! `RunUntil`). Message delay is not part of it, but for one bound: a lease
+//! runs from when its renewal, or the stamp a confirmation echoes, was
+//! sent, and the witness counts from when it received, so a delay only
+//! makes the witness wait longer. The bound: an answer to a request
+//! arrives within a lease, before its requester asks again, since a grant
+//! starts the lease from the latest request sent.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -41,7 +49,7 @@ mod node;
 mod witness;
 
 use node::Node;
-use witness::Witness;
+use witness::{Decision, Grant, Witness};
 
 use crate::error::HostError;
 use crate::runtime::{Runtime, RuntimeInner};
@@ -70,8 +78,10 @@ pub struct FailoverConfig {
     /// How long a renewal keeps a lease.
     pub lease: Duration,
     /// Safety margin: a holder stops this long before its lease ends, and
-    /// the witness waits this long after. More than half of the worst
-    /// message delay plus clock drift.
+    /// the witness waits this long after. Twice the margin must exceed the
+    /// clocks' drift over a lease plus the time to stop a singleton; message
+    /// delay does not count, if the witness's answers arrive within a lease
+    /// ([`crate::failover`]).
     pub margin: Duration,
     /// The epoch to start at: the highest this node reached before it
     /// stopped, kept on disk, so epochs (fencing tokens) never go back. 0
@@ -310,32 +320,42 @@ impl Shared {
 
     /// A failover message from node `from`.
     pub(crate) fn deliver(&self, rt: &RuntimeInner, from: u32, msg: FailoverMsg) {
-        let reply = {
+        let decision = {
             let mut witness = self.witness.lock().unwrap_or_else(PoisonError::into_inner);
-            witness.as_mut().map(|w| {
-                w.handle(from, msg.clone())
-                    .map(|r| (r, w.epoch, w.promoted))
-            })
+            witness.as_mut().map(|w| w.handle(from, msg.clone()))
         };
-        match reply {
-            Some(Some((reply, epoch, promoted))) => {
-                if matches!(reply, FailoverMsg::Granted { .. }) {
-                    let persist = self
-                        .persist
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .clone();
-                    if let Some(persist) = persist
-                        && let Err(e) = persist(epoch, promoted)
-                    {
-                        tracing::error!(error = %e, "witness state not kept; grant withheld");
-                        return;
-                    }
-                }
-                transport::send(rt, from, Frame::Failover(reply));
+        let reply = match decision {
+            None => return self.forward(from, msg),
+            Some(None) => return,
+            Some(Some(Decision::Answer(reply))) => reply,
+            Some(Some(Decision::Grant(grant))) => match self.keep(grant) {
+                Some(reply) => reply,
+                None => return,
+            },
+        };
+        transport::send(rt, from, Frame::Failover(reply));
+    }
+
+    /// Keep `grant` on disk, then apply it (R10): the answer, or `None` if
+    /// it could not be kept and was dropped. The witness answers nothing
+    /// from the pair meanwhile ([`Witness::handle`]).
+    fn keep(&self, grant: Grant) -> Option<FailoverMsg> {
+        let persist = self
+            .persist
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let kept = persist.map_or(Ok(()), |persist| persist(grant.epoch, grant.promoted));
+        let mut witness = self.witness.lock().unwrap_or_else(PoisonError::into_inner);
+        let w = witness.as_mut()?;
+        match kept {
+            Ok(()) => Some(w.apply(grant)),
+            Err(e) => {
+                w.abandon();
+                drop(witness);
+                tracing::error!(error = %e, "witness state not kept; grant withheld");
+                None
             }
-            Some(None) => {}
-            None => self.forward(from, msg),
         }
     }
 

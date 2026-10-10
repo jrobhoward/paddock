@@ -389,8 +389,16 @@ impl Standby {
             // stale one would promote on a later, unrelated cut.
             ctx.confirmed_by_operator = false;
             // `Cancel`: the witness keeps no pending request, so with none in
-            // flight a standby that hears a primary again stops asking.
-            if self.asking.is_some_and(|a| !a.in_flight) && partner.primary(false).is_some() {
+            // flight a standby that hears a primary again stops asking. A
+            // request past its retry time counts as answered: its answer
+            // was lost, and waiting for it would keep this standby from
+            // confirming the primary's lease for good. A grant arriving
+            // after the cancel finds no request and is ignored.
+            if self
+                .asking
+                .is_some_and(|a| !a.in_flight || a.retry_at.is_some_and(|t| now >= t))
+                && partner.primary(false).is_some()
+            {
                 self.asking = None;
             }
             // `StandDown`: neither node leads; step down, as if restarted, so

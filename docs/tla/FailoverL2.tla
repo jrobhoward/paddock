@@ -26,7 +26,8 @@
  *     survive its crashes; its renewal record too, unless ForgetRenewals: then
  *     it restarts counting the node it promoted as just renewed (the code).
  *   - A standby asks when it hears its partner on no path; it stops asking
- *     if it hears a primary again with no request in flight (cancel); it
+ *     if it hears a primary again with no request in flight, or one past
+ *     its retry time, whose answer was lost (cancel); it
  *     steps down after hearing its partner Down for a lease (stand-down).
  *   - Nodes crash and restart Down; their epoch survives only with
  *     PersistEpoch. Replies can be lost with their link.
@@ -291,7 +292,9 @@ TopEpoch(n) == Max(epoch[n], IF PrimaryEpochs(n, FALSE) = {} THEN 0
 \* The partner is heard: maybe cancel; watch for it saying Down.
 StandbyHears(n) ==
     LET e == TopEpoch(n)
-        cancel == asking[n] /\ ~inflight[n] /\ PrimaryEpochs(n, FALSE) # {}
+        \* A request past its retry time counts as answered (its answer was
+        \* lost); a grant after the cancel finds asked FALSE and is ignored.
+        cancel == asking[n] /\ (~inflight[n] \/ retry[n] = 0) /\ PrimaryEpochs(n, FALSE) # {}
         newAsking == asking[n] /\ ~cancel
         \* The code before ConfirmOnSend refreshed the confirmation on every
         \* step that hears the partner.
@@ -306,9 +309,10 @@ StandbyHears(n) ==
              /\ asking' = [asking EXCEPT ![n] = newAsking]
              /\ asked' = [asked EXCEPT ![n] = IF cancel THEN FALSE ELSE @]
              /\ retry' = [retry EXCEPT ![n] = IF cancel THEN 0 ELSE @]
+             /\ inflight' = [inflight EXCEPT ![n] = IF cancel THEN FALSE ELSE @]
              /\ confAge' = [confAge EXCEPT ![n] = conf]
              /\ downAge' = [downAge EXCEPT ![n] = down]
-             /\ UNCHANGED <<role, lease, inflight, q>>
+             /\ UNCHANGED <<role, lease, q>>
 
 \* Silent on every path: `Ask`.
 StandbySilent(n) ==

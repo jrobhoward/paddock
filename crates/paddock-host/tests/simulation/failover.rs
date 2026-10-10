@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use paddock_host::failover::{
-    Arbiter, FailoverConfig, FailoverHandle, Leadership, Standing, WitnessConfig,
+    Arbiter, FailoverConfig, FailoverHandle, Leadership, Standing, WitnessConfig, WitnessPersist,
 };
+use paddock_host::transport::memory::Faults;
 use paddock_host::{CallError, LifecycleState};
 use tokio::time::Instant;
 
@@ -63,6 +64,11 @@ impl Pair {
 
 /// Serve the witness on node 3, start failover on 1 and 2, and log `may_run`.
 fn start(sim: &Sim, arbiter: Arbiter) -> Pair {
+    start_kept(sim, arbiter, None)
+}
+
+/// [`start`], with the witness keeping its state through `persist`.
+fn start_kept(sim: &Sim, arbiter: Arbiter, persist: Option<WitnessPersist>) -> Pair {
     sim.mesh.add_path(SERIAL);
     sim.mesh.cut_path(1, 3, SERIAL);
     sim.mesh.cut_path(2, 3, SERIAL);
@@ -70,7 +76,7 @@ fn start(sim: &Sim, arbiter: Arbiter) -> Pair {
     witness.lease = LEASE;
     witness.margin = MARGIN;
     if matches!(arbiter, Arbiter::Witness(_)) {
-        sim.node(3).rt.serve_witness(witness).unwrap();
+        sim.node(3).rt.serve_witness_kept(witness, persist).unwrap();
     }
     let log: Log = Arc::default();
     let handles = (1..=2)
@@ -190,6 +196,79 @@ fn bound_instances____lease_moves_with_no_gate____guest_code_runs_only_under_the
     assert_eq!(cut_off, Err(CallError::Timeout));
     assert_eq!(taken_over.as_deref(), Ok("two"));
     assert_eq!(old_state, LifecycleState::Active);
+}
+
+/// A standby whose request's answer was lost, and which then hears its
+/// primary again, goes back to confirming the primary's lease once the
+/// request's retry time passes (ROADMAP Q12): the primary keeps running
+/// when it later loses the witness.
+#[test]
+fn lost_answer____partner_heard_again____standby_confirms_the_lease_again() {
+    let (runners, overlap) = simulate(48, 3, |sim| async move {
+        let pair = start(&sim, witness());
+        pass(3000).await;
+        let lose_all = Faults {
+            drop: 1.0,
+            ..Faults::default()
+        };
+
+        // The standby hears nothing from the primary and asks; every
+        // answer of the witness's to it is lost.
+        sim.mesh.set_faults(3, 2, lose_all);
+        sim.mesh.stall(1, 2);
+        sim.mesh.cut_path(1, 2, SERIAL);
+        pass(u64::try_from((NODE_TIMEOUT + HEARTBEAT * 2).as_millis()).unwrap()).await;
+        sim.mesh.set_faults(3, 2, Faults::default());
+        sim.mesh.heal(1, 2);
+        sim.mesh.heal_path(1, 2, SERIAL);
+        pass(u64::try_from((LEASE * 2).as_millis()).unwrap()).await;
+        // The primary's lease now rests on its partner's confirmations.
+        sim.mesh.stall(1, 3);
+        pass(u64::try_from((LEASE * 3).as_millis()).unwrap()).await;
+
+        (pair.runners(), pair.overlap())
+    });
+
+    assert_eq!(runners, vec![1]);
+    assert_eq!(overlap, None);
+}
+
+/// A grant whose state cannot be kept is withheld; the standby is still
+/// promoted once a later write succeeds, at the epoch that write kept, and
+/// never two runners. (That no answer carries an epoch not yet on disk is
+/// `witness_tests`'s.)
+#[test]
+fn witness_write_fails_once____primary_cut_off____standby_promoted_at_the_next_epoch() {
+    let kept: Arc<Mutex<Vec<(u64, u32)>>> = Arc::default();
+    let (runners, epoch, kept_now, overlap) = simulate(49, 3, |sim| {
+        let kept = kept.clone();
+        async move {
+            let failures = Arc::new(Mutex::new(1));
+            let log = kept.clone();
+            let persist: WitnessPersist = Arc::new(move |epoch, node| {
+                let mut failures = failures.lock().unwrap();
+                if epoch >= 2 && *failures > 0 {
+                    *failures -= 1;
+                    return Err("disk full".into());
+                }
+                log.lock().unwrap().push((epoch, node));
+                Ok(())
+            });
+            let pair = start_kept(&sim, witness(), Some(persist));
+            pass(3000).await;
+
+            isolate(&sim, 1);
+            pass(u64::try_from((takeover_bound() * 3).as_millis()).unwrap()).await;
+
+            let kept_now = kept.lock().unwrap().clone();
+            (pair.runners(), pair.of(2).epoch, kept_now, pair.overlap())
+        }
+    });
+
+    assert_eq!(runners, vec![2]);
+    assert_eq!(epoch, 2);
+    assert_eq!(kept_now.last(), Some(&(2, 2)));
+    assert_eq!(overlap, None);
 }
 
 #[test]
