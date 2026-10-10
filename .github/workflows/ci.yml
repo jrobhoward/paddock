@@ -98,11 +98,11 @@ jobs:
           tool: wasm-tools
 
       - name: Build fixtures
-        run: cargo build -p paddock-fixture-echo -p paddock-fixture-chaos -p paddock-fixture-services -p paddock-fixture-sdk -p paddock-fixture-counter -p example-counter -p example-ping-pong -p example-chaos -p example-greeter-app -p paddock-fixture-conn -p example-line-server --target wasm32-wasip2 --release --locked
+        run: cargo build -p paddock-fixture-echo -p paddock-fixture-chaos -p paddock-fixture-services -p paddock-fixture-sdk -p paddock-fixture-counter -p example-counter -p example-ping-pong -p example-chaos -p example-greeter-app -p paddock-fixture-conn -p example-line-server -p example-scada-points -p example-scada-hmi -p example-http-counter --target wasm32-wasip2 --release --locked
 
       - name: Check component world
         run: |
-          for name in paddock_fixture_echo paddock_fixture_chaos paddock_fixture_services paddock_fixture_sdk paddock_fixture_counter example_counter example_ping_pong example_chaos example_greeter_app; do
+          for name in paddock_fixture_echo paddock_fixture_chaos paddock_fixture_services paddock_fixture_sdk paddock_fixture_counter example_counter example_ping_pong example_chaos example_greeter_app example_scada_points example_http_counter; do
             wasm=target/wasm32-wasip2/release/$name.wasm
             wasm-tools validate --features all "$wasm"
             wasm-tools component wit "$wasm" | tee wit.txt
@@ -113,7 +113,7 @@ jobs:
             done
           done
           # Connection handlers export `paddock:connection/handler` instead.
-          for name in paddock_fixture_conn example_line_server; do
+          for name in paddock_fixture_conn example_line_server example_scada_hmi; do
             wasm=target/wasm32-wasip2/release/$name.wasm
             wasm-tools validate --features all "$wasm"
             wasm-tools component wit "$wasm" | tee wit.txt

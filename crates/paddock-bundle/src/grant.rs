@@ -135,6 +135,13 @@ pub fn effective_grant(
         });
     }
 
+    // Capabilities served without imports are used whenever declared.
+    imported.extend(
+        declared
+            .iter()
+            .copied()
+            .filter(|c| crate::manifest::Capabilities::import_free(*c)),
+    );
     let (granted, denied): (BTreeSet<Capability>, BTreeSet<Capability>) = imported
         .iter()
         .copied()

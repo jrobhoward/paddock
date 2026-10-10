@@ -685,6 +685,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-http-counter"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "example-line-server"
 version = "0.0.0"
 dependencies = [
@@ -1481,7 +1489,11 @@ name = "paddock-host"
 version = "0.0.0"
 dependencies = [
  "anyprobe",
+ "bytes",
  "ciborium",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "paddock-bundle",
  "redb",
  "rstest",

@@ -87,6 +87,10 @@ name = "listeners"
 required-features = ["node"]
 
 [[test]]
+name = "http"
+required-features = ["node"]
+
+[[test]]
 name = "scada"
 required-features = ["modbus"]
 

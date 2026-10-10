@@ -163,6 +163,12 @@ All notable changes are recorded here. The format follows
   registers to Modbus masters. `modbus_load` throughput harness.
 - `examples/scada`: a hash-routed `points` pool keeping Modbus points in a
   shared bucket, and an `hmi` connection handler answering over a listener.
+- HTTP ingress (`paddock_host::http`, node config `[http.<name>]`): apps'
+  `wasi:http/incoming-handler` routes (host, path prefix, `hash_header`,
+  `max_body`, `timeout_ms`) receive each request as a call, granted by
+  policy without an import; failures map to 404, 413, 502, 503 and 504.
+  SDK feature `http` (`paddock_sdk::http::{Request, Response}`);
+  `examples/http-counter`.
 
 ### Changed
 

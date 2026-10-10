@@ -29,10 +29,15 @@
 //! - `cas:<bucket>:<key>:<expected or ->:<value>`: the new revision.
 //! - `cad:<bucket>:<key>:<expected>`: the bucket's new revision.
 //! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
+//! - HTTP requests (`paddock_sdk::http`), by the end of the path: `/plain`
+//!   replies a plain text envelope; `/status/<n>` replies status n;
+//!   `/crash` traps; `/never` never replies; anything else replies 200 with
+//!   `<method> <path>?<query> key=<key> body=<body> pid=<pid>`.
 //! - `changes`: every change notice received, `<key>@<revision>`, joined
 //!   by `,`.
 
 use paddock_sdk::groups::{self, GroupError};
+use paddock_sdk::http::{Request, Response};
 use paddock_sdk::kv::{Bucket, KvError};
 use paddock_sdk::watch::{self, Change, WatchError};
 use paddock_sdk::{App, CallRef, Ctx, Envelope, Info, Reply};
@@ -48,6 +53,32 @@ struct Point {
 struct Fixture {
     received: Vec<String>,
     changes: Vec<String>,
+}
+
+fn http(ctx: &mut Ctx, req: &Request) -> Reply {
+    let path = req.path.as_str();
+    if path.ends_with("/plain") {
+        return Reply::Now(Envelope::text("plain"));
+    }
+    if path.ends_with("/crash") {
+        panic!("asked to crash");
+    }
+    if path.ends_with("/never") {
+        return Reply::Later;
+    }
+    if let Some((_, code)) = path.rsplit_once("/status/") {
+        return Reply::Now(Response::new(code.parse().unwrap_or(500)).into());
+    }
+    let echo = format!(
+        "{} {}?{} key={} body={} pid={}",
+        req.method,
+        path,
+        req.query.as_deref().unwrap_or(""),
+        req.key.as_deref().unwrap_or("-"),
+        req.text().unwrap_or("<binary>"),
+        ctx.pid(),
+    );
+    Reply::Now(Response::text(200, echo).header("x-fixture", "sdk").into())
 }
 
 const WATCH_VERBS: [&str; 9] = [
@@ -185,7 +216,10 @@ impl App for Fixture {
         Ok(Self::default())
     }
 
-    fn handle_call(&mut self, _ctx: &mut Ctx, _call: CallRef, msg: Envelope) -> Reply {
+    fn handle_call(&mut self, ctx: &mut Ctx, _call: CallRef, msg: Envelope) -> Reply {
+        if let Some(req) = Request::from_envelope(&msg) {
+            return http(ctx, &req);
+        }
         let command = msg.as_text().unwrap_or("");
         let verb = command.split(':').next().unwrap_or("");
         let reply = if command.starts_with("config") {

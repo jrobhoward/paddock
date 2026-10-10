@@ -25,6 +25,7 @@ mod delivery;
 mod deny;
 mod error;
 pub mod failover;
+pub mod http;
 mod instance;
 mod lifecycle;
 mod links;

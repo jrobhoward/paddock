@@ -36,6 +36,8 @@
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
 //! - `groups` (cargo feature `groups`): `paddock:groups`, process groups
 //!   on this node with publish.
+//! - `http` (cargo feature `http`): requests from the node's HTTP ingress,
+//!   delivered as calls, and the responses to them.
 //! - `watch` (cargo feature `watch`): `paddock:watch`, revisioned reads,
 //!   compare-and-swap and change watches on keyvalue buckets.
 //!
@@ -58,6 +60,8 @@ mod ctx;
 mod envelope;
 #[cfg(feature = "groups")]
 pub mod groups;
+#[cfg(feature = "http")]
+pub mod http;
 #[cfg(feature = "keyvalue")]
 pub mod kv;
 pub mod log;

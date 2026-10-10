@@ -24,6 +24,11 @@
 //! scope = "node"                # "cluster" is Phase 3
 //!
 //! # Node-level config overrides, per app, on top of the manifest defaults.
+//! # HTTP ingress: every app's `wasi:http/incoming-handler` routes, on
+//! # each address.
+//! [http.main]
+//! address = "0.0.0.0:8080"
+//!
 //! [config.orders]
 //! "db.host" = "pg.internal"
 //!
@@ -108,6 +113,10 @@ pub struct NodeConfig {
     /// Addresses for the listeners apps declare, by listener name.
     #[serde(default)]
     pub listeners: BTreeMap<String, ListenerBinding>,
+    /// HTTP ingress addresses, by a name of the operator's choosing. Every
+    /// address serves every app's routes.
+    #[serde(default)]
+    pub http: BTreeMap<String, ListenerBinding>,
     /// This node's part in a cluster.
     #[serde(default)]
     pub cluster: ClusterConfig,

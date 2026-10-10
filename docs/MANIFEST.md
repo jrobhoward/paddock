@@ -153,7 +153,8 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (*not enforced*, Phase 3). `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `paddock:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
 | `paddock:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. | enforced |
 | `wasi:filesystem` | `preopens."<guest path>" = { volume, mode, quota }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`; `quota` is *not enforced*. `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
-| `paddock:secrets`, `wasi:http/outgoing-handler`, `wasi:http/incoming-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
+| `wasi:http/incoming-handler` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
+| `paddock:secrets`, `wasi:http/outgoing-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
 | `wasi:sockets`, `paddock:sql` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
 | `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
 | `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
@@ -236,6 +237,10 @@ orders-data = "/srv/paddock/orders"    # backs manifest preopens with volume = "
 [listeners.lines]
 address = "0.0.0.0:7070"               # binds a manifest listener named "lines"
 acceptors = 4                          # default 4: tasks accepting connections at once
+
+[http.main]
+address = "0.0.0.0:8080"               # HTTP ingress: serves every app's wasi:http/incoming-handler routes
+acceptors = 4                          # default 4
 
 [config.orders]
 currency = "USD"                       # overrides the app's config.defaults

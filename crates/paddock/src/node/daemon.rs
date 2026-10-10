@@ -10,8 +10,9 @@ use crate::api::{
     AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, ListenerInfo, LogLine,
     RolloutParams, StateResponse, Target, UpgradeResponse,
 };
-use paddock_bundle::manifest::{AppManifest, UpgradeMode};
+use paddock_bundle::manifest::{AppManifest, Capability, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
+use paddock_host::http::{HttpIngress, HttpRoute};
 use paddock_host::services::{Extension, StartedExtensions};
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
@@ -43,6 +44,8 @@ pub struct Node {
     connections: std::sync::Mutex<HashMap<String, ConnectionApp>>,
     /// Extensions' node-level work, stopped on shutdown.
     extensions: std::sync::Mutex<Option<StartedExtensions>>,
+    /// HTTP ingress, if node config has `[http]` addresses.
+    http: Option<HttpIngress>,
 }
 
 /// A connection-handler app this node runs: its listeners, and the
@@ -309,6 +312,19 @@ impl Node {
         )
         .map_err(internal)?;
         let apps = rt.start_apps(Vec::new()).await.map_err(internal)?;
+        let http = if config.http.is_empty() {
+            None
+        } else {
+            let ingress = HttpIngress::new(apps.clone());
+            for (name, binding) in &config.http {
+                let bound = ingress
+                    .listen(binding.address, binding.acceptors)
+                    .await
+                    .map_err(|e| NodeError::Invalid(format!("http.{name}: {e}")))?;
+                tracing::info!(name, %bound, "HTTP ingress listening");
+            }
+            Some(ingress)
+        };
         let audit = Audit::new(store.audit_path());
         let node = Self {
             config,
@@ -324,6 +340,7 @@ impl Node {
             }),
             connections: std::sync::Mutex::default(),
             extensions: std::sync::Mutex::default(),
+            http,
         };
         node.restore().await;
         let started = match node
@@ -520,12 +537,19 @@ impl Node {
     /// the supervised app's handle.
     async fn run(&self, name: &str, run: Runnable) -> Result<Option<AppHandle>, NodeError> {
         match run {
-            Runnable::App(deployment) => self
-                .apps
-                .add(deployment)
-                .await
-                .map(Some)
-                .map_err(|e| NodeError::Invalid(e.to_string())),
+            Runnable::App(deployment) => {
+                self.set_routes(name, &deployment)?;
+                let added = self
+                    .apps
+                    .add(deployment)
+                    .await
+                    .map(Some)
+                    .map_err(|e| NodeError::Invalid(e.to_string()));
+                if added.is_err() {
+                    self.remove_routes(name);
+                }
+                added
+            }
             Runnable::Connection(build) => {
                 let listeners = self.listen(&build)?;
                 self.connection_apps().insert(
@@ -538,6 +562,31 @@ impl Node {
                 );
                 Ok(None)
             }
+        }
+    }
+
+    /// Give `name` the HTTP routes `deployment` declares, if the operator
+    /// granted them (none otherwise).
+    fn set_routes(&self, name: &str, deployment: &AppDeployment) -> Result<(), NodeError> {
+        let routes = if deployment.spec.granted.contains(&Capability::HttpIncoming) {
+            HttpRoute::from_manifest(&deployment.manifest)
+        } else {
+            Vec::new()
+        };
+        match &self.http {
+            Some(ingress) => ingress
+                .set_routes(name, routes)
+                .map_err(|e| NodeError::Conflict(e.to_string())),
+            None if routes.is_empty() => Ok(()),
+            None => Err(NodeError::Invalid(format!(
+                "{name} declares HTTP routes, and this node has no HTTP ingress ([http.<name>] in node config)"
+            ))),
+        }
+    }
+
+    fn remove_routes(&self, name: &str) {
+        if let Some(ingress) = &self.http {
+            ingress.remove_routes(name);
         }
     }
 
@@ -749,11 +798,25 @@ impl Node {
                 .map_err(|e| (e, false)),
             Runnable::App(deployment) => {
                 let snapshot = deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
-                self.apps
-                    .upgrade(name, deployment, &options(params))
-                    .await
-                    .map(|r| upgrade_response(&r))
-                    .map_err(|e| (rollout_error(e, snapshot, params), true))
+                let before = self.http.as_ref().map(|h| h.routes(name));
+                match self.set_routes(name, &deployment) {
+                    Err(e) => Err((e, false)),
+                    Ok(()) => {
+                        let upgraded = self
+                            .apps
+                            .upgrade(name, deployment, &options(params))
+                            .await
+                            .map(|r| upgrade_response(&r))
+                            .map_err(|e| (rollout_error(e, snapshot, params), true));
+                        if upgraded.is_err()
+                            && let (Some(http), Some(before)) = (&self.http, before)
+                        {
+                            // The old version keeps running with its routes.
+                            let _ = http.set_routes(name, before);
+                        }
+                        upgraded
+                    }
+                }
             }
         };
         match result {
@@ -873,11 +936,19 @@ impl Node {
             None => {
                 let snapshot = self.apps.app(name).and_then(|a| a.rollback_mode())
                     == Some(UpgradeMode::Snapshot);
-                self.apps
+                let rolled = self
+                    .apps
                     .rollback(name, &options(params))
                     .await
                     .map(|r| upgrade_response_from(&r))
-                    .map_err(|e| rollout_error(e, snapshot, params))
+                    .map_err(|e| rollout_error(e, snapshot, params));
+                if rolled.is_ok()
+                    && let Some(app) = self.apps.app(name)
+                    && let Err(e) = self.set_routes(name, &app.deployment())
+                {
+                    tracing::warn!(app = name, error = %e, "routes after rollback");
+                }
+                rolled
             }
         };
         match &result {
@@ -930,6 +1001,7 @@ impl Node {
                 .await
                 .map_err(|e| NodeError::Conflict(e.to_string()))?;
         }
+        self.remove_routes(name);
         app.running = false;
         st.restore_errors.remove(name);
         self.store.save_state(&st.desired)?;
@@ -993,6 +1065,7 @@ impl Node {
                 .await
                 .map_err(|e| NodeError::Conflict(e.to_string()))?;
         }
+        self.remove_routes(name);
         self.store.remove_app(name);
         st.desired.apps.remove(name);
         st.desired.order.retain(|n| n != name);
@@ -1249,6 +1322,9 @@ impl Node {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         drop(started);
+        if let Some(http) = &self.http {
+            http.stop();
+        }
         let names: Vec<String> = self.connection_apps().keys().cloned().collect();
         for name in names {
             self.stop_connections(&name);

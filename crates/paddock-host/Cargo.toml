@@ -17,7 +17,11 @@ probes = ["dep:anyprobe"]
 
 [dependencies]
 anyprobe = { workspace = true, optional = true }
+bytes = { workspace = true }
 ciborium = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 paddock-bundle = { workspace = true }
 redb = { workspace = true }
 semver = { workspace = true }

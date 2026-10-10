@@ -19,6 +19,7 @@ members = [
     "examples/greeter/app",
     "examples/greeter/node",
     "examples/greeter/service",
+    "examples/http-counter",
     "examples/line-server",
     "examples/scada/hmi",
     "examples/scada/points",

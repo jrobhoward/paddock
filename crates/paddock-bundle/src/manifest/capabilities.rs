@@ -114,10 +114,13 @@ impl Capability {
     #[must_use]
     pub const fn phase(self) -> Option<Phase> {
         match self {
-            Self::Logging | Self::Config | Self::KeyValue | Self::Filesystem | Self::Groups => None,
-            Self::Secrets | Self::HttpOutgoing | Self::HttpIncoming | Self::Metrics => {
-                Some(Phase::Phase2)
-            }
+            Self::Logging
+            | Self::Config
+            | Self::KeyValue
+            | Self::Filesystem
+            | Self::Groups
+            | Self::HttpIncoming => None,
+            Self::Secrets | Self::HttpOutgoing | Self::Metrics => Some(Phase::Phase2),
             Self::Sockets | Self::Sql => Some(Phase::Phase3),
             Self::Supervisor | Self::Admin => Some(Phase::Later),
         }
@@ -398,6 +401,14 @@ impl Capabilities {
             .copied()
             .filter(|c| self.is_declared(*c))
             .collect()
+    }
+
+    /// Whether `capability` serves the app without any import: HTTP
+    /// ingress delivers requests as calls (`wasi:http/incoming-handler`'s
+    /// routes), so its grant cannot be read from the component's imports.
+    #[must_use]
+    pub const fn import_free(capability: Capability) -> bool {
+        matches!(capability, Capability::HttpIncoming)
     }
 
     /// Whether `capability` is declared.
@@ -716,15 +727,21 @@ impl HttpOutgoingScope {
     }
 }
 
-/// Scope of `wasi:http/incoming-handler`.
+/// Scope of `wasi:http/incoming-handler`: the routes the node's HTTP
+/// ingress sends to the app, each request as a call.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HttpIncomingScope {
     /// Requests routed to the app.
     pub routes: Vec<Route>,
-    /// Largest request body accepted.
+    /// Largest request body accepted (default 1 MiB, and never more than
+    /// `limits.message_max_bytes` allows).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_body: Option<ByteSize>,
+    /// Time a request may wait for the app's reply before the client gets
+    /// 504 (default 30000).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 impl HttpIncomingScope {
@@ -733,6 +750,26 @@ impl HttpIncomingScope {
             if !route.path_prefix.starts_with('/') {
                 v.error_at(format!("routes[{i}].path_prefix"), "must start with '/'");
             }
+            if let Some(h) = &route.hash_header
+                && (h.is_empty()
+                    || !h
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)))
+            {
+                v.error_at(
+                    format!("routes[{i}].hash_header"),
+                    "must be a header name (letters, digits, '-' and '_')",
+                );
+            }
+        }
+        if self.routes.is_empty() {
+            v.error_at("routes", "must list at least one route");
+        }
+        if self.max_body.is_some_and(|b| b.bytes() == 0) {
+            v.error_at("max_body", "must be greater than zero");
+        }
+        if self.timeout_ms == Some(0) {
+            v.error_at("timeout_ms", "must be greater than zero");
         }
     }
 }
@@ -744,8 +781,14 @@ pub struct Route {
     /// Host to match. Unset matches any host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
-    /// Path prefix to match (`/orders`).
+    /// Path prefix to match (`/orders`), on segment boundaries: `/orders`
+    /// matches `/orders` and `/orders/7`, not `/ordersx`.
     pub path_prefix: String,
+    /// A request header whose value becomes the request's `key` field, for
+    /// a pool routed with `hash:key` (a tenant or customer id). Unset sends
+    /// requests round-robin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash_header: Option<String>,
 }
 
 /// Scope of `wasi:sockets`. Bind and connect have separate rules: Rust's

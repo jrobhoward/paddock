@@ -387,7 +387,7 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 | Persistent term storage | `wasi:keyvalue`, durability `disk` (redb) | DETS | — | 1 |
 | Replicated storage | `wasi:keyvalue`, durability `replicated` (protocol chosen in Phase 3); every node reads its local copy and delivers watches from it | Mnesia, Khepri | Infinispan distributed | 3 |
 | Files | `wasi:filesystem`: read-only `/priv` from the bundle, writable `/data` per app | `code:priv_dir` | — | 1 |
-| HTTP ingress | `wasi:http/incoming-handler`; host terminates TLS and routes by host/path | Cowboy, inets | Undertow web container | 2 |
+| HTTP ingress | Node-level ingress delivering each request on an app's routes (`wasi:http/incoming-handler` scope) as a call; host terminates HTTP (TLS next) and routes by host/path (see "HTTP ingress") | Cowboy, inets | Undertow web container | 2 |
 | HTTP egress | `wasi:http/outgoing-handler` via filtering proxy | `httpc` | — | 2 |
 | Sockets | `wasi:sockets` with allow-list | `gen_tcp`, `gen_udp` | — | 3 |
 | Database pools | `paddock:sql` against named datasources | — | JDBC datasources | 3 |
@@ -456,6 +456,16 @@ This is the platform's job rather than an app's: an app holding the board would 
 For a `cluster` bucket (Phase 3), the replication protocol is chosen then: Raft (openraft), or synchronous replication between an HA pair with a witness as HAppliance does, which keeps writes on the LAN while one HA node is down. The guest interface above fits either. Writes from any node are forwarded to the leader and commit once replicated: a network round trip plus an fsync, so a replicated write costs more than a cast, and the board suits state (point tables, configuration, leadership) rather than streams. Every node applies the log to a full local copy. Reads come from that copy by default (they may trail the leader slightly), and a read can ask to be linearizable, which goes through the leader. Watches are delivered by each node from its own copy as it applies changes, so a notice never crosses the network per subscriber. In a minority partition, reads keep working and writes fail with an `unavailable` error, so apps can degrade. Two later options: keys owned by a pid (etcd leases, ZooKeeper ephemeral nodes), removed when the owner exits or its node is lost, for presence and election; and a `mirrored` durability, replicated asynchronously from the leader like Redis, for high-rate data whose last few updates may be lost on failover because the app re-reads its sources (a SCADA app re-polls its devices).
 
 A bridge to an external Redis or etcd is an extension (A5) for sites that run one already, not the platform's board.
+
+### HTTP ingress
+
+Decided 2026-10-09 (ROADMAP E1), from S15's measurements: the host terminates HTTP and delivers each request to an app as a call, the shape that kept about 75% of native throughput; `wasi:http/incoming-handler` with an instance per request kept about 15%.
+
+- **Ingress is node-level.** Node config names addresses (`[http.<name>]`), each with several accept tasks; every address serves every app's routes, as a web container or Cowboy does. Apps claim routes in their manifest (`wasi:http/incoming-handler`'s `routes`: an optional host and a path prefix). The longest prefix wins, matched on path segments, and a route naming the host beats one that does not. A deploy that claims another app's exact host and prefix is refused.
+- **A request is a call.** The request is a CBOR map (`method`, `path`, `query`, `headers`, `body`, and `key`) in an `application/cbor` envelope with schema `paddock/http-request`; the app's pool picks the instance by its routing, and a route's `hash_header` copies a header (a tenant or customer id) into `key` for `hash:key` pools. The app answers from `handle-call`, at once or later with `process.reply`, with a `paddock/http-response` envelope (`status`, `headers`, `body`); any other reply is sent as `200` with its content type. An app serves HTTP and ordinary calls from the same instances, with its state, supervision and upgrades unchanged, and the frozen app world gains nothing.
+- **Limits and failures are the call's.** The callback deadline bounds guest execution; the route's `timeout_ms` bounds the wait for the reply (504). A full mailbox is 503 with `Retry-After`, an app not running 503, an instance exiting before it replies 502, a body over `max_body` 413 (checked from `content-length` before reading, and while reading). Bodies are buffered whole: no streaming.
+- **Granting without an import.** An app that serves HTTP imports nothing, so its grant cannot be read from its imports. Its routes go live only if operator policy grants `wasi:http/incoming-handler`; otherwise the deploy reports it denied and the routes stay unrouted.
+- **Later:** TLS termination in the host (rustls, certificates per ingress, SNI by route host; ROADMAP E1b), and a separate `wasi:http` handler world for unmodified `wasi:http` components and streaming bodies, an instance per request as connection handlers are (E6).
 
 ## Security model
 

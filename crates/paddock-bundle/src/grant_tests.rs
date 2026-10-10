@@ -220,3 +220,21 @@ fn effective_grant____shared_buckets____granted_only_with_keyvalue_and_policy() 
     assert!(no_kv.granted_buckets.is_empty());
     assert_eq!(no_kv.denied_buckets.len(), 2);
 }
+
+#[test]
+fn effective_grant____http_incoming_without_imports____granted_or_denied_by_policy() {
+    let spec =
+        spec(json!({ "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/" }] } }));
+
+    let granted = effective_grant(
+        &imports(&[PROCESS]),
+        &spec,
+        &grants(&[Capability::HttpIncoming]),
+    )
+    .unwrap();
+    let denied = effective_grant(&imports(&[PROCESS]), &spec, &grants(&[])).unwrap();
+
+    assert_eq!(granted.granted, BTreeSet::from([Capability::HttpIncoming]));
+    assert!(granted.unused.is_empty());
+    assert_eq!(denied.denied, BTreeSet::from([Capability::HttpIncoming]));
+}
