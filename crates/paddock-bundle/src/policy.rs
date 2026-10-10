@@ -12,6 +12,7 @@
 //! [apps.orders]
 //! grant = ["wasi:keyvalue", "wasi:filesystem"]
 //! buckets = ["points"]          # shared buckets, from the node's [buckets]
+//! secrets = ["db-password"]     # secrets, from the node's [secrets]
 //!
 //! # Granted to every app signed by this key.
 //! [signers.payments-team]
@@ -22,8 +23,9 @@
 //! A `grant` list holds capability keys and extension package names
 //! (`"example:greeting"`) alike.
 //!
-//! Policy grants or withholds whole capabilities, and each shared keyvalue
-//! bucket by name (`buckets`; it needs `wasi:keyvalue` granted too). Other
+//! Policy grants or withholds whole capabilities, each shared keyvalue
+//! bucket by name (`buckets`; it needs `wasi:keyvalue` granted too), and
+//! each secret by name (`secrets`; it needs `paddock:secrets` granted too). Other
 //! scopes an app requests (its own buckets, preopens, hosts) are used as
 //! written; narrowing them by policy is not supported.
 
@@ -56,6 +58,8 @@ pub struct Grants {
     pub grant: Granted,
     /// Shared keyvalue buckets granted, by name.
     pub buckets: BTreeSet<String>,
+    /// Secrets granted, by name.
+    pub secrets: BTreeSet<String>,
 }
 
 /// Capabilities granted to apps signed by one key.
@@ -70,6 +74,9 @@ pub struct SignerGrants {
     /// Shared keyvalue buckets granted, by name.
     #[serde(default)]
     pub buckets: BTreeSet<String>,
+    /// Secrets granted, by name.
+    #[serde(default)]
+    pub secrets: BTreeSet<String>,
 }
 
 /// Granted capabilities and extension packages. Written in policy as one
@@ -83,13 +90,16 @@ pub struct Granted {
     pub extensions: BTreeSet<String>,
     /// Shared keyvalue buckets, from the policy's `buckets` lists.
     pub buckets: BTreeSet<String>,
+    /// Secrets, from the policy's `secrets` lists.
+    pub secrets: BTreeSet<String>,
 }
 
 impl Granted {
-    fn extend(&mut self, other: &Self, buckets: &BTreeSet<String>) {
+    fn extend(&mut self, other: &Self, buckets: &BTreeSet<String>, secrets: &BTreeSet<String>) {
         self.capabilities.extend(&other.capabilities);
         self.extensions.extend(other.extensions.iter().cloned());
         self.buckets.extend(buckets.iter().cloned());
+        self.secrets.extend(secrets.iter().cloned());
     }
 }
 
@@ -140,12 +150,16 @@ impl OperatorPolicy {
     #[must_use]
     pub fn granted(&self, app: &str, signer_key: &str) -> Granted {
         let mut granted = Granted::default();
-        granted.extend(&self.defaults.grant, &self.defaults.buckets);
+        granted.extend(
+            &self.defaults.grant,
+            &self.defaults.buckets,
+            &self.defaults.secrets,
+        );
         if let Some(entry) = self.apps.get(app) {
-            granted.extend(&entry.grant, &entry.buckets);
+            granted.extend(&entry.grant, &entry.buckets, &entry.secrets);
         }
         for signer in self.signers.values().filter(|s| s.key == signer_key) {
-            granted.extend(&signer.grant, &signer.buckets);
+            granted.extend(&signer.grant, &signer.buckets, &signer.secrets);
         }
         granted
     }

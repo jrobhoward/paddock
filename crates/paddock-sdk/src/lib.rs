@@ -38,6 +38,8 @@
 //!   on this node with publish.
 //! - `http` (cargo feature `http`): requests from the node's HTTP ingress,
 //!   delivered as calls, and the responses to them.
+//! - `secrets` (cargo feature `secrets`): `paddock:secrets`, values the
+//!   operator binds on the node.
 //! - `watch` (cargo feature `watch`): `paddock:watch`, revisioned reads,
 //!   compare-and-swap and change watches on keyvalue buckets.
 //!
@@ -65,6 +67,8 @@ pub mod http;
 #[cfg(feature = "keyvalue")]
 pub mod kv;
 pub mod log;
+#[cfg(feature = "secrets")]
+pub mod secrets;
 pub mod snapshot;
 mod types;
 #[cfg(feature = "watch")]
@@ -83,6 +87,7 @@ pub mod bindings {
             "../../wit/connection",
             "../../wit/groups",
             "../../wit/watch",
+            "../../wit/secrets",
             "wit",
         ],
         world: "paddock:sdk/app",

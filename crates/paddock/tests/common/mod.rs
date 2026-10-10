@@ -48,12 +48,15 @@ fn build(package: &str, features: Option<&str>, target_dir: &PathBuf) {
 pub fn fixture(name: &str) -> Vec<u8> {
     static CHAOS: OnceLock<()> = OnceLock::new();
     static SERVICES: OnceLock<()> = OnceLock::new();
+    static SDK: OnceLock<()> = OnceLock::new();
     let (package, dir, once) = if name == "paddock_fixture_services" {
         (
             "paddock-fixture-services",
             "target/fixtures/services-plain",
             &SERVICES,
         )
+    } else if name == "paddock_fixture_sdk" {
+        ("paddock-fixture-sdk", "target/fixtures/sdk-plain", &SDK)
     } else {
         (
             "paddock-fixture-chaos",

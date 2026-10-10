@@ -12,12 +12,13 @@ use crate::api::{
 };
 use paddock_bundle::manifest::{AppManifest, Capability, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
-use paddock_host::http::{HttpIngress, HttpRoute};
+use paddock_host::http::{HttpIngress, HttpRoute, IngressListen};
 use paddock_host::services::{Extension, StartedExtensions};
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
     InstanceSpec, Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid,
-    Role, Runtime, RuntimeConfig, SharedBucket, UpgradeError, UpgradeOptions, UpgradeReport,
+    Role, Runtime, RuntimeConfig, SecretSource, SharedBucket, UpgradeError, UpgradeOptions,
+    UpgradeReport,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -296,6 +297,18 @@ impl Node {
                     groups: config.limits.groups_max,
                     watches: config.limits.watches_max,
                 },
+                secrets: config
+                    .secrets
+                    .iter()
+                    .filter_map(|(name, s)| {
+                        let source = match (&s.file, &s.env) {
+                            (Some(f), _) => SecretSource::File(f.clone()),
+                            (None, Some(v)) => SecretSource::Env(v.clone()),
+                            (None, None) => return None,
+                        };
+                        Some((name.clone(), source))
+                    })
+                    .collect(),
                 buckets: config
                     .buckets
                     .iter()
@@ -318,7 +331,14 @@ impl Node {
             let ingress = HttpIngress::new(apps.clone());
             for (name, binding) in &config.http {
                 let bound = ingress
-                    .listen(binding.address, binding.acceptors)
+                    .listen(IngressListen {
+                        address: binding.address,
+                        acceptors: binding.acceptors,
+                        max_connections: binding.max_connections,
+                        header_timeout: Duration::from_millis(binding.header_timeout_ms.max(1)),
+                        body_timeout: Duration::from_millis(binding.body_timeout_ms.max(1)),
+                        max_response: binding.max_response.bytes(),
+                    })
                     .await
                     .map_err(|e| NodeError::Invalid(format!("http.{name}: {e}")))?;
                 tracing::info!(name, %bound, "HTTP ingress listening");
@@ -450,7 +470,18 @@ impl Node {
         let mut spec = InstanceSpec::from_manifest(&manifest)
             .with_granted(&grant.granted)
             .with_granted_extensions(&grant.granted_extensions)
-            .with_granted_buckets(&grant.granted_buckets);
+            .with_granted_buckets(&grant.granted_buckets)
+            .with_granted_secrets(&grant.granted_secrets);
+        if let Some(missing) = grant
+            .granted_secrets
+            .iter()
+            .chain(&grant.denied_secrets)
+            .find(|s| !self.config.secrets.contains_key(*s))
+        {
+            return Err(NodeError::Invalid(format!(
+                "secret '{missing}' is not configured on this node"
+            )));
+        }
         if let Some(missing) = spec
             .services
             .keyvalue
@@ -496,10 +527,12 @@ impl Node {
             granted: keys(&grant.granted, &grant.granted_extensions)
                 .into_iter()
                 .chain(grant.granted_buckets.iter().map(|b| format!("bucket:{b}")))
+                .chain(grant.granted_secrets.iter().map(|s| format!("secret:{s}")))
                 .collect(),
             denied: keys(&grant.denied, &grant.denied_extensions)
                 .into_iter()
                 .chain(grant.denied_buckets.iter().map(|b| format!("bucket:{b}")))
+                .chain(grant.denied_secrets.iter().map(|s| format!("secret:{s}")))
                 .collect(),
             stubbed: match &loaded {
                 Loaded::App(app) => app.stubbed_imports().to_vec(),

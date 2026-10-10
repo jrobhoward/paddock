@@ -59,6 +59,7 @@ pub mod bindings {
             "../../wit/connection",
             "../../wit/groups",
             "../../wit/watch",
+            "../../wit/secrets",
             "wit",
         ],
         world: "paddock:sdk/connection",

@@ -28,10 +28,11 @@
 //! - `rev:<bucket>`: the bucket's revision.
 //! - `cas:<bucket>:<key>:<expected or ->:<value>`: the new revision.
 //! - `cad:<bucket>:<key>:<expected>`: the bucket's new revision.
+//! - `secret:<name>`: the secret as text, or `err:<error>`.
 //! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
 //! - HTTP requests (`paddock_sdk::http`), by the end of the path: `/plain`
 //!   replies a plain text envelope; `/status/<n>` replies status n;
-//!   `/crash` traps; `/never` never replies; anything else replies 200 with
+//!   `/crash` traps; `/never` never replies; `/big/<n>` replies n bytes; anything else replies 200 with
 //!   `<method> <path>?<query> key=<key> body=<body> pid=<pid>`.
 //! - `changes`: every change notice received, `<key>@<revision>`, joined
 //!   by `,`.
@@ -65,6 +66,10 @@ fn http(ctx: &mut Ctx, req: &Request) -> Reply {
     }
     if path.ends_with("/never") {
         return Reply::Later;
+    }
+    if let Some((_, n)) = path.rsplit_once("/big/") {
+        let body = "x".repeat(n.parse().unwrap_or(0));
+        return Reply::Now(Response::text(200, body).into());
     }
     if let Some((_, code)) = path.rsplit_once("/status/") {
         return Reply::Now(Response::new(code.parse().unwrap_or(500)).into());
@@ -226,6 +231,9 @@ impl App for Fixture {
             config(command).unwrap_or_else(|e| format!("err:{e}"))
         } else if verb == "received" {
             self.received.join(",")
+        } else if verb == "secret" {
+            let name = command.split_once(':').map_or("", |(_, n)| n);
+            paddock_sdk::secrets::get_string(name).unwrap_or_else(|e| format!("err:{e}"))
         } else if verb == "busy" {
             let ms = command
                 .split(':')

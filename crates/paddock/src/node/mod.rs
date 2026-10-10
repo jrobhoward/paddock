@@ -19,8 +19,8 @@ mod state_view;
 mod store;
 
 pub use config::{
-    BucketConfig, BucketScope, ClusterConfig, ClusterRole, ListenerBinding, MemoryProfile,
-    NodeConfig,
+    BucketConfig, BucketScope, ClusterConfig, ClusterRole, HttpBinding, ListenerBinding,
+    MemoryProfile, NodeConfig, SecretBinding,
 };
 pub use daemon::Node;
 pub use error::NodeError;

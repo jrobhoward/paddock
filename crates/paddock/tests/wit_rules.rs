@@ -251,6 +251,7 @@ fn paddock_packages____checked____every_function_synchronous_with_access_denied(
     for (dir, name) in [
         ("groups", "paddock:groups@0.1.0"),
         ("watch", "paddock:watch@0.1.0"),
+        ("secrets", "paddock:secrets@0.1.0"),
     ] {
         let wit = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit");
         let mut resolve = Resolve::default();

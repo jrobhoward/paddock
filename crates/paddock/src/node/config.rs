@@ -16,6 +16,10 @@
 //! [extensions."paddock-modbus:modbus".devices.pump-1]
 //! address = "10.0.0.5:502"
 //!
+//! # Secrets apps read by name (policy grants each): a file or a variable.
+//! [secrets.db-password]
+//! file = "/run/secrets/db-password"
+//!
 //! # Shared keyvalue buckets, opened by apps whose manifest lists them
 //! # and whose policy entry grants them.
 //! [buckets.points]
@@ -28,6 +32,10 @@
 //! # each address.
 //! [http.main]
 //! address = "0.0.0.0:8080"
+//! max_connections = 1024        # more are closed on accept
+//! header_timeout_ms = 10000     # slow clients are dropped
+//! body_timeout_ms = 30000       # then 408
+//! max_response = "16MiB"        # larger app replies become 502
 //!
 //! [config.orders]
 //! "db.host" = "pg.internal"
@@ -101,6 +109,9 @@ pub struct NodeConfig {
     /// Shared keyvalue buckets, by name.
     #[serde(default)]
     pub buckets: BTreeMap<String, BucketConfig>,
+    /// Secrets, by name: where each value comes from.
+    #[serde(default)]
+    pub secrets: BTreeMap<String, SecretBinding>,
     /// Each extension's node configuration, by package
     /// (`[extensions."paddock-modbus:modbus"]`), handed to the extension as
     /// it starts. A table for an extension the node does not have refuses
@@ -116,7 +127,7 @@ pub struct NodeConfig {
     /// HTTP ingress addresses, by a name of the operator's choosing. Every
     /// address serves every app's routes.
     #[serde(default)]
-    pub http: BTreeMap<String, ListenerBinding>,
+    pub http: BTreeMap<String, HttpBinding>,
     /// This node's part in a cluster.
     #[serde(default)]
     pub cluster: ClusterConfig,
@@ -185,6 +196,19 @@ pub struct BucketConfig {
     /// Where the bucket's data lives.
     #[serde(default)]
     pub scope: BucketScope,
+}
+
+/// A `[secrets.<name>]` entry: exactly one of `file` and `env`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretBinding {
+    /// A file whose whole contents are the value (mode 0600, owned by the
+    /// node's user, is the operator's to set).
+    #[serde(default)]
+    pub file: Option<PathBuf>,
+    /// An environment variable of the node process.
+    #[serde(default)]
+    pub env: Option<String>,
 }
 
 /// Where a shared bucket's data lives.
@@ -263,6 +287,45 @@ pub struct ListenerBinding {
     pub acceptors: usize,
 }
 
+/// An HTTP ingress address and its limits: `[http.<name>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpBinding {
+    /// The address to bind, `ip:port`.
+    pub address: std::net::SocketAddr,
+    /// Tasks accepting connections at once.
+    #[serde(default = "default_acceptors")]
+    pub acceptors: usize,
+    /// Most connections open at once; more are closed on accept.
+    #[serde(default = "default_http_connections")]
+    pub max_connections: usize,
+    /// Time a client has to send a request's headers.
+    #[serde(default = "default_header_timeout_ms")]
+    pub header_timeout_ms: u64,
+    /// Time a client has to send a request's body.
+    #[serde(default = "default_body_timeout_ms")]
+    pub body_timeout_ms: u64,
+    /// Largest reply body an app may send.
+    #[serde(default = "default_max_response")]
+    pub max_response: ByteSize,
+}
+
+fn default_http_connections() -> usize {
+    1_024
+}
+
+fn default_header_timeout_ms() -> u64 {
+    10_000
+}
+
+fn default_body_timeout_ms() -> u64 {
+    30_000
+}
+
+fn default_max_response() -> ByteSize {
+    ByteSize::mib(16)
+}
+
 fn default_acceptors() -> usize {
     4
 }
@@ -307,6 +370,13 @@ impl NodeConfig {
             if let Some(problem) = problem {
                 return Err(NodeError::Invalid(format!(
                     "node config: buckets.{name}: {problem}"
+                )));
+            }
+        }
+        for (name, secret) in &config.secrets {
+            if secret.file.is_some() == secret.env.is_some() {
+                return Err(NodeError::Invalid(format!(
+                    "node config: secrets.{name} needs exactly one of file and env"
                 )));
             }
         }

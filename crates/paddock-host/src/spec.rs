@@ -143,6 +143,17 @@ impl InstanceSpec {
         self
     }
 
+    /// Keep only the secrets in `granted` readable (the effective grant's
+    /// `granted_secrets`); the others return `access-denied`.
+    #[must_use]
+    pub fn with_granted_secrets(mut self, granted: &BTreeSet<String>) -> Self {
+        self.services
+            .secrets
+            .names
+            .retain(|name| granted.contains(name));
+        self
+    }
+
     /// Keep only the shared buckets in `granted` openable (the effective
     /// grant's `granted_buckets`); the others return `access-denied`.
     #[must_use]

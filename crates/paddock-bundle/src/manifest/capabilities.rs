@@ -119,8 +119,9 @@ impl Capability {
             | Self::KeyValue
             | Self::Filesystem
             | Self::Groups
-            | Self::HttpIncoming => None,
-            Self::Secrets | Self::HttpOutgoing | Self::Metrics => Some(Phase::Phase2),
+            | Self::HttpIncoming
+            | Self::Secrets => None,
+            Self::HttpOutgoing | Self::Metrics => Some(Phase::Phase2),
             Self::Sockets | Self::Sql => Some(Phase::Phase3),
             Self::Supervisor | Self::Admin => Some(Phase::Later),
         }

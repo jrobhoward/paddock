@@ -115,3 +115,20 @@ fn OperatorPolicy____reserved_or_bad_key____refused() {
     assert!(reserved.is_err());
     assert!(bad.is_err());
 }
+
+#[test]
+fn OperatorPolicy____secrets____union_of_matching_entries() {
+    let policy = OperatorPolicy::from_toml_str(
+        "[apps.billing]\nsecrets = [\"stripe\"]\n[signers.ops]\nkey = \"RWQops\"\nsecrets = [\"db\"]\n",
+    )
+    .unwrap();
+
+    let billing = policy.granted("billing", "RWQops");
+    let other = policy.granted("web", "RWQother");
+
+    assert_eq!(
+        billing.secrets,
+        BTreeSet::from(["db".into(), "stripe".into()])
+    );
+    assert!(other.secrets.is_empty());
+}

@@ -168,7 +168,14 @@ All notable changes are recorded here. The format follows
   `max_body`, `timeout_ms`) receive each request as a call, granted by
   policy without an import; failures map to 404, 413, 502, 503 and 504.
   SDK feature `http` (`paddock_sdk::http::{Request, Response}`);
-  `examples/http-counter`.
+  `examples/http-counter`. Each `[http.<name>]` address caps connections
+  (`max_connections`) and the time to send headers (`header_timeout_ms`)
+  and a body (`body_timeout_ms`, 408), and refuses app replies over
+  `max_response` (502).
+- Secrets (`paddock:secrets@0.1.0`, `wit/secrets`): names listed in the
+  manifest, granted by name in policy (`secrets = [...]`), bound in node
+  config to a file or environment variable (`[secrets.<name>]`), read on
+  every call and never logged. SDK feature `secrets`.
 
 ### Changed
 

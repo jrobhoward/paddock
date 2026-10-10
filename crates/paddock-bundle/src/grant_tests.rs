@@ -25,6 +25,7 @@ fn grants(capabilities: &[Capability]) -> Granted {
         capabilities: capabilities.iter().copied().collect(),
         extensions: BTreeSet::new(),
         buckets: BTreeSet::new(),
+        secrets: BTreeSet::new(),
     }
 }
 
@@ -161,6 +162,7 @@ fn effective_grant____extension_declared_and_granted____linked_to_service() {
         capabilities: BTreeSet::new(),
         extensions: BTreeSet::from(["example:greeting".to_string()]),
         buckets: BTreeSet::new(),
+        secrets: BTreeSet::new(),
     };
 
     let grant = effective_grant(&imports(&[PROCESS, GREET]), &spec, &operator).unwrap();
@@ -237,4 +239,21 @@ fn effective_grant____http_incoming_without_imports____granted_or_denied_by_poli
     assert_eq!(granted.granted, BTreeSet::from([Capability::HttpIncoming]));
     assert!(granted.unused.is_empty());
     assert_eq!(denied.denied, BTreeSet::from([Capability::HttpIncoming]));
+}
+
+#[test]
+fn effective_grant____secrets____granted_only_with_capability_and_policy() {
+    const SECRETS: &str = "paddock:secrets/store@0.1.0";
+    let spec = spec(json!({ "paddock:secrets": { "secrets": ["db", "api"] } }));
+    let mut operator = grants(&[Capability::Secrets]);
+    operator.secrets = BTreeSet::from(["db".to_string()]);
+    let mut no_capability = grants(&[]);
+    no_capability.secrets = BTreeSet::from(["db".to_string()]);
+
+    let granted = effective_grant(&imports(&[SECRETS]), &spec, &operator).unwrap();
+    let without = effective_grant(&imports(&[SECRETS]), &spec, &no_capability).unwrap();
+
+    assert_eq!(granted.granted_secrets, BTreeSet::from(["db".into()]));
+    assert_eq!(granted.denied_secrets, BTreeSet::from(["api".into()]));
+    assert!(without.granted_secrets.is_empty());
 }

@@ -35,6 +35,7 @@ mod bindings {
             "../../wit/vendor/wasi-keyvalue",
             "../../wit/groups",
             "../../wit/watch",
+            "../../wit/secrets",
             "wit",
         ],
         world: "paddock:host/groups",

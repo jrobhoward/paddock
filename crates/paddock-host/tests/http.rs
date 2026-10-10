@@ -9,10 +9,11 @@ mod common;
 
 use std::net::SocketAddr;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use common::fixture;
 use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
-use paddock_host::http::{HttpIngress, HttpRoute};
+use paddock_host::http::{HttpIngress, HttpRoute, IngressListen};
 use paddock_host::{AppDeployment, Apps, Runtime, RuntimeConfig};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -48,6 +49,10 @@ struct Served {
     _apps: Apps,
     ingress: HttpIngress,
     address: SocketAddr,
+    /// 300 ms for headers and body, 1,000-byte replies.
+    tight: SocketAddr,
+    /// One connection at a time.
+    capped: SocketAddr,
 }
 
 /// One runtime, the `web` app (a pool of three routed by `key`) and an
@@ -89,7 +94,7 @@ fn start() -> Served {
         }),
     );
     let routes = HttpRoute::from_manifest(&web);
-    let (apps, ingress, address) = tokio.block_on(async {
+    let (apps, ingress, address, tight, capped) = tokio.block_on(async {
         let apps = rt
             .start_apps(vec![AppDeployment::new(web, app)])
             .await
@@ -97,11 +102,25 @@ fn start() -> Served {
         let ingress = HttpIngress::new(apps.clone());
         ingress.set_routes("web", routes).unwrap();
         ingress.set_routes("ghost", vec![route("/ghost")]).unwrap();
-        let address = ingress
-            .listen("127.0.0.1:0".parse().unwrap(), 2)
+        let any = "127.0.0.1:0".parse().unwrap();
+        let address = ingress.listen(IngressListen::new(any)).await.unwrap();
+        let tight = ingress
+            .listen(IngressListen {
+                header_timeout: Duration::from_millis(300),
+                body_timeout: Duration::from_millis(300),
+                max_response: 1_000,
+                ..IngressListen::new(any)
+            })
             .await
             .unwrap();
-        (apps, ingress, address)
+        let capped = ingress
+            .listen(IngressListen {
+                max_connections: 1,
+                ..IngressListen::new(any)
+            })
+            .await
+            .unwrap();
+        (apps, ingress, address, tight, capped)
     });
     Served {
         _tokio: tokio,
@@ -109,6 +128,8 @@ fn start() -> Served {
         _apps: apps,
         ingress,
         address,
+        tight,
+        capped,
     }
 }
 
@@ -118,7 +139,7 @@ fn route(prefix: &str) -> HttpRoute {
         path_prefix: prefix.into(),
         hash_header: None,
         max_body: 1024,
-        timeout: std::time::Duration::from_secs(1),
+        timeout: Duration::from_secs(1),
     }
 }
 
@@ -244,4 +265,59 @@ async fn set_routes____another_apps_route____refused() {
 
     assert!(clash.unwrap_err().to_string().contains("belongs to web"));
     assert!(own_again.is_ok());
+}
+
+/// Read until the server closes or `limit` passes; what arrived.
+async fn read_until_closed(stream: &mut tokio::net::TcpStream, limit: Duration) -> Option<String> {
+    let mut raw = Vec::new();
+    match tokio::time::timeout(limit, stream.read_to_end(&mut raw)).await {
+        Ok(_) => Some(String::from_utf8_lossy(&raw).into_owned()),
+        Err(_) => None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn slow_client____headers_or_body_late____dropped_or_408() {
+    let s = served();
+    let mut silent = tokio::net::TcpStream::connect(s.tight).await.unwrap();
+    let mut slow_body = tokio::net::TcpStream::connect(s.tight).await.unwrap();
+    slow_body
+        .write_all(b"POST /api/x HTTP/1.1\r\nhost: localhost\r\ncontent-length: 10\r\n\r\nab")
+        .await
+        .unwrap();
+    let started = Instant::now();
+
+    let silent_end = read_until_closed(&mut silent, Duration::from_secs(5)).await;
+    let body_end = read_until_closed(&mut slow_body, Duration::from_secs(5)).await;
+
+    assert!(silent_end.is_some(), "an idle connection stayed open");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let body_end = body_end.expect("a slow body held the connection");
+    assert!(body_end.starts_with("HTTP/1.1 408"), "{body_end}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn max_response____reply_over_it____502() {
+    let s = served();
+
+    let small = request(s.tight, "GET", "/api/big/10", &[], "").await;
+    let big = request(s.tight, "GET", "/api/big/2000", &[], "").await;
+
+    assert_eq!((small.status, small.body.len()), (200, 10));
+    assert_eq!(big.status, 502);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn max_connections____over_it____closed_on_accept() {
+    let s = served();
+    let refused_before = s.ingress.stats().refused;
+    let _held = tokio::net::TcpStream::connect(s.capped).await.unwrap();
+    // Let the accept task take the first connection.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut second = tokio::net::TcpStream::connect(s.capped).await.unwrap();
+
+    let ended = read_until_closed(&mut second, Duration::from_secs(2)).await;
+
+    assert_eq!(ended.as_deref(), Some(""));
+    assert!(s.ingress.stats().refused > refused_before);
 }

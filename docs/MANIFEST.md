@@ -154,7 +154,8 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `paddock:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. | enforced |
 | `wasi:filesystem` | `preopens."<guest path>" = { volume, mode, quota }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`; `quota` is *not enforced*. `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
 | `wasi:http/incoming-handler` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
-| `paddock:secrets`, `wasi:http/outgoing-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
+| `paddock:secrets` | `secrets = ["db-password"]`: names the app reads. Each name needs a `[secrets.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`secrets = [...]`); reading an ungranted one returns `access-denied`. | enforced |
+| `wasi:http/outgoing-handler`, `paddock:metrics` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
 | `wasi:sockets`, `paddock:sql` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
 | `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
 | `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
@@ -238,9 +239,16 @@ orders-data = "/srv/paddock/orders"    # backs manifest preopens with volume = "
 address = "0.0.0.0:7070"               # binds a manifest listener named "lines"
 acceptors = 4                          # default 4: tasks accepting connections at once
 
+[secrets.db-password]
+file = "/run/secrets/db-password"      # or env = "DB_PASSWORD"; read on every access
+
 [http.main]
 address = "0.0.0.0:8080"               # HTTP ingress: serves every app's wasi:http/incoming-handler routes
 acceptors = 4                          # default 4
+max_connections = 1024                 # default 1024; more are closed on accept
+header_timeout_ms = 10000              # default 10000: time to send headers (also between kept-alive requests)
+body_timeout_ms = 30000                # default 30000: time to send a body, then 408
+max_response = "16MiB"                 # default "16MiB": larger app replies become 502
 
 [config.orders]
 currency = "USD"                       # overrides the app's config.defaults
@@ -305,6 +313,7 @@ grant = ["wasi:logging", "wasi:config"]
 [apps.orders]
 grant = ["wasi:keyvalue", "wasi:filesystem"]
 buckets = ["points"]                   # shared buckets; needs wasi:keyvalue granted too
+secrets = ["db-password"]              # secrets; needs paddock:secrets granted too
 
 [signers.payments-team]
 key = "RWQ..."

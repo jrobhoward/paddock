@@ -17,9 +17,17 @@
 //! sent as `200` with the envelope's content type and body.
 //!
 //! Failures map to statuses: no route 404, a body over `max_body` (or the
-//! app's `message_max_bytes`) 413, the app not running or overloaded 503
+//! app's `message_max_bytes`) 413, a body not received within the
+//! listener's `body_timeout` 408, the app not running or overloaded 503
 //! (overloaded with `Retry-After`), no reply within the route's timeout
-//! 504, the instance exiting before replying or a malformed reply 502.
+//! 504, the instance exiting before replying, a malformed reply or one
+//! over `max_response` 502.
+//!
+//! Each listener caps its open connections and the time a client may take
+//! to send its headers and its body ([`IngressListen`]), so slow or idle
+//! clients cannot hold the node's connections. HTTP parsing runs in the
+//! node, not the sandbox (DESIGN.md, "HTTP ingress": a parser bug here is
+//! a node bug; connection handlers parse in the sandbox instead).
 //! Bodies are buffered whole; there is no streaming (S15: about 75% of
 //! native hyper's throughput through an instance call).
 
@@ -36,10 +44,10 @@ use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
 use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderName, HeaderValue, RETRY_AFTER};
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use paddock_bundle::manifest::{AppManifest, ByteSize};
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
 
 use crate::apps::Apps;
 use crate::error::HostError;
@@ -54,6 +62,40 @@ pub const RESPONSE_SCHEMA: &str = "paddock/http-response";
 pub const DEFAULT_MAX_BODY: ByteSize = ByteSize::mib(1);
 /// Reply timeout when the manifest sets no `timeout_ms`.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One ingress address and its limits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IngressListen {
+    /// Where to listen.
+    pub address: SocketAddr,
+    /// Accept tasks.
+    pub acceptors: usize,
+    /// Most connections open at once; more are closed on accept.
+    pub max_connections: usize,
+    /// Time a client has to send a request's headers, on a new connection
+    /// or between requests on a kept-alive one.
+    pub header_timeout: Duration,
+    /// Time a client has to send a request's body (408 after).
+    pub body_timeout: Duration,
+    /// Largest reply body from an app, in bytes (502 above it).
+    pub max_response: u64,
+}
+
+impl IngressListen {
+    /// `address` with the default limits: 4 acceptors, 1,024 connections,
+    /// 10 s for headers, 30 s for a body, 16 MiB replies.
+    #[must_use]
+    pub fn new(address: SocketAddr) -> Self {
+        Self {
+            address,
+            acceptors: 4,
+            max_connections: 1_024,
+            header_timeout: Duration::from_secs(10),
+            body_timeout: Duration::from_secs(30),
+            max_response: 16 << 20,
+        }
+    }
+}
 
 /// One route an app owns.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +165,8 @@ pub struct IngressStats {
     pub server_errors: u64,
     /// Of those, matched no route.
     pub not_found: u64,
+    /// Connections closed on accept, over `max_connections`.
+    pub refused: u64,
 }
 
 #[derive(Debug, Default)]
@@ -130,6 +174,7 @@ struct Counters {
     requests: AtomicU64,
     server_errors: AtomicU64,
     not_found: AtomicU64,
+    refused: AtomicU64,
 }
 
 /// The node's HTTP ingress. Cheap to clone; clones share the route table
@@ -163,26 +208,29 @@ impl HttpIngress {
         }
     }
 
-    /// Listen on `address` with `acceptors` accept tasks. Returns the bound
-    /// address (for port 0).
+    /// Listen on `spec.address` with its limits. Returns the bound address
+    /// (for port 0).
     ///
     /// # Errors
     ///
     /// [`HostError::Listen`] if the address cannot be bound.
-    pub async fn listen(
-        &self,
-        address: SocketAddr,
-        acceptors: usize,
-    ) -> Result<SocketAddr, HostError> {
-        let listener = TcpListener::bind(address)
+    pub async fn listen(&self, spec: IngressListen) -> Result<SocketAddr, HostError> {
+        let listener = TcpListener::bind(spec.address)
             .await
-            .map_err(|e| HostError::Listen(format!("{address}: {e}")))?;
+            .map_err(|e| HostError::Listen(format!("{}: {e}", spec.address)))?;
         let bound = listener
             .local_addr()
             .map_err(|e| HostError::Listen(e.to_string()))?;
         let listener = Arc::new(listener);
-        for _ in 0..acceptors.max(1) {
-            tokio::spawn(accept(self.inner.clone(), listener.clone()));
+        let slots = Arc::new(Semaphore::new(spec.max_connections.max(1)));
+        let spec = Arc::new(spec);
+        for _ in 0..spec.acceptors.max(1) {
+            tokio::spawn(accept(
+                self.inner.clone(),
+                listener.clone(),
+                slots.clone(),
+                spec.clone(),
+            ));
         }
         Ok(bound)
     }
@@ -253,6 +301,7 @@ impl HttpIngress {
             requests: c.requests.load(Ordering::Relaxed),
             server_errors: c.server_errors.load(Ordering::Relaxed),
             not_found: c.not_found.load(Ordering::Relaxed),
+            refused: c.refused.load(Ordering::Relaxed),
         }
     }
 
@@ -262,7 +311,12 @@ impl HttpIngress {
     }
 }
 
-async fn accept(inner: Arc<Inner>, listener: Arc<TcpListener>) {
+async fn accept(
+    inner: Arc<Inner>,
+    listener: Arc<TcpListener>,
+    slots: Arc<Semaphore>,
+    spec: Arc<IngressListen>,
+) {
     let mut stop = inner.stop.subscribe();
     loop {
         let accepted = tokio::select! {
@@ -272,14 +326,24 @@ async fn accept(inner: Arc<Inner>, listener: Arc<TcpListener>) {
         let Ok((stream, _)) = accepted else {
             continue;
         };
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            inner.counters.refused.fetch_add(1, Ordering::Relaxed);
+            drop(stream);
+            continue;
+        };
         let inner = inner.clone();
+        let spec = spec.clone();
         let mut stop = inner.stop.subscribe();
         tokio::spawn(async move {
+            let _slot = slot;
             let service = hyper::service::service_fn(|req| {
                 let inner = inner.clone();
-                async move { Ok::<_, Infallible>(serve(&inner, req).await) }
+                let spec = spec.clone();
+                async move { Ok::<_, Infallible>(serve(&inner, &spec, req).await) }
             });
             let conn = hyper::server::conn::http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(spec.header_timeout)
                 .serve_connection(TokioIo::new(stream), service);
             tokio::pin!(conn);
             tokio::select! {
@@ -315,8 +379,8 @@ fn pick(
         .map(|(app, r)| (app.clone(), r.clone()))
 }
 
-async fn serve(inner: &Inner, req: Request<Incoming>) -> Reply {
-    let reply = handle(inner, req).await;
+async fn serve(inner: &Inner, spec: &IngressListen, req: Request<Incoming>) -> Reply {
+    let reply = handle(inner, spec, req).await;
     let c = &inner.counters;
     c.requests.fetch_add(1, Ordering::Relaxed);
     if reply.status().is_server_error() {
@@ -328,7 +392,7 @@ async fn serve(inner: &Inner, req: Request<Incoming>) -> Reply {
     reply
 }
 
-async fn handle(inner: &Inner, req: Request<Incoming>) -> Reply {
+async fn handle(inner: &Inner, spec: &IngressListen, req: Request<Incoming>) -> Reply {
     let host = req
         .headers()
         .get(HOST)
@@ -369,21 +433,31 @@ async fn handle(inner: &Inner, req: Request<Incoming>) -> Reply {
         .and_then(|h| req.headers().get(h))
         .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
     let limit = usize::try_from(route.max_body).unwrap_or(usize::MAX);
-    let body = match Limited::new(req.into_body(), limit).collect().await {
-        Ok(b) => b.to_bytes(),
-        Err(e)
+    let read = Limited::new(req.into_body(), limit).collect();
+    let body = match tokio::time::timeout(spec.body_timeout, read).await {
+        Err(_) => return status(StatusCode::REQUEST_TIMEOUT, "body not received in time"),
+        Ok(Ok(b)) => b.to_bytes(),
+        Ok(Err(e))
             if e.downcast_ref::<http_body_util::LengthLimitError>()
                 .is_some() =>
         {
             return status(StatusCode::PAYLOAD_TOO_LARGE, "body too large");
         }
-        Err(_) => return status(StatusCode::BAD_REQUEST, "unreadable body"),
+        Ok(Err(_)) => return status(StatusCode::BAD_REQUEST, "unreadable body"),
     };
     let msg = request_envelope(&method, &path, query, &headers, &body, key);
     let Some(target) = inner.apps.app(&app) else {
         return status(StatusCode::SERVICE_UNAVAILABLE, "app not running");
     };
     match target.call(msg, route.timeout).await {
+        Ok(reply) if u64::try_from(reply.body.len()).unwrap_or(u64::MAX) > spec.max_response => {
+            tracing::debug!(
+                app,
+                bytes = reply.body.len(),
+                "HTTP reply over max_response"
+            );
+            status(StatusCode::BAD_GATEWAY, "reply too large")
+        }
         Ok(reply) => response(reply),
         Err(CallError::Overloaded) => {
             let mut r = status(StatusCode::SERVICE_UNAVAILABLE, "overloaded");

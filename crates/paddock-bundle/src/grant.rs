@@ -63,6 +63,13 @@ pub struct EffectiveGrant {
     /// returns `access-denied`).
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub denied_buckets: BTreeSet<String>,
+    /// Secrets declared and granted, with `paddock:secrets` granted.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub granted_secrets: BTreeSet<String>,
+    /// Secrets declared but not granted (reading one returns
+    /// `access-denied`).
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub denied_secrets: BTreeSet<String>,
 }
 
 /// Check `imports` against `spec` and compute the effective grant given the
@@ -153,6 +160,13 @@ pub fn effective_grant(
         .iter()
         .flat_map(|scope| scope.shared.keys().cloned())
         .partition(|name| kv && operator.buckets.contains(name));
+    let secrets_on = granted.contains(&Capability::Secrets);
+    let (granted_secrets, denied_secrets) = spec
+        .capabilities
+        .secrets
+        .iter()
+        .flat_map(|scope| scope.secrets.iter().cloned())
+        .partition(|name| secrets_on && operator.secrets.contains(name));
     Ok(EffectiveGrant {
         imports: links,
         granted,
@@ -162,6 +176,8 @@ pub fn effective_grant(
         denied_extensions,
         granted_buckets,
         denied_buckets,
+        granted_secrets,
+        denied_secrets,
     })
 }
 

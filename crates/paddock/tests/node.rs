@@ -648,3 +648,70 @@ async fn shared_bucket____two_apps_through_policy____shared_read_only_and_kept_o
     assert_eq!(after_restart, "on");
     n.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let secret = dir.path().join("db");
+    std::fs::write(&secret, "hunter2").unwrap();
+    let policy = dir.path().join("policy.toml");
+    std::fs::write(
+        &policy,
+        "[apps.vault]\ngrant = [\"paddock:secrets\"]\nsecrets = [\"db\"]\n",
+    )
+    .unwrap();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[secrets.db]\nfile = {secret:?}\n[secrets.other]\nenv = \"PADDOCK_UNSET_FOR_TEST\"\n"
+    ))
+    .await;
+    let manifest = |names: serde_json::Value| {
+        fast(json!({ "capabilities": {
+            "wasi:config": {},
+            "wasi:keyvalue": {},
+            "paddock:groups": {},
+            "paddock:secrets": { "secrets": names }
+        } }))
+    };
+    let sdk = fixture("paddock_fixture_sdk");
+
+    let unbound = n
+        .client
+        .deploy(bundle(
+            &n.key,
+            "vault",
+            "1.0.0",
+            &sdk,
+            manifest(json!(["db", "nowhere"])),
+            &[],
+        ))
+        .await;
+    let deployed = n
+        .client
+        .deploy(bundle(
+            &n.key,
+            "vault",
+            "1.0.0",
+            &sdk,
+            manifest(json!(["db", "other"])),
+            &[],
+        ))
+        .await
+        .unwrap();
+    let value = call(&n, "vault", "secret:db").await;
+    let denied = call(&n, "vault", "secret:other").await;
+
+    assert_eq!(kind(&unbound.unwrap_err()), "invalid");
+    assert!(
+        deployed.granted.contains(&"secret:db".to_string()),
+        "{deployed:?}"
+    );
+    assert!(
+        deployed.denied.contains(&"secret:other".to_string()),
+        "{deployed:?}"
+    );
+    assert_eq!(value, "hunter2");
+    assert_eq!(denied, "err:access denied");
+    let audit = serde_json::to_string(&n.audit()).unwrap();
+    assert!(!audit.contains("hunter2"), "{audit}");
+    n.shutdown().await;
+}

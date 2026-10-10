@@ -169,3 +169,20 @@ fn NodeConfig____unsupported_bucket____refused() {
         );
     }
 }
+
+#[test]
+fn NodeConfig____secrets____one_source_each() {
+    let ok = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[secrets.db]\nfile = \"/run/db\"\n[secrets.api]\nenv = \"API\"\n",
+    )
+    .unwrap();
+    let both = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[secrets.db]\nfile = \"/run/db\"\nenv = \"DB\"\n",
+    );
+    let neither = NodeConfig::from_toml_str("data_dir = \"/d\"\n[secrets.db]\n");
+
+    assert_eq!(ok.secrets["db"].file, Some(PathBuf::from("/run/db")));
+    assert_eq!(ok.secrets["api"].env.as_deref(), Some("API"));
+    assert!(both.unwrap_err().to_string().contains("secrets.db"));
+    assert!(neither.unwrap_err().to_string().contains("exactly one"));
+}

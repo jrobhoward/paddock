@@ -42,6 +42,7 @@ pub mod extension;
 pub mod groups;
 pub mod keyvalue;
 pub mod logging;
+pub mod secrets;
 
 pub use extension::{
     Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ExtensionSpec, StartedExtensions,
@@ -221,6 +222,8 @@ pub struct ServiceSpecs {
     pub keyvalue: keyvalue::KeyValueSpec,
     /// `wasi:logging`.
     pub logging: logging::LoggingSpec,
+    /// `paddock:secrets`.
+    pub secrets: secrets::SecretsSpec,
     /// Extensions the manifest declares, by package.
     pub extensions: BTreeMap<String, ExtensionSpec>,
 }
@@ -232,6 +235,7 @@ impl ServiceSpecs {
             groups: groups::Groups::spec(manifest),
             keyvalue: keyvalue::KeyValue::spec(manifest),
             logging: logging::Logging::spec(manifest),
+            secrets: secrets::Secrets::spec(manifest),
             extensions: manifest
                 .capabilities
                 .extensions
@@ -248,6 +252,7 @@ pub(crate) struct Shared {
     groups: Arc<groups::Shared>,
     keyvalue: Arc<<keyvalue::KeyValue as Service>::Shared>,
     pub(crate) logging: Arc<logging::Shared>,
+    secrets: Arc<<secrets::Secrets as Service>::Shared>,
 }
 
 impl Shared {
@@ -257,6 +262,7 @@ impl Shared {
             groups: Arc::new(groups::Groups::shared(config)?),
             keyvalue: Arc::new(keyvalue::KeyValue::shared(config)?),
             logging: Arc::new(logging::Logging::shared(config)?),
+            secrets: Arc::new(secrets::Secrets::shared(config)?),
         })
     }
 
@@ -266,6 +272,7 @@ impl Shared {
         groups::Groups::exited(&self.groups, pid);
         keyvalue::KeyValue::exited(&self.keyvalue, pid);
         logging::Logging::exited(&self.logging, pid);
+        secrets::Secrets::exited(&self.secrets, pid);
     }
 }
 
@@ -275,6 +282,7 @@ pub(crate) struct States {
     pub(crate) groups: groups::Instance,
     pub(crate) keyvalue: keyvalue::Instance,
     pub(crate) logging: logging::Instance,
+    pub(crate) secrets: secrets::Instance,
     pub(crate) extensions: extension::ExtensionStates,
 }
 
@@ -285,6 +293,7 @@ impl States {
         events.extend(groups::Groups::announce(&self.groups, tags));
         events.extend(keyvalue::KeyValue::announce(&self.keyvalue, tags));
         events.extend(logging::Logging::announce(&self.logging, tags));
+        events.extend(secrets::Secrets::announce(&self.secrets, tags));
         events
     }
 
@@ -340,6 +349,11 @@ impl States {
                 &services.logging,
                 &info(logging::Logging::CAPABILITY),
             ),
+            secrets: secrets::Secrets::instance(
+                &shared.secrets,
+                &services.secrets,
+                &info(secrets::Secrets::CAPABILITY),
+            ),
             extensions: states,
         })
     }
@@ -351,12 +365,14 @@ where
     T: HostState<config::Config>
         + HostState<groups::Groups>
         + HostState<keyvalue::KeyValue>
-        + HostState<logging::Logging>,
+        + HostState<logging::Logging>
+        + HostState<secrets::Secrets>,
 {
     config::Config::link(linker)?;
     groups::Groups::link(linker)?;
     keyvalue::KeyValue::link(linker)?;
     logging::Logging::link(linker)?;
+    secrets::Secrets::link(linker)?;
     Ok(())
 }
 
@@ -366,4 +382,5 @@ pub(crate) const INTERFACES: &[&[&str]] = &[
     groups::Groups::INTERFACES,
     keyvalue::KeyValue::INTERFACES,
     logging::Logging::INTERFACES,
+    secrets::Secrets::INTERFACES,
 ];

@@ -133,6 +133,16 @@ pub struct SharedBucket {
     pub quota: Option<u64>,
 }
 
+/// Where a secret's value comes from. Read on every access.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SecretSource {
+    /// A file's whole contents.
+    File(PathBuf),
+    /// An environment variable of the node process.
+    Env(String),
+}
+
 /// Configuration for a [`Runtime`](crate::Runtime).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -171,6 +181,8 @@ pub struct RuntimeConfig {
     pub host_objects: HostObjects,
     /// Shared keyvalue buckets, by name.
     pub buckets: BTreeMap<String, SharedBucket>,
+    /// Secrets, by name.
+    pub secrets: BTreeMap<String, SecretSource>,
 }
 
 impl Default for RuntimeConfig {
@@ -188,6 +200,7 @@ impl Default for RuntimeConfig {
             address: String::new(),
             host_objects: HostObjects::default(),
             buckets: BTreeMap::new(),
+            secrets: BTreeMap::new(),
         }
     }
 }
