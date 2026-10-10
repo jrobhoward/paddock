@@ -1,6 +1,7 @@
 //! An HA pair with a witness over the QUIC transport (ROADMAP D10): a
 //! singleton runs on the primary only, moves to the standby when the
-//! primary stops, and stays put when the old primary comes back.
+//! primary stops or its process is killed, and stays put when the old
+//! primary comes back.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -156,4 +157,112 @@ async fn failover____node_without_failover____not_found() {
     let err = node.client.failover().await.unwrap_err();
 
     assert_eq!(common::kind(&err), "not_found");
+}
+
+/// A `paddock node` process.
+struct Process {
+    child: tokio::process::Child,
+    client: paddock::api::Client,
+}
+
+impl Process {
+    /// Start `paddock node` on `config` (TOML, without `data_dir` and the
+    /// socket, which go in `dir`) and wait for its admin socket.
+    async fn start(dir: &Path, n: u32, signer: &str, config: &str) -> Self {
+        let socket = dir.join(format!("n{n}.sock"));
+        let _ = std::fs::remove_file(&socket);
+        let path = dir.join(format!("node-{n}.toml"));
+        std::fs::write(
+            &path,
+            format!(
+                "data_dir = {:?}\nadmin_socket = {socket:?}\nmax_instances = 32\n\
+                 trusted_keys = [{signer:?}]\n{config}",
+                dir.join(format!("data-{n}"))
+            ),
+        )
+        .unwrap();
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(format!("node-{n}.log")))
+            .unwrap();
+        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+            .arg("node")
+            .arg("--config")
+            .arg(&path)
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        for _ in 0..400 {
+            if socket.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        Self {
+            child,
+            client: paddock::api::Client::new(&socket),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failover____primary_process_killed____standby_takes_over_and_old_primary_rejoins() {
+    // A short directory: the admin sockets live in it.
+    let dir = tempfile::Builder::new()
+        .prefix("pfo")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let app = bundle(
+        &signer,
+        "leader",
+        "1.0.0",
+        &fixture("paddock_fixture_chaos"),
+        fast(serde_json::json!({ "placement": { "mode": "singleton" } })),
+        &[],
+    );
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    // The pair starts after the witness has given up on hearing it.
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &member(1, dir.path(), &peers, &a1, &a3)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &member(2, dir.path(), &peers, &a2, &a3)).await;
+    n1.client.deploy(app.clone()).await.unwrap();
+    n2.client.deploy(app).await.unwrap();
+    let runs = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move {
+            c.status("leader")
+                .await
+                .is_ok_and(|d| d.summary.status == "running")
+        }
+    };
+    let role = |c: &paddock::api::Client, r: &'static str| {
+        let c = c.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == r) }
+    };
+
+    until("node 1 runs the singleton", || runs(&n1.client)).await;
+    until("node 2 standby", || role(&n2.client, "standby")).await;
+    n1.child.kill().await.unwrap();
+    let killed = std::time::Instant::now();
+    until("node 2 runs the singleton", || runs(&n2.client)).await;
+    let took = killed.elapsed();
+    n1 = Process::start(dir.path(), 1, &pk, &member(1, dir.path(), &peers, &a1, &a3)).await;
+    until("node 1 back as standby", || role(&n1.client, "standby")).await;
+    let back = n1.client.failover().await.unwrap();
+
+    // node timeout + lease + 2 margins = 1 s + 1 s + 0.4 s, plus beats.
+    assert!(took < Duration::from_secs(8), "{took:?}");
+    assert!(!back.may_run);
+    assert!(back.epoch >= 2, "{back:?}");
+    assert!(runs(&n2.client).await);
+    for p in [&mut n1, &mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
 }

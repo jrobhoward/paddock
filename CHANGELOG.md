@@ -195,6 +195,8 @@ All notable changes are recorded here. The format follows
   `identity_reload_s`; `seeds` are addresses. `paddock cluster keygen`,
   `paddock cluster pubkey`, `paddock members` (`GET /v1/cluster`); calls and
   casts by pid reach other nodes.
+- `examples/failover`: a demo script that fails a singleton over between
+  three `paddock node` processes, killing the primary with SIGKILL.
 - Failover on the node: `[failover]` (partner, arbiter `witness`, `paths` or
   `operator`, lease and margin) makes a node one of an HA pair, and
   `[witness]` (on a node with cluster role `witness`) arbitrates one.
@@ -212,6 +214,10 @@ All notable changes are recorded here. The format follows
 - A node that left the cluster cleanly and restarted could not rejoin: the
   closing connection re-created the departed peer with a raised session
   number, so the new start's join was dropped as stale.
+- A node that restarted after a crash, or started after a peer had stopped
+  waiting for it, never rejoined: the peer still marked it unreachable and
+  refused every reply to its join. The first frame from a new start of a
+  node now resets what was known of it.
 - A graceful leave could be lost: a peer closed the connection when the
   first of its two streams finished, discarding a `Leave` still unread on
   the other, and kept the departed node as a member. A peer now closes once
