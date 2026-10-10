@@ -186,3 +186,125 @@ fn NodeConfig____secrets____one_source_each() {
     assert!(both.unwrap_err().to_string().contains("secrets.db"));
     assert!(neither.unwrap_err().to_string().contains("exactly one"));
 }
+
+const CLUSTERED: &str = "data_dir = \"/d\"\nnode = 1\n[cluster]\naddress = \"10.0.0.1:7400\"\nkey = \"/k\"\npeers = \"/p\"\n";
+
+#[test]
+fn NodeConfig____failover____read_with_defaults() {
+    let config = NodeConfig::from_toml_str(&format!(
+        "{CLUSTERED}[failover]\npartner = 2\narbiter = \"witness\"\nwitness = 3\n"
+    ))
+    .unwrap();
+
+    assert_eq!(
+        config.failover,
+        Some(FailoverBinding {
+            partner: 2,
+            arbiter: ArbiterKind::Witness,
+            witness: Some(3),
+            lease_ms: 3_000,
+            margin_ms: 500,
+        })
+    );
+}
+
+#[test]
+fn NodeConfig____witness____read_with_defaults() {
+    let config = NodeConfig::from_toml_str(&format!(
+        "{}role = \"witness\"\n[witness]\npair = [2, 3]\nfirst = 2\n",
+        CLUSTERED.replace("node = 1", "node = 4")
+    ))
+    .unwrap();
+
+    assert_eq!(
+        config.witness,
+        Some(WitnessBinding {
+            pair: [2, 3],
+            first: 2,
+            lease_ms: 3_000,
+            margin_ms: 500,
+        })
+    );
+}
+
+#[test]
+fn NodeConfig____bad_failover____refused() {
+    let cases = [
+        (
+            "partner = 2\narbiter = \"witness\"",
+            "needs failover.witness",
+        ),
+        (
+            "partner = 2\narbiter = \"witness\"\nwitness = 2",
+            "third node",
+        ),
+        ("partner = 1\narbiter = \"paths\"", "partner is this node"),
+        (
+            "partner = 2\narbiter = \"paths\"\nwitness = 3",
+            "only for arbiter",
+        ),
+        (
+            "partner = 2\narbiter = \"operator\"\nlease_ms = 1000\nmargin_ms = 500",
+            "margin_ms",
+        ),
+    ];
+
+    let errors: Vec<(String, &str)> = cases
+        .iter()
+        .map(|(lines, named)| {
+            let text = format!("{CLUSTERED}[failover]\n{lines}\n");
+            (
+                NodeConfig::from_toml_str(&text).unwrap_err().to_string(),
+                *named,
+            )
+        })
+        .collect();
+
+    for (err, named) in errors {
+        assert!(err.contains(named), "{err}");
+    }
+}
+
+#[test]
+fn NodeConfig____witness_on_a_member____refused() {
+    let err =
+        NodeConfig::from_toml_str(&format!("{CLUSTERED}[witness]\npair = [2, 3]\nfirst = 2\n"))
+            .unwrap_err();
+
+    assert!(err.to_string().contains("cluster.role"), "{err}");
+}
+
+#[test]
+fn NodeConfig____failover_without_cluster_address____refused() {
+    let err = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[failover]\npartner = 2\narbiter = \"paths\"\n",
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("cluster.address"), "{err}");
+}
+
+#[test]
+fn NodeConfig____witness_pair_or_first_wrong____refused() {
+    let witness = CLUSTERED.replace("node = 1", "node = 4") + "role = \"witness\"\n";
+    let cases = [
+        ("pair = [2, 4]\nfirst = 2", "two other nodes"),
+        ("pair = [2, 2]\nfirst = 2", "two other nodes"),
+        ("pair = [2, 3]\nfirst = 5", "witness.first"),
+    ];
+
+    let errors: Vec<(String, &str)> = cases
+        .iter()
+        .map(|(lines, named)| {
+            let text = format!("{witness}[witness]\n{lines}\n");
+            (
+                NodeConfig::from_toml_str(&text).unwrap_err().to_string(),
+                *named,
+            )
+        })
+        .collect();
+
+    for (err, named) in errors {
+        assert!(err.contains(named), "{err}");
+    }
+}

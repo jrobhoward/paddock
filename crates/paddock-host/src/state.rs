@@ -61,6 +61,8 @@ pub struct InstanceState {
     pub(crate) timers: Timers,
     /// Most host objects this instance may hold.
     pub(crate) host_objects: HostObjects,
+    /// Whether to announce the node's failover role.
+    announce_role: bool,
     services: States,
 }
 
@@ -110,6 +112,7 @@ impl InstanceState {
             pending: HashMap::new(),
             timers: Timers::default(),
             host_objects,
+            announce_role: spec.announce_role,
             services,
         })
     }
@@ -132,7 +135,16 @@ impl InstanceState {
 
     /// The host events the services want this instance to see now.
     pub(crate) fn announcements(&self) -> Vec<(String, Envelope)> {
-        self.services.announce(&self.tags)
+        let mut events = self.services.announce(&self.tags);
+        if self.announce_role
+            && let Some(role) = self.ctx.rt.failover_role()
+        {
+            events.push((
+                "failover-role".to_string(),
+                Envelope::new("text/plain", role),
+            ));
+        }
+        events
     }
 
     /// A context for a new Store of the same instance (an upgrade).

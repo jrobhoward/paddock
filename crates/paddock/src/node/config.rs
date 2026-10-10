@@ -55,6 +55,22 @@
 //! key = "/etc/paddock/node.key" # paddock cluster keygen
 //! peers = "/etc/paddock/peers.toml"
 //!
+//! # One node of an HA pair: `singleton` apps run only on the primary;
+//! # `hot-standby` apps run on both and are told the role.
+//! [failover]
+//! partner = 2
+//! arbiter = "witness"           # or "paths", "operator"
+//! witness = 3                   # the witness's node id, with "witness"
+//! lease_ms = 3000
+//! margin_ms = 500               # less than half of lease_ms
+//!
+//! # On the witness (cluster role "witness") instead:
+//! # [witness]
+//! # pair = [1, 2]
+//! # first = 1                   # primary at epoch 1
+//! # lease_ms = 3000             # as on the pair
+//! # margin_ms = 500
+//!
 //! # Host objects per instance: the value for apps that set none, and the
 //! # most a manifest may ask for.
 //! [limits]
@@ -144,6 +160,12 @@ pub struct NodeConfig {
     /// This node's part in a cluster.
     #[serde(default)]
     pub cluster: ClusterConfig,
+    /// This node is one of an HA pair.
+    #[serde(default)]
+    pub failover: Option<FailoverBinding>,
+    /// This node is the witness for an HA pair.
+    #[serde(default)]
+    pub witness: Option<WitnessBinding>,
     /// Host-object limits per instance.
     #[serde(default)]
     pub limits: NodeLimits,
@@ -310,6 +332,63 @@ fn default_node_timeout_ms() -> u64 {
     5_000
 }
 
+/// Who promotes the standby, in `[failover]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArbiterKind {
+    /// The witness node grants promotions; leases are used.
+    Witness,
+    /// The standby promotes itself when its partner is silent on every path.
+    Paths,
+    /// The standby promotes itself when an operator confirms
+    /// (`paddock failover confirm`).
+    Operator,
+}
+
+/// The `[failover]` section: this node and `partner` are an HA pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailoverBinding {
+    /// The other node of the pair.
+    pub partner: u32,
+    /// Who promotes the standby.
+    pub arbiter: ArbiterKind,
+    /// The witness's node id, with `arbiter = "witness"`.
+    #[serde(default)]
+    pub witness: Option<u32>,
+    /// How long a renewal keeps the primary's lease, in milliseconds.
+    #[serde(default = "default_lease_ms")]
+    pub lease_ms: u64,
+    /// How long before its lease ends a primary stops its singletons, in
+    /// milliseconds. Less than half of `lease_ms`.
+    #[serde(default = "default_margin_ms")]
+    pub margin_ms: u64,
+}
+
+/// The `[witness]` section: this node arbitrates an HA pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WitnessBinding {
+    /// The pair's node ids.
+    pub pair: [u32; 2],
+    /// The node primary at epoch 1.
+    pub first: u32,
+    /// As the pair's `lease_ms`.
+    #[serde(default = "default_lease_ms")]
+    pub lease_ms: u64,
+    /// As the pair's `margin_ms`.
+    #[serde(default = "default_margin_ms")]
+    pub margin_ms: u64,
+}
+
+fn default_lease_ms() -> u64 {
+    3_000
+}
+
+fn default_margin_ms() -> u64 {
+    500
+}
+
 /// Where a listener an app declares listens on this node.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -438,6 +517,7 @@ impl NodeConfig {
                 )));
             }
         }
+        config.check_failover()?;
         for (name, bucket) in &config.buckets {
             let problem = if bucket.scope == BucketScope::Cluster {
                 Some("scope \"cluster\" is not supported until Phase 3")
@@ -477,6 +557,58 @@ impl NodeConfig {
             }
         }
         Ok(config)
+    }
+
+    /// `[failover]` and `[witness]` against each other and `[cluster]`.
+    fn check_failover(&self) -> Result<(), NodeError> {
+        let invalid = |m: &str| Err(NodeError::Invalid(format!("node config: {m}")));
+        let witness_role = self.cluster.role == ClusterRole::Witness;
+        let timing_ok = |lease: u64, margin: u64| margin > 0 && margin.saturating_mul(2) < lease;
+        if let Some(f) = &self.failover {
+            if self.cluster.address.is_none() {
+                return invalid("[failover] needs cluster.address");
+            }
+            if witness_role {
+                return invalid("a witness (cluster.role) cannot have [failover]");
+            }
+            if f.partner == self.node {
+                return invalid("failover.partner is this node");
+            }
+            match (f.arbiter, f.witness) {
+                (ArbiterKind::Witness, None) => {
+                    return invalid("failover.arbiter \"witness\" needs failover.witness");
+                }
+                (ArbiterKind::Witness, Some(w)) if w == self.node || w == f.partner => {
+                    return invalid("failover.witness must be a third node");
+                }
+                (ArbiterKind::Paths | ArbiterKind::Operator, Some(_)) => {
+                    return invalid("failover.witness is only for arbiter \"witness\"");
+                }
+                _ => {}
+            }
+            if !timing_ok(f.lease_ms, f.margin_ms) {
+                return invalid(
+                    "failover.margin_ms must be more than 0 and less than half of lease_ms",
+                );
+            }
+        }
+        if let Some(w) = &self.witness {
+            if !witness_role || self.cluster.address.is_none() {
+                return invalid("[witness] needs cluster.role \"witness\" and cluster.address");
+            }
+            if w.pair[0] == w.pair[1] || w.pair.contains(&self.node) {
+                return invalid("witness.pair must be two other nodes");
+            }
+            if !w.pair.contains(&w.first) {
+                return invalid("witness.first must be in witness.pair");
+            }
+            if !timing_ok(w.lease_ms, w.margin_ms) {
+                return invalid(
+                    "witness.margin_ms must be more than 0 and less than half of lease_ms",
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Read and parse a configuration file.

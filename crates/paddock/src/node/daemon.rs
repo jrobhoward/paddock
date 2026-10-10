@@ -7,11 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{
-    AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, ListenerInfo, LogLine, MemberInfo,
-    RolloutParams, StateResponse, Target, UpgradeResponse,
+    AppDetail, AppSummary, DeployResponse, Done, FailoverInfo, InstanceInfo, ListenerInfo, LogLine,
+    MemberInfo, RolloutParams, StateResponse, Target, UpgradeResponse,
 };
 use paddock_bundle::manifest::{AppManifest, Capability, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
+use paddock_host::failover::{Arbiter, FailoverConfig, FailoverHandle, WitnessConfig};
 use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, IngressTls, TlsCertificate};
 use paddock_host::services::{Extension, StartedExtensions};
 use paddock_host::transport::quic::{NodeIdentity, QuicConfig, QuicTransport};
@@ -25,8 +26,9 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use super::audit::Audit;
-use super::config::{ClusterRole, MemoryProfile, NodeConfig};
+use super::config::{ArbiterKind, ClusterRole, MemoryProfile, NodeConfig};
 use super::error::{NodeError, internal};
+use super::gate::{self, Gate};
 use super::logring::LogRing;
 use super::store::{AppState, State, Store};
 
@@ -55,6 +57,10 @@ pub struct Node {
     certificates: Vec<(String, IngressTls)>,
     /// The cluster transport, with `cluster.address`.
     quic: std::sync::Mutex<Option<QuicTransport>>,
+    /// The singletons, with `[failover]`.
+    gate: Option<Arc<Gate>>,
+    /// This node's failover, once started.
+    failover: std::sync::OnceLock<FailoverHandle>,
 }
 
 /// A connection-handler app this node runs: its listeners, and the
@@ -372,8 +378,11 @@ impl Node {
             Some(ingress)
         };
         let audit = Audit::new(store.audit_path());
+        let gate = config
+            .failover
+            .is_some()
+            .then(|| Arc::new(Gate::new(apps.clone())));
         let node = Self {
-            config,
             rt,
             apps,
             store,
@@ -393,6 +402,9 @@ impl Node {
                 .map(|(n, t, _)| (n.clone(), t.clone()))
                 .collect(),
             quic: std::sync::Mutex::default(),
+            gate,
+            failover: std::sync::OnceLock::new(),
+            config,
         };
         for (name, tls, every) in certificates {
             if every > 0 {
@@ -431,7 +443,7 @@ impl Node {
             .extensions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(started);
-        if let Err(e) = node.start_cluster() {
+        if let Err(e) = node.start_cluster().and_then(|()| node.start_failover()) {
             node.shutdown().await;
             return Err(e);
         }
@@ -486,6 +498,11 @@ impl Node {
             let prev = self.build(&self.store.bundle_path(name, previous)).await?;
             match (handle, prev.run) {
                 (Some(handle), Runnable::App(d)) => handle.set_previous(Some(d)),
+                (None, Runnable::App(d)) => {
+                    if let Some(gate) = &self.gate {
+                        gate.set_previous(name, d);
+                    }
+                }
                 (None, Runnable::Connection(c)) => {
                     if let Some(app) = self.connection_apps().get_mut(name) {
                         app.previous = Some(c);
@@ -629,13 +646,29 @@ impl Node {
     async fn run(&self, name: &str, run: Runnable) -> Result<Option<AppHandle>, NodeError> {
         match run {
             Runnable::App(deployment) => {
+                if let Some(gate) = &self.gate
+                    && !gate::is_singleton(&deployment)
+                    && let Some(dep) = deployment
+                        .manifest
+                        .spec
+                        .dependencies
+                        .iter()
+                        .find(|d| gate.holds(&d.app))
+                {
+                    return Err(NodeError::Invalid(format!(
+                        "{name} depends on {}, a singleton, which runs on one node of the pair only; \
+                         make {name} a singleton too",
+                        dep.app
+                    )));
+                }
                 self.set_routes(name, &deployment)?;
-                let added = self
-                    .apps
-                    .add(deployment)
-                    .await
-                    .map(Some)
-                    .map_err(|e| NodeError::Invalid(e.to_string()));
+                let added = match &self.gate {
+                    Some(gate) if gate::is_singleton(&deployment) => {
+                        gate.hold(name, deployment).await
+                    }
+                    _ => self.apps.add(deployment).await.map(Some),
+                }
+                .map_err(|e| NodeError::Invalid(e.to_string()));
                 if added.is_err() {
                     self.remove_routes(name);
                 }
@@ -728,7 +761,34 @@ impl Node {
 
     /// Whether `name` runs now, under a supervisor or on listeners.
     fn running(&self, name: &str) -> bool {
-        self.apps.app(name).is_some() || self.connection_apps().contains_key(name)
+        self.apps.app(name).is_some()
+            || self.connection_apps().contains_key(name)
+            || self.held(name)
+    }
+
+    /// Whether `name` is a singleton this node holds, running or not.
+    fn held(&self, name: &str) -> bool {
+        self.gate.as_ref().is_some_and(|g| g.holds(name))
+    }
+
+    /// Stop running `name`, if it runs: a singleton, a supervised app or a
+    /// connection handler.
+    async fn stop_running(&self, name: &str) -> Result<(), NodeError> {
+        if let Some(gate) = &self.gate
+            && gate
+                .release(name)
+                .await
+                .map_err(|e| NodeError::Conflict(e.to_string()))?
+        {
+            return Ok(());
+        }
+        if !self.stop_connections(name) && self.apps.app(name).is_some() {
+            self.apps
+                .remove(name)
+                .await
+                .map_err(|e| NodeError::Conflict(e.to_string()))?;
+        }
+        Ok(())
     }
 
     fn summary(&self, name: &str, app: &AppState, restore_error: Option<&String>) -> AppSummary {
@@ -740,6 +800,10 @@ impl Node {
         let (status, reason) = match (&handle, connections, restore_error) {
             (Some(h), _, _) => status_text(&h.status()),
             (None, Some(_), _) => ("running".into(), None),
+            (None, None, _) if self.held(name) => (
+                "standby".into(),
+                Some("a singleton; runs while this node is primary".into()),
+            ),
             (None, None, Some(e)) => ("failed".into(), Some(e.clone())),
             (None, None, None) => ("stopped".into(), None),
         };
@@ -887,6 +951,9 @@ impl Node {
             Runnable::Connection(build) => self
                 .upgrade_connections(name, build, params)
                 .map_err(|e| (e, false)),
+            Runnable::App(deployment) if self.held(name) && self.apps.app(name).is_none() => {
+                self.upgrade_held(name, deployment, params)
+            }
             Runnable::App(deployment) => {
                 let snapshot = deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
                 let before = self.http.as_ref().map(|h| h.routes(name));
@@ -904,6 +971,9 @@ impl Node {
                         {
                             // The old version keeps running with its routes.
                             let _ = http.set_routes(name, before);
+                        }
+                        if let Some(gate) = &self.gate {
+                            gate.sync(name);
                         }
                         upgraded
                     }
@@ -934,6 +1004,46 @@ impl Node {
                 Err(e)
             }
         }
+    }
+
+    /// Upgrade a singleton this node holds but does not run: a promotion
+    /// starts the new version.
+    fn upgrade_held(
+        &self,
+        name: &str,
+        deployment: AppDeployment,
+        params: &RolloutParams,
+    ) -> Result<UpgradeResponse, (NodeError, bool)> {
+        let gate = self
+            .gate
+            .as_ref()
+            .ok_or_else(|| (internal("no failover"), false))?;
+        let to = deployment.manifest.app.version.to_string();
+        let (from, approved) = gate
+            .upgrade_held(name, deployment, params.approve)
+            .map_err(|e| (upgrade_error(e), false))?;
+        Ok(UpgradeResponse {
+            from,
+            to,
+            mode: "held".into(),
+            instances: Vec::new(),
+            pauses_us: Vec::new(),
+            approved,
+        })
+    }
+
+    /// Roll back a singleton this node holds but does not run.
+    fn rollback_held(&self, name: &str) -> Result<UpgradeResponse, NodeError> {
+        let gate = self.gate.as_ref().ok_or_else(|| internal("no failover"))?;
+        let (from, to) = gate.rollback_held(name).map_err(upgrade_error)?;
+        Ok(UpgradeResponse {
+            from,
+            to,
+            mode: "held".into(),
+            instances: Vec::new(),
+            pauses_us: Vec::new(),
+            approved: Vec::new(),
+        })
     }
 
     /// Upgrade a connection handler: new connections get `build`; open ones
@@ -1024,6 +1134,7 @@ impl Node {
         }
         let result = match self.rollback_connections(name) {
             Some(result) => result,
+            None if self.held(name) && self.apps.app(name).is_none() => self.rollback_held(name),
             None => {
                 let snapshot = self.apps.app(name).and_then(|a| a.rollback_mode())
                     == Some(UpgradeMode::Snapshot);
@@ -1038,6 +1149,9 @@ impl Node {
                     && let Err(e) = self.set_routes(name, &app.deployment())
                 {
                     tracing::warn!(app = name, error = %e, "routes after rollback");
+                }
+                if let Some(gate) = &self.gate {
+                    gate.sync(name);
                 }
                 rolled
             }
@@ -1086,12 +1200,7 @@ impl Node {
         if !app.running {
             return Err(NodeError::Conflict(format!("{name} is already stopped")));
         }
-        if !self.stop_connections(name) && self.apps.app(name).is_some() {
-            self.apps
-                .remove(name)
-                .await
-                .map_err(|e| NodeError::Conflict(e.to_string()))?;
-        }
+        self.stop_running(name).await?;
         self.remove_routes(name);
         app.running = false;
         st.restore_errors.remove(name);
@@ -1150,12 +1259,7 @@ impl Node {
         if !st.desired.apps.contains_key(name) {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
         }
-        if !self.stop_connections(name) && self.apps.app(name).is_some() {
-            self.apps
-                .remove(name)
-                .await
-                .map_err(|e| NodeError::Conflict(e.to_string()))?;
-        }
+        self.stop_running(name).await?;
         self.remove_routes(name);
         self.store.remove_app(name);
         st.desired.apps.remove(name);
@@ -1419,6 +1523,9 @@ impl Node {
             .take();
         drop(started);
         self.stop.send_replace(true);
+        if let Some(gate) = &self.gate {
+            gate.close().await;
+        }
         let quic = self
             .quic
             .lock()
@@ -1526,6 +1633,106 @@ impl Node {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(quic);
         Ok(())
+    }
+
+    /// Start `[failover]` at the epoch kept on disk and follow its
+    /// leadership, or serve `[witness]` from its kept state.
+    fn start_failover(&self) -> Result<(), NodeError> {
+        if let Some(w) = &self.config.witness {
+            let mut cfg = WitnessConfig::new(w.pair, w.first);
+            cfg.lease = Duration::from_millis(w.lease_ms);
+            cfg.margin = Duration::from_millis(w.margin_ms);
+            cfg.resume = self.store.load_witness()?;
+            self.rt
+                .serve_witness_kept(cfg, Some(self.store.witness_persist()))
+                .map_err(|e| NodeError::Invalid(format!("witness: {e}")))?;
+            tracing::info!(pair = ?w.pair, "serving as witness");
+        }
+        let (Some(f), Some(gate)) = (&self.config.failover, &self.gate) else {
+            return Ok(());
+        };
+        let arbiter = match (f.arbiter, f.witness) {
+            (ArbiterKind::Witness, Some(w)) => Arbiter::Witness(w),
+            (ArbiterKind::Operator, _) => Arbiter::Operator,
+            _ => Arbiter::Paths,
+        };
+        let epoch = self.store.load_epoch()?;
+        let mut cfg = FailoverConfig::new(f.partner, arbiter);
+        cfg.lease = Duration::from_millis(f.lease_ms);
+        cfg.margin = Duration::from_millis(f.margin_ms);
+        cfg.epoch = epoch;
+        let handle = self
+            .rt
+            .start_failover(cfg)
+            .map_err(|e| NodeError::Invalid(format!("failover: {e}")))?;
+        tracing::info!(partner = f.partner, epoch, "failover started");
+        tokio::spawn(gate::follow(
+            gate.clone(),
+            self.rt.clone(),
+            self.store.epoch_saver(),
+            epoch,
+            handle.subscribe(),
+            self.stop.subscribe(),
+        ));
+        let _ = self.failover.set(handle);
+        Ok(())
+    }
+
+    /// This node's failover standing.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] without `[failover]`.
+    pub fn failover(&self) -> Result<FailoverInfo, NodeError> {
+        let (Some(f), Some(handle)) = (&self.config.failover, self.failover.get()) else {
+            return Err(NodeError::NotFound(
+                "this node has no [failover] in its config".into(),
+            ));
+        };
+        let now = handle.leadership();
+        let singletons = self.gate.as_ref().map(|g| g.names()).unwrap_or_default();
+        Ok(FailoverInfo {
+            partner: f.partner,
+            arbiter: match f.arbiter {
+                ArbiterKind::Witness => format!("witness {}", f.witness.unwrap_or_default()),
+                ArbiterKind::Paths => "paths".into(),
+                ArbiterKind::Operator => "operator".into(),
+            },
+            role: gate::role_name(now.standing).into(),
+            epoch: now.epoch,
+            may_run: now.may_run,
+            awaiting_confirmation: now.awaiting_confirmation,
+            partner_reachable: self.rt.peer_status(f.partner).is_some_and(|s| s.reachable),
+            singletons,
+        })
+    }
+
+    /// An operator confirms that the partner is gone, so the standby may
+    /// promote itself (`paddock_host::failover::FailoverHandle::confirm`).
+    /// Safe only if the partner is down or cut off: with
+    /// `arbiter = "operator"`, or a witness that cannot be reached.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] without `[failover]`.
+    pub fn confirm_failover(&self) -> Result<Done, NodeError> {
+        let handle = self.failover.get().ok_or_else(|| {
+            NodeError::NotFound("this node has no [failover] in its config".into())
+        })?;
+        let now = handle.leadership();
+        handle.confirm();
+        self.audit.record(
+            "failover_confirm",
+            json!({ "epoch": now.epoch, "awaiting": now.awaiting_confirmation }),
+        );
+        Ok(Done {
+            message: if now.awaiting_confirmation {
+                "confirmed: this node is promoted once the partner's lease has run out".into()
+            } else {
+                "confirmed; this node was not waiting for confirmation, so nothing may change"
+                    .into()
+            },
+        })
     }
 
     /// Reload every HTTPS ingress's certificates from their files. An

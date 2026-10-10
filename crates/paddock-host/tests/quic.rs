@@ -257,3 +257,46 @@ async fn peer_restart____monitor_gets_noconnection_then_the_lower_node_redials()
     n1.quic.shutdown();
     again.quic.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn leave_then_restart____rejoins_through_the_seed() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Keys::new(dir.path(), &[1, 2, 3]);
+    let peers = keys.peers("peers", &[(1, 1), (2, 2), (3, 3)]);
+    let seed = Node::start(3, 1, free_udp(), keys.identity(3, &peers));
+    let n1_address = free_udp();
+    let n1_id = keys.identity(1, &peers);
+    let n1 = Node::start(1, 1, n1_address, n1_id.clone());
+    let n2 = Node::start(2, 1, free_udp(), keys.identity(2, &peers));
+    n1.quic.join_seed(seed.address).await.unwrap();
+    n2.quic.join_seed(seed.address).await.unwrap();
+    until("a full mesh", || {
+        n1.quic.connected() == vec![2, 3]
+            && [&seed, &n1, &n2].iter().all(|n| n.rt.members().len() == 3)
+    })
+    .await;
+
+    // A clean stop: the leave, then the connection closes. Whether a peer
+    // acts on the leave before or after the close, the next start rejoins.
+    n1.rt.leave_cluster();
+    n1.quic.shutdown_gracefully().await;
+    drop(n1);
+    let again = restart(1, 2, n1_address, n1_id).await;
+    again.quic.join_seed(seed.address).await.unwrap();
+    until("rejoined", || {
+        [&seed, &n2, &again]
+            .iter()
+            .all(|n| n.rt.members().len() == 3)
+    })
+    .await;
+
+    assert!(
+        n2.rt
+            .members()
+            .iter()
+            .any(|m| m.node == 1 && m.creation == 2)
+    );
+    for n in [&seed, &n2, &again] {
+        n.quic.shutdown();
+    }
+}

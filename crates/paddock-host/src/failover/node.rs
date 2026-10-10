@@ -499,7 +499,7 @@ impl Node {
         let now = Instant::now();
         let mut node = Self {
             state: State::Down(Down {
-                epoch: 0,
+                epoch: cfg.epoch,
                 asking: Asking::default(),
             }),
             ctx: Ctx {

@@ -187,6 +187,12 @@ impl AppHandle {
         self.versions().current.clone()
     }
 
+    /// The deployment a rollback would return to.
+    #[must_use]
+    pub fn previous(&self) -> Option<AppDeployment> {
+        self.versions().previous.clone()
+    }
+
     /// The version a rollback would return to.
     #[must_use]
     pub fn previous_version(&self) -> Option<semver::Version> {
@@ -331,6 +337,27 @@ impl Apps {
         set.order.push(name.clone());
         set.apps.insert(name, handle.clone());
         Ok(handle)
+    }
+
+    /// Kill every instance of `name` at once (no `terminate`, no restart)
+    /// and remove it from the set, whatever depends on it: for a singleton
+    /// that must stop now (its failover lease is ending).
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidApps`] if `name` is not in the set.
+    pub async fn kill(&self, name: &str) -> Result<(), HostError> {
+        let app = self
+            .set()
+            .apps
+            .get(name)
+            .cloned()
+            .ok_or_else(|| HostError::InvalidApps(format!("{name} is not deployed")))?;
+        end_app(&self.rt, &app, true).await;
+        let mut set = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        set.order.retain(|n| n != name);
+        set.apps.remove(name);
+        Ok(())
     }
 
     /// Stop an app and take it out of the set.
@@ -485,9 +512,19 @@ fn rollback_mode(current: &AppDeployment, previous: &AppDeployment) -> UpgradeMo
 
 /// Stop an app's root supervisor and mark it stopped (unless it failed).
 async fn stop_app(rt: &Runtime, app: &AppHandle) {
+    end_app(rt, app, false).await;
+}
+
+/// Stop `app`: gracefully, or with `kill` at once, every instance killed
+/// and none restarted.
+async fn end_app(rt: &Runtime, app: &AppHandle, kill: bool) {
     app.shared.stopping.store(true, Ordering::Relaxed);
     if let Some(supervisor) = &app.shared.supervisor {
-        supervisor.shutdown();
+        if kill {
+            supervisor.kill();
+        } else {
+            supervisor.shutdown();
+        }
         supervisor.wait().await;
     }
     rt.remove_pool(app.name());

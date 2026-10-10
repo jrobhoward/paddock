@@ -46,6 +46,11 @@ pub struct InstanceSpec {
     pub services: ServiceSpecs,
     /// Host-object limits the manifest asks for.
     pub host_objects: HostObjectRequest,
+    /// Tell the instance its node's failover role, as
+    /// `host-event("failover-role", "primary" | "standby" | "down")`, after
+    /// `init` and on every change ([`crate::Runtime::set_failover_role`]):
+    /// a `hot-standby` app.
+    pub announce_role: bool,
 }
 
 /// A host directory visible to the guest.
@@ -114,6 +119,10 @@ impl InstanceSpec {
             granted: spec.capabilities.declared().into_iter().collect(),
             preopens: Vec::new(),
             services: ServiceSpecs::from_manifest(spec),
+            announce_role: spec
+                .placement
+                .as_ref()
+                .is_some_and(|p| p.mode == paddock_bundle::manifest::PlacementMode::HotStandby),
             host_objects: HostObjectRequest {
                 timers: spec.limits.timers_max,
                 monitors: spec.limits.monitors_max,

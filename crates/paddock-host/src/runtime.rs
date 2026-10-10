@@ -53,6 +53,8 @@ pub(crate) struct RuntimeInner {
     pub(crate) services: services::Shared,
     /// Apps' metrics and the host's counters.
     pub(crate) metrics: Metrics,
+    /// This node's failover role, for `hot-standby` instances.
+    failover_role: RwLock<Option<String>>,
     pub(crate) extensions: Vec<Arc<dyn Extension>>,
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
@@ -73,6 +75,14 @@ impl RuntimeInner {
     /// This start of the node.
     pub(crate) fn creation(&self) -> u32 {
         self.config.creation
+    }
+
+    /// This node's failover role, if failover runs.
+    pub(crate) fn failover_role(&self) -> Option<String> {
+        self.failover_role
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The node's host-object limits.
@@ -195,6 +205,7 @@ impl Runtime {
                 pools: RwLock::default(),
                 services,
                 metrics: Metrics::default(),
+                failover_role: RwLock::default(),
                 extensions,
                 transport: std::sync::OnceLock::new(),
                 pending_calls: PendingCalls::default(),
@@ -522,6 +533,19 @@ impl Runtime {
     #[must_use]
     pub fn instances(&self) -> Vec<InstanceHandle> {
         self.inner.table.all()
+    }
+
+    /// Set this node's failover role (`primary`, `standby`, `down`) and tell
+    /// every `hot-standby` instance ([`InstanceSpec::announce_role`]).
+    pub fn set_failover_role(&self, role: Option<&str>) {
+        *self
+            .inner
+            .failover_role
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = role.map(str::to_string);
+        for instance in self.instances() {
+            instance.announce();
+        }
     }
 
     /// Every app's metrics and the host's, in the Prometheus text format.

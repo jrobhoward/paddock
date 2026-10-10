@@ -338,7 +338,7 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             "wasi:keyvalue": { "buckets": { "r": { "durability": "replicated" } } }
         },
         "upgrade": { "mode": "blue-green" },
-        "placement": { "mode": "hot-standby" },
+        "placement": { "mode": "all-nodes", "required_labels": { "zone": "a" }, "spread": "zone" },
         "health": {},
         "observability": { "metrics": true, "trace_sampling": 0.1 }
     }))
@@ -369,7 +369,9 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
                 Phase::Phase3
             ),
             ("upgrade.mode".into(), Phase::Later),
-            ("placement".into(), Phase::Phase3),
+            ("placement.mode".into(), Phase::Phase3),
+            ("placement.required_labels".into(), Phase::Phase3),
+            ("placement.spread".into(), Phase::Phase3),
             ("health".into(), Phase::Phase2),
             ("observability.metrics".into(), Phase::Phase2),
             ("observability.trace_sampling".into(), Phase::Phase2),

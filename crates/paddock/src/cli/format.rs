@@ -252,6 +252,31 @@ pub fn logs(lines: &[LogLine]) -> String {
 #[path = "format_tests.rs"]
 mod format_tests;
 
+/// `paddock failover`: the node's standing, one field per line.
+pub(crate) fn failover(f: &paddock::api::FailoverInfo) -> String {
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    let mut out = format!(
+        "role:       {}\nepoch:      {}\nmay run:    {}\npartner:    {} (reachable: {})\narbiter:    {}\nsingletons: {}",
+        f.role,
+        f.epoch,
+        yes(f.may_run),
+        f.partner,
+        yes(f.partner_reachable),
+        f.arbiter,
+        if f.singletons.is_empty() {
+            "none".to_string()
+        } else {
+            f.singletons.join(", ")
+        }
+    );
+    if f.awaiting_confirmation {
+        out.push_str(
+            "\nwaiting:    the partner looks gone; `paddock failover confirm` promotes this node",
+        );
+    }
+    out
+}
+
 /// `paddock members`: one line per member.
 pub(crate) fn members(members: &[paddock::api::MemberInfo]) -> String {
     let mut out = String::from("NODE  CREATION  ROLE     REACHABLE  ADDRESS");

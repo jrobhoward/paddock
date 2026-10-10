@@ -362,10 +362,15 @@ impl Liveness {
         })
     }
 
-    /// Raise the session with `node` and return the new number.
+    /// Raise the session with `node` and return the new number. A node no
+    /// longer watched (it left) stays unwatched: recreating it here, with a
+    /// raised number and no creation, would make the first frames of its
+    /// next start look stale, and its join would be dropped.
     pub(crate) fn end(&self, node: u32) -> u64 {
         let mut peers = self.peers();
-        let peer = self.peer(&mut peers, node, Instant::now());
+        let Some(peer) = peers.get_mut(&node) else {
+            return 0;
+        };
         peer.session += 1;
         peer.session
     }

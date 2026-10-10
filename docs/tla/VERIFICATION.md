@@ -103,7 +103,7 @@ From layer 2:
 | --- | --- | --- | --- |
 | R8 | `EchoLease` | Renewal through the partner is timed by the primary's own stamp, echoed | `node::Primary::step` |
 | R9 | `ConfirmOnSend` | The confirmation time is when the payload stops confirming, recorded before a request leaves | `node::Ctx::ask`, `node::Node::publish` |
-| R10 | The witness's epoch, last promotion and renewal record survive its crashes | Kept on disk and synced before a grant is answered | Not yet: the witness's state is in memory (ROADMAP D10, node wiring) |
+| R10 | The witness's epoch, last promotion and renewal record survive its crashes | Kept on disk and synced before a grant is answered | The epoch and promoted node: `data_dir/witness-state`, synced before a grant (`serve_witness_kept`). The renewal record is not kept: a restarted witness counts its promoted node as renewed at the restart (`witness::Witness::start`), which is never earlier than the true record |
 | R11 | Every frame a witness answers was sent at most `Delay` before (on an up link) | Message delay plus clock drift stays below the margin | Deployment: margin 500 ms by default |
 
 ## Assumptions not tested

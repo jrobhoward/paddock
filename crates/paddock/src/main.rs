@@ -80,6 +80,14 @@ enum ClusterCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum FailoverCommand {
+    /// Confirm that the partner is gone (powered off or cut off), so this
+    /// standby promotes itself once the partner's lease has run out. With
+    /// arbiter "operator", or a witness that cannot be reached.
+    Confirm,
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Run a node.
     #[cfg(feature = "node")]
@@ -179,6 +187,11 @@ enum Command {
     ReloadTls,
     /// List the cluster's members as the node knows them.
     Members,
+    /// Show this node's failover standing in its HA pair.
+    Failover {
+        #[command(subcommand)]
+        action: Option<FailoverCommand>,
+    },
     /// Show an instance's state (through its save-snapshot; an instance that
     /// traps there restarts).
     State {
@@ -438,6 +451,12 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
         Command::Metrics => print_metrics(client).await,
         Command::ReloadTls => done(json, client.reload_tls().await),
         Command::Members => print(json, &client.members().await?, |m| format::members(m)),
+        Command::Failover { action: None } => {
+            print(json, &client.failover().await?, format::failover)
+        }
+        Command::Failover {
+            action: Some(FailoverCommand::Confirm),
+        } => done(json, client.confirm_failover().await),
         Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
         Command::Cast { message } => {
             let (target, content_type, body) = message.into_parts()?;

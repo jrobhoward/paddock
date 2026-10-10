@@ -6,8 +6,8 @@ use hyper::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 
 use super::{
-    ApiError, AppDetail, AppSummary, DeployResponse, Done, InstanceInfo, LogLine, MemberInfo,
-    RolloutParams, StateResponse, Target, UpgradeResponse,
+    ApiError, AppDetail, AppSummary, DeployResponse, Done, FailoverInfo, InstanceInfo, LogLine,
+    MemberInfo, RolloutParams, StateResponse, Target, UpgradeResponse,
 };
 
 /// Why a request failed.
@@ -251,6 +251,25 @@ impl Client {
     /// Any [`ClientError`].
     pub async fn members(&self) -> Result<Vec<MemberInfo>, ClientError> {
         self.json(Method::GET, "/v1/cluster", None).await
+    }
+
+    /// The node's failover standing.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; not found for a node without `[failover]`.
+    pub async fn failover(&self) -> Result<FailoverInfo, ClientError> {
+        self.json(Method::GET, "/v1/failover", None).await
+    }
+
+    /// Confirm that the partner is gone, so this standby may promote
+    /// itself.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; not found for a node without `[failover]`.
+    pub async fn confirm_failover(&self) -> Result<Done, ClientError> {
+        self.json(Method::POST, "/v1/failover/confirm", None).await
     }
 
     /// The node's metrics, in the Prometheus text format.

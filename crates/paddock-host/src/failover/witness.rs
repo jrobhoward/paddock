@@ -18,6 +18,25 @@ pub(super) struct Witness {
 }
 
 impl Witness {
+    /// A witness starting at epoch 1 with `cfg.first`, or resuming the state
+    /// kept on disk. A resumed witness counts the node it promoted as renewed
+    /// now: its renewals before the restart were lost, and none can be later
+    /// than this, so grants wait at least as long as with the true record
+    /// (R10, which the model keeps across crashes).
+    pub(super) fn start(cfg: WitnessConfig) -> Self {
+        let (epoch, promoted) = cfg.resume.unwrap_or((1, cfg.first));
+        let mut renewed = HashMap::new();
+        if cfg.resume.is_some() {
+            renewed.insert(promoted, Instant::now());
+        }
+        Self {
+            cfg,
+            epoch,
+            promoted,
+            renewed,
+        }
+    }
+
     fn partner(&self, node: u32) -> Option<u32> {
         match self.cfg.pair {
             [a, b] if a == node => Some(b),
@@ -79,3 +98,7 @@ impl Witness {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "witness_tests.rs"]
+mod witness_tests;

@@ -74,3 +74,40 @@ fn Store____next_creation____one_more_on_each_start() {
 
     assert_eq!((first, second), (1, 2));
 }
+
+#[test]
+fn Store____epoch____zero_then_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let before = store.load_epoch().unwrap();
+
+    (store.epoch_saver())(7).unwrap();
+    drop(store);
+    let after = Store::open(dir.path()).unwrap().load_epoch().unwrap();
+
+    assert_eq!((before, after), (0, 7));
+}
+
+#[test]
+fn Store____witness_state____none_then_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let before = store.load_witness().unwrap();
+
+    (store.witness_persist())(4, 2).unwrap();
+    drop(store);
+    let after = Store::open(dir.path()).unwrap().load_witness().unwrap();
+
+    assert_eq!((before, after), (None, Some((4, 2))));
+}
+
+#[test]
+fn Store____corrupt_witness_state____error() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    std::fs::write(dir.path().join("witness-state"), "4").unwrap();
+
+    let loaded = store.load_witness();
+
+    assert!(loaded.is_err());
+}

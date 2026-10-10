@@ -283,6 +283,8 @@ async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
         (&Method::GET, ["v1", "metrics"]) => metrics_text(node.metrics()),
         (&Method::GET, ["v1", "cluster"]) => json(StatusCode::OK, &node.members()),
         (&Method::POST, ["v1", "tls", "reload"]) => respond(node.reload_tls()),
+        (&Method::GET, ["v1", "failover"]) => respond(node.failover()),
+        (&Method::POST, ["v1", "failover", "confirm"]) => respond(node.confirm_failover()),
         (&Method::POST, ["v1", "instances", pid, "kill"]) => respond(node.kill(pid).await),
         _ => error(&NodeError::NotFound(format!(
             "no route for {method} {path}"

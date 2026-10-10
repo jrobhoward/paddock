@@ -12,6 +12,7 @@ mod audit;
 mod config;
 mod daemon;
 mod error;
+mod gate;
 mod logring;
 mod run;
 mod server;
@@ -19,8 +20,9 @@ mod state_view;
 mod store;
 
 pub use config::{
-    BucketConfig, BucketScope, ClusterConfig, ClusterRole, HttpBinding, ListenerBinding,
-    MemoryProfile, MetricsBinding, NodeConfig, SecretBinding, TlsBinding,
+    ArbiterKind, BucketConfig, BucketScope, ClusterConfig, ClusterRole, FailoverBinding,
+    HttpBinding, ListenerBinding, MemoryProfile, MetricsBinding, NodeConfig, SecretBinding,
+    TlsBinding, WitnessBinding,
 };
 pub use daemon::Node;
 pub use error::NodeError;

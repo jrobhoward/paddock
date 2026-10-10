@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::manifest::AppSpec;
 use crate::manifest::capabilities::{Capability, Durability};
 use crate::manifest::lifecycle::{Kind, UpgradeMode};
-use crate::manifest::sections::NameScope;
+use crate::manifest::sections::{NameScope, PlacementMode};
 
 /// When a field starts being enforced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -123,7 +123,8 @@ impl AppSpec {
     }
 
     /// `messaging_acl`, `config`, `upgrade`, `placement`, `health` and
-    /// `observability`.
+    /// `observability`. Of `placement`, a node with `[failover]` enforces
+    /// `singleton` and `hot-standby`; the rest needs a scheduler.
     fn unenforced_sections(&self, out: &mut Fields) {
         out.add_if(self.messaging_acl.is_some(), "messaging_acl", Phase::Phase2);
         out.add_if(
@@ -136,7 +137,24 @@ impl AppSpec {
             "upgrade.mode",
             Phase::Later,
         );
-        out.add_if(self.placement.is_some(), "placement", Phase::Phase3);
+        if let Some(p) = &self.placement {
+            out.add_if(
+                p.mode == PlacementMode::AllNodes,
+                "placement.mode",
+                Phase::Phase3,
+            );
+            out.add_if(
+                !p.required_labels.is_empty(),
+                "placement.required_labels",
+                Phase::Phase3,
+            );
+            out.add_if(
+                !p.preferred_labels.is_empty(),
+                "placement.preferred_labels",
+                Phase::Phase3,
+            );
+            out.add_if(p.spread.is_some(), "placement.spread", Phase::Phase3);
+        }
         out.add_if(self.health.is_some(), "health", Phase::Phase2);
         out.add_if(
             self.observability.metrics,

@@ -150,7 +150,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   and the witness (`witness.rs`). The rules are R1 to R11 in
   `docs/tla/VERIFICATION.md`; a change to a transition means updating the
   matching action in the model and rerunning it. `tests/simulation/failover.rs` logs `may_run` and checks that a
-  singleton never runs on both nodes.
+  singleton never runs on both nodes. On the node, `crates/paddock/src/node/gate.rs`
+  starts and kills `singleton` apps as `may_run` changes;
+  `crates/paddock/tests/failover.rs` runs a pair and a witness over QUIC.
 - `crates/paddock-modbus`: the Modbus TCP extension (`paddock-modbus:modbus`,
   WIT in its `wit/`), depending on `paddock-host` alone; linked into
   `paddock node` by `paddock`'s default `modbus` feature. Device tasks,

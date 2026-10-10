@@ -195,6 +195,23 @@ All notable changes are recorded here. The format follows
   `identity_reload_s`; `seeds` are addresses. `paddock cluster keygen`,
   `paddock cluster pubkey`, `paddock members` (`GET /v1/cluster`); calls and
   casts by pid reach other nodes.
+- Failover on the node: `[failover]` (partner, arbiter `witness`, `paths` or
+  `operator`, lease and margin) makes a node one of an HA pair, and
+  `[witness]` (on a node with cluster role `witness`) arbitrates one.
+  `placement.mode = "singleton"` apps run only on the primary while it may
+  run them, start from `init` on promotion and are killed at once when it
+  may not; `hot-standby` apps run on both nodes and receive
+  `host-event("failover-role", "primary" | "standby" | "down")`. The epoch
+  and the witness's state are synced to disk before they are acted on.
+  `paddock failover` (`GET /v1/failover`) and `paddock failover confirm`
+  (`POST /v1/failover/confirm`). Deploy warnings now name only the placement
+  fields still unenforced (`all-nodes`, labels, `spread`).
+
+### Fixed
+
+- A node that left the cluster cleanly and restarted could not rejoin: the
+  closing connection re-created the departed peer with a raised session
+  number, so the new start's join was dropped as stale.
 
 ### Changed
 
