@@ -12,7 +12,7 @@ use crate::api::{
 };
 use paddock_bundle::manifest::{AppManifest, UpgradeMode};
 use paddock_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
-use paddock_host::services::Extension;
+use paddock_host::services::{Extension, StartedExtensions};
 use paddock_host::{
     AppDeployment, AppHandle, AppStatus, Apps, CallError, Envelope, HostObjects, InstanceHandle,
     InstanceSpec, Listener, ListenerSpec, LoadedConnection, MemoryProfile as HostProfile, Pid,
@@ -41,6 +41,8 @@ pub struct Node {
     /// Running connection-handler apps, by name. Locked only briefly,
     /// never across an await.
     connections: std::sync::Mutex<HashMap<String, ConnectionApp>>,
+    /// Extensions' node-level work, stopped on shutdown.
+    extensions: std::sync::Mutex<Option<StartedExtensions>>,
 }
 
 /// A connection-handler app this node runs: its listeners, and the
@@ -321,8 +323,23 @@ impl Node {
                 ..NodeState::default()
             }),
             connections: std::sync::Mutex::default(),
+            extensions: std::sync::Mutex::default(),
         };
         node.restore().await;
+        let started = match node
+            .rt
+            .start_extensions(&node.apps, &node.config.extensions)
+        {
+            Ok(started) => started,
+            Err(e) => {
+                node.shutdown().await;
+                return Err(NodeError::Invalid(e.to_string()));
+            }
+        };
+        *node
+            .extensions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(started);
         Ok(node)
     }
 
@@ -1226,6 +1243,12 @@ impl Node {
 
     /// Stop every app, in reverse start order.
     pub async fn shutdown(&self) {
+        let started = self
+            .extensions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(started);
         let names: Vec<String> = self.connection_apps().keys().cloned().collect();
         for name in names {
             self.stop_connections(&name);

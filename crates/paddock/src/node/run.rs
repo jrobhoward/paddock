@@ -19,6 +19,20 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use super::{LogRing, Node, NodeConfig, RingLayer};
 
+/// The extensions `paddock node` runs with: the Modbus TCP extension with
+/// the `modbus` feature (on by default), none otherwise.
+#[must_use]
+pub fn builtin_extensions() -> Vec<Arc<dyn Extension>> {
+    #[cfg(feature = "modbus")]
+    {
+        vec![Arc::new(paddock_modbus::Modbus::default())]
+    }
+    #[cfg(not(feature = "modbus"))]
+    {
+        Vec::new()
+    }
+}
+
 /// Run a node from its configuration file, with `extensions` (none for a
 /// plain node), until SIGTERM or Ctrl-C. Logs go to stderr, filtered by
 /// `RUST_LOG` (default `info`).

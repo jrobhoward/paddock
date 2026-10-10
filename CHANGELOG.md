@@ -153,6 +153,16 @@ All notable changes are recorded here. The format follows
   bucket cannot replay). `limits.watches_max` and node `[limits]
   watches_max` (default 1,000). SDK feature `watch` (`paddock_sdk::watch`).
 - `watch_cost` baseline harness (`paddock-host` example).
+- Extensions can run node-level work: `Extension::start` with an
+  `ExtensionNode` (node config from `[extensions."<package>"]`, casts to
+  apps by pool routing, a stop signal); `Runtime::start_extensions`.
+- Modbus TCP extension (`crates/paddock-modbus`, `paddock-modbus:modbus`),
+  in `paddock node` by default (`modbus` feature): polls devices from node
+  config and casts changed points per device and scan to an app, reports
+  devices offline, lets apps read and write listed devices, and serves
+  registers to Modbus masters. `modbus_load` throughput harness.
+- `examples/scada`: a hash-routed `points` pool keeping Modbus points in a
+  shared bucket, and an `hmi` connection handler answering over a listener.
 
 ### Changed
 

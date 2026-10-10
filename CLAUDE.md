@@ -148,6 +148,12 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `docs/tla/VERIFICATION.md`; a change to a transition means updating the
   matching action in the model and rerunning it. `tests/simulation/failover.rs` logs `may_run` and checks that a
   singleton never runs on both nodes.
+- `crates/paddock-modbus`: the Modbus TCP extension (`paddock-modbus:modbus`,
+  WIT in its `wit/`), depending on `paddock-host` alone; linked into
+  `paddock node` by `paddock`'s default `modbus` feature. Device tasks,
+  change detection and the update format (`points`), the server.
+  `examples/scada` is its demo (`points` pool, `hmi` connection handler);
+  `crates/paddock/tests/scada.rs` runs it against a fake device.
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.

@@ -10,6 +10,7 @@ members = [
     "crates/paddock-fixture-sdk",
     "crates/paddock-fixture-services",
     "crates/paddock-host",
+    "crates/paddock-modbus",
     "crates/paddock-sdk",
     "crates/paddock-sdk-macros",
     "examples/counter",
@@ -19,6 +20,8 @@ members = [
     "examples/greeter/node",
     "examples/greeter/service",
     "examples/line-server",
+    "examples/scada/hmi",
+    "examples/scada/points",
 ]
 # Throwaway spike code is its own workspace with its own lock file; the
 # conventions and Definition of Done below do not apply to it.
@@ -45,6 +48,8 @@ wit-parser = "0.259"
 # copy.
 wasmparser = { version = "0.259", default-features = false, features = ["component-model", "std"] }
 tokio = "1"
+# MIT OR Apache-2.0. Client (polling) and server (serving registers) over TCP.
+tokio-modbus = { version = "0.17", default-features = false, features = ["tcp", "tcp-server"] }
 thiserror = "2"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -66,6 +71,7 @@ toml = "0.9"
 
 paddock-bundle = { path = "crates/paddock-bundle" }
 paddock-host = { path = "crates/paddock-host" }
+paddock-modbus = { path = "crates/paddock-modbus" }
 paddock-sdk = { path = "crates/paddock-sdk" }
 paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
 # rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2

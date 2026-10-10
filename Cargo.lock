@@ -180,6 +180,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,6 +508,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4944ef05513e1c1a85a945cf8f29d95ddea8bcbb19e0bfd4e71063450967420"
 
 [[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -677,6 +698,22 @@ dependencies = [
  "paddock-sdk",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "example-scada-hmi"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+]
+
+[[package]]
+name = "example-scada-points"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "serde",
+ "wit-bindgen 0.62.0",
 ]
 
 [[package]]
@@ -1360,6 +1397,7 @@ dependencies = [
  "minisign",
  "paddock-bundle",
  "paddock-host",
+ "paddock-modbus",
  "rustbridge-bundle",
  "semver",
  "serde",
@@ -1367,6 +1405,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-modbus",
  "toml",
  "tracing",
  "tracing-subscriber",
@@ -1456,6 +1495,20 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wat",
+]
+
+[[package]]
+name = "paddock-modbus"
+version = "0.0.0"
+dependencies = [
+ "ciborium",
+ "paddock-bundle",
+ "paddock-host",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-modbus",
+ "tracing",
 ]
 
 [[package]]
@@ -2182,6 +2235,39 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "tokio-modbus"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95d06136e737e962c71d922a09148f5a264f6609a021fdf031ad16ffd172c818"
+dependencies = [
+ "async-trait",
+ "byteorder",
+ "bytes",
+ "crc",
+ "futures-core",
+ "futures-util",
+ "log",
+ "socket2",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e464cf451ba96ebfc6f9b6542f17ee8b8956e33f1e40d9690624e59d7a7f8a4b"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "libc",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]

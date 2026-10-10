@@ -18,9 +18,12 @@ mod server;
 mod state_view;
 mod store;
 
-pub use config::{ClusterConfig, ClusterRole, ListenerBinding, MemoryProfile, NodeConfig};
+pub use config::{
+    BucketConfig, BucketScope, ClusterConfig, ClusterRole, ListenerBinding, MemoryProfile,
+    NodeConfig,
+};
 pub use daemon::Node;
 pub use error::NodeError;
 pub use logring::{LogRing, RingLayer};
-pub use run::run;
+pub use run::{builtin_extensions, run};
 pub use server::{MAX_BODY, serve};

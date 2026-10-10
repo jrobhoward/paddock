@@ -17,7 +17,9 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["node"]
+default = ["node", "modbus"]
+# The Modbus TCP extension (`paddock-modbus:modbus`) in `paddock node`.
+modbus = ["node", "dep:paddock-modbus"]
 # The node daemon (`paddock node`) and everything it runs on, wasmtime
 # included. Without it, the CLI and bundle tooling only.
 node = [
@@ -42,6 +44,7 @@ hyper-util = { workspace = true }
 minisign = { workspace = true }
 paddock-bundle = { workspace = true }
 paddock-host = { workspace = true, optional = true }
+paddock-modbus = { workspace = true, optional = true }
 rustbridge-bundle = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
@@ -54,6 +57,7 @@ tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio-modbus = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
 wat = { workspace = true }
 wit-parser = { workspace = true }
@@ -81,6 +85,10 @@ required-features = ["node"]
 [[test]]
 name = "listeners"
 required-features = ["node"]
+
+[[test]]
+name = "scada"
+required-features = ["modbus"]
 
 [lints]
 workspace = true

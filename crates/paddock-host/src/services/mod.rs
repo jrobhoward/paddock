@@ -44,7 +44,8 @@ pub mod keyvalue;
 pub mod logging;
 
 pub use extension::{
-    Extension, ExtensionApp, ExtensionCtx, ExtensionSpec, StoreData, extension_ctx,
+    Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ExtensionSpec, StartedExtensions,
+    StoreData, extension_ctx,
 };
 
 use std::collections::BTreeMap;

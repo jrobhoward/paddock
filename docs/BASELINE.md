@@ -167,7 +167,7 @@ Probes (`paddock-host`'s `probes` feature, anyprobe USDT) with no tracer attache
 
 ## 2026-10-09: keyvalue watches (roadmap H4)
 
-Same machine. `watch_cost.rs` runs `paddock-fixture-sdk` instances against a shared `memory` bucket. A writer instance sets one key 2,000 times through `wasi:keyvalue` (median per call) while 0 to 1,000 other instances watch that key, or another key, through `paddock:watch`. Write to notice: the time from starting a write until a call to the watcher returns the change, polling with calls (signals are taken before calls), median of 1,000.
+Same machine, but probably not idle: a TLA+ model check using about 8 of the 16 cores was likely running at the time (load average about 10 an hour later). Treat these figures as provisional and rerun on an idle machine. `watch_cost.rs` runs `paddock-fixture-sdk` instances against a shared `memory` bucket. A writer instance sets one key 2,000 times through `wasi:keyvalue` (median per call) while 0 to 1,000 other instances watch that key, or another key, through `paddock:watch`. Write to notice: the time from starting a write until a call to the watcher returns the change, polling with calls (signals are taken before calls), median of 1,000.
 
 ```sh
 cargo build --release --target wasm32-wasip2 -p paddock-fixture-sdk
@@ -192,6 +192,19 @@ cargo run --release -p paddock-host --example watch_cost -- 4    # and 1
 - Conflation caps that work when watchers fall behind: on 1 worker the writer outpaces 1,000 watchers, later writes raise queued notices instead of adding callbacks, and a write costs less than with 4 workers.
 - A notice is handled about 17–20 µs after the write call starts, beyond two plain calls: the write, the wake-up and one `handle-info` with a JSON decode in the guest.
 - Not measured: watches on `disk` buckets (the fsync dominates the write), and resuming a prefix watch over a large bucket (it scans the bucket's keys once).
+
+## Modbus point throughput (roadmap F6): to measure on an idle machine
+
+`modbus_load.rs` runs in-process fake Modbus TCP devices whose registers all change on every read (the worst case for report by exception), polls them through the `paddock-modbus` extension over loopback, and delivers each scan to `examples/scada/points`, a hash-routed pool that writes every update into a shared `memory` bucket in one batch. It reports updates stored per second against polls asked, and points per second.
+
+```sh
+cargo build --release --target wasm32-wasip2 -p example-scada-points
+cargo run --release -p paddock-modbus --example modbus_load -- 16 100 10 4 4
+cargo run --release -p paddock-modbus --example modbus_load -- 64 125 1 4 4
+cargo run --release -p paddock-modbus --example modbus_load -- 64 125 1 8 8
+```
+
+Arguments: devices, registers per device, poll interval in ms, pool instances, tokio worker threads. Not recorded yet: the machine was busy with another job when the harness was written. The fake devices share the node's cores, so the figures will understate what a node polling real devices sustains.
 
 ## Not measured yet
 

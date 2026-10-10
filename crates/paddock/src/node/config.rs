@@ -12,6 +12,10 @@
 //! [volumes]
 //! orders-data = "/srv/paddock/volumes/orders-data"
 //!
+//! # An extension's own configuration, by package.
+//! [extensions."paddock-modbus:modbus".devices.pump-1]
+//! address = "10.0.0.5:502"
+//!
 //! # Shared keyvalue buckets, opened by apps whose manifest lists them
 //! # and whose policy entry grants them.
 //! [buckets.points]
@@ -92,6 +96,12 @@ pub struct NodeConfig {
     /// Shared keyvalue buckets, by name.
     #[serde(default)]
     pub buckets: BTreeMap<String, BucketConfig>,
+    /// Each extension's node configuration, by package
+    /// (`[extensions."paddock-modbus:modbus"]`), handed to the extension as
+    /// it starts. A table for an extension the node does not have refuses
+    /// the start.
+    #[serde(default)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
     /// Config overrides per app.
     #[serde(default)]
     pub config: BTreeMap<String, BTreeMap<String, String>>,

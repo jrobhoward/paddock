@@ -349,6 +349,23 @@ impl Runtime {
         apps::start(self, deployments).await
     }
 
+    /// Start every extension's node-level work
+    /// ([`Extension::start`](services::Extension::start)) against `apps`,
+    /// each with its entry in `configs` (by package; null if none). Keep the
+    /// result: stopping or dropping it ends their tasks.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::InvalidApps`] for configuration naming an extension this
+    /// runtime does not have, or one an extension refuses.
+    pub fn start_extensions(
+        &self,
+        apps: &Apps,
+        configs: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> Result<services::StartedExtensions, HostError> {
+        services::extension::start(&self.inner.extensions, apps, configs)
+    }
+
     /// Override the log level of every instance of `app` from now on, or
     /// return to each instance's own level with `None`.
     pub fn set_log_level(&self, app: &str, level: Option<LogLevel>) {

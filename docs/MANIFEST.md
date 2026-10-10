@@ -262,6 +262,35 @@ scope = "node"                         # "cluster" (replicated) is Phase 3 and r
 
 A deploy is refused if the manifest lists a shared bucket the node does not configure.
 
+Extensions read their own node configuration from `[extensions."<package>"]`; a table for an extension the node was not built with refuses the start. `paddock node` includes the Modbus TCP extension (`paddock-modbus:modbus`, `crates/paddock-modbus`):
+
+```toml
+[extensions."paddock-modbus:modbus".devices.pump-1]
+address = "10.0.0.5:502"
+unit = 1                               # default 1
+poll_ms = 1000                         # default 1000
+timeout_ms = 1000                      # connect and per request; default 1000
+full_every_ms = 60000                  # optional integrity scan: every point, changed or not
+deliver_to = "points"                  # the app each scan's changes are cast to
+holding = [{ start = 0, count = 10 }]  # also input, coils, discrete
+```
+
+```toml
+[extensions."paddock-modbus:modbus".server]
+listen = "0.0.0.0:5020"
+deliver_to = "points"                  # masters' writes
+holding = 100                          # table sizes from address 0; also input, coils, discrete
+```
+
+Apps declare which devices they may read or write, and whether they set the served tables, and the operator grants the package:
+
+```toml
+[appserver.capabilities.extensions."paddock-modbus:modbus"]
+read = ["pump-1"]
+write = ["pump-1"]                     # writing implies reading
+serve = true
+```
+
 The operator policy (`policy`). Grants add up: the defaults, plus the app's own entry, plus the entry of each signer whose key verified the bundle.
 
 ```toml

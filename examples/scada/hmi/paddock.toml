@@ -1,0 +1,16 @@
+# The operator's line protocol: one instance per connection on the `hmi`
+# listener, forwarding each command to `points-api`. Bind it in node
+# config:
+#
+#   [listeners.hmi]
+#   address = "127.0.0.1:7071"
+[app]
+name = "hmi"
+version = "1.0.0"
+description = "Answers point queries over TCP (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[[appserver.listeners]]
+name = "hmi"
+idle_timeout_ms = 60000
+max_connections = 64
