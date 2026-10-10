@@ -1,4 +1,4 @@
-//! Phase 1 exit criteria (docs/ROADMAP.md, "Status"), one test each, all through
+//! Phase 1 exit criteria, one test each (named for its criterion), all through
 //! a running node and its admin API. `paddock-host` tests cover the same
 //! ground at the runtime level.
 

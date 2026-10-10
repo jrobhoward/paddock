@@ -16,9 +16,9 @@ remaining work: tracks, their order, and the code areas each owns. Read these
 before changing anything structural:
 
 - `docs/DESIGN.md`: the design, prior art, spike findings and risks.
-- `docs/ROADMAP.md`: status, tracks and items, code areas, crate plan, spike
-  status. Keep work inside the current track's areas; record anything outside
-  them in the roadmap instead of widening the change.
+- `docs/ROADMAP.md`: open work only, in stages, with code areas, decisions
+  and spike status. Keep a change inside its item's areas; record anything
+  outside them in the roadmap instead of widening the change.
 - `spikes/*/README.md`: what each spike measured and what it changed.
 
 ## Commands
@@ -387,14 +387,17 @@ Before considering any change to the main workspace complete:
 ## Docs are part of "done"
 
 Each file has one job; keep changes in the right one rather than restating
-across them:
+across them. CHANGELOG.md, MANIFEST.md and OBSERVABILITY.md (interfaces)
+change with the code. A change that leaves a narrative doc (README,
+GETTING_STARTED, WRITING_APPS, DESIGN prose, the tutorial) wrong may add a
+line to ROADMAP.md's "Doc debt" instead of rewriting it then:
 
 | File | Holds | Scope |
 |---|---|---|
 | `README.md` | What Paddock does, how to run it, caveats that change how it should be used | Link out rather than expand |
 | `docs/DESIGN.md` | Design, rationale, prior art, spike findings, risks | Update when a decision changes; not a development log |
 | `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
-| `docs/ROADMAP.md` | The single plan: status, tracks, code areas, crate plan, parked ideas, spike status | Tick items as they land; add new work here, never in a second plan file |
+| `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
 | `CHANGELOG.md` | What changed, under `Unreleased` until the first release | Keep a Changelog format; one line per change |
 | `CLAUDE.md` | Conventions and constraints a contributor needs before editing | Rules, not narrative |
