@@ -73,6 +73,15 @@ impl SimNode {
     pub fn spawn(&self, init_args: &str) -> InstanceHandle {
         self.rt.spawn(&self.app, spec(init_args)).unwrap()
     }
+
+    /// Start a chaos instance bound to the node's failover lease, as a
+    /// singleton is, with no gate to start or kill it.
+    pub fn spawn_bound(&self) -> InstanceHandle {
+        let mut spec = spec("");
+        spec.bound_to_lease = true;
+        spec.init_timeout = Duration::from_secs(3600);
+        self.rt.spawn(&self.app, spec).unwrap()
+    }
 }
 
 /// Nodes 1 to n, joined by `mesh`.

@@ -51,6 +51,15 @@ pub struct InstanceSpec {
     /// `init` and on every change ([`crate::Runtime::set_failover_role`]):
     /// a `hot-standby` app.
     pub announce_role: bool,
+    /// Run guest code only while this node's failover lease is current: a
+    /// `singleton` app. The instance checks the lease against the
+    /// monotonic clock before `init`, each callback and `terminate`, and
+    /// at every epoch tick. Out of lease, it waits before a callback (the
+    /// message stays queued) until the lease is renewed or the node's gate
+    /// kills it, and a callback running when the lease ends is ended with
+    /// `crashed: lease_ended` at the next tick. No effect on a node without
+    /// failover.
+    pub bound_to_lease: bool,
 }
 
 /// A host directory visible to the guest.
@@ -123,6 +132,10 @@ impl InstanceSpec {
                 .placement
                 .as_ref()
                 .is_some_and(|p| p.mode == paddock_bundle::manifest::PlacementMode::HotStandby),
+            bound_to_lease: spec
+                .placement
+                .as_ref()
+                .is_some_and(|p| p.mode == paddock_bundle::manifest::PlacementMode::Singleton),
             host_objects: HostObjectRequest {
                 timers: spec.limits.timers_max,
                 monitors: spec.limits.monitors_max,

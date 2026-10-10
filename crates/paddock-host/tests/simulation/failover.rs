@@ -11,8 +11,10 @@ use std::time::Duration;
 use paddock_host::failover::{
     Arbiter, FailoverConfig, FailoverHandle, Leadership, Standing, WitnessConfig,
 };
+use paddock_host::{CallError, LifecycleState};
 use tokio::time::Instant;
 
+use crate::common::{body, text};
 use crate::harness::{HEARTBEAT, NODE_TIMEOUT, Sim, pass, simulate};
 
 const LEASE: Duration = Duration::from_millis(1000);
@@ -159,6 +161,35 @@ fn failover____primary_cut_off____standby_takes_over_within_the_bound_never_both
         takeover_bound()
     );
     assert_eq!(overlap, None);
+}
+
+#[test]
+fn bound_instances____lease_moves_with_no_gate____guest_code_runs_only_under_the_lease() {
+    let (before, standby_before, cut_off, taken_over, old_state) =
+        simulate(47, 3, |sim| async move {
+            let one = sim.node(1).spawn_bound();
+            let two = sim.node(2).spawn_bound();
+            let pair = start(&sim, witness());
+            pass(3000).await;
+            let short = Duration::from_millis(100);
+            let before = one.call(text("echo:one"), short).await.map(|e| body(&e));
+            let standby_before = two.call(text("echo:two"), short).await;
+
+            isolate(&sim, 1);
+            // Past node 1's lease; it hears nobody, so nothing renews it.
+            pass(u64::try_from((LEASE + MARGIN).as_millis()).unwrap()).await;
+            let cut_off = one.call(text("echo:one"), short).await;
+            pass(5000).await;
+            let taken_over = two.call(text("echo:two"), short).await.map(|e| body(&e));
+            assert_eq!(pair.runners(), vec![2]);
+            (before, standby_before, cut_off, taken_over, one.state())
+        });
+
+    assert_eq!(before.as_deref(), Ok("one"));
+    assert_eq!(standby_before, Err(CallError::Timeout));
+    assert_eq!(cut_off, Err(CallError::Timeout));
+    assert_eq!(taken_over.as_deref(), Ok("two"));
+    assert_eq!(old_state, LifecycleState::Active);
 }
 
 #[test]

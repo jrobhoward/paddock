@@ -5,10 +5,19 @@
 //! (written before the app's `init`) until `singleton killed` or `cannot
 //! start singleton`, or until its process is killed, exits or is started
 //! again. Time while the process is stopped (`SIGSTOP`) does not count: it
-//! runs nothing then. Time after it is continued does, until the gate's kill
-//! record, since a callback can run in that window. Every boundary is taken
-//! on the side that makes a run longer, so the check errs toward reporting
-//! an overlap.
+//! runs nothing then.
+//!
+//! A singleton instance stops running guest code when its node's lease
+//! ends, by itself, before the gate kills it. A run therefore ends no later
+//! than the lease: at the end a node logs when it notices it late
+//! (`failover lease ended`, `ended_ms_ago`), or else at the bound its
+//! `failover lease extended` records give (`until_ms` plus `slack_ms` from
+//! the last one), which holds even when the process is killed before it
+//! can log anything more. A callback cut off after the lease's end
+//! (`crashed: lease_ended`) extends the run to that record. Without lease
+//! records a run lasts until the gate's kill. Every boundary is taken on the
+//! side that makes a run longer, so the check errs toward reporting an
+//! overlap.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -31,6 +40,12 @@ pub(crate) enum Mark {
     Freeze,
     /// The process is about to be continued.
     Thaw,
+    /// The node's lease ended (logged late, dated back to the end).
+    LeaseEnded,
+    /// A callback of the singleton was cut off at the lease's end.
+    CutOff,
+    /// The node's lease ends no later than this time.
+    LeaseBound(i64),
 }
 
 /// A mark at a time, on a node.
@@ -44,17 +59,55 @@ pub(crate) struct Record {
 /// A half-open time span `[start, end)` in microseconds.
 pub(crate) type Span = (i64, i64);
 
-/// The gate's records for `app` in a node's log.
+/// The gate's and the instances' records for `app` in a node's log, and
+/// the node's late lease ends.
 pub(crate) fn log_records(node: u32, app: &str, text: &str) -> Vec<Record> {
     let field = format!("app={app}");
     text.lines()
         .filter_map(|line| {
             let line = strip_ansi(line);
             let at_us = parse_rfc3339_us(line.split_whitespace().next()?)?;
-            if !line.split_whitespace().any(|w| w == field) {
+            if line.contains("failover lease extended") {
+                let field = |name: &str| -> Option<i64> {
+                    let value = line
+                        .split_whitespace()
+                        .find_map(|w| w.strip_prefix(name)?.strip_prefix('='))?;
+                    let digits = value
+                        .find(|c: char| !c.is_ascii_digit())
+                        .unwrap_or(value.len());
+                    value[..digits].parse().ok()
+                };
+                let ms = field("until_ms")? + field("slack_ms")?;
+                return Some(Record {
+                    at_us,
+                    node,
+                    mark: Mark::LeaseBound(at_us + ms * 1_000),
+                });
+            }
+            if line.contains("failover lease ended") {
+                let value = line
+                    .split_whitespace()
+                    .find_map(|w| w.strip_prefix("ended_ms_ago="))?;
+                let digits = value
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(value.len());
+                let ago_ms: i64 = value[..digits].parse().ok()?;
+                return Some(Record {
+                    at_us: at_us - ago_ms * 1_000,
+                    node,
+                    mark: Mark::LeaseEnded,
+                });
+            }
+            // An event field (`app=x`) or the instance span's (`instance{app=x`).
+            if !line
+                .split(|c: char| c.is_whitespace() || c == '{')
+                .any(|w| w == field)
+            {
                 return None;
             }
-            let mark = if line.contains("singleton starting") {
+            let mark = if line.contains("lease_ended") {
+                Mark::CutOff
+            } else if line.contains("singleton starting") {
                 Mark::Start
             } else if line.contains("singleton killed") || line.contains("cannot start singleton") {
                 Mark::Stop
@@ -91,17 +144,70 @@ pub(crate) fn event_records(events: &[Event]) -> Vec<Record> {
 pub(crate) fn running(records: &[Record], node: u32, horizon: i64) -> Vec<Span> {
     let mut mine: Vec<Record> = records.iter().copied().filter(|r| r.node == node).collect();
     mine.sort_by_key(|r| r.at_us);
-    let (mut runs, mut frozen) = (Vec::new(), Vec::new());
+    let (mut runs, mut frozen): (Vec<Span>, Vec<Span>) = (Vec::new(), Vec::new());
     let (mut run, mut freeze): (Option<i64>, Option<i64>) = (None, None);
+    // The run a lease end closed, which a cut-off callback extends.
+    let mut closed_by_lease: Option<usize> = None;
+    // The latest bound on the open run's lease.
+    let mut bound: Option<i64> = None;
+    // Close the open run at `end`, or at its lease's bound if earlier.
+    let close = |runs: &mut Vec<Span>,
+                 run: &mut Option<i64>,
+                 bound: &mut Option<i64>,
+                 closed_by_lease: &mut Option<usize>,
+                 end: i64| {
+        if let Some(s) = run.take() {
+            match bound.take() {
+                Some(b) if b < end => {
+                    runs.push((s, b.max(s)));
+                    *closed_by_lease = Some(runs.len() - 1);
+                }
+                _ => runs.push((s, end)),
+            }
+        }
+    };
     for r in mine {
         match r.mark {
             Mark::Start => {
                 run.get_or_insert(r.at_us);
+                closed_by_lease = None;
             }
-            Mark::Stop => runs.extend(run.take().map(|s| (s, r.at_us))),
+            Mark::LeaseBound(b) => {
+                if run.is_some() {
+                    bound = Some(b);
+                }
+            }
+            Mark::Stop => close(
+                &mut runs,
+                &mut run,
+                &mut bound,
+                &mut closed_by_lease,
+                r.at_us,
+            ),
+            Mark::LeaseEnded => {
+                if let Some(s) = run.take() {
+                    runs.push((s, r.at_us.max(s)));
+                    closed_by_lease = Some(runs.len() - 1);
+                }
+                bound = None;
+            }
+            Mark::CutOff => {
+                if let Some(span) = closed_by_lease.and_then(|i| runs.get_mut(i)) {
+                    span.1 = span.1.max(r.at_us);
+                }
+            }
             Mark::Spawn | Mark::Gone => {
-                runs.extend(run.take().map(|s| (s, r.at_us)));
+                close(
+                    &mut runs,
+                    &mut run,
+                    &mut bound,
+                    &mut closed_by_lease,
+                    r.at_us,
+                );
                 frozen.extend(freeze.take().map(|s| (s, r.at_us)));
+                if r.mark == Mark::Spawn {
+                    closed_by_lease = None;
+                }
             }
             Mark::Freeze => {
                 freeze.get_or_insert(r.at_us);
@@ -109,7 +215,13 @@ pub(crate) fn running(records: &[Record], node: u32, horizon: i64) -> Vec<Span> 
             Mark::Thaw => frozen.extend(freeze.take().map(|s| (s, r.at_us))),
         }
     }
-    runs.extend(run.map(|s| (s, horizon)));
+    close(
+        &mut runs,
+        &mut run,
+        &mut bound,
+        &mut closed_by_lease,
+        horizon,
+    );
     frozen.extend(freeze.map(|s| (s, horizon)));
     subtract(&runs, &frozen)
 }

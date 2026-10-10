@@ -246,12 +246,54 @@ struct Inbox {
     tx: mpsc::UnboundedSender<FailoverMsg>,
 }
 
-/// Failover state on a runtime: a node's inbox, or the witness.
-#[derive(Default)]
+/// Until when this node's singleton instances may run guest code: the
+/// failover task's view of its lease, which each such instance checks
+/// against the monotonic clock before every callback and at every epoch
+/// tick ([`crate::InstanceSpec::bound_to_lease`]). The gate stops
+/// singletons when the lease ends, but only once the failover task runs;
+/// after the process was paused past its lease, instances may run first,
+/// and this check keeps them from running guest code meanwhile
+/// (assumption A8 in `docs/tla/VERIFICATION.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunUntil {
+    /// No failover on this node, or a primary that needs no lease (the
+    /// paths or operator arbiter, or an operator's override).
+    Always,
+    /// Not primary.
+    Never,
+    /// A primary holding a lease, until its end less the margin.
+    Until(Instant),
+}
+
+impl RunUntil {
+    /// Whether guest code may run at `now`.
+    pub(crate) fn allows(self, now: Instant) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::Until(end) => now < end,
+        }
+    }
+}
+
+/// Failover state on a runtime: a node's inbox, or the witness, and the
+/// lease singletons run under.
 pub(crate) struct Shared {
     inbox: Mutex<Option<Inbox>>,
     witness: Mutex<Option<Witness>>,
     persist: Mutex<Option<WitnessPersist>>,
+    run_until: watch::Sender<RunUntil>,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self {
+            inbox: Mutex::default(),
+            witness: Mutex::default(),
+            persist: Mutex::default(),
+            run_until: watch::Sender::new(RunUntil::Always),
+        }
+    }
 }
 
 impl std::fmt::Debug for Shared {
@@ -261,6 +303,11 @@ impl std::fmt::Debug for Shared {
 }
 
 impl Shared {
+    /// Until when singleton instances may run guest code, as it changes.
+    pub(crate) fn run_until(&self) -> watch::Receiver<RunUntil> {
+        self.run_until.subscribe()
+    }
+
     /// A failover message from node `from`.
     pub(crate) fn deliver(&self, rt: &RuntimeInner, from: u32, msg: FailoverMsg) {
         let reply = {
@@ -463,6 +510,7 @@ impl Runtime {
                 tx: inbox_tx,
             });
         }
+        rt.failover.run_until.send_replace(RunUntil::Never);
         self.add_peer(cfg.partner);
         if let Arbiter::Witness(witness) = cfg.arbiter {
             self.add_peer(witness);

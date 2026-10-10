@@ -63,7 +63,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Liveness, membership and failover
 
 - **Controls.** As for node and node; the failover rules R1 to R11 and their model (`docs/tla/VERIFICATION.md`).
-- **Gaps.** Q8, Q10, Q11 in the roadmap; S5 is fixed.
+- **Gaps.** Q10 and Q11 in the roadmap; S5 is fixed. A primary paused past its lease no longer runs its singleton's callbacks when it continues (A8 in `docs/tla/VERIFICATION.md`).
 
 ### Bundles, manifests and policy
 

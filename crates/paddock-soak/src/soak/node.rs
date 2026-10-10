@@ -78,7 +78,7 @@ impl Node {
             .arg("--config")
             .arg(&self.config)
             .env("NO_COLOR", "1")
-            .env("RUST_LOG", "info")
+            .env("RUST_LOG", "info,paddock::lease=debug")
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)

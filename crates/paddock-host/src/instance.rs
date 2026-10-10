@@ -21,6 +21,7 @@ use wasmtime::{Store, Trap, UpdateDeadline};
 use crate::bindings::{CallResult, PaddockApp};
 use crate::delivery;
 use crate::error::describe;
+use crate::failover::RunUntil;
 use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::metrics::AppStats;
@@ -609,6 +610,9 @@ impl InstanceTask {
         app: &LoadedApp,
         spec: &InstanceSpec,
     ) -> Result<PaddockApp, ExitReason> {
+        if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
+            return Err(stop);
+        }
         store.data_mut().clock.start(spec.init_timeout);
         let init = tokio::time::timeout(spec.init_timeout, async {
             let instance = app.pre.instantiate_async(&mut *store).await?;
@@ -653,6 +657,9 @@ impl InstanceTask {
                     continue;
                 }
                 Some(op) = self.ops.recv() => {
+                    if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
+                        return Err(stop);
+                    }
                     if let Some(reason) = self.operate(store, instance, spec, op).await {
                         return Err(reason);
                     }
@@ -668,6 +675,13 @@ impl InstanceTask {
             let Some(message) = message else {
                 return Ok(ExitReason::Shutdown);
             };
+            // Out of lease, the message waits here; a stop drops it.
+            if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
+                return match *self.control.borrow() {
+                    Control::Shutdown(_) => Ok(stop),
+                    Control::Run | Control::Kill(_) => Err(stop),
+                };
+            }
 
             store.data_mut().clock.start(spec.callback_deadline);
             let kind = match &message {
@@ -866,7 +880,44 @@ impl InstanceTask {
         }
     }
 
-    /// Run `terminate` within the shutdown timeout. Overrunning it is a kill.
+    /// Wait until guest code may run: the instance's lease, if it is bound
+    /// to one, is current. Returns the exit reason if the instance is
+    /// stopped or killed first (the stop's reason or the kill's), or if
+    /// the runtime is gone.
+    async fn await_lease(
+        &mut self,
+        lease: Option<watch::Receiver<RunUntil>>,
+    ) -> Option<ExitReason> {
+        let mut lease = lease?;
+        let mut logged = false;
+        loop {
+            if lease
+                .borrow_and_update()
+                .allows(tokio::time::Instant::now())
+            {
+                return None;
+            }
+            if !logged {
+                tracing::info!("singleton out of lease: waiting to run guest code");
+                logged = true;
+            }
+            match &*self.control.borrow_and_update() {
+                Control::Run => {}
+                Control::Shutdown(reason) | Control::Kill(reason) => return Some(reason.clone()),
+            }
+            tokio::select! {
+                changed = self.control.changed() => if changed.is_err() {
+                    return Some(ExitReason::Killed);
+                },
+                changed = lease.changed() => if changed.is_err() {
+                    return Some(ExitReason::Killed);
+                },
+            }
+        }
+    }
+
+    /// Run `terminate` within the shutdown timeout. Overrunning it is a
+    /// kill, and so is a stop while out of lease: `terminate` is guest code.
     async fn stop(
         &mut self,
         store: &mut Store<InstanceState>,
@@ -874,6 +925,10 @@ impl InstanceTask {
         spec: &InstanceSpec,
         reason: ExitReason,
     ) -> ExitReason {
+        if !store.data().within_lease() {
+            tracing::info!(%reason, "singleton out of lease: terminate skipped");
+            return ExitReason::Killed;
+        }
         store.data_mut().clock.start(spec.shutdown_timeout);
         let wit_reason = (&reason).into();
         let terminate = tokio::time::timeout(
@@ -904,6 +959,11 @@ pub(crate) fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Stor
     store.limiter(|s| &mut s.limiter);
     store.epoch_deadline_callback(|mut ctx| {
         if ctx.data_mut().clock.expired() {
+            Ok(UpdateDeadline::Interrupt)
+        } else if !ctx.data().within_lease() {
+            // The lease ended while guest code ran: stop it now (A8 in
+            // docs/tla/VERIFICATION.md).
+            ctx.data_mut().lease_ended = true;
             Ok(UpdateDeadline::Interrupt)
         } else {
             // Cooperative preemption: give other instances the thread.
@@ -941,6 +1001,9 @@ pub(crate) fn classify(err: &wasmtime::Error, state: &InstanceState) -> ExitReas
     }
     if state.limiter.table_exceeded {
         return ExitReason::Crashed("table_limit".to_string());
+    }
+    if state.lease_ended {
+        return ExitReason::Crashed("lease_ended".to_string());
     }
     let trap = err.downcast_ref::<Trap>();
     if state.clock.timed_out || trap == Some(&Trap::Interrupt) {

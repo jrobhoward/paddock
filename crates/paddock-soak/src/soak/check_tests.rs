@@ -32,6 +32,41 @@ not a log line app=counter singleton starting";
 }
 
 #[test]
+fn log_records____late_lease_end_and_cut_off_callback____dated_marks() {
+    let text = "\
+2026-10-10T12:00:09.050000Z  WARN paddock_host::failover::node: failover lease ended before this node noticed; singleton instances stopped running guest code at its end ended_ms_ago=6050
+2026-10-10T12:00:09.051000Z  WARN instance{app=counter version=1.0.0 pid=1.4294967297.1 node=1}: paddock_host::instance: instance failed reason=crashed: lease_ended
+2026-10-10T12:00:09.052000Z  WARN instance{app=counter2 version=1.0.0 pid=1.4294967298.1 node=1}: paddock_host::instance: instance failed reason=crashed: lease_ended
+2026-10-10T12:00:09.053000Z  WARN paddock_host::failover::node: failover lease ended before this node noticed ended_ms_ago=junk";
+
+    let records = log_records(1, "counter", text);
+
+    let base = parse_rfc3339_us("2026-10-10T12:00:00Z").unwrap();
+    assert_eq!(
+        records,
+        vec![
+            rec(base + 3_000_000, 1, Mark::LeaseEnded),
+            rec(base + 9_051_000, 1, Mark::CutOff),
+        ]
+    );
+}
+
+#[test]
+fn log_records____lease_extended____bound_at_until_plus_slack() {
+    let text = "\
+2026-10-10T12:00:01.000000Z DEBUG paddock::lease: failover lease extended until_ms=2400 slack_ms=500
+2026-10-10T12:00:02.000000Z DEBUG paddock::lease: failover lease extended until_ms=2400";
+
+    let records = log_records(1, "counter", text);
+
+    let base = parse_rfc3339_us("2026-10-10T12:00:00Z").unwrap();
+    assert_eq!(
+        records,
+        vec![rec(base + 1_000_000, 1, Mark::LeaseBound(base + 3_900_000))]
+    );
+}
+
+#[test]
 fn log_records____ansi_colours____read() {
     let text = "\u{1b}[2m2026-10-10T12:00:00.000001Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m \u{1b}[2mpaddock::node::gate\u{1b}[0m\u{1b}[2m:\u{1b}[0m singleton starting: this node is primary \u{1b}[3mapp\u{1b}[0m\u{1b}[2m=\u{1b}[0mcounter";
 
@@ -191,6 +226,132 @@ fn check_dir____old_primary_thawed_after_promotion____overlap_reported() {
         "{}",
         report.render()
     );
+}
+
+#[test]
+fn check_dir____old_primary_thawed_after_its_lease_ended____no_overlap() {
+    let dir = tempdir();
+    let base = parse_rfc3339_us("2026-10-10T12:00:00Z").unwrap();
+    write_events(
+        dir.path(),
+        &[
+            (base, 1, What::Spawn),
+            (base, 2, What::Spawn),
+            (base + 2_000_000, 1, What::Freeze),
+            (base + 9_000_000, 1, What::Thaw),
+        ],
+    );
+    write_log(
+        dir.path(),
+        1,
+        &[
+            ("2026-10-10T12:00:01Z", "singleton starting"),
+            (
+                "2026-10-10T12:00:09.040Z",
+                "failover lease ended ended_ms_ago=6040",
+            ),
+            ("2026-10-10T12:00:09.050Z", "singleton killed"),
+        ],
+    );
+    write_log(
+        dir.path(),
+        2,
+        &[("2026-10-10T12:00:06Z", "singleton starting")],
+    );
+
+    let report = check_dir(dir.path(), "counter").unwrap();
+
+    assert!(report.passed(), "{}", report.render());
+}
+
+#[test]
+fn check_dir____callback_cut_off_after_the_thaw____overlap_until_the_cut() {
+    let dir = tempdir();
+    let base = parse_rfc3339_us("2026-10-10T12:00:00Z").unwrap();
+    write_events(
+        dir.path(),
+        &[
+            (base, 1, What::Spawn),
+            (base, 2, What::Spawn),
+            (base + 2_000_000, 1, What::Freeze),
+            (base + 9_000_000, 1, What::Thaw),
+        ],
+    );
+    write_log(
+        dir.path(),
+        1,
+        &[
+            ("2026-10-10T12:00:01Z", "singleton starting"),
+            (
+                "2026-10-10T12:00:09.001Z",
+                "instance failed reason=crashed: lease_ended",
+            ),
+            (
+                "2026-10-10T12:00:09.040Z",
+                "failover lease ended ended_ms_ago=6040",
+            ),
+            ("2026-10-10T12:00:09.050Z", "singleton killed"),
+        ],
+    );
+    write_log(
+        dir.path(),
+        2,
+        &[("2026-10-10T12:00:06Z", "singleton starting")],
+    );
+
+    let report = check_dir(dir.path(), "counter").unwrap();
+
+    assert_eq!(report.overlaps, vec![(base + 9_000_000, base + 9_001_000)]);
+}
+
+#[test]
+fn check_dir____paused_past_its_lease_then_killed_at_once____no_overlap() {
+    let dir = tempdir();
+    let base = parse_rfc3339_us("2026-10-10T12:00:00Z").unwrap();
+    write_events(
+        dir.path(),
+        &[
+            (base, 1, What::Spawn),
+            (base, 2, What::Spawn),
+            (base + 2_000_000, 1, What::Freeze),
+            (base + 9_000_000, 1, What::Thaw),
+            (base + 9_006_000, 1, What::Kill),
+        ],
+    );
+    write_log(
+        dir.path(),
+        1,
+        &[
+            ("2026-10-10T12:00:01Z", "singleton starting"),
+            (
+                "2026-10-10T12:00:01.900Z",
+                "failover lease extended until_ms=2400 slack_ms=500",
+            ),
+        ],
+    );
+    write_log(
+        dir.path(),
+        2,
+        &[("2026-10-10T12:00:06Z", "singleton starting")],
+    );
+
+    let report = check_dir(dir.path(), "counter").unwrap();
+
+    assert!(report.passed(), "{}", report.render());
+}
+
+#[test]
+fn running____lease_bound_after_the_stop____ends_at_the_stop() {
+    let base = parse_rfc3339_us("2026-10-10T12:00:00Z").unwrap();
+    let records = vec![
+        rec(base + 1_000_000, 1, Mark::Start),
+        rec(base + 1_500_000, 1, Mark::LeaseBound(base + 9_000_000)),
+        rec(base + 4_000_000, 1, Mark::Stop),
+    ];
+
+    let runs = running(&records, 1, base + 20_000_000);
+
+    assert_eq!(runs, vec![(base + 1_000_000, base + 4_000_000)]);
 }
 
 #[test]

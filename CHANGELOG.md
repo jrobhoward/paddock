@@ -258,6 +258,7 @@ All notable changes are recorded here. The format follows
   together. An app's `rate_limit_per_sec` can only lower it.
 - The failover simulation's random schedules start from
   `PADDOCK_SIM_FAILOVER_FIRST_SEED` (default 0).
+- `InstanceSpec::bound_to_lease`, set for `singleton` apps.
 - Node config `[cluster] incoming_calls_max` (default 10000): the most
   calls from one peer handled at once; beyond it a call is answered
   `overloaded` (`RuntimeConfig::incoming_calls_per_peer`).
@@ -268,6 +269,15 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Failover: a primary paused past its lease (`SIGSTOP`, a stalled host)
+  ran its singleton's callbacks for a moment after it continued, until
+  the gate killed it, while the standby already ran it. Singleton
+  instances now check the lease against the monotonic clock before each
+  callback and at each epoch tick: out of lease a message waits, and a
+  callback running at the lease's end ends with `crashed: lease_ended`.
+  The node logs `failover lease ended` when it notices a lease end late,
+  and `failover lease extended` (debug, target `paddock::lease`) as the
+  lease moves; the soak's check reads both to end a run at the lease.
 - A deploy, upgrade or rollback that lists a registered name another
   deployed app lists is refused; before, the first instance to register a
   shared name got the other app's messages.

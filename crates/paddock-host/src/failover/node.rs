@@ -14,7 +14,9 @@ use std::time::Duration;
 use tokio::sync::{Notify, mpsc, watch};
 use tokio::time::Instant;
 
-use super::{Arbiter, FailoverConfig, FailoverMsg, Leadership, PartnerView, Standing, Status};
+use super::{
+    Arbiter, FailoverConfig, FailoverMsg, Leadership, PartnerView, RunUntil, Standing, Status,
+};
 use crate::runtime::RuntimeInner;
 use crate::transport::{self, Frame};
 
@@ -89,6 +91,10 @@ pub(super) struct Ctx {
     seen: u64,
     /// An operator confirmed that the partner is gone.
     confirmed_by_operator: bool,
+    /// The last lease end logged as noticed late.
+    late_logged: Option<Instant>,
+    /// The last lease end logged as extended, for this term.
+    extended_logged: Option<Instant>,
     tx: watch::Sender<Leadership>,
 }
 
@@ -114,6 +120,20 @@ impl State {
         match self {
             Self::Primary(p) => p.lease_until,
             Self::Standby(_) | Self::Down(_) => None,
+        }
+    }
+
+    /// Until when singletons may run guest code: as `may_run` in
+    /// [`State::leadership`], but as a deadline instances check themselves.
+    fn run_until(&self, cfg: &FailoverConfig) -> RunUntil {
+        match self {
+            Self::Primary(p) => match cfg.arbiter {
+                Arbiter::Witness(_) if !p.overridden => {
+                    p.lease_until.map_or(RunUntil::Never, RunUntil::Until)
+                }
+                Arbiter::Witness(_) | Arbiter::Paths | Arbiter::Operator => RunUntil::Always,
+            },
+            Self::Standby(_) | Self::Down(_) => RunUntil::Never,
         }
     }
 
@@ -516,6 +536,8 @@ impl Node {
                 stamps: BTreeMap::new(),
                 seen: 0,
                 confirmed_by_operator: false,
+                late_logged: None,
+                extended_logged: None,
                 tx,
             },
         };
@@ -534,6 +556,58 @@ impl Node {
         self.state = transition(state, &mut self.ctx);
     }
 
+    /// Log a lease that ended well before this task noticed (the process
+    /// was paused or starved), once per lease end, with how long ago it
+    /// ended. Singleton instances stopped running guest code at the end
+    /// themselves; the gate's kill comes only now. `scripts/soak.sh` reads
+    /// this record (`failover lease ended`, `ended_ms_ago`).
+    fn log_late_lease_end(&mut self, rt: &RuntimeInner, now: Instant) {
+        let current = *rt.failover.run_until.borrow();
+        let RunUntil::Until(end) = current else {
+            return;
+        };
+        if now <= end || self.ctx.late_logged == Some(end) {
+            return;
+        }
+        self.ctx.late_logged = Some(end);
+        let ago = now - end;
+        if ago > rt.liveness.interval() {
+            tracing::warn!(
+                ended_ms_ago = u64::try_from(ago.as_millis()).unwrap_or(u64::MAX),
+                "failover lease ended before this node noticed; singleton instances \
+                 stopped running guest code at its end"
+            );
+        }
+    }
+
+    /// Log the lease's end (debug, target `paddock::lease`) whenever it
+    /// moves more than `margin` past the end last logged, so the logs bound
+    /// every lease end: it is never later than the last record's end plus
+    /// its `slack_ms`, even when the process is killed before it can log
+    /// anything more. `scripts/soak.sh` reads these records.
+    fn log_extension(&mut self, run_until: RunUntil, now: Instant) {
+        let RunUntil::Until(end) = run_until else {
+            self.ctx.extended_logged = None;
+            return;
+        };
+        let slack = self.ctx.cfg.margin;
+        if self
+            .ctx
+            .extended_logged
+            .is_some_and(|logged| end <= logged + slack)
+        {
+            return;
+        }
+        self.ctx.extended_logged = Some(end);
+        let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+        tracing::debug!(
+            target: "paddock::lease",
+            until_ms = ms(end.saturating_duration_since(now)),
+            slack_ms = ms(slack),
+            "failover lease extended"
+        );
+    }
+
     fn publish(&mut self, rt: &RuntimeInner, now: Instant) {
         let status = self.state.status(&self.ctx);
         rt.liveness.set_payload(status.encode());
@@ -543,6 +617,14 @@ impl Node {
             self.ctx.confirmed_at = now;
         }
         self.ctx.confirming = confirming;
+        self.log_late_lease_end(rt, now);
+        // Before the leadership, so a singleton the gate starts on it finds
+        // its lease already set.
+        let run_until = self.state.run_until(&self.ctx.cfg);
+        rt.failover
+            .run_until
+            .send_if_modified(|current| std::mem::replace(current, run_until) != run_until);
+        self.log_extension(run_until, now);
         let next = self.state.leadership(&self.ctx.cfg, now);
         self.ctx.tx.send_if_modified(|current| {
             let changed = *current != next;

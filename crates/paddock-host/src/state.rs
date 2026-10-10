@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use paddock_bundle::manifest::Capability;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Error, ResourceLimiter, Result};
@@ -16,6 +16,7 @@ use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 use crate::bindings::paddock::runtime::{process, types};
 use crate::config::HostObjects;
 use crate::delivery;
+use crate::failover::RunUntil;
 use crate::instance::{InstanceHandle, Message};
 use crate::message::{Envelope, ExitReason, Info};
 use crate::output::{CapturedOutput, Tags};
@@ -63,6 +64,12 @@ pub struct InstanceState {
     pub(crate) host_objects: HostObjects,
     /// Whether to announce the node's failover role.
     announce_role: bool,
+    /// The node's failover lease, for an instance bound to it
+    /// ([`InstanceSpec::bound_to_lease`]).
+    pub(crate) lease: Option<watch::Receiver<RunUntil>>,
+    /// The lease ended while guest code ran, and the epoch callback
+    /// interrupted it.
+    pub(crate) lease_ended: bool,
     services: States,
 }
 
@@ -96,6 +103,7 @@ impl InstanceState {
             }
         }
         let host_objects = ctx.rt.host_objects().grant(&spec.host_objects)?;
+        let lease = spec.bound_to_lease.then(|| ctx.rt.failover.run_until());
         let services = States::new(
             &ctx.rt.services,
             spec,
@@ -117,8 +125,18 @@ impl InstanceState {
             timers: Timers::default(),
             host_objects,
             announce_role: spec.announce_role,
+            lease,
+            lease_ended: false,
             services,
         })
+    }
+
+    /// Whether guest code may run now: always, unless the instance is bound
+    /// to a lease that is not current.
+    pub(crate) fn within_lease(&self) -> bool {
+        self.lease
+            .as_ref()
+            .is_none_or(|l| l.borrow().allows(tokio::time::Instant::now()))
     }
 
     /// The context for an extension whose state is `S`, if one made it.
