@@ -16,6 +16,8 @@ remaining work: tracks, their order, and the code areas each owns. Read these
 before changing anything structural:
 
 - `docs/DESIGN.md`: the design, prior art, spike findings and risks.
+- `docs/ARCHITECTURE.md`: where things are: crates, the paths of a call, a
+  deploy and a failover, threads and tasks, and where state lives.
 - `docs/ROADMAP.md`: open work only, in stages, with code areas, decisions
   and spike status. Keep a change inside its item's areas; record anything
   outside them in the roadmap instead of widening the change.
@@ -427,13 +429,14 @@ Before considering any change to the main workspace complete:
 Each file has one job; keep changes in the right one rather than restating
 across them. CHANGELOG.md, MANIFEST.md and OBSERVABILITY.md (interfaces)
 change with the code. A change that leaves a narrative doc (README,
-GETTING_STARTED, WRITING_APPS, DESIGN prose, the tutorial) wrong may add a
+GETTING_STARTED, WRITING_APPS, DESIGN prose, ARCHITECTURE, the tutorial) wrong may add a
 line to ROADMAP.md's "Doc debt" instead of rewriting it then:
 
 | File | Holds | Scope |
 |---|---|---|
 | `README.md` | What Paddock does, how to run it, caveats that change how it should be used | Link out rather than expand |
 | `docs/DESIGN.md` | Design, rationale, prior art, spike findings, risks | Update when a decision changes; not a development log |
+| `docs/ARCHITECTURE.md` | Map of the code as built: crates, data paths, threads and tasks, where state lives | Narrative; a change that leaves it wrong adds a line to ROADMAP's "Doc debt" |
 | `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
 | `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
