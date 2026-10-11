@@ -33,6 +33,8 @@
  *     PersistEpoch. Replies can be lost with their link.
  *   - A reply carries its request's age, so a lease (from a renewal or a
  *     grant) runs from when the request it answers was sent.
+ *   - With SerialLost, there is no serial line: it is lost from the start
+ *     and never heals, and its loss is not counted among the faults.
  *   - With OperatorConfirms, an operator may confirm that a standby's
  *     partner is gone while the standby hears it on no path and cannot
  *     reach the witness. The operator is right: the partner is down. Once
@@ -67,6 +69,9 @@ CONSTANTS LanFaults, SerialFaults, WanFaults, Crashes, WitnessCrashes
 CONSTANT Holds
 \* Whether an operator may confirm a standby's partner gone (R7 at layer 2).
 CONSTANT OperatorConfirms
+\* A deployment without a serial line: lost from the start, never healed,
+\* and not counted as a fault.
+CONSTANT SerialLost
 
 Pair == {A, B}
 Partner(n) == IF n = A THEN B ELSE A
@@ -144,7 +149,7 @@ Init ==
     /\ wPromoted = A
     /\ wRenewedAge = [n \in Pair |-> Cap]
     /\ wAlive = TRUE
-    /\ chan = [c \in Channels |-> "up"]
+    /\ chan = [c \in Channels |-> IF SerialLost /\ c[1] = "ser" THEN "lost" ELSE "up"]
     /\ q = [c \in Channels |-> <<>>]
     /\ faults = 0
     /\ phase = "env"
@@ -199,6 +204,7 @@ Lose(c, both) ==
 
 \* Held frames move on, due within Delay of the heal.
 Heal(c) ==
+    /\ ~(SerialLost /\ c[1] = "ser")
     /\ chan[c] # "up"
     /\ chan' = [chan EXCEPT ![c] = "up"]
     /\ q' = [q EXCEPT ![c] = [i \in 1..Len(@) |-> [@[i] EXCEPT !.due = Delay]]]
