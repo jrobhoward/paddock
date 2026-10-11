@@ -337,6 +337,10 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `paddock list`, `paddock status`, `paddock logs` and `paddock log-level`
+  (and their admin API routes) no longer wait while a deploy, upgrade or
+  rollback verifies, compiles or rolls out a bundle. Changes still run one
+  at a time.
 - Failover with a witness: a standby asks for an operator's
   confirmation (`awaiting_confirmation`, `paddock failover confirm`) only
   while its partner is silent on every path and the witness cannot be

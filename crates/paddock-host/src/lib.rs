@@ -36,6 +36,7 @@ mod output;
 pub mod pid;
 mod pool;
 mod probe;
+mod process;
 mod registry;
 mod runtime;
 pub mod services;

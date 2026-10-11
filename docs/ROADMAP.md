@@ -45,7 +45,7 @@ Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test 
 
 ## Stage 2: Review (M)
 
-Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1, Q2, Q7; Q3 is done). W1 finishes both drafts.
+Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1, Q2; Q3 and Q7 are done). W1 finishes both drafts.
 
 ## Stage 3: Rework (M–L)
 
@@ -58,9 +58,8 @@ From stage 2 and earlier work:
   - Failover transitions the model checks but no Rust test reaches: a refusal from the witness to a standby and to a node that is down, stand-down after the partner says `Down` for a lease, `NotYet` to a node that is down.
   - The Modbus guest interface (`paddock-modbus/src/lib.rs`, 32%): reads and writes on demand and the served-table setters, with their count and length checks.
   - Links cascading along a chain of instances that do not trap (C3); a watch removed when its instance exits, asserted (H4); a secret's value absent from logs and errors.
-  - Rollback paths that ignore errors: putting the pool's template back after a reverted rollout (`apps.rs`) and an app's HTTP routes after a failed upgrade (`daemon.rs`). A failure leaves later instances on the version rolled back from, silently; log it, and report it in the upgrade's error.
+  - Rollback paths that ignore errors: putting the pool's template back after a reverted rollout (`apps.rs`) and an app's HTTP routes after a failed upgrade (`node/daemon/upgrade.rs`). A failure leaves later instances on the version rolled back from, silently; log it, and report it in the upgrade's error.
 - [ ] **Q6 Security fixes** from R3 (`docs/SECURITY.md`). S1 to S9 are fixed and the fuzz targets added. Left: a connection cap on the Modbus server (tokio-modbus's server gives no hook for one).
-- [ ] **Q7 Refactors.** Split `node/daemon.rs` by concern (deploy and upgrade, connection apps, cluster and failover start, queries); move the `process` host functions out of `state.rs`; let `list` and `status` read without waiting behind a deploy or upgrade. No new crates.
 - [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
 
 ### Verification of failover
@@ -180,7 +179,7 @@ An area is a set of modules with a narrow interface to the rest: modules in crat
 | --- | --- | --- |
 | Contract | `wit/`, WIT rules tests | The `paddock:runtime` world and the separate packages (`connection`, `groups`, `watch`, `secrets`, `metrics`); versioned, never changed in place |
 | Manifest and bundle | `paddock-bundle` | `AppSpec`, `VerifiedBundle`, the effective grant |
-| Process core | `paddock-host`: `pid`, `table`, `registry`, `links`, `message`, `instance`, `runtime`, `state`, `delivery` | Spawn, call, cast, link, monitor, exit; `delivery` routes every pid |
+| Process core | `paddock-host`: `pid`, `table`, `registry`, `links`, `message`, `instance`, `runtime`, `state`, `process`, `delivery` | Spawn, call, cast, link, monitor, exit; `delivery` routes every pid |
 | Host services | `paddock-host::services`, one module each; `metrics` | The `Service` trait; extensions through `Extension` |
 | Orchestration | `paddock-host`: `apps`, `pool`, `supervisor`, `upgrade`, `lifecycle`, `spec` | `Apps`, `AppHandle`, `UpgradeOptions` |
 | Cluster | `paddock-host`: `transport` (`liveness`, `membership`, `memory`, `quic`, `wire`), `failover` | The `Transport` trait, node events, `FailoverHandle` |

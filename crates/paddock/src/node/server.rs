@@ -248,9 +248,9 @@ async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
     let q = query(&req);
     match (&method, segments.as_slice()) {
-        (&Method::GET, ["v1", "apps"]) => json(StatusCode::OK, &node.list().await),
+        (&Method::GET, ["v1", "apps"]) => json(StatusCode::OK, &node.list()),
         (&Method::POST, ["v1", "apps"]) => deploy(node, req).await,
-        (&Method::GET, ["v1", "apps", app]) => respond(node.status(app).await),
+        (&Method::GET, ["v1", "apps", app]) => respond(node.status(app)),
         (&Method::DELETE, ["v1", "apps", app]) => respond(node.remove(app).await),
         (&Method::POST, ["v1", "apps", app, "stop"]) => respond(node.stop(app).await),
         (&Method::POST, ["v1", "apps", app, "start"]) => respond(node.start(app).await),
@@ -270,13 +270,13 @@ async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
         ) => send(node, kind, id, verb, &q, req).await,
         (&Method::POST, ["v1", "apps", app, "log-level"]) => {
             match q.iter().find(|(k, _)| k == "level") {
-                Some((_, level)) => respond(node.set_log_level(app, level).await),
+                Some((_, level)) => respond(node.set_log_level(app, level)),
                 None => error(&NodeError::Invalid("level is required".into())),
             }
         }
         (&Method::GET, ["v1", "instances", pid, "state"]) => respond(node.state(pid).await),
         (&Method::GET, ["v1", "apps", app, "logs"]) => match param::<usize>(&q, "lines") {
-            Ok(lines) => respond(node.logs(app, lines.unwrap_or(100)).await),
+            Ok(lines) => respond(node.logs(app, lines.unwrap_or(100))),
             Err(e) => error(&e),
         },
         (&Method::GET, ["v1", "instances"]) => json(StatusCode::OK, &node.ps()),

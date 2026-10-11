@@ -53,7 +53,7 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 | Area | Modules | Role |
 | --- | --- | --- |
 | Engine | `runtime`, `config`, `bindings`, `deny` | `Runtime` and its `RuntimeInner`: the wasmtime engine with a pooling allocator sized by `max_instances`, the epoch ticker, the linker (WASI p2, `paddock:runtime`, services, extensions), deny stubs for ungranted imports |
-| Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `state`, `delivery`, `lifecycle`, `output` | Instances, their mailboxes and callback loop, the per-Store host state and `process` functions, pid routing, links and monitors |
+| Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `state`, `process`, `delivery`, `lifecycle`, `output` | Instances, their mailboxes and callback loop, the per-Store host state (`state`) and `process` functions (`process`), pid routing, links and monitors |
 | Orchestration | `apps`, `pool`, `supervisor`, `upgrade`, `spec` | App sets in dependency order, a root supervisor per app, pools and routing, snapshot and restart upgrades |
 | Services | `services::{config, keyvalue, groups, logging, secrets, metrics, extension}`, `metrics` | Guest-facing interfaces on the `Service` pattern; extensions from other crates |
 | I/O | `http` (and `http::tls`), `listener` | The HTTP ingress (a request is a call) and listeners (an instance per connection) |
@@ -92,7 +92,7 @@ The caller waits with its timeout; a reply after the timeout is dropped. A guest
 
 ### Between instances
 
-A guest calls `process.call`. The host function (`state`) hands it to `delivery::call`, and the time the caller waits counts as host time, not against its deadline.
+A guest calls `process.call`. The host function (`process`) hands it to `delivery::call`, and the time the caller waits counts as host time, not against its deadline.
 
 - **Local:** the target's mailbox, as above.
 - **Remote:** a `Frame::Call` with an id goes to the target's node over the transport, and the caller waits on `pending_calls`. The receiving node runs `delivery::call` in a task of its own and answers with `Frame::Reply`. A session that ends meanwhile fails the call with `noconnection`.
@@ -109,7 +109,7 @@ Casts follow the same routes without a reply; a full mailbox drops the cast and 
 paddock deploy app.rbp
   │  POST /v1/apps (bundle bytes)
   ▼
-Node (holds the NodeState lock for the whole deploy)
+Node (holds the change lock for the whole deploy; reads do not wait for it)
   ├─ write the upload to <data_dir>/tmp
   ├─ blocking pool: VerifiedBundle::open
   │     signature against trusted_keys, checksums, manifest, component world
@@ -167,7 +167,7 @@ A node runs one tokio multi-threaded runtime, one worker per core by default. No
 | tokio workers | 1 per core | `node::run` | process exit |
 | blocking pool | on demand | bundle verify and compile, `disk` bucket transactions (redb), secret file reads | per job |
 | Instance task (callback loop) | 1 per instance | `Runtime::spawn` | instance exit |
-| Timer | 1 per pending `process.send-after` | `state` | fires or is cancelled |
+| Timer | 1 per pending `process.send-after` | `process` | fires or is cancelled |
 | Supervisor | 1 per supervisor, plus 1 per child watching its exit | `supervisor` | supervisor exit |
 | App watcher | 1 per app | `apps` | root supervisor exit |
 | HTTP accept, connection | several per address; 1 per connection | `http` | stop; connection close |
@@ -223,7 +223,7 @@ A guest's state lives only in its Store. A crash or restart starts from `init`; 
 
 | State | Holder |
 | --- | --- |
-| Desired apps and deploy info | `NodeState`, behind a tokio `Mutex`: one admin change (deploy, upgrade, stop, start, remove, rollback) at a time, held across its awaits |
+| Desired apps and deploy info | `NodeState`, behind a `std::sync::Mutex` taken briefly and never across an await; a separate tokio `Mutex`, the change lock, keeps admin changes (deploy, upgrade, stop, start, remove, rollback) to one at a time across their awaits, and reads (`list`, `status`) do not take it |
 | Connection apps and their listeners | std `Mutex` |
 | HTTP route table, TLS certificates | `HttpIngress` |
 | Held singletons | `gate::Gate` (std `Mutex`, and a tokio `Mutex` serializing starts and stops) |
@@ -250,7 +250,7 @@ Node configuration, the node's cluster key and the peers file live wherever the 
 
 Found while drafting; each review decides.
 
-- **R2 (decided in R5, Q7):** the daemon's `NodeState` lock is held across bundle verification and compilation, and `list` and `status` take it too, so a slow deploy or upgrade also stalls read-only admin calls (and the soak's checks, which call `status`). One change at a time is intended; reads waiting behind it may not be.
+- **R2 (done, Q7):** the daemon's `NodeState` lock was held across bundle verification and compilation, and `list` and `status` took it too, so a slow deploy or upgrade stalled read-only admin calls. Changes now hold a separate change lock; reads take only the brief state lock.
 - **R3 (done):** an incoming `Frame::Call` spawns a task with no bound on how many run at once (SECURITY.md S8). An instance's signal queue is unbounded as a channel but bounded in practice: exit signals by the node's instance count, timers and watches by their limits.
-- **R5 (decided, Q7):** `daemon.rs` is 1,860 lines and holds deploy, upgrade, rollback, connections, cluster start and failover start; it is the first candidate for splitting.
+- **R5 (done, Q7):** `daemon.rs` was 1,860 lines; it is now `node/daemon/` by concern: `mod.rs` (the node, opening, shutdown, TLS reload), `deploy.rs` (build, deploy, start, stop, remove, restore), `upgrade.rs`, `connections.rs`, `cluster.rs` (transport, failover, witness) and `queries.rs`.
 - **R4 (done):** the gate is outside `failover/` and outside the model: it writes the epoch, then starts or kills singletons. The model's `may_run` is the leadership's; the window between them is not modelled, and singleton instances close it themselves by checking the lease before each callback and at each epoch tick (`failover::RunUntil`; A8). The review's results are in `docs/tla/VERIFICATION.md`, "Conformance with the code".
