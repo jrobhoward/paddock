@@ -41,7 +41,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Stage 1: Tooling (S)
 
-Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test run on the Raspberry Pi 5 (CHANGELOG). What the Pi run found is Q9 (Q4 is fixed).
+Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test run on the Raspberry Pi 5 (CHANGELOG). What the Pi run found, Q4 and Q9, is fixed.
 
 ## Stage 2: Review (M)
 
@@ -52,7 +52,6 @@ Done on 2026-10-10. Each review wrote its findings as stage 3 items and its deci
 From stage 2 and earlier work:
 
 - [ ] **Q5 Test gaps: what is left** (the rest landed 2026-10-11, CHANGELOG). `NotYet` to a node that is down: it arises only from the millisecond rounding of `confirmed_ago_ms`, and a direct test needs the node state machine without a runtime. A pool template the rollout cannot put back (now logged and reported in the upgrade's error) and a singleton kill that fails: both need a supervisor that exits mid-operation, which no test can yet arrange.
-- [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
 
 ### Verification of failover
 

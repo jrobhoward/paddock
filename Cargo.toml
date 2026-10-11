@@ -134,6 +134,15 @@ undocumented_unsafe_blocks = "warn"
 # that other instances are scheduled on.
 await_holding_lock = "deny"
 
+# Line tables only: backtraces keep file and line, but a debugger sees no
+# variables. Measured 2026-10-11 (16-core machine, fresh target, idle) against
+# full debug info: test binaries 220 MB instead of 637 MB (8.0 GB in all
+# instead of 24.5 GB), peak memory relinking one test 2.2 GB instead of
+# 3.6 GB, a full test build 1:25 instead of 1:57. For a debugging session:
+# CARGO_PROFILE_DEV_DEBUG=true. The test profile inherits it.
+[profile.dev]
+debug = "line-tables-only"
+
 # minisign's scrypt key derivation takes about 5 s per key unoptimized, which
 # makes debug builds of `paddock bundle` and their tests crawl.
 [profile.dev.package.scrypt]

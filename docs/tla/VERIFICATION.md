@@ -68,9 +68,9 @@ Rerun under the V1 rule on 2026-10-11 for ROADMAP Q10 (operator confirmation mod
 | Config | Distinct states | Depth | Time | Fingerprint collision chance | Result |
 | --- | --- | --- | --- | --- | --- |
 | `L2_Crashes_Fixed1` | 147,491,679 | 310 | 16 min 20 s | 0.00064 | pass |
-| `L2_Links_Fixed_holds1` | | | | | running |
+| `L2_Links_Fixed_holds1` | 966,098,919 | 349 | 1 h 59 min | 0.027 | pass |
 
-A confirmation needs two faults (the partner, and the witness or its link), so the one-fault runs cover the reply ages only; the two-fault random simulations cover the confirmation. Results of those to follow.
+A confirmation needs two faults (the partner, and the witness or its link), so the one-fault runs cover the reply ages only; the two-fault random simulations cover the confirmation: 30 minutes each (traces up to 400 steps, `-deadlock`), `L2_Crashes_Fixed` 2,218,151 traces and `L2_Links_Fixed` 2,169,170 traces, both pass. `L2_Crashes_Fixed1` has fewer states than before (147.5 against 155.0 million): a lease that runs from its request, not its reply, is shorter, and ends sooner.
 
 TLC stores each state as a 64-bit fingerprint, and two states with the same fingerprint count as one. For `L2_Crashes_Fixed1` it puts the chance of such a collision at 0.006, for `L2_Links_Fixed_holds1` at 0.08; for `L2_Links_Fixed_loss2` (4.7 billion states) and `L2_Crashes_Fixed` (8.4 billion), at about 1, so in each run a state or two (and any reached only through them) were most likely not checked. A second run with another fingerprint seed (`-fp`) would close this; the random simulations below cover the same configurations independently.
 

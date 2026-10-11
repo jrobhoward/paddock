@@ -371,6 +371,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Debug and test builds carry line tables only, not full debug info: test
+  binaries about a third the size, and less memory to link them (the
+  Raspberry Pi 5 ran out at the default four jobs).
 - The Modbus extension is no longer in a default build: build `paddock`
   with `--features modbus`.
 - `paddock list`, `paddock status`, `paddock logs` and `paddock log-level`

@@ -50,6 +50,8 @@ scripts/soak.sh --hours 1
 # `paddock node` as its own process are not counted.
 cargo llvm-cov --workspace --no-fail-fast --summary-only
 
+# Debug and test builds carry line tables only (backtraces keep file and
+# line); `CARGO_PROFILE_DEV_DEBUG=true` for a debugger's variables.
 # Build and test the main workspace. `paddock`'s features: `node`, `http`,
 # `tls` and `probes` by default; `modbus` off. Each optional one compiles
 # out (`scripts/check.sh features`).
