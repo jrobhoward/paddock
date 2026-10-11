@@ -175,14 +175,19 @@ impl Ingress {
     }
 
     /// Put back routes saved before a failed upgrade: the old version keeps
-    /// running with them.
-    pub(super) fn restore_routes(&self, name: &str, saved: SavedRoutes) {
+    /// running with them. A failure is logged and returned, to add to the
+    /// upgrade's error.
+    pub(super) fn restore_routes(&self, name: &str, saved: SavedRoutes) -> Result<(), String> {
         #[cfg(feature = "http")]
-        if let (Some(http), SavedRoutes(Some(before))) = (&self.http, saved) {
-            let _ = http.set_routes(name, before);
+        if let (Some(http), SavedRoutes(Some(before))) = (&self.http, saved)
+            && let Err(e) = http.set_routes(name, before)
+        {
+            tracing::error!(app = name, error = %e, "HTTP routes not put back after a failed upgrade");
+            return Err(format!("its HTTP routes could not be put back: {e}"));
         }
         #[cfg(not(feature = "http"))]
         let _ = (saved, name);
+        Ok(())
     }
 
     /// The ingress's counters in the Prometheus text format; empty without

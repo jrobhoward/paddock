@@ -65,6 +65,26 @@ impl DeviceHandle {
     }
 }
 
+/// A device that answers each request with `answer`, and records the
+/// requests in `seen`: for tests of what the guest interface sends.
+#[cfg(test)]
+pub(crate) fn answering(
+    answer: impl Fn(&Request) -> Result<Reply, DeviceError> + Send + 'static,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<Request>>>,
+) -> DeviceHandle {
+    let (jobs, mut queue) = mpsc::channel::<Job>(64);
+    tokio::spawn(async move {
+        while let Some((request, reply)) = queue.recv().await {
+            let result = answer(&request);
+            seen.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(request);
+            let _ = reply.send(result);
+        }
+    });
+    DeviceHandle { jobs }
+}
+
 /// Start the task for device `name`.
 pub(crate) fn spawn(name: String, config: DeviceConfig, node: ExtensionNode) -> DeviceHandle {
     let (jobs, queue) = mpsc::channel(64);

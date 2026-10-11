@@ -152,9 +152,13 @@ impl Node {
                             .await
                             .map(|r| upgrade_response(&r))
                             .map_err(|e| (rollout_error(e, snapshot, params), true));
-                        if upgraded.is_err() {
-                            self.ingress.restore_routes(name, before);
-                        }
+                        let upgraded = match upgraded {
+                            Err((e, reverted)) => match self.ingress.restore_routes(name, before) {
+                                Ok(()) => Err((e, reverted)),
+                                Err(note) => Err((e.noting(&note), reverted)),
+                            },
+                            ok => ok,
+                        };
                         if let Some(gate) = &self.gate {
                             gate.sync(name);
                         }

@@ -277,9 +277,21 @@ All notable changes are recorded here. The format follows
   HTTP but no TLS, builds clean.
 - `docs/OPERATIONS.md` (paths, environment variables, signals, backups) and
   `examples/systemd/paddock.service`.
+- `Mesh::lose_next` (`paddock_host::transport::memory`): lose the next
+  frame between two nodes that a predicate matches, for tests.
+- Tests for: the singleton gate (deploy to a primary; upgrade, rollback and
+  removal of a held singleton; a refused start; an epoch that cannot be
+  kept), failover after a lost grant (refused, step down, resume) and a
+  standby standing down when its partner says `Down`, the Modbus guest
+  interface, links cascading along a chain, watches ended when their
+  instance exits, and secret values absent from every log record and error.
 
 ### Fixed
 
+- A rollout that reverted but could not put the pool's template back, and
+  an upgrade whose HTTP routes could not be put back, said nothing: later
+  instances would run the version rolled back from, or the app lose its
+  routes. Both are now logged and added to the upgrade's error.
 - Failover: a grant that arrived after the standby had asked again
   started its lease from the later request, so the new primary's lease
   could run past the end the witness counted. Requests are now numbered,

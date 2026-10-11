@@ -67,7 +67,7 @@ pub use config::{Config, DeviceConfig, Range, ServerConfig};
 use config::{MAX_READ_BITS, MAX_READ_REGISTERS, MAX_WRITE_BITS, MAX_WRITE_REGISTERS};
 use device::{DeviceError, DeviceHandle, Reply, Request};
 use points::Table;
-use server::Served;
+use server::{Served, Tables};
 
 mod bindings {
     // Generated code carries no doc comments.
@@ -77,6 +77,7 @@ mod bindings {
         path: "wit",
         world: "paddock-modbus:modbus/modbus",
         imports: { default: async | trappable },
+        additional_derives: [PartialEq, Eq],
         wasmtime_crate: paddock_host::wasmtime,
     });
 }
@@ -205,57 +206,105 @@ impl State {
             .cloned()
             .ok_or(served::Error::NotServing)
     }
-}
 
-/// Run `request` on `device`, counting the wait as host time.
-async fn run(
-    ctx: &mut ServiceCtx<'_, State>,
-    device: &str,
-    request: Request,
-) -> Result<Reply, client::Error> {
-    let write = matches!(request, Request::WriteWords(..) | Request::WriteBits(..));
-    let handle = ctx.state().device(device, write)?;
-    let started = Instant::now();
-    let result = handle.request(request).await;
-    ctx.add_host_time(started.elapsed());
-    result.map_err(|e| match e {
-        DeviceError::Offline(why) => client::Error::Offline(why),
-        DeviceError::Exception(code) => client::Error::Exception(code),
-    })
-}
-
-async fn read_words(
-    ctx: &mut ServiceCtx<'_, State>,
-    device: String,
-    table: Table,
-    address: u16,
-    count: u16,
-) -> Result<Vec<u16>, client::Error> {
-    check_count(count, MAX_READ_REGISTERS)?;
-    match run(ctx, &device, Request::ReadWords(table, address, count)).await? {
-        Reply::Words(w) => Ok(w),
-        other => Err(client::Error::Offline(format!(
-            "unexpected reply {other:?}"
-        ))),
+    /// Run `request` on `device`, after the access checks.
+    async fn run(&self, device: &str, request: Request) -> Result<Reply, client::Error> {
+        let write = matches!(request, Request::WriteWords(..) | Request::WriteBits(..));
+        let handle = self.device(device, write)?;
+        handle.request(request).await.map_err(|e| match e {
+            DeviceError::Offline(why) => client::Error::Offline(why),
+            DeviceError::Exception(code) => client::Error::Exception(code),
+        })
     }
-}
 
-async fn read_bits(
-    ctx: &mut ServiceCtx<'_, State>,
-    device: String,
-    table: Table,
-    address: u16,
-    count: u16,
-) -> Result<Vec<bool>, client::Error> {
-    check_count(count, MAX_READ_BITS)?;
-    match run(ctx, &device, Request::ReadBits(table, address, count)).await? {
-        Reply::Bits(mut b) => {
-            b.truncate(usize::from(count));
-            Ok(b)
+    async fn read_words(
+        &self,
+        device: &str,
+        table: Table,
+        address: u16,
+        count: u16,
+    ) -> Result<Vec<u16>, client::Error> {
+        check_count(count, MAX_READ_REGISTERS)?;
+        match self
+            .run(device, Request::ReadWords(table, address, count))
+            .await?
+        {
+            Reply::Words(w) => Ok(w),
+            other => Err(client::Error::Offline(format!(
+                "unexpected reply {other:?}"
+            ))),
         }
-        other => Err(client::Error::Offline(format!(
-            "unexpected reply {other:?}"
-        ))),
+    }
+
+    async fn read_bits(
+        &self,
+        device: &str,
+        table: Table,
+        address: u16,
+        count: u16,
+    ) -> Result<Vec<bool>, client::Error> {
+        check_count(count, MAX_READ_BITS)?;
+        match self
+            .run(device, Request::ReadBits(table, address, count))
+            .await?
+        {
+            // Coils come in whole bytes; drop the padding.
+            Reply::Bits(mut b) => {
+                b.truncate(usize::from(count));
+                Ok(b)
+            }
+            other => Err(client::Error::Offline(format!(
+                "unexpected reply {other:?}"
+            ))),
+        }
+    }
+
+    async fn write_words(
+        &self,
+        device: &str,
+        address: u16,
+        values: Vec<u16>,
+    ) -> Result<(), client::Error> {
+        check_len(values.len(), MAX_WRITE_REGISTERS)?;
+        self.run(device, Request::WriteWords(address, values))
+            .await
+            .map(|_| ())
+    }
+
+    async fn write_bits(
+        &self,
+        device: &str,
+        address: u16,
+        values: Vec<bool>,
+    ) -> Result<(), client::Error> {
+        check_len(values.len(), MAX_WRITE_BITS)?;
+        self.run(device, Request::WriteBits(address, values))
+            .await
+            .map(|_| ())
+    }
+
+    /// Write `values` into the served table `pick` chooses.
+    fn set<T: Copy>(
+        &self,
+        pick: impl FnOnce(&mut Tables) -> &mut Vec<T>,
+        address: u16,
+        values: &[T],
+    ) -> Result<(), served::Error> {
+        let served = self.served()?;
+        let mut tables = served.tables();
+        server::set(pick(&mut tables), address, values).map_err(range)
+    }
+
+    /// `count` values from the served table `pick` chooses.
+    fn get<T: Copy>(
+        &self,
+        pick: impl FnOnce(&Tables) -> &Vec<T>,
+        address: u16,
+        count: u16,
+    ) -> Result<Vec<T>, served::Error> {
+        let served = self.served()?;
+        let tables = served.tables();
+        server::get(pick(&tables), address, count).map_err(range)
     }
 }
 
@@ -277,6 +326,20 @@ fn check_len(len: usize, max: usize) -> Result<(), client::Error> {
     Ok(())
 }
 
+fn range(_: server::OutOfRange) -> served::Error {
+    served::Error::OutOfRange
+}
+
+/// Run a device request for a guest, counting the wait as host time.
+macro_rules! timed {
+    ($ctx:expr, $call:expr) => {{
+        let started = Instant::now();
+        let result = $call.await;
+        $ctx.add_host_time(started.elapsed());
+        Ok(result)
+    }};
+}
+
 impl client::Host for ServiceCtx<'_, State> {
     async fn read_holding(
         &mut self,
@@ -284,7 +347,11 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<u16>, client::Error>> {
-        Ok(read_words(self, device, Table::Holding, address, count).await)
+        timed!(
+            self,
+            self.state()
+                .read_words(&device, Table::Holding, address, count)
+        )
     }
 
     async fn read_input(
@@ -293,7 +360,11 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<u16>, client::Error>> {
-        Ok(read_words(self, device, Table::Input, address, count).await)
+        timed!(
+            self,
+            self.state()
+                .read_words(&device, Table::Input, address, count)
+        )
     }
 
     async fn read_coils(
@@ -302,7 +373,10 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<bool>, client::Error>> {
-        Ok(read_bits(self, device, Table::Coil, address, count).await)
+        timed!(
+            self,
+            self.state().read_bits(&device, Table::Coil, address, count)
+        )
     }
 
     async fn read_discrete(
@@ -311,7 +385,11 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<bool>, client::Error>> {
-        Ok(read_bits(self, device, Table::Discrete, address, count).await)
+        timed!(
+            self,
+            self.state()
+                .read_bits(&device, Table::Discrete, address, count)
+        )
     }
 
     async fn write_holding(
@@ -320,12 +398,7 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<u16>,
     ) -> wasmtime::Result<Result<(), client::Error>> {
-        if let Err(e) = check_len(values.len(), MAX_WRITE_REGISTERS) {
-            return Ok(Err(e));
-        }
-        Ok(run(self, &device, Request::WriteWords(address, values))
-            .await
-            .map(|_| ()))
+        timed!(self, self.state().write_words(&device, address, values))
     }
 
     async fn write_coils(
@@ -334,17 +407,8 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<bool>,
     ) -> wasmtime::Result<Result<(), client::Error>> {
-        if let Err(e) = check_len(values.len(), MAX_WRITE_BITS) {
-            return Ok(Err(e));
-        }
-        Ok(run(self, &device, Request::WriteBits(address, values))
-            .await
-            .map(|_| ()))
+        timed!(self, self.state().write_bits(&device, address, values))
     }
-}
-
-fn range(_: server::OutOfRange) -> served::Error {
-    served::Error::OutOfRange
 }
 
 impl served::Host for ServiceCtx<'_, State> {
@@ -353,10 +417,7 @@ impl served::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<u16>,
     ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self
-            .state()
-            .served()
-            .and_then(|s| server::set(&mut s.tables().holding, address, &values).map_err(range)))
+        Ok(self.state().set(|t| &mut t.holding, address, &values))
     }
 
     async fn set_input(
@@ -364,10 +425,7 @@ impl served::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<u16>,
     ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self
-            .state()
-            .served()
-            .and_then(|s| server::set(&mut s.tables().input, address, &values).map_err(range)))
+        Ok(self.state().set(|t| &mut t.input, address, &values))
     }
 
     async fn set_coils(
@@ -375,10 +433,7 @@ impl served::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<bool>,
     ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self
-            .state()
-            .served()
-            .and_then(|s| server::set(&mut s.tables().coils, address, &values).map_err(range)))
+        Ok(self.state().set(|t| &mut t.coils, address, &values))
     }
 
     async fn set_discrete(
@@ -386,10 +441,7 @@ impl served::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<bool>,
     ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self
-            .state()
-            .served()
-            .and_then(|s| server::set(&mut s.tables().discrete, address, &values).map_err(range)))
+        Ok(self.state().set(|t| &mut t.discrete, address, &values))
     }
 
     async fn get_holding(
@@ -397,10 +449,7 @@ impl served::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<u16>, served::Error>> {
-        Ok(self
-            .state()
-            .served()
-            .and_then(|s| server::get(&s.tables().holding, address, count).map_err(range)))
+        Ok(self.state().get(|t| &t.holding, address, count))
     }
 
     async fn get_coils(
@@ -408,9 +457,10 @@ impl served::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<bool>, served::Error>> {
-        Ok(self
-            .state()
-            .served()
-            .and_then(|s| server::get(&s.tables().coils, address, count).map_err(range)))
+        Ok(self.state().get(|t| &t.coils, address, count))
     }
 }
+
+#[cfg(test)]
+#[path = "lib_tests.rs"]
+mod lib_tests;

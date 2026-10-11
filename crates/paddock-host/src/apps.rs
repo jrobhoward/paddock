@@ -754,13 +754,22 @@ async fn rollout(
                 options.max_restarts
             ));
         }
-        if let Some(why) = failure {
+        if let Some(mut why) = failure {
             tracing::warn!(app = %name, reason = %why, "rollout stopped; reverting");
             for id in moved.iter().rev() {
                 rollout.revert_one(id).await;
             }
-            if pooled {
-                let _ = supervisor.replace_template(rollout.start(false)).await;
+            if pooled && let Err(e) = supervisor.replace_template(rollout.start(false)).await {
+                tracing::error!(
+                    app = %name,
+                    error = %e,
+                    "rollout reverted, but the pool template is still the new version"
+                );
+                why = format!(
+                    "{why}; the pool template could not be put back ({e}), so instances \
+                     started from now on run {}",
+                    report.to
+                );
             }
             return Err(UpgradeError::Reverted(why));
         }

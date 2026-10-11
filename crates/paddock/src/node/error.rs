@@ -51,6 +51,20 @@ impl NodeError {
     }
 }
 
+impl NodeError {
+    /// The same error with `note` added to its message.
+    pub(crate) fn noting(self, note: &str) -> Self {
+        let add = |m: String| format!("{m}; {note}");
+        match self {
+            Self::NotFound(m) => Self::NotFound(add(m)),
+            Self::Conflict(m) => Self::Conflict(add(m)),
+            Self::Invalid(m) => Self::Invalid(add(m)),
+            Self::Refused(m) => Self::Refused(add(m)),
+            Self::Internal(m) => Self::Internal(add(m)),
+        }
+    }
+}
+
 pub(crate) fn internal(e: impl std::fmt::Display) -> NodeError {
     NodeError::Internal(e.to_string())
 }

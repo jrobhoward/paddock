@@ -253,3 +253,7 @@ impl Late for Notice {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "watches_tests.rs"]
+mod watches_tests;

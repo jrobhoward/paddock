@@ -47,7 +47,7 @@ use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 
 use super::liveness::HeartbeatPath;
-use super::{Packet, Transport};
+use super::{Frame, Packet, Transport};
 use crate::error::HostError;
 use crate::runtime::{Runtime, RuntimeInner};
 
@@ -93,12 +93,18 @@ struct State {
     generation: HashMap<(u32, u32), u64>,
     /// Stalled directions, (from, to): frames wait.
     stalled: HashSet<(u32, u32)>,
+    /// Frames to lose once, by direction: the next frame each predicate
+    /// matches is dropped, and the predicate removed.
+    lose: Vec<(u32, u32, LoseIf)>,
     /// Extra heartbeat paths, by name.
     paths: BTreeSet<String>,
     /// Cut directions of extra paths: (path, from, to).
     path_cut: HashSet<(String, u32, u32)>,
     rng: SplitMix64,
 }
+
+/// Which frame [`Mesh::lose_next`] drops.
+type LoseIf = Box<dyn Fn(&Frame) -> bool + Send>;
 
 struct Queue {
     tx: mpsc::UnboundedSender<(Instant, u64, Packet)>,
@@ -128,6 +134,14 @@ impl Shared {
             .copied()
             .unwrap_or(state.default_faults);
         if faults.drop > 0.0 && state.rng.unit() < faults.drop {
+            return true;
+        }
+        if let Some(i) = state
+            .lose
+            .iter()
+            .position(|(f, t, matches)| *f == from && *t == to && matches(&packet.frame))
+        {
+            drop(state.lose.remove(i));
             return true;
         }
         let jitter = if faults.jitter.is_zero() {
@@ -258,6 +272,7 @@ impl Mesh {
                     partitioned: HashSet::new(),
                     generation: HashMap::new(),
                     stalled: HashSet::new(),
+                    lose: Vec::new(),
                     paths: BTreeSet::new(),
                     path_cut: HashSet::new(),
                     rng: SplitMix64(seed),
@@ -378,6 +393,12 @@ impl Mesh {
     /// Hold frames from `from` to `to`, telling nobody.
     pub fn stall_one_way(&self, from: u32, to: u32) {
         self.shared.state().stalled.insert((from, to));
+    }
+
+    /// Lose the next frame from `from` to `to` that `matches`, telling
+    /// nobody (the pair stays up), as a single lost datagram would.
+    pub fn lose_next(&self, from: u32, to: u32, matches: impl Fn(&Frame) -> bool + Send + 'static) {
+        self.shared.state().lose.push((from, to, Box::new(matches)));
     }
 
     /// Faults on frames from `from` to `to` (one direction).

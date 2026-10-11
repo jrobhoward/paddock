@@ -35,6 +35,26 @@ async fn link____partner_crashes____non_trapping_instance_exits_with_same_reason
     assert_eq!(a.wait().await, reason);
 }
 
+/// a - b - c, none trapping exits: c's crash takes b down, and b's exit
+/// takes a down, each with c's reason.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn link____chain_of_non_trapping_instances____crash_cascades_to_the_end() {
+    let (rt, app) = shared();
+    let a = rt.spawn(app, spec("")).unwrap();
+    let b = rt.spawn(app, spec("")).unwrap();
+    let c = rt.spawn(app, spec("")).unwrap();
+    let bystander = rt.spawn(app, spec("")).unwrap();
+    ask(&a, &format!("link:{}", pid_text(b.pid()))).await;
+    ask(&b, &format!("link:{}", pid_text(c.pid()))).await;
+
+    let reason = crash(&c).await;
+
+    assert_eq!(b.wait().await, reason);
+    assert_eq!(a.wait().await, reason);
+    assert_eq!(ask(&bystander, "echo:alive").await, "alive");
+    bystander.kill();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn link____either_side_crashes____propagates_both_ways() {
     let (rt, app) = shared();

@@ -8,9 +8,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use paddock_host::failover::FailoverMsg;
 use paddock_host::failover::{
     Arbiter, FailoverConfig, FailoverHandle, Leadership, Standing, WitnessConfig, WitnessPersist,
 };
+use paddock_host::transport::Frame;
 use paddock_host::transport::memory::Faults;
 use paddock_host::{CallError, LifecycleState};
 use tokio::time::Instant;
@@ -119,6 +121,32 @@ fn start_timed(
         })
         .collect();
     Pair { handles, log }
+}
+
+/// Every (standing, epoch) `handle` takes from now on, in order.
+fn standings(handle: &FailoverHandle) -> Arc<Mutex<Vec<(Standing, u64)>>> {
+    let seen: Arc<Mutex<Vec<(Standing, u64)>>> = Arc::default();
+    let mut changes = handle.subscribe();
+    let log = seen.clone();
+    tokio::spawn(async move {
+        loop {
+            let now = changes.borrow_and_update().clone();
+            {
+                let mut log = log.lock().unwrap();
+                if log.last() != Some(&(now.standing, now.epoch)) {
+                    log.push((now.standing, now.epoch));
+                }
+            }
+            if changes.changed().await.is_err() {
+                return;
+            }
+        }
+    });
+    seen
+}
+
+fn granted(frame: &Frame) -> bool {
+    matches!(frame, Frame::Failover(FailoverMsg::Granted { .. }))
 }
 
 /// Cut `node` off from everything: its links stall, its serial line is cut.
@@ -417,6 +445,84 @@ fn failover____grant_arrives_after_a_retry____lease_runs_from_the_granted_reques
         (Standing::Primary, 2, true)
     );
     assert!(!runs_when_promoted);
+    assert_eq!(overlap, None);
+}
+
+/// The witness's grant to the standby is lost: its next request, at its
+/// old epoch, is refused, and it steps down, then resumes as the node the
+/// witness promoted.
+#[test]
+fn lost_grant____standby_asks_again____refused_steps_down_then_resumes() {
+    let (two, path, overlap) = simulate(52, 3, |sim| async move {
+        let pair = start(&sim, witness());
+        pass(3000).await;
+        let path = standings(&pair.handles[1]);
+
+        sim.mesh.lose_next(3, 2, granted);
+        isolate(&sim, 1);
+        pass(8000).await;
+
+        let path = path.lock().unwrap().clone();
+        (pair.of(2), path, pair.overlap())
+    });
+
+    assert_eq!(
+        (two.standing, two.epoch, two.may_run),
+        (Standing::Primary, 2, true)
+    );
+    assert_eq!(
+        path,
+        vec![
+            (Standing::Standby, 1),
+            (Standing::Down, 2),
+            (Standing::Primary, 2)
+        ]
+    );
+    assert_eq!(overlap, None);
+}
+
+/// After a lost grant, the old primary comes back and is fenced by the
+/// witness (`Down`) while the standby cannot reach the witness: the
+/// standby stands down after hearing its partner `Down` for a lease, the
+/// old primary's resume is refused, and once the witness is reachable the
+/// node it promoted resumes.
+#[test]
+fn partner_down____for_a_lease____standby_stands_down_and_the_promoted_node_resumes() {
+    let (one_path, two_path, one, two, overlap) = simulate(53, 3, |sim| async move {
+        let pair = start(&sim, witness());
+        pass(3000).await;
+        let one_path = standings(&pair.handles[0]);
+        let two_path = standings(&pair.handles[1]);
+
+        sim.mesh.lose_next(3, 2, granted);
+        isolate(&sim, 1);
+        // Long enough for the grant, not for the request after it.
+        pass(2000).await;
+        sim.mesh.stall_one_way(2, 3);
+        sim.mesh.heal(1, 2);
+        sim.mesh.heal(1, 3);
+        sim.mesh.heal_path(1, 2, SERIAL);
+        pass(5000).await;
+        sim.mesh.heal(2, 3);
+        pass(5000).await;
+
+        let one_path = one_path.lock().unwrap().clone();
+        let two_path = two_path.lock().unwrap().clone();
+        (one_path, two_path, pair.of(1), pair.of(2), pair.overlap())
+    });
+
+    assert_eq!(one_path[..2], [(Standing::Primary, 1), (Standing::Down, 2)]);
+    assert!(
+        two_path
+            .windows(2)
+            .any(|w| w == [(Standing::Standby, 1), (Standing::Down, 1)]),
+        "{two_path:?}"
+    );
+    assert_eq!(
+        (two.standing, two.epoch, two.may_run),
+        (Standing::Primary, 2, true)
+    );
+    assert_eq!((one.standing, one.epoch), (Standing::Standby, 2));
     assert_eq!(overlap, None);
 }
 

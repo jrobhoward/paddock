@@ -10,7 +10,7 @@ mod common;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use common::{ask, fixture};
@@ -18,6 +18,8 @@ use paddock_bundle::manifest::Capability;
 use paddock_host::{InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig, SecretSource};
 
 const ENV_VAR: &str = "PADDOCK_TEST_SECRET_E3";
+/// In secret values only: no log record or error may carry it.
+const MARKER: &str = "s3cr3t-marker";
 
 struct Setup {
     rt: Runtime,
@@ -32,6 +34,10 @@ fn setup() -> &'static Setup {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("db-password");
         std::fs::write(&file, "hunter2\n").unwrap();
+        let marked = dir.path().join("marked");
+        std::fs::write(&marked, MARKER).unwrap();
+        let binary = dir.path().join("binary");
+        std::fs::write(&binary, [b"\xff".as_slice(), MARKER.as_bytes()].concat()).unwrap();
         // SAFETY: set once, before any thread of this test binary reads the
         // environment through the secrets service.
         unsafe { std::env::set_var(ENV_VAR, "from-env") };
@@ -44,6 +50,8 @@ fn setup() -> &'static Setup {
                     "gone".to_string(),
                     SecretSource::File(dir.path().join("missing")),
                 ),
+                ("marked".to_string(), SecretSource::File(marked)),
+                ("binary".to_string(), SecretSource::File(binary)),
             ]),
             ..RuntimeConfig::default()
         })
@@ -124,4 +132,45 @@ async fn get____unlisted_ungranted_unbound_or_unreadable____errors() {
     for h in [listed, ungranted, narrowed] {
         h.kill();
     }
+}
+
+/// Every log record of this test binary, any target and level, as text.
+static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+struct Everything;
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Everything {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        struct Fields(String);
+        impl tracing::field::Visit for Fields {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0.push_str(&format!(" {}={value:?}", field.name()));
+            }
+        }
+        let mut fields = Fields(event.metadata().target().to_string());
+        event.record(&mut fields);
+        LOGGED.lock().unwrap().push(fields.0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get____values_and_failures____never_in_a_log_record_or_error() {
+    use tracing_subscriber::layer::SubscriberExt;
+    let _ =
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Everything));
+    let a = up(&["marked", "binary"], true);
+
+    let value = ask(&a, "secret:marked").await;
+    // The guest decodes the bytes as UTF-8 and fails.
+    let binary = ask(&a, "secret:binary").await;
+    a.kill();
+    a.wait().await;
+
+    assert_eq!(value, MARKER);
+    assert!(binary.starts_with("err:"), "{binary}");
+    assert!(!binary.contains(MARKER), "{binary}");
+    let logged = LOGGED.lock().unwrap();
+    assert!(!logged.is_empty(), "no records captured");
+    let leaked: Vec<&String> = logged.iter().filter(|r| r.contains(MARKER)).collect();
+    assert!(leaked.is_empty(), "{leaked:?}");
 }

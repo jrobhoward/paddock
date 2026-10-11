@@ -269,3 +269,159 @@ async fn failover____primary_process_killed____standby_takes_over_and_old_primar
         p.child.kill().await.unwrap();
     }
 }
+
+// ------------------------------------------------------------ the gate alone
+
+/// One node of a pair whose partner never runs: with `arbiter`
+/// "paths" it promotes itself once the partner is silent; with "operator"
+/// it stays down and only holds its singletons.
+async fn alone(arbiter: &str) -> (tempfile::TempDir, TestNode) {
+    let dir = tempfile::tempdir().unwrap();
+    let peers = keys(dir.path());
+    let extra = format!(
+        "{}[failover]\npartner = 2\narbiter = \"{arbiter}\"\nlease_ms = 1000\nmargin_ms = 200\n",
+        cluster(1, dir.path(), &peers, &free_udp(), &[])
+    );
+    (dir, TestNode::start(&extra).await)
+}
+
+fn singleton_bundle(node: &TestNode, version: &str, extra: serde_json::Value) -> Vec<u8> {
+    let mut manifest = fast(extra);
+    manifest["placement"] = serde_json::json!({ "mode": "singleton" });
+    bundle(
+        &node.key,
+        "leader",
+        version,
+        &fixture("paddock_fixture_chaos"),
+        manifest,
+        &[],
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gate____singleton_deployed_to_a_primary____runs_at_once() {
+    let (_dir, mut n) = alone("paths").await;
+    until("node 1 primary alone", || async {
+        standing(&n).await.may_run
+    })
+    .await;
+
+    n.client
+        .deploy(singleton_bundle(&n, "1.0.0", serde_json::json!({})))
+        .await
+        .unwrap();
+    let status = singleton(&n).await;
+
+    assert_eq!(status, "running");
+    assert_eq!(n.client.ps().await.unwrap().len(), 1);
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gate____held_singleton____upgraded_rolled_back_and_removed_without_running() {
+    let (_dir, mut n) = alone("operator").await;
+    n.client
+        .deploy(singleton_bundle(&n, "1.0.0", serde_json::json!({})))
+        .await
+        .unwrap();
+
+    let upgraded = n
+        .client
+        .upgrade(
+            "leader",
+            singleton_bundle(&n, "2.0.0", serde_json::json!({})),
+            &paddock::api::RolloutParams::default(),
+        )
+        .await
+        .unwrap();
+    let after_upgrade = n.client.status("leader").await.unwrap().summary;
+    let rolled = n
+        .client
+        .rollback("leader", &paddock::api::RolloutParams::default())
+        .await
+        .unwrap();
+    let after_rollback = n.client.status("leader").await.unwrap().summary;
+    let instances = n.client.ps().await.unwrap().len();
+    n.client.remove("leader").await.unwrap();
+
+    assert_eq!(
+        (
+            upgraded.from.as_str(),
+            upgraded.to.as_str(),
+            upgraded.mode.as_str()
+        ),
+        ("1.0.0", "2.0.0", "held")
+    );
+    assert_eq!(
+        (
+            after_upgrade.version.as_str(),
+            after_upgrade.status.as_str()
+        ),
+        ("2.0.0", "standby")
+    );
+    assert_eq!(
+        (rolled.to.as_str(), rolled.mode.as_str()),
+        ("1.0.0", "held")
+    );
+    assert_eq!(after_rollback.version, "1.0.0");
+    assert_eq!(instances, 0);
+    assert!(standing(&n).await.singletons.is_empty());
+    assert!(n.client.list().await.unwrap().is_empty());
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gate____singleton_start_refused_on_a_primary____deploy_refused_and_not_held() {
+    let (_dir, mut n) = alone("paths").await;
+    until("node 1 primary alone", || async {
+        standing(&n).await.may_run
+    })
+    .await;
+
+    let deployed = n
+        .client
+        .deploy(singleton_bundle(
+            &n,
+            "1.0.0",
+            serde_json::json!({ "dependencies": [{ "app": "absent", "version": "^1" }] }),
+        ))
+        .await;
+
+    let err = deployed.unwrap_err().to_string();
+    assert!(err.contains("absent"), "{err}");
+    assert!(standing(&n).await.singletons.is_empty());
+    assert!(n.client.list().await.unwrap().is_empty());
+    n.shutdown().await;
+}
+
+/// A new epoch that cannot be written to disk keeps the singletons
+/// stopped, though the node is primary: running at an epoch a restart
+/// could lose would break fencing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gate____epoch_cannot_be_kept____singleton_stays_stopped() {
+    let (_dir, mut n) = alone("paths").await;
+    until("node 1 primary alone", || async {
+        standing(&n).await.may_run
+    })
+    .await;
+    n.client
+        .deploy(singleton_bundle(&n, "1.0.0", serde_json::json!({})))
+        .await
+        .unwrap();
+    // The epoch is written through tmp/failover-epoch; a directory there
+    // makes the next write fail.
+    std::fs::create_dir(n.data().join("tmp/failover-epoch")).unwrap();
+
+    n.restart().await;
+    until("node 1 primary again, at a new epoch", || async {
+        let f = standing(&n).await;
+        f.may_run && f.epoch == 2
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let status = singleton(&n).await;
+
+    assert_eq!(status, "standby");
+    assert_eq!(n.client.ps().await.unwrap().len(), 0);
+    n.shutdown().await;
+}

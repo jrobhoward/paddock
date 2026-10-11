@@ -110,6 +110,6 @@ fn write(component: &Component, path: &Path) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "compiled_tests.rs"]
 mod compiled_tests;

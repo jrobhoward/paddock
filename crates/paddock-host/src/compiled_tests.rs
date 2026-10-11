@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
+// The tests check Unix modes and inodes.
+#![cfg(unix)]
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 

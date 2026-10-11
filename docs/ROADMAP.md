@@ -51,13 +51,9 @@ Done on 2026-10-10. Each review wrote its findings as stage 3 items and its deci
 
 From stage 2 and earlier work:
 
-- [ ] **Q5 Test gaps** from R2 (2026-10-10: 785 tests, 88.9% of production lines in `paddock`, `paddock-host`, `paddock-bundle` and `paddock-modbus` under `cargo llvm-cov`; tests that run `paddock node` as a separate process are not counted, so `node/run.rs` shows 5%). In order:
-  - The gate (`node/gate.rs`, 53%): a singleton deployed to a node already primary, upgrade, rollback and removal of a held singleton, a start or kill that fails, an epoch that cannot be kept.
-  - Failover transitions the model checks but no Rust test reaches: a refusal from the witness to a standby and to a node that is down, stand-down after the partner says `Down` for a lease, `NotYet` to a node that is down.
-  - The Modbus guest interface (`paddock-modbus/src/lib.rs`, 32%): reads and writes on demand and the served-table setters, with their count and length checks.
-  - Links cascading along a chain of instances that do not trap (C3); a watch removed when its instance exits, asserted (H4); a secret's value absent from logs and errors.
-  - Rollback paths that ignore errors: putting the pool's template back after a reverted rollout (`apps.rs`) and an app's HTTP routes after a failed upgrade (`node/daemon/upgrade.rs`). A failure leaves later instances on the version rolled back from, silently; log it, and report it in the upgrade's error.
+- [ ] **Q5 Test gaps: what is left** (the rest landed 2026-10-11, CHANGELOG). `NotYet` to a node that is down: it arises only from the millisecond rounding of `confirmed_ago_ms`, and a direct test needs the node state machine without a runtime. A pool template the rollout cannot put back (now logged and reported in the upgrade's error) and a singleton kill that fails: both need a supervisor that exits mid-operation, which no test can yet arrange.
 - [ ] **Q6 Security fixes** from R3 (`docs/SECURITY.md`). S1 to S9 are fixed and the fuzz targets added. Left: a connection cap on the Modbus server (tokio-modbus's server gives no hook for one).
+- [ ] **Q15 Singletons on a node that does not run them.** A singleton deployed to a standby is only held: nothing checks it can start (a missing dependency, say) until a promotion tries, logs `cannot start singleton`, and leaves it stopped while the node is primary. A start that fails at promotion is not tried again until the next one. Check what `Apps::add` checks at hold time, and retry a failed start (with backoff) while the node may run singletons. Found writing Q5's gate tests.
 - [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
 
 ### Verification of failover
