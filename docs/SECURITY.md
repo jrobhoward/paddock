@@ -69,6 +69,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 - **Controls.** Signatures checked against operator keys only (never the key inside the bundle); checksums; manifest validation; the effective grant computed from the manifest and policy; `priv/` paths checked by Paddock on open and again on extraction (plain relative names only), as well as by rustbridge-bundle.
 - **Gaps.** None found; S7 is fixed.
+- **Compiled components** (`data_dir/compiled`) are machine code a restart runs without compiling or checking it against the bundle again. A file is read only if it and its directory belong to the node's user and neither can be written by group or others; anyone who can write there as that user can run code as the node, as with the node's binary and configuration.
 
 ### Secrets and keys
 

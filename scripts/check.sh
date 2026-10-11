@@ -25,7 +25,11 @@
 #   build        cargo build --workspace --all-targets: links what clippy and
 #                the tests do not (the guest crates' native cdylibs)
 #   cli-no-node  paddock without its `node` feature builds and has no wasmtime
-#   test         cargo test --workspace (needs the wasm32-wasip2 target)
+#   features     the node with no optional feature (no HTTP ingress, TLS,
+#                probes or Modbus), and with HTTP but no TLS, each builds
+#                clean; the first has none of their dependencies
+#   test         cargo test --workspace --all-features (needs the
+#                wasm32-wasip2 target)
 #   doc          rustdoc with warnings as errors
 #   deny         cargo-deny: licences, bans, sources, advisories
 #   msrv         cargo check on the workspace's rust-version
@@ -46,7 +50,7 @@ set -uo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
-all_checks="fmt clippy build cli-no-node test doc deny msrv guests secrets conventions changelog"
+all_checks="fmt clippy build cli-no-node features test doc deny msrv guests secrets conventions changelog"
 quick_checks="fmt clippy conventions test"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -131,10 +135,28 @@ check_cli_no_node() {
     fi
 }
 
+# Each optional capability compiles out: `paddock` with `node` alone, and
+# `paddock-host` with no features, then the HTTP ingress without TLS. The
+# default and every feature together are `build` and `clippy`.
+check_features() {
+    cargo clippy -p paddock-host --no-default-features --all-targets --locked -- -Dwarnings || return 1
+    cargo clippy -p paddock --no-default-features --features node --all-targets --locked -- -Dwarnings || return 1
+    cargo clippy -p paddock --no-default-features --features http --all-targets --locked -- -Dwarnings || return 1
+    local found
+    found=$(cargo tree -p paddock --no-default-features --features node -e normal --prefix none --locked |
+        grep -E '^(paddock-modbus|tokio-modbus|anyprobe|tokio-rustls) ' | sort -u)
+    if [ -n "$found" ]; then
+        echo "paddock with only the node feature depends on:"
+        echo "$found"
+        return 1
+    fi
+}
+
 # The host tests build the guest fixtures themselves, so they need the target.
+# Every feature, so the Modbus tests run too.
 check_test() {
     need_target wasm32-wasip2 || return 1
-    cargo test --workspace --locked --no-fail-fast
+    cargo test --workspace --all-features --locked --no-fail-fast
 }
 
 check_doc() {

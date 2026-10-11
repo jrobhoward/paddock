@@ -49,7 +49,7 @@ pub(crate) struct Store {
 
 impl Store {
     pub(crate) fn open(root: &Path) -> Result<Self, NodeError> {
-        for dir in ["bundles", "priv", "kv", "tmp"] {
+        for dir in ["bundles", "priv", "compiled", "kv", "tmp"] {
             std::fs::create_dir_all(root.join(dir))
                 .map_err(|e| NodeError::Internal(format!("{}: {e}", root.join(dir).display())))?;
         }
@@ -164,6 +164,48 @@ impl Store {
         self.root.join("priv").join(app).join(version)
     }
 
+    /// Where `app`'s `version` keeps its compiled component, named after
+    /// the component's checksum (`sha256:<hex>`), so a different component
+    /// under the same version never reads it.
+    pub(crate) fn compiled_path(&self, app: &str, version: &str, checksum: &str) -> PathBuf {
+        let hex: String = checksum
+            .trim_start_matches("sha256:")
+            .chars()
+            .filter(char::is_ascii_hexdigit)
+            .take(32)
+            .collect();
+        self.root
+            .join("compiled")
+            .join(app)
+            .join(version)
+            .join(format!("{hex}.cwasm"))
+    }
+
+    /// Delete compiled components of apps and versions `state` no longer
+    /// holds, as current or previous: those left by refused deploys and
+    /// upgrades.
+    pub(crate) fn prune_compiled(&self, state: &State) {
+        let Ok(apps) = std::fs::read_dir(self.root.join("compiled")) else {
+            return;
+        };
+        for app in apps.flatten() {
+            let name = app.file_name().to_string_lossy().into_owned();
+            let Some(kept) = state.apps.get(&name) else {
+                let _ = std::fs::remove_dir_all(app.path());
+                continue;
+            };
+            let Ok(versions) = std::fs::read_dir(app.path()) else {
+                continue;
+            };
+            for version in versions.flatten() {
+                let v = version.file_name().to_string_lossy().into_owned();
+                if v != kept.current && kept.previous.as_deref() != Some(v.as_str()) {
+                    let _ = std::fs::remove_dir_all(version.path());
+                }
+            }
+        }
+    }
+
     /// Write an upload to a temporary file for verification.
     pub(crate) fn write_upload(&self, bytes: &[u8]) -> Result<PathBuf, NodeError> {
         let n = self.uploads.fetch_add(1, Ordering::Relaxed);
@@ -189,16 +231,18 @@ impl Store {
         std::fs::rename(upload, &target).map_err(internal)
     }
 
-    /// Delete one version's bundle and `priv/` files.
+    /// Delete one version's bundle, `priv/` files and compiled component.
     pub(crate) fn remove_version(&self, app: &str, version: &str) {
         let _ = std::fs::remove_file(self.bundle_path(app, version));
         let _ = std::fs::remove_dir_all(self.priv_dir(app, version));
+        let _ = std::fs::remove_dir_all(self.root.join("compiled").join(app).join(version));
     }
 
     /// Delete every version of an app.
     pub(crate) fn remove_app(&self, app: &str) {
         let _ = std::fs::remove_dir_all(self.root.join("bundles").join(app));
         let _ = std::fs::remove_dir_all(self.root.join("priv").join(app));
+        let _ = std::fs::remove_dir_all(self.root.join("compiled").join(app));
     }
 
     pub(crate) fn load_state(&self) -> Result<State, NodeError> {

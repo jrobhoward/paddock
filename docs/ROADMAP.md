@@ -9,7 +9,7 @@ The single plan for remaining work: what is left, in what order, and which part 
 - **Stages** run in order. Items inside a stage can run in parallel unless one names another. An item found while working on another goes into the stage where it fits, not into the current change.
 - **Finishing an item** removes it from this file, adds a CHANGELOG entry, and updates DESIGN.md if a decision changed. A partly done item keeps only what is left.
 - **Checks** are one command, `scripts/check.sh` (`--quick` while working); CLAUDE.md's Definition of Done lists what it runs.
-- **Interface docs** change with the code: CHANGELOG.md, MANIFEST.md (manifest and node config) and OBSERVABILITY.md (probe and metric names). Narrative docs (README, GETTING_STARTED, WRITING_APPS, DESIGN prose, ARCHITECTURE, the tutorial) may fall behind: a change that leaves one wrong adds a line to "Doc debt" below, and W1 clears the list once, near the end.
+- **Interface docs** change with the code: CHANGELOG.md, MANIFEST.md (manifest and node config), OBSERVABILITY.md (probe and metric names) and OPERATIONS.md (paths, variables, signals). Narrative docs (README, GETTING_STARTED, WRITING_APPS, DESIGN prose, ARCHITECTURE, the tutorial) may fall behind: a change that leaves one wrong adds a line to "Doc debt" below, and W1 clears the list once, near the end.
 - **Reviews (stage 2)** produce items for stage 3 and decisions for DESIGN.md. A finding is fixed during the review only if the fix is a line or two.
 - **Failover changes** follow the verification rule in V1.
 - **Sizes** are relative: S = days, M = about a week, L = more than a week.
@@ -45,14 +45,12 @@ Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test 
 
 ## Stage 2: Review (M)
 
-Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1, Q2; Q3 and Q7 are done). W1 finishes both drafts.
+Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3 and Q7 are done). W1 finishes both drafts.
 
 ## Stage 3: Rework (M–L)
 
 From stage 2 and earlier work:
 
-- [ ] **Q1 Feature flags.** Modbus behind a cargo feature, off by default; HTTP ingress, TLS, probes and SQL on. Each optional capability compiles out cleanly. CI builds the default, all features, the node with no optional features, and the CLI without the node (DESIGN.md, "Operating a node"). README and GETTING_STARTED name the feature where they show Modbus.
-- [ ] **Q2 Node layout and bundle store**, with G4 (cache compiled components in the store, so a restart does not recompile) since both change the store. Everything a node writes stays under `data_dir`; compiled components go in `data_dir/compiled`. An example systemd unit (own user, `CAP_NET_BIND_SERVICE` only, `dialout` for serial) and a short operations page: paths, the `PADDOCK_*` variables (`PADDOCK_CONFIG`, `PADDOCK_SOCKET`, `PADDOCK_KEY_PASSWORD`), what to back up.
 - [ ] **Q5 Test gaps** from R2 (2026-10-10: 785 tests, 88.9% of production lines in `paddock`, `paddock-host`, `paddock-bundle` and `paddock-modbus` under `cargo llvm-cov`; tests that run `paddock node` as a separate process are not counted, so `node/run.rs` shows 5%). In order:
   - The gate (`node/gate.rs`, 53%): a singleton deployed to a node already primary, upgrade, rollback and removal of a held singleton, a start or kill that fails, an epoch that cannot be kept.
   - Failover transitions the model checks but no Rust test reaches: a refusal from the witness to a standby and to a node that is down, stand-down after the partner says `Down` for a lease, `NotYet` to a node that is down.

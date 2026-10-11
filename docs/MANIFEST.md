@@ -247,13 +247,13 @@ file = "/run/secrets/db-password"      # or env = "DB_PASSWORD"; read on every a
 address = "127.0.0.1:9100"             # GET /metrics for Prometheus; unauthenticated, keep it off public networks
 
 [http.main]
-address = "0.0.0.0:8080"               # HTTP ingress: serves every app's wasi:http/incoming-handler routes
+address = "0.0.0.0:8080"               # HTTP ingress (cargo feature `http`, on by default): serves every app's routes
 acceptors = 4                          # default 4
 max_connections = 1024                 # default 1024; more are closed on accept
 header_timeout_ms = 10000              # default 10000: time to send headers (also between kept-alive requests)
 body_timeout_ms = 30000                # default 30000: time to send a body, then 408
 max_response = "16MiB"                 # default "16MiB": larger app replies become 502
-tls = [                                # HTTPS: PEM chain and key; SNI picks by hosts; the first is the default
+tls = [                                # HTTPS (cargo feature `tls`, on by default): PEM chain and key; SNI picks by hosts; the first is the default
   { cert = "/etc/paddock/shop.pem", key = "/etc/paddock/shop.key", hosts = ["shop.example", "*.shop.example"] },
 ]
 tls_reload_s = 60                      # default 60: reload when the files change (0: only SIGHUP or `paddock reload-tls`)
@@ -290,7 +290,7 @@ scope = "node"                         # "cluster" (replicated) is Phase 3 and r
 
 A deploy is refused if the manifest lists a shared bucket the node does not configure.
 
-Extensions read their own node configuration from `[extensions."<package>"]`; a table for an extension the node was not built with refuses the start. `paddock node` includes the Modbus TCP extension (`paddock-modbus:modbus`, `crates/paddock-modbus`):
+Extensions read their own node configuration from `[extensions."<package>"]`; a table for an extension the node was not built with refuses the start. `paddock node` built with the `modbus` cargo feature (off by default: `cargo build -p paddock --features modbus`) includes the Modbus TCP extension (`paddock-modbus:modbus`, `crates/paddock-modbus`):
 
 ```toml
 [extensions."paddock-modbus:modbus".devices.pump-1]

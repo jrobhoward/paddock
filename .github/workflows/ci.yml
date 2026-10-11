@@ -62,6 +62,9 @@ jobs:
       - name: CLI without the node
         run: scripts/check.sh cli-no-node
 
+      - name: Node without optional features
+        run: scripts/check.sh features
+
       - name: Test
         run: scripts/check.sh test
 
@@ -154,7 +157,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -Dwarnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
       - name: Build fixtures
         run: cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release

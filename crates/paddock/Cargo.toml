@@ -17,14 +17,12 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["node", "modbus"]
-# The Modbus TCP extension (`paddock-modbus:modbus`) in `paddock node`.
-modbus = ["node", "dep:paddock-modbus"]
+default = ["node", "http", "tls", "probes"]
 # The node daemon (`paddock node`) and everything it runs on, wasmtime
-# included. Without it, the CLI and bundle tooling only.
+# included. Without it, the CLI and bundle tooling only. Alone, a node with
+# no optional capability: no HTTP ingress, no probes, no Modbus.
 node = [
     "dep:paddock-host",
-    "paddock-host/probes",
     "dep:tracing",
     "dep:tracing-subscriber",
     "tokio/rt-multi-thread",
@@ -32,6 +30,15 @@ node = [
     "tokio/sync",
     "tokio/time",
 ]
+# The node's HTTP ingress (`[http.<name>]` in node config, apps' routes).
+http = ["node", "paddock-host/http"]
+# HTTPS on the HTTP ingress.
+tls = ["http", "paddock-host/tls"]
+# USDT probes on the message path (docs/OBSERVABILITY.md).
+probes = ["node", "paddock-host/probes"]
+# The Modbus TCP extension (`paddock-modbus:modbus`) in `paddock node`. Off
+# by default: a network server with no authentication of its own.
+modbus = ["node", "dep:paddock-modbus"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -92,7 +99,7 @@ required-features = ["node"]
 
 [[test]]
 name = "http"
-required-features = ["node"]
+required-features = ["tls"]
 
 [[test]]
 name = "cluster"
@@ -100,7 +107,7 @@ required-features = ["node"]
 
 [[test]]
 name = "board"
-required-features = ["node"]
+required-features = ["http"]
 
 [[test]]
 name = "failover"

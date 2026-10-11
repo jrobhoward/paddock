@@ -2,16 +2,18 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use wasmtime::component::{Component, HasSelf, Linker};
+use wasmtime::component::{HasSelf, Linker};
 use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
 
 use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{PaddockApp, PaddockAppPre};
+use crate::compiled;
 use crate::config::{HostObjects, MemoryProfile, RuntimeConfig};
 use crate::delivery;
 use crate::deny;
@@ -236,8 +238,27 @@ impl Runtime {
     /// cannot link, for example a provided interface at an incompatible
     /// version.
     pub fn load(&self, component: &[u8]) -> Result<LoadedApp, HostError> {
+        self.load_with(component, None)
+    }
+
+    /// [`Runtime::load`], keeping the compiled code in the file `cache`: a
+    /// later load with the same `cache` (after a restart) reads it instead
+    /// of compiling again. The caller names the file after the component's
+    /// contents, so a different component never reads it. A file group or
+    /// others can write, or one from another wasmtime version or engine
+    /// configuration, is compiled again and replaced.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Runtime::load`]; a cache that cannot be read or written is
+    /// logged and skipped, not an error.
+    pub fn load_cached(&self, component: &[u8], cache: &Path) -> Result<LoadedApp, HostError> {
+        self.load_with(component, Some(cache))
+    }
+
+    fn load_with(&self, component: &[u8], cache: Option<&Path>) -> Result<LoadedApp, HostError> {
         let load = |e: wasmtime::Error| HostError::Load(describe(&e));
-        let (pre, stubbed) = self.link(component).map_err(load)?;
+        let (pre, stubbed) = self.link(component, cache).map_err(load)?;
         Ok(LoadedApp {
             pre: PaddockAppPre::new(pre).map_err(load)?,
             stubbed: Arc::new(stubbed),
@@ -253,17 +274,40 @@ impl Runtime {
     /// As for [`Runtime::load`], including a component that does not export
     /// the connection handler.
     pub fn load_connection(&self, component: &[u8]) -> Result<LoadedConnection, HostError> {
+        self.load_connection_with(component, None)
+    }
+
+    /// [`Runtime::load_connection`], keeping the compiled code in `cache`
+    /// as [`Runtime::load_cached`] does.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Runtime::load_connection`].
+    pub fn load_connection_cached(
+        &self,
+        component: &[u8],
+        cache: &Path,
+    ) -> Result<LoadedConnection, HostError> {
+        self.load_connection_with(component, Some(cache))
+    }
+
+    fn load_connection_with(
+        &self,
+        component: &[u8],
+        cache: Option<&Path>,
+    ) -> Result<LoadedConnection, HostError> {
         let load = |e: wasmtime::Error| HostError::Load(describe(&e));
-        let (pre, stubbed) = self.link(component).map_err(load)?;
+        let (pre, stubbed) = self.link(component, cache).map_err(load)?;
         LoadedConnection::new(pre, stubbed).map_err(load)
     }
 
     fn link(
         &self,
         component: &[u8],
+        cache: Option<&Path>,
     ) -> wasmtime::Result<(wasmtime::component::InstancePre<InstanceState>, Vec<String>)> {
         let engine = &self.inner.engine;
-        let component = Component::new(engine, component)?;
+        let component = compiled::component(engine, component, cache)?;
         let extensions = &self.inner.extensions;
         let mut linker = base_linker(engine, extensions)?;
         let served: Vec<&str> = extensions.iter().map(|e| e.package()).collect();

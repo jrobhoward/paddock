@@ -508,7 +508,7 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mutua
 
 ## Operating a node
 
-Decided in the structure review (ROADMAP R5, 2026-10-10); stage 3 carries them out (Q1, Q2, Q7; logging is done).
+Decided in the structure review (ROADMAP R5, 2026-10-10); stage 3 carried them out (Q1 to Q3, Q7; 2026-10-11); [OPERATIONS.md](OPERATIONS.md) is the operator's view.
 
 - **Build features.** A default build has the node, the HTTP ingress with TLS, probes and SQL datasources (idle without a datasource in node config). Modbus is a cargo feature, off by default: it adds a network server with no authentication of its own (`docs/SECURITY.md`, S4), and about 0.8 MB and 8 crates, to a node that may never use it. CI builds four sets: the default, all features, the node with no optional features, and the CLI without the node.
 - **Layout.** One directory per node holds everything the node writes: `data_dir` (`/var/lib/paddock` by convention) with the deploy store, buckets, failover state, the audit log, the admin socket (as now) and, with G4, compiled components under `compiled/`. One directory is simple to back up, move or wipe, and assumes no service manager. Configuration, keys and policy stay where the operator puts them (`/etc/paddock` by convention). An upgrade keeps the current and previous bundle of an app and removes older ones, as now.

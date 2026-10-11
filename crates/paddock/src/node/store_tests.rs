@@ -111,3 +111,64 @@ fn Store____corrupt_witness_state____error() {
 
     assert!(loaded.is_err());
 }
+
+#[test]
+fn compiled_path____checksum____named_after_its_hex_under_the_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+
+    let path = store.compiled_path("orders", "1.0.0", "sha256:00ff/../x");
+
+    assert_eq!(path, dir.path().join("compiled/orders/1.0.0/00ff.cwasm"));
+}
+
+#[test]
+fn prune_compiled____apps_and_versions_not_kept____removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    for (app, version) in [
+        ("orders", "1.0.0"),
+        ("orders", "2.0.0"),
+        ("orders", "3.0.0"),
+        ("gone", "1.0.0"),
+    ] {
+        let path = store.compiled_path(app, version, "sha256:ab");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"x").unwrap();
+    }
+    let mut state = State::default();
+    state.apps.insert(
+        "orders".into(),
+        AppState {
+            current: "2.0.0".into(),
+            previous: Some("1.0.0".into()),
+            running: true,
+        },
+    );
+
+    store.prune_compiled(&state);
+
+    let kept = |app: &str, version: &str| store.compiled_path(app, version, "sha256:ab").exists();
+    assert_eq!(
+        (
+            kept("orders", "1.0.0"),
+            kept("orders", "2.0.0"),
+            kept("orders", "3.0.0"),
+            kept("gone", "1.0.0")
+        ),
+        (true, true, false, false)
+    );
+}
+
+#[test]
+fn remove_version____compiled_component____removed_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let path = store.compiled_path("orders", "1.0.0", "sha256:ab");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"x").unwrap();
+
+    store.remove_version("orders", "1.0.0");
+
+    assert!(!path.exists());
+}

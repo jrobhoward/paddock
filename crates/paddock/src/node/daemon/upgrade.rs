@@ -142,8 +142,8 @@ impl Node {
             }
             Runnable::App(deployment) => {
                 let snapshot = deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
-                let before = self.http.as_ref().map(|h| h.routes(name));
-                match self.set_routes(name, &deployment) {
+                let before = self.ingress.save_routes(name);
+                match self.ingress.set_routes(name, &deployment) {
                     Err(e) => Err((e, false)),
                     Ok(()) => {
                         let upgraded = self
@@ -152,11 +152,8 @@ impl Node {
                             .await
                             .map(|r| upgrade_response(&r))
                             .map_err(|e| (rollout_error(e, snapshot, params), true));
-                        if upgraded.is_err()
-                            && let (Some(http), Some(before)) = (&self.http, before)
-                        {
-                            // The old version keeps running with its routes.
-                            let _ = http.set_routes(name, before);
+                        if upgraded.is_err() {
+                            self.ingress.restore_routes(name, before);
                         }
                         if let Some(gate) = &self.gate {
                             gate.sync(name);
@@ -271,7 +268,7 @@ impl Node {
                     .map_err(|e| rollout_error(e, snapshot, params));
                 if rolled.is_ok()
                     && let Some(app) = self.apps.app(name)
-                    && let Err(e) = self.set_routes(name, &app.deployment())
+                    && let Err(e) = self.ingress.set_routes(name, &app.deployment())
                 {
                     tracing::warn!(app = name, error = %e, "routes after rollback");
                 }

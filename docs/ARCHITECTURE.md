@@ -244,7 +244,7 @@ A guest's state lives only in its Store. A crash or restart starts from `init`; 
 └── audit.log                  one JSON object per line
 ```
 
-Node configuration, the node's cluster key and the peers file live wherever the configuration names them. Compiled components are not cached on disk; a restart compiles again (ROADMAP G4, with Q2).
+Node configuration, the node's cluster key and the peers file live wherever the configuration names them. Compiled components are kept under `data_dir/compiled/<app>/<version>/`, named by the component's checksum, so a restart reads them instead of compiling (`paddock_host::compiled`, `Runtime::load_cached`). [OPERATIONS.md](OPERATIONS.md) lists every path under `data_dir`.
 
 ## Open questions for the reviews
 

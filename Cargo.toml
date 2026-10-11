@@ -85,7 +85,8 @@ toml = "0.9"
 
 paddock = { path = "crates/paddock", default-features = false }
 paddock-bundle = { path = "crates/paddock-bundle" }
-paddock-host = { path = "crates/paddock-host" }
+# Without the HTTP ingress; `paddock` enables `http` and `tls` by feature.
+paddock-host = { path = "crates/paddock-host", default-features = false }
 paddock-modbus = { path = "crates/paddock-modbus" }
 paddock-sdk = { path = "crates/paddock-sdk" }
 paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
@@ -103,6 +104,9 @@ minisign = "0.9"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi", "json"] }
 proptest = "1"
 rstest = "0.26"
+# Safe system calls: the effective uid for the compiled-component cache's
+# owner check (paddock-host, unix only).
+rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
 tempfile = "3"
 wat = "1.259"
 # Same major as rustbridge-bundle's, so tests add no second copy.

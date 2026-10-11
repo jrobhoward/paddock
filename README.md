@@ -50,10 +50,16 @@ milestones M0 to M9 are done. rustbridge's bundle format 1.2 comes from its
 Rust 1.96.0 or newer. Guest components build for `wasm32-wasip2`:
 
 ```sh
-cargo test --workspace
+cargo test --workspace --all-features
 rustup target add wasm32-wasip2
 cargo build -p paddock-fixture-echo --target wasm32-wasip2 --release
 ```
+
+`paddock`'s cargo features choose what a node can do. The default build has
+the node with its HTTP ingress (`http`), HTTPS (`tls`) and probes (`probes`).
+The Modbus TCP extension is off by default (`--features modbus`).
+`--no-default-features --features node` builds a node with none of them, and
+`--no-default-features` the CLI and bundle tooling alone, without wasmtime.
 
 ## Running a node
 

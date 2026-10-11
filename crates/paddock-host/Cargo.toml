@@ -10,6 +10,11 @@ repository.workspace = true
 publish = false
 
 [features]
+default = ["http", "tls"]
+# The HTTP ingress (`paddock_host::http`): node-level routes to apps.
+http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+# HTTPS on the HTTP ingress (`http::IngressTls`).
+tls = ["http", "dep:tokio-rustls"]
 # USDT probes on the message path (`src/probe.rs`): SystemTap SDT on Linux,
 # DTrace on macOS and FreeBSD, ETW on Windows. Without it the probe calls
 # compile to nothing.
@@ -19,9 +24,9 @@ probes = ["dep:anyprobe"]
 anyprobe = { workspace = true, optional = true }
 bytes = { workspace = true }
 ciborium = { workspace = true }
-http-body-util = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
 base64 = { workspace = true }
 quinn = { workspace = true }
 rcgen = { workspace = true }
@@ -30,7 +35,7 @@ rustls-webpki = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 rustls-pki-types = { workspace = true }
-tokio-rustls = { workspace = true }
+tokio-rustls = { workspace = true, optional = true }
 paddock-bundle = { workspace = true }
 redb = { workspace = true }
 semver = { workspace = true }
@@ -41,6 +46,9 @@ tracing = { workspace = true }
 wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator"] }
 wasmtime-wasi = { workspace = true, features = ["p2"] }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
+
 [dev-dependencies]
 rcgen = { workspace = true }
 rstest = { workspace = true }
@@ -49,6 +57,10 @@ wat = { workspace = true }
 tracing-subscriber = { workspace = true }
 semver = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
+
+[[test]]
+name = "http"
+required-features = ["tls"]
 
 [lints]
 workspace = true

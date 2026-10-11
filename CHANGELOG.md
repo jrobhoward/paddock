@@ -266,6 +266,17 @@ All notable changes are recorded here. The format follows
   error.
 - Fuzz targets `wire_packet`, `failover_status`, `http_reply`,
   `state_view` and `modbus_request`, run nightly with the others.
+- Compiled components are kept under `data_dir/compiled/<app>/<version>/`,
+  so a restart reads them instead of compiling every app again; removed with
+  their version, and pruned at start. `Runtime::load_cached` and
+  `Runtime::load_connection_cached` in `paddock-host`.
+- `paddock` cargo features `http` (the HTTP ingress), `tls` (HTTPS) and
+  `probes`, on by default; `paddock-host` features `http` and `tls`. A node
+  built without one refuses node config or apps that need it.
+- `scripts/check.sh features`: the node with no optional feature, and with
+  HTTP but no TLS, builds clean.
+- `docs/OPERATIONS.md` (paths, environment variables, signals, backups) and
+  `examples/systemd/paddock.service`.
 
 ### Fixed
 
@@ -337,6 +348,8 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- The Modbus extension is no longer in a default build: build `paddock`
+  with `--features modbus`.
 - `paddock list`, `paddock status`, `paddock logs` and `paddock log-level`
   (and their admin API routes) no longer wait while a deploy, upgrade or
   rollback verifies, compiles or rolls out a bundle. Changes still run one

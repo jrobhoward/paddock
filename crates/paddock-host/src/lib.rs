@@ -20,11 +20,13 @@
 
 mod apps;
 mod bindings;
+mod compiled;
 mod config;
 mod delivery;
 mod deny;
 mod error;
 pub mod failover;
+#[cfg(feature = "http")]
 pub mod http;
 mod instance;
 mod lifecycle;

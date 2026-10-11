@@ -1669,6 +1669,7 @@ dependencies = [
  "rcgen",
  "redb",
  "rstest",
+ "rustix",
  "rustls",
  "rustls-pki-types",
  "rustls-webpki",

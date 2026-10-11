@@ -65,7 +65,7 @@ Gauges are read when the metrics are rendered; counters are kept per app from th
 
 ## Probes
 
-The `paddock` binary carries USDT probes on the message path (provider `paddock`, from `paddock-host`'s `probes` feature, on by default with the `node` feature). They use anyprobe: SystemTap SDT on Linux (bpftrace, perf), DTrace USDT on macOS and FreeBSD, ETW on Windows. With no tracer attached a probe costs one enabled check and its arguments are not computed; `baseline` shows no difference beyond run-to-run noise ([BASELINE.md](BASELINE.md)).
+The `paddock` binary carries USDT probes on the message path (provider `paddock`, from `paddock`'s `probes` cargo feature, on by default; without it the probe calls compile to nothing). They use anyprobe: SystemTap SDT on Linux (bpftrace, perf), DTrace USDT on macOS and FreeBSD, ETW on Windows. With no tracer attached a probe costs one enabled check and its arguments are not computed; `baseline` shows no difference beyond run-to-run noise ([BASELINE.md](BASELINE.md)).
 
 An instance is identified by its pid's whole `id` (and `incarnation` where shown): the node's creation shifted left 40 bits, plus the serial `ps` shows. In bpftrace, `arg0 & 0xffffffffff` is the serial and `arg0 >> 40` the creation. A sender of 0 is a message from outside any instance (the admin API). A `&str` argument is two values, a pointer and a length.
 

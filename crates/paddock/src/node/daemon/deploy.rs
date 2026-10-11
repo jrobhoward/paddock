@@ -4,9 +4,8 @@
 use std::path::Path;
 
 use crate::api::{DeployResponse, Done};
-use paddock_bundle::manifest::{AppManifest, Capability};
+use paddock_bundle::manifest::AppManifest;
 use paddock_bundle::{BundleError, VerifiedBundle};
-use paddock_host::http::HttpRoute;
 use paddock_host::{AppDeployment, AppHandle, InstanceSpec, LoadedConnection};
 use serde_json::json;
 
@@ -151,11 +150,15 @@ impl Node {
         let rt = self.rt.clone();
         let component = bundle.component.clone();
         let connection = manifest.component.world == paddock_bundle::CONNECTION_WORLD;
+        let cache = self
+            .store
+            .compiled_path(&name, &version, &manifest.component.checksum);
         let loaded = tokio::task::spawn_blocking(move || {
             if connection {
-                rt.load_connection(&component).map(Loaded::Connection)
+                rt.load_connection_cached(&component, &cache)
+                    .map(Loaded::Connection)
             } else {
-                rt.load(&component).map(Loaded::App)
+                rt.load_cached(&component, &cache).map(Loaded::App)
             }
         })
         .await
@@ -280,7 +283,7 @@ impl Node {
                         dep.app
                     )));
                 }
-                self.set_routes(name, &deployment)?;
+                self.ingress.set_routes(name, &deployment)?;
                 let added = match &self.gate {
                     Some(gate) if gate::is_singleton(&deployment) => {
                         gate.hold(name, deployment).await
@@ -289,7 +292,7 @@ impl Node {
                 }
                 .map_err(|e| NodeError::Invalid(e.to_string()));
                 if added.is_err() {
-                    self.remove_routes(name);
+                    self.ingress.remove_routes(name);
                 }
                 added
             }
@@ -305,35 +308,6 @@ impl Node {
                 );
                 Ok(None)
             }
-        }
-    }
-
-    /// Give `name` the HTTP routes `deployment` declares, if the operator
-    /// granted them (none otherwise).
-    pub(super) fn set_routes(
-        &self,
-        name: &str,
-        deployment: &AppDeployment,
-    ) -> Result<(), NodeError> {
-        let routes = if deployment.spec.granted.contains(&Capability::HttpIncoming) {
-            HttpRoute::from_manifest(&deployment.manifest)
-        } else {
-            Vec::new()
-        };
-        match &self.http {
-            Some(ingress) => ingress
-                .set_routes(name, routes)
-                .map_err(|e| NodeError::Conflict(e.to_string())),
-            None if routes.is_empty() => Ok(()),
-            None => Err(NodeError::Invalid(format!(
-                "{name} declares HTTP routes, and this node has no HTTP ingress ([http.<name>] in node config)"
-            ))),
-        }
-    }
-
-    fn remove_routes(&self, name: &str) {
-        if let Some(ingress) = &self.http {
-            ingress.remove_routes(name);
         }
     }
 
@@ -454,7 +428,7 @@ impl Node {
             return Err(NodeError::Conflict(format!("{name} is already stopped")));
         }
         self.stop_running(name).await?;
-        self.remove_routes(name);
+        self.ingress.remove_routes(name);
         {
             let mut st = self.st();
             if let Some(app) = st.desired.apps.get_mut(name) {
@@ -519,7 +493,7 @@ impl Node {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
         }
         self.stop_running(name).await?;
-        self.remove_routes(name);
+        self.ingress.remove_routes(name);
         self.store.remove_app(name);
         {
             let mut st = self.st();

@@ -838,3 +838,42 @@ async fn registered_names____listed_by_another_app____deploy_and_upgrade_refused
     assert_eq!(kind(&upgrade), "conflict");
     assert!(own.is_ok(), "{own:?}");
 }
+
+/// The compiled component in `data`'s store for `app` `version`, if one.
+#[cfg(unix)]
+fn compiled(data: &std::path::Path, app: &str, version: &str) -> Option<std::path::PathBuf> {
+    std::fs::read_dir(data.join("compiled").join(app).join(version))
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "cwasm"))
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart____app_deployed____compiled_component_read_not_compiled_again() {
+    use std::os::unix::fs::MetadataExt;
+    let mut n = TestNode::start("").await;
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "kept",
+            "1.0.0",
+            &fixture("paddock_fixture_chaos"),
+            fast(json!({})),
+            &[],
+        ))
+        .await
+        .unwrap();
+    let path = compiled(&n.data(), "kept", "1.0.0").expect("compiled at deploy");
+    let before = std::fs::metadata(&path).unwrap().ino();
+
+    n.restart().await;
+    let list = n.client.list().await.unwrap();
+
+    assert_eq!(list[0].status, "running");
+    assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
+    n.client.remove("kept").await.unwrap();
+    assert!(compiled(&n.data(), "kept", "1.0.0").is_none());
+    n.shutdown().await;
+}

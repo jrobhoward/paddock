@@ -50,9 +50,11 @@ scripts/soak.sh --hours 1
 # `paddock node` as its own process are not counted.
 cargo llvm-cov --workspace --no-fail-fast --summary-only
 
-# Build and test the main workspace
+# Build and test the main workspace. `paddock`'s features: `node`, `http`,
+# `tls` and `probes` by default; `modbus` off. Each optional one compiles
+# out (`scripts/check.sh features`).
 cargo build --workspace --all-targets
-cargo test --workspace
+cargo test --workspace --all-features
 cargo test --workspace -- some____test____name     # single test
 
 # Lint (must be clean before any change is considered done). CI will run the
@@ -192,7 +194,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `crates/paddock/tests/failover.rs` runs a pair and a witness over QUIC.
 - `crates/paddock-modbus`: the Modbus TCP extension (`paddock-modbus:modbus`,
   WIT in its `wit/`), depending on `paddock-host` alone; linked into
-  `paddock node` by `paddock`'s default `modbus` feature. Device tasks,
+  `paddock node` by `paddock`'s `modbus` feature (off by default). Device tasks,
   change detection and the update format (`points`), the server.
   `examples/scada` is its demo (`points` pool, `hmi` connection handler);
   `crates/paddock/tests/scada.rs` runs it against a fake device.
@@ -421,9 +423,9 @@ sets `shell: bash`.
 Before considering any change to the main workspace complete:
 
 - `scripts/check.sh` passes. It runs, each with a line of result: the tests
-  (`cargo test --workspace`), clippy with `-Dwarnings`, a native build of
-  every target, the CLI built
-  without the `node` feature, rustdoc with warnings as errors, `cargo fmt
+  (`cargo test --workspace --all-features`), clippy with `-Dwarnings`, a
+  native build of every target, the CLI built without the `node` feature,
+  the node with no optional feature (`features`), rustdoc with warnings as errors, `cargo fmt
   --check`, `cargo deny`, the MSRV check, the guest builds with their
   `wasm-tools` checks and fixture test, `scripts/check-secrets.sh`, the test
   conventions (above), and a CHANGELOG change for any change to `crates/`,
@@ -445,7 +447,7 @@ Before considering any change to the main workspace complete:
 ## Docs are part of "done"
 
 Each file has one job; keep changes in the right one rather than restating
-across them. CHANGELOG.md, MANIFEST.md and OBSERVABILITY.md (interfaces)
+across them. CHANGELOG.md, MANIFEST.md, OBSERVABILITY.md and OPERATIONS.md (interfaces)
 change with the code. A change that leaves a narrative doc (README,
 GETTING_STARTED, WRITING_APPS, DESIGN prose, ARCHITECTURE, the tutorial) wrong may add a
 line to ROADMAP.md's "Doc debt" instead of rewriting it then:
@@ -457,6 +459,7 @@ line to ROADMAP.md's "Doc debt" instead of rewriting it then:
 | `docs/ARCHITECTURE.md` | Map of the code as built: crates, data paths, threads and tasks, where state lives | Narrative; a change that leaves it wrong adds a line to ROADMAP's "Doc debt" |
 | `docs/SECURITY.md` | Threat model: what is protected, whom Paddock trusts, each boundary's controls and gaps, fuzz targets | Update when a boundary or a control changes; findings are fixed through ROADMAP items |
 | `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
+| `docs/OPERATIONS.md` | Paths under `data_dir`, environment variables, signals, backups, running as a service | Update with every path, variable or signal change |
 | `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
 | `CHANGELOG.md` | What changed, under `Unreleased` until the first release | Keep a Changelog format; one line per change |

@@ -32,8 +32,10 @@
 //! Bodies are buffered whole; there is no streaming (S15: about 75% of
 //! native hyper's throughput through an instance call).
 
+#[cfg(feature = "tls")]
 mod tls;
 
+#[cfg(feature = "tls")]
 pub use tls::{IngressTls, TlsCertificate};
 
 use std::collections::BTreeMap;
@@ -85,6 +87,7 @@ pub struct IngressListen {
     /// Largest reply body from an app, in bytes (502 above it).
     pub max_response: u64,
     /// Serve HTTPS with these certificates; `None` serves plain HTTP.
+    #[cfg(feature = "tls")]
     pub tls: Option<IngressTls>,
 }
 
@@ -100,6 +103,7 @@ impl IngressListen {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(30),
             max_response: 16 << 20,
+            #[cfg(feature = "tls")]
             tls: None,
         }
     }
@@ -344,6 +348,9 @@ async fn accept(
         let stop = inner.stop.subscribe();
         tokio::spawn(async move {
             let _slot = slot;
+            #[cfg(not(feature = "tls"))]
+            serve_connection(inner, spec, stream, "http", stop).await;
+            #[cfg(feature = "tls")]
             match spec.tls.clone() {
                 None => serve_connection(inner, spec, stream, "http", stop).await,
                 Some(tls) => {
