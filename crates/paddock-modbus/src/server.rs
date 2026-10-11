@@ -4,12 +4,18 @@
 //! `deliver_to` app as a `written` update.
 
 use std::future::{Ready, ready};
+use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::task::{Context, Poll};
 
 use paddock_host::services::ExtensionNode;
 use paddock_host::{Envelope, cidr_contains};
-use tokio::net::TcpListener;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_modbus::server::tcp::{Server, accept_tcp_connection};
 use tokio_modbus::{ExceptionCode, Request, Response};
 
@@ -226,6 +232,41 @@ impl tokio_modbus::server::Service for Service {
     }
 }
 
+/// A master's connection, holding one of the server's `max_connections`
+/// slots until it closes.
+struct Counted {
+    stream: TcpStream,
+    _slot: OwnedSemaphorePermit,
+}
+
+impl AsyncRead for Counted {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Counted {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+
 /// Bind the server now (so a bad address fails the node's start) and serve
 /// until the node stops. Returns the bound address (for `listen` port 0).
 pub(crate) fn start(
@@ -239,6 +280,9 @@ pub(crate) fn start(
     let listener = TcpListener::from_std(std_listener).map_err(cannot)?;
     let bound = listener.local_addr().map_err(|e| e.to_string())?;
     let allowed = config.allowed();
+    let slots = Arc::new(Semaphore::new(config.max_connections));
+    // Warn once each time the server fills, not for every refusal.
+    let full = Arc::new(AtomicBool::new(false));
     let config = Arc::new(config);
     let stop = node.clone();
     tokio::spawn(async move {
@@ -248,11 +292,44 @@ pub(crate) fn start(
                 config: config.clone(),
                 node: node.clone(),
             };
-            let admitted = allowed.iter().any(|net| cidr_contains(*net, addr.ip()));
+            let mut admitted = allowed.iter().any(|net| cidr_contains(*net, addr.ip()));
             if !admitted {
                 tracing::warn!(master = %addr, "modbus master not in server.allow; refused");
             }
-            async move { accept_tcp_connection(stream, addr, |_| Ok(admitted.then(|| service.clone()))) }
+            let slot = if admitted {
+                slots.clone().try_acquire_owned().ok()
+            } else {
+                None
+            };
+            match &slot {
+                Some(_) => full.store(false, Ordering::Relaxed),
+                None if admitted => {
+                    admitted = false;
+                    if !full.swap(true, Ordering::Relaxed) {
+                        tracing::warn!(
+                            master = %addr,
+                            max = config.max_connections,
+                            "modbus server at server.max_connections; refusing masters"
+                        );
+                    }
+                }
+                None => {}
+            }
+            let accepted =
+                accept_tcp_connection(stream, addr, |_| Ok(admitted.then(|| service.clone())));
+            async move {
+                Ok(accepted?.and_then(|(service, stream)| {
+                    slot.map(|slot| {
+                        (
+                            service,
+                            Counted {
+                                stream,
+                                _slot: slot,
+                            },
+                        )
+                    })
+                }))
+            }
         };
         let on_error = |e| tracing::debug!(error = %e, "modbus server connection failed");
         let stopped = async move { stop.stopped().await };

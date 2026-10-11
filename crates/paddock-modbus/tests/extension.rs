@@ -79,6 +79,52 @@ async fn server____master_not_in_allow____refused() {
     started.stop();
 }
 
+/// With `max_connections = 1`, a second master is closed on accept while
+/// the first is connected, and served once it has gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn server____over_max_connections____refused_until_one_closes() {
+    let modbus = Modbus::default();
+    let rt = runtime(&modbus);
+    let apps = rt.start_apps(Vec::new()).await.unwrap();
+    let config =
+        json!({ "server": { "listen": "127.0.0.1:0", "holding": 4, "max_connections": 1 } });
+    let started = rt
+        .start_extensions(&apps, &BTreeMap::from([(PACKAGE.to_string(), config)]))
+        .unwrap();
+    let address = modbus.server_address().unwrap();
+    let read = |mut client: tokio_modbus::client::Context| async move {
+        let answer = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.read_holding_registers(0, 1),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .and_then(Result::ok);
+        (answer, client)
+    };
+    let first = tokio_modbus::client::tcp::connect_slave(address, Slave(1))
+        .await
+        .unwrap();
+    let (first_read, first) = read(first).await;
+
+    let second = match tokio_modbus::client::tcp::connect_slave(address, Slave(1)).await {
+        Ok(client) => read(client).await.0,
+        Err(_) => None,
+    };
+    drop(first);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let third = tokio_modbus::client::tcp::connect_slave(address, Slave(1))
+        .await
+        .unwrap();
+    let (third_read, _third) = read(third).await;
+
+    assert_eq!(first_read, Some(vec![0]));
+    assert_eq!(second, None);
+    assert_eq!(third_read, Some(vec![0]));
+    started.stop();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start____bad_configuration____refused() {
     let modbus = Modbus::default();
@@ -95,6 +141,10 @@ async fn start____bad_configuration____refused() {
         PACKAGE,
         json!({ "server": { "listen": "127.0.0.1:0", "allow": ["10.0.0.0/33"] } }),
     );
+    let no_connections = start(
+        PACKAGE,
+        json!({ "server": { "listen": "127.0.0.1:0", "max_connections": 0 } }),
+    );
     let unknown_extension = start("other:ext", json!({}));
     let no_target = start(
         PACKAGE,
@@ -105,6 +155,7 @@ async fn start____bad_configuration____refused() {
 
     assert!(unknown_field.unwrap_err().contains("devcies"));
     assert!(bad_allow.unwrap_err().contains("server.allow"));
+    assert!(no_connections.unwrap_err().contains("max_connections"));
     assert!(unknown_extension.unwrap_err().contains("other:ext"));
     assert!(no_target.unwrap_err().contains("deliver_to"));
 }

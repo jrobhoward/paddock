@@ -6,6 +6,12 @@
 //! leadership with `may_run` starts them from `init`; one without kills
 //! them at once (no `terminate`: the lease may be ending).
 //!
+//! A singleton held but not running is checked as a start would be (its
+//! dependencies, its supervision), so a node that does not run it refuses
+//! what the primary would. A start that still fails when the node may run
+//! singletons (a dependency stopped meanwhile) is tried again, with
+//! backoff, until it succeeds or the leadership changes.
+//!
 //! Each start logs `singleton starting` before the app's `init` runs and
 //! `singleton started` or `cannot start singleton` after; each kill logs
 //! `singleton killed` once it is done. `scripts/soak.sh` reads these
@@ -14,6 +20,7 @@
 use std::sync::Mutex;
 use std::sync::PoisonError;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use paddock_bundle::manifest::PlacementMode;
 use paddock_host::failover::{Leadership, Standing};
@@ -21,6 +28,11 @@ use paddock_host::{AppDeployment, AppHandle, Apps, HostError, Runtime, UpgradeEr
 use tokio::sync::watch;
 
 use super::error::NodeError;
+
+/// The first wait before trying a failed singleton start again, doubled
+/// after each failure up to [`RETRY_MAX`].
+const RETRY_MIN: Duration = Duration::from_secs(1);
+const RETRY_MAX: Duration = Duration::from_secs(30);
 
 /// A singleton this node would run.
 #[derive(Debug)]
@@ -75,6 +87,15 @@ impl Gate {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The held singletons but `name`, as they would start.
+    fn others(&self, name: &str) -> Vec<AppDeployment> {
+        self.held()
+            .iter()
+            .filter(|h| h.name != name)
+            .map(|h| h.current.clone())
+            .collect()
+    }
+
     /// Whether `name` is a singleton this node holds.
     pub(super) fn holds(&self, name: &str) -> bool {
         self.held().iter().any(|h| h.name == name)
@@ -92,6 +113,10 @@ impl Gate {
         deployment: AppDeployment,
     ) -> Result<Option<AppHandle>, HostError> {
         let _op = self.op.lock().await;
+        if !self.may_run.load(Ordering::Relaxed) {
+            // Refuse now what a promotion could not start.
+            self.apps.check_add(&deployment, &self.others(name))?;
+        }
         self.held().retain(|h| h.name != name);
         self.held().push(Held {
             name: name.to_string(),
@@ -152,13 +177,22 @@ impl Gate {
         deployment: AppDeployment,
         approve: bool,
     ) -> Result<(String, Vec<String>), UpgradeError> {
+        let current = self
+            .held()
+            .iter()
+            .find(|h| h.name == name)
+            .map(|h| h.current.manifest.clone())
+            .ok_or_else(|| UpgradeError::UnknownApp(name.to_string()))?;
+        let approved = paddock_host::validate_upgrade(&current, &deployment.manifest, approve)?;
+        // What a promotion would start must start.
+        self.apps
+            .check_add(&deployment, &self.others(name))
+            .map_err(|e| UpgradeError::Invalid(e.to_string()))?;
         let mut held = self.held();
         let h = held
             .iter_mut()
             .find(|h| h.name == name)
             .ok_or_else(|| UpgradeError::UnknownApp(name.to_string()))?;
-        let approved =
-            paddock_host::validate_upgrade(&h.current.manifest, &deployment.manifest, approve)?;
         let from = h.current.manifest.app.version.to_string();
         h.previous = Some(std::mem::replace(&mut h.current, deployment));
         Ok((from, approved.iter().map(|c| c.key().to_string()).collect()))
@@ -189,27 +223,11 @@ impl Gate {
             return;
         }
         self.may_run.store(may_run, Ordering::Relaxed);
-        let held: Vec<(String, AppDeployment, Option<AppDeployment>)> = self
-            .held()
-            .iter()
-            .map(|h| (h.name.clone(), h.current.clone(), h.previous.clone()))
-            .collect();
         if may_run {
-            for (name, current, previous) in held {
-                if self.apps.app(&name).is_some() {
-                    continue;
-                }
-                tracing::info!(app = %name, "singleton starting: this node is primary");
-                match self.apps.add(current).await {
-                    Ok(app) => {
-                        app.set_previous(previous);
-                        tracing::info!(app = %name, "singleton started: this node is primary");
-                    }
-                    Err(e) => tracing::error!(app = %name, error = %e, "cannot start singleton"),
-                }
-            }
+            self.start_held().await;
         } else {
-            for (name, _, _) in held.iter().rev() {
+            let names: Vec<String> = self.held().iter().map(|h| h.name.clone()).collect();
+            for name in names.iter().rev() {
                 if self.apps.app(name).is_none() {
                     continue;
                 }
@@ -220,6 +238,50 @@ impl Gate {
                     Err(e) => tracing::error!(app = %name, error = %e, "cannot kill singleton"),
                 }
             }
+        }
+    }
+
+    /// Start every held singleton that does not run, in deploy order.
+    /// Returns whether any could not start. Called with `op` held.
+    async fn start_held(&self) -> bool {
+        let held: Vec<(String, AppDeployment, Option<AppDeployment>)> = self
+            .held()
+            .iter()
+            .map(|h| (h.name.clone(), h.current.clone(), h.previous.clone()))
+            .collect();
+        let mut failed = false;
+        for (name, current, previous) in held {
+            if self.apps.app(&name).is_some() {
+                continue;
+            }
+            tracing::info!(app = %name, "singleton starting: this node is primary");
+            match self.apps.add(current).await {
+                Ok(app) => {
+                    app.set_previous(previous);
+                    tracing::info!(app = %name, "singleton started: this node is primary");
+                }
+                Err(e) => {
+                    failed = true;
+                    tracing::error!(app = %name, error = %e, "cannot start singleton");
+                }
+            }
+        }
+        failed
+    }
+
+    /// Whether a held singleton is missing while this node may run them:
+    /// a start that failed, to try again.
+    fn missing(&self) -> bool {
+        self.may_run.load(Ordering::Relaxed)
+            && !self.closed.load(Ordering::Relaxed)
+            && self.held().iter().any(|h| self.apps.app(&h.name).is_none())
+    }
+
+    /// Try the failed starts again, if this node may still run singletons.
+    async fn retry(&self) {
+        let _op = self.op.lock().await;
+        if self.may_run.load(Ordering::Relaxed) && !self.closed.load(Ordering::Relaxed) {
+            self.start_held().await;
         }
     }
 
@@ -253,9 +315,22 @@ pub(super) async fn follow(
         }
         rt.set_failover_role(Some(role_name(now.standing)));
         gate.set(now.may_run && saved >= now.epoch).await;
-        tokio::select! {
-            changed = leadership.changed() => if changed.is_err() { return },
-            _ = stop.wait_for(|s| *s) => return,
+        let mut wait = RETRY_MIN;
+        loop {
+            let retry = gate.missing();
+            let woke = tokio::select! {
+                changed = leadership.changed() => {
+                    if changed.is_err() { return }
+                    false
+                }
+                _ = stop.wait_for(|s| *s) => return,
+                () = tokio::time::sleep(wait), if retry => true,
+            };
+            if !woke {
+                break;
+            }
+            gate.retry().await;
+            wait = (wait * 2).min(RETRY_MAX);
         }
     }
 }

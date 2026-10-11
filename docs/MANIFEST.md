@@ -309,6 +309,7 @@ listen = "0.0.0.0:5020"
 deliver_to = "points"                  # masters' writes
 holding = 100                          # table sizes from address 0; also input, coils, discrete
 allow = ["10.20.0.0/24"]               # masters allowed (addresses or networks); default loopback only
+max_connections = 32                   # default 32: masters connected at once; more are closed on accept
 ```
 
 Modbus has no authentication: any master that can connect reads and writes the served tables. A master whose address is not in `allow` is refused; list the SCADA network, and bind `listen` to the interface that reaches it.

@@ -45,15 +45,13 @@ Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test 
 
 ## Stage 2: Review (M)
 
-Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3 and Q7 are done). W1 finishes both drafts.
+Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6, done); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3 and Q7 are done). W1 finishes both drafts.
 
 ## Stage 3: Rework (M–L)
 
 From stage 2 and earlier work:
 
 - [ ] **Q5 Test gaps: what is left** (the rest landed 2026-10-11, CHANGELOG). `NotYet` to a node that is down: it arises only from the millisecond rounding of `confirmed_ago_ms`, and a direct test needs the node state machine without a runtime. A pool template the rollout cannot put back (now logged and reported in the upgrade's error) and a singleton kill that fails: both need a supervisor that exits mid-operation, which no test can yet arrange.
-- [ ] **Q6 Security fixes** from R3 (`docs/SECURITY.md`). S1 to S9 are fixed and the fuzz targets added. Left: a connection cap on the Modbus server (tokio-modbus's server gives no hook for one).
-- [ ] **Q15 Singletons on a node that does not run them.** A singleton deployed to a standby is only held: nothing checks it can start (a missing dependency, say) until a promotion tries, logs `cannot start singleton`, and leaves it stopped while the node is primary. A start that fails at promotion is not tried again until the next one. Check what `Apps::add` checks at hold time, and retry a failed start (with backoff) while the node may run singletons. Found writing Q5's gate tests.
 - [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
 
 ### Verification of failover

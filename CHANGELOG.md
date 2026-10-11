@@ -285,9 +285,20 @@ All notable changes are recorded here. The format follows
   standby standing down when its partner says `Down`, the Modbus guest
   interface, links cascading along a chain, watches ended when their
   instance exits, and secret values absent from every log record and error.
+- `Apps::check_add`: whether `Apps::add` would accept an app, without
+  starting it.
+- Modbus server `max_connections` (default 32): masters connected at once;
+  more are closed on accept, with one warning each time the server fills.
 
 ### Fixed
 
+- A singleton deployed to, or upgraded on, a node that does not run it was
+  not checked until a promotion tried to start it: a missing dependency
+  failed then, and the node stayed primary without it. It is now checked
+  as a start would be and refused at once. A start that fails at
+  promotion (a dependency stopped meanwhile) is tried again, waiting 1 s
+  then twice as long each time up to 30 s, until it starts or the
+  leadership changes.
 - A rollout that reverted but could not put the pool's template back, and
   an upgrade whose HTTP routes could not be put back, said nothing: later
   instances would run the version rolled back from, or the app lose its

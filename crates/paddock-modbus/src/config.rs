@@ -105,6 +105,13 @@ pub struct ServerConfig {
     /// default is loopback only; list the SCADA network to serve it.
     #[serde(default = "default_allow")]
     pub allow: Vec<String>,
+    /// Most masters connected at once; more are closed on accept.
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+}
+
+fn default_max_connections() -> usize {
+    32
 }
 
 fn default_allow() -> Vec<String> {
@@ -205,6 +212,13 @@ impl Config {
             return Err(format!(
                 "server.allow: '{bad}' is not an address or a network (10.0.0.0/24)"
             ));
+        }
+        if config
+            .server
+            .as_ref()
+            .is_some_and(|s| s.max_connections == 0)
+        {
+            return Err("server.max_connections must be more than 0".into());
         }
         Ok(config)
     }

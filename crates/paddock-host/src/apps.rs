@@ -296,47 +296,77 @@ impl Apps {
     /// with [`AppStatus::Failed`], not as an error.
     pub async fn add(&self, deployment: AppDeployment) -> Result<AppHandle, HostError> {
         let name = deployment.manifest.app.name.clone();
-        let spec = {
-            let set = self.set();
-            if set.apps.contains_key(&name) {
-                return Err(HostError::InvalidApps(format!(
-                    "{name} is already deployed"
-                )));
-            }
-            for dep in &deployment.manifest.spec.dependencies {
-                let Some(found) = set.apps.get(&dep.app) else {
-                    return Err(HostError::InvalidApps(format!(
-                        "{name} depends on {}, which is not deployed",
-                        dep.app
-                    )));
-                };
-                let version = found.version();
-                if !dep.version.matches(&version) {
-                    return Err(HostError::InvalidApps(format!(
-                        "{name} needs {} {}, but {version} is deployed",
-                        dep.app, dep.version
-                    )));
-                }
-                if found.status() != AppStatus::Running {
-                    return Err(HostError::InvalidApps(format!(
-                        "dependency {} is not running",
-                        dep.app
-                    )));
-                }
-            }
-            let others: Vec<AppDeployment> = set.apps.values().map(AppHandle::deployment).collect();
-            let mut by_name: HashMap<&str, &AppDeployment> = others
-                .iter()
-                .map(|d| (d.manifest.app.name.as_str(), d))
-                .collect();
-            by_name.insert(name.as_str(), &deployment);
-            root_spec(&deployment, &by_name).map_err(HostError::InvalidApps)?
-        };
+        let spec = self.checked(&deployment, &[])?;
         let handle = start_app(&self.rt, &deployment, spec).await;
         let mut set = self.inner.write().unwrap_or_else(PoisonError::into_inner);
         set.order.push(name.clone());
         set.apps.insert(name, handle.clone());
         Ok(handle)
+    }
+
+    /// Whether [`Apps::add`] would accept `deployment` once the apps in
+    /// `also` are added too, without starting anything: for an app this
+    /// node holds to start later (a singleton on a node that does not run
+    /// singletons now), with `also` the others it holds, which count as
+    /// deployed and running.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Apps::add`].
+    pub fn check_add(
+        &self,
+        deployment: &AppDeployment,
+        also: &[AppDeployment],
+    ) -> Result<(), HostError> {
+        self.checked(deployment, also).map(|_| ())
+    }
+
+    /// [`Apps::add`]'s checks, and the root spec it would start.
+    fn checked(
+        &self,
+        deployment: &AppDeployment,
+        also: &[AppDeployment],
+    ) -> Result<SupervisorSpec, HostError> {
+        let name = deployment.manifest.app.name.as_str();
+        let set = self.set();
+        if set.apps.contains_key(name) {
+            return Err(HostError::InvalidApps(format!(
+                "{name} is already deployed"
+            )));
+        }
+        let also_named = |app: &str| also.iter().find(|d| d.manifest.app.name == app);
+        for dep in &deployment.manifest.spec.dependencies {
+            let (version, running) = match (set.apps.get(&dep.app), also_named(&dep.app)) {
+                (Some(found), _) => (found.version(), found.status() == AppStatus::Running),
+                (None, Some(held)) => (held.manifest.app.version.clone(), true),
+                (None, None) => {
+                    return Err(HostError::InvalidApps(format!(
+                        "{name} depends on {}, which is not deployed",
+                        dep.app
+                    )));
+                }
+            };
+            if !dep.version.matches(&version) {
+                return Err(HostError::InvalidApps(format!(
+                    "{name} needs {} {}, but {version} is deployed",
+                    dep.app, dep.version
+                )));
+            }
+            if !running {
+                return Err(HostError::InvalidApps(format!(
+                    "dependency {} is not running",
+                    dep.app
+                )));
+            }
+        }
+        let others: Vec<AppDeployment> = set.apps.values().map(AppHandle::deployment).collect();
+        let mut by_name: HashMap<&str, &AppDeployment> = others
+            .iter()
+            .chain(also)
+            .map(|d| (d.manifest.app.name.as_str(), d))
+            .collect();
+        by_name.insert(name, deployment);
+        root_spec(deployment, &by_name).map_err(HostError::InvalidApps)
     }
 
     /// Kill every instance of `name` at once (no `terminate`, no restart)

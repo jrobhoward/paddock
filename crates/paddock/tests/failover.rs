@@ -276,11 +276,19 @@ async fn failover____primary_process_killed____standby_takes_over_and_old_primar
 /// "paths" it promotes itself once the partner is silent; with "operator"
 /// it stays down and only holds its singletons.
 async fn alone(arbiter: &str) -> (tempfile::TempDir, TestNode) {
+    alone_for(arbiter, 1000).await
+}
+
+/// [`alone`], promoting itself (paths) `node_timeout_ms` after it starts.
+async fn alone_for(arbiter: &str, node_timeout_ms: u64) -> (tempfile::TempDir, TestNode) {
     let dir = tempfile::tempdir().unwrap();
     let peers = keys(dir.path());
     let extra = format!(
         "{}[failover]\npartner = 2\narbiter = \"{arbiter}\"\nlease_ms = 1000\nmargin_ms = 200\n",
-        cluster(1, dir.path(), &peers, &free_udp(), &[])
+        cluster(1, dir.path(), &peers, &free_udp(), &[]).replace(
+            "node_timeout_ms = 1000",
+            &format!("node_timeout_ms = {node_timeout_ms}")
+        )
     );
     (dir, TestNode::start(&extra).await)
 }
@@ -423,5 +431,87 @@ async fn gate____epoch_cannot_be_kept____singleton_stays_stopped() {
 
     assert_eq!(status, "standby");
     assert_eq!(n.client.ps().await.unwrap().len(), 0);
+    n.shutdown().await;
+}
+
+/// A node that does not run singletons checks one as a start would, so it
+/// refuses what the primary would refuse.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gate____held_singleton_with_a_missing_dependency____deploy_and_upgrade_refused() {
+    let (_dir, mut n) = alone("operator").await;
+    let needs_base = serde_json::json!({ "dependencies": [{ "app": "base", "version": "^1" }] });
+
+    let deployed = n
+        .client
+        .deploy(singleton_bundle(&n, "1.0.0", needs_base.clone()))
+        .await;
+    n.client
+        .deploy(singleton_bundle(&n, "1.0.0", serde_json::json!({})))
+        .await
+        .unwrap();
+    let upgraded = n
+        .client
+        .upgrade(
+            "leader",
+            singleton_bundle(&n, "2.0.0", needs_base),
+            &paddock::api::RolloutParams::default(),
+        )
+        .await;
+
+    let deploy_err = deployed.unwrap_err().to_string();
+    let upgrade_err = upgraded.unwrap_err().to_string();
+    assert!(deploy_err.contains("base"), "{deploy_err}");
+    assert!(upgrade_err.contains("base"), "{upgrade_err}");
+    assert_eq!(
+        n.client.status("leader").await.unwrap().summary.version,
+        "1.0.0"
+    );
+    n.shutdown().await;
+}
+
+/// A singleton that cannot start at promotion (its dependency was stopped
+/// while it was held) starts once the dependency is back, without another
+/// promotion.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gate____start_fails_at_promotion____tried_again_until_it_starts() {
+    let (_dir, mut n) = alone_for("paths", 4000).await;
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "base",
+            "1.0.0",
+            &fixture("paddock_fixture_chaos"),
+            fast(serde_json::json!({})),
+            &[],
+        ))
+        .await
+        .unwrap();
+    n.client
+        .deploy(singleton_bundle(
+            &n,
+            "1.0.0",
+            serde_json::json!({ "dependencies": [{ "app": "base", "version": "^1" }] }),
+        ))
+        .await
+        .unwrap();
+    n.client.stop("base").await.unwrap();
+    assert!(
+        !standing(&n).await.may_run,
+        "promoted too early for the test"
+    );
+
+    until("node 1 primary alone", || async {
+        standing(&n).await.may_run
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let while_base_stopped = singleton(&n).await;
+    n.client.start("base").await.unwrap();
+    until("the singleton started", || async {
+        singleton(&n).await == "running"
+    })
+    .await;
+
+    assert_eq!(while_base_stopped, "standby");
     n.shutdown().await;
 }

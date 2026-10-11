@@ -58,7 +58,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 - **Devices** are polled with a timeout per request; responses are parsed by tokio-modbus.
 - **The server** answers only masters in `server.allow` (loopback by default): Modbus has no authentication of its own.
-- **Gaps.** S4 is fixed but for a connection cap.
+- **Gaps.** None found; S4 is fixed. At most `server.max_connections` masters (default 32) are connected at once.
 
 ### Liveness, membership and failover
 
@@ -83,7 +83,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 | S1 | medium, fixed 2026-10-10 | Two deployed apps could list the same registered name. The first instance to register it holds it; names are released when the holder exits, so each restart is a race the other app can win and receive the messages meant for the first. | Fixed: a deploy, upgrade or rollback that lists a name another deployed app lists, running or stopped, is refused (`conflict`). |
 | S2 | medium, fixed 2026-10-10 | Guest log messages and contexts were written as given. A newline starts what looks like a new host record, with any timestamp and target: checked with tracing-subscriber 0.3.23, which escapes ANSI sequences but not newlines. Operators' logs, and the soak's checker, which reads the gate's records, can be fooled. | Fixed: control characters in guest text (log messages and contexts, stdout and stderr lines, crash reasons) are escaped. |
 | S3 | medium, fixed 2026-10-10 | Guest stdout and stderr became log records with no rate limit, and an app's own `rate_limit_per_sec` was optional, so one app could flood the node's log. | Fixed: every app has a budget, the node's `[limits] log_records_per_sec` (default 1000) or its own lower rate, shared by its log records and its stdout and stderr lines. |
-| S4 | medium, fixed 2026-10-10 | The Modbus server accepted reads and writes from any master that reached its address; a write changes the served table and is cast to the `deliver_to` app. | Fixed: `server.allow` lists the masters' addresses or networks, loopback only by default; MANIFEST.md says to bind it to the SCADA interface. A cap on connections is still to do (tokio-modbus's server gives no hook for it). |
+| S4 | medium, fixed 2026-10-10 | The Modbus server accepted reads and writes from any master that reached its address; a write changes the served table and is cast to the `deliver_to` app. | Fixed: `server.allow` lists the masters' addresses or networks, loopback only by default; MANIFEST.md says to bind it to the SCADA interface. `server.max_connections` (default 32) caps the masters connected at once (2026-10-11). |
 | S5 | low, fixed 2026-10-10 | A pair node took failover answers (`Granted`, `LeaseOk`, `Fenced`, `NotYet`, `Refused`) from any member, not only its witness: a faulty member's `Granted` promotes the standby. | Fixed: answers from any node but the configured witness are dropped and logged. |
 | S6 | low, fixed 2026-10-10 | A volume's `quota` was accepted but not enforced (documented): an app with a writable volume can fill the disk. | Fixed: a manifest `quota` on a preopen is refused, since wasmtime-wasi offers no place to enforce one; MANIFEST.md tells operators to give each writable volume a filesystem quota. |
 | S7 | low, fixed 2026-10-10 | `priv/` extraction relied on rustbridge-bundle for path safety. | Fixed: Paddock refuses a bundle with a `priv/` path that is not plain relative names (`..`, `.`, a root, an empty part, `:` or a backslash), on open and again on extraction. |
