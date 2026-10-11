@@ -289,9 +289,15 @@ All notable changes are recorded here. The format follows
   starting it.
 - Modbus server `max_connections` (default 32): masters connected at once;
   more are closed on accept, with one warning each time the server fills.
+- Tests that drive failover transitions one at a time against a fake
+  environment (`failover::node`'s `Env` trait), among them `NotYet` to a
+  node that is down, and one where a pool's supervisor exits mid-rollout.
 
 ### Fixed
 
+- The test `link____partner_exits_normal____non_trapping_instance_keeps_running`
+  failed about one run in thirty: the instance asked to exit could stop
+  before replying. It now accepts either.
 - A singleton deployed to, or upgraded on, a node that does not run it was
   not checked until a promotion tried to start it: a missing dependency
   failed then, and the node stayed primary without it. It is now checked
@@ -371,6 +377,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `Apps::kill` returns whether the app was there to kill, instead of an
+  error for one that was not: the gate no longer has a failure path that
+  only a race could reach.
 - Debug and test builds carry line tables only, not full debug info: test
   binaries about a third the size, and less memory to link them (the
   Raspberry Pi 5 ran out at the default four jobs).

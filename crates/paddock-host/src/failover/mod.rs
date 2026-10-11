@@ -466,8 +466,8 @@ struct PartnerView {
 }
 
 impl PartnerView {
-    fn read(rt: &RuntimeInner, partner: u32) -> Self {
-        let beats = rt.liveness.beats_from(partner);
+    fn read(env: &dyn node::Env, partner: u32) -> Self {
+        let beats = env.beats_from(partner);
         let any_live = beats.iter().any(|b| b.live);
         let live = beats
             .into_iter()

@@ -45,13 +45,11 @@ Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test 
 
 ## Stage 2: Review (M)
 
-Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6, done); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3 and Q7 are done). W1 finishes both drafts.
+Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5, done); R3, the draft [SECURITY.md](SECURITY.md) (Q6, done); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3 and Q7 are done). W1 finishes both drafts.
 
 ## Stage 3: Rework (M–L)
 
-From stage 2 and earlier work:
-
-- [ ] **Q5 Test gaps: what is left** (the rest landed 2026-10-11, CHANGELOG). `NotYet` to a node that is down: it arises only from the millisecond rounding of `confirmed_ago_ms`, and a direct test needs the node state machine without a runtime. A pool template the rollout cannot put back (now logged and reported in the upgrade's error) and a singleton kill that fails: both need a supervisor that exits mid-operation, which no test can yet arrange.
+Every item from stage 2 is done (2026-10-11, CHANGELOG); V2 is what is left.
 
 ### Verification of failover
 

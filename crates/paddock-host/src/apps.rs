@@ -371,23 +371,17 @@ impl Apps {
 
     /// Kill every instance of `name` at once (no `terminate`, no restart)
     /// and remove it from the set, whatever depends on it: for a singleton
-    /// that must stop now (its failover lease is ending).
-    ///
-    /// # Errors
-    ///
-    /// [`HostError::InvalidApps`] if `name` is not in the set.
-    pub async fn kill(&self, name: &str) -> Result<(), HostError> {
-        let app = self
-            .set()
-            .apps
-            .get(name)
-            .cloned()
-            .ok_or_else(|| HostError::InvalidApps(format!("{name} is not deployed")))?;
+    /// that must stop now (its failover lease is ending). Returns whether
+    /// `name` was in the set; one that is not has nothing left to kill.
+    pub async fn kill(&self, name: &str) -> bool {
+        let Some(app) = self.set().apps.get(name).cloned() else {
+            return false;
+        };
         end_app(&self.rt, &app, true).await;
         let mut set = self.inner.write().unwrap_or_else(PoisonError::into_inner);
         set.order.retain(|n| n != name);
         set.apps.remove(name);
-        Ok(())
+        true
     }
 
     /// Stop an app and take it out of the set.

@@ -475,3 +475,21 @@ async fn remove____needed_by_a_running_app____refused_then_allowed_after_depende
     assert!(apps.names().is_empty());
     assert_eq!(base_instance.exit_reason(), Some(ExitReason::Shutdown));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kill____running_app_then_again____killed_once_then_nothing_to_kill() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![deployment("kill-app", "1.0.0", fast(json!({})))])
+        .await
+        .unwrap();
+    let instance = apps.app("kill-app").unwrap().instances()[0].clone();
+
+    let first = apps.kill("kill-app").await;
+    let again = apps.kill("kill-app").await;
+
+    assert!(first);
+    assert!(!again);
+    assert!(apps.app("kill-app").is_none());
+    assert_eq!(instance.wait().await, paddock_host::ExitReason::Killed);
+}

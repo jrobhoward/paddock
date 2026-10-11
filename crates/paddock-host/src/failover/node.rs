@@ -18,7 +18,40 @@ use super::{
     Arbiter, FailoverConfig, FailoverMsg, Leadership, PartnerView, RunUntil, Standing, Status,
 };
 use crate::runtime::RuntimeInner;
+use crate::transport::liveness::Beat;
 use crate::transport::{self, Frame};
+
+/// What the transitions see of the node: liveness and the transport. The
+/// runtime in a node; a fake in the unit tests, which drive transitions
+/// one at a time.
+pub(super) trait Env {
+    /// This node's id.
+    fn node(&self) -> u32;
+    /// The last beat from `node` on each path.
+    fn beats_from(&self, node: u32) -> Vec<Beat>;
+    /// Whether frames to `node` are sent (it hears this node).
+    fn reachable(&self, node: u32) -> bool;
+    /// Send `msg` to `to`.
+    fn send(&self, to: u32, msg: FailoverMsg);
+}
+
+impl Env for RuntimeInner {
+    fn node(&self) -> u32 {
+        RuntimeInner::node(self)
+    }
+
+    fn beats_from(&self, node: u32) -> Vec<Beat> {
+        self.liveness.beats_from(node)
+    }
+
+    fn reachable(&self, node: u32) -> bool {
+        self.liveness.reachable(node)
+    }
+
+    fn send(&self, to: u32, msg: FailoverMsg) {
+        transport::send(self, to, Frame::Failover(msg));
+    }
+}
 
 /// A node's standing, with the data that standing has and no other.
 #[derive(Debug)]
@@ -190,38 +223,38 @@ impl State {
     }
 
     /// A periodic step: look at the partner, renew, ask, or move on.
-    fn step(self, ctx: &mut Ctx, rt: &RuntimeInner, now: Instant) -> Self {
+    fn step(self, ctx: &mut Ctx, env: &dyn Env, now: Instant) -> Self {
         ctx.stamp += 1;
         ctx.stamps.insert(ctx.stamp, now);
         // Stamps older than a lease cannot renew anything.
         let horizon = now.checked_sub(ctx.cfg.lease).unwrap_or(now);
         ctx.stamps.retain(|_, set| *set >= horizon);
-        let partner = PartnerView::read(rt, ctx.cfg.partner);
+        let partner = PartnerView::read(env, ctx.cfg.partner);
         if let Some(stamp) = partner.stamp() {
             ctx.seen = ctx.seen.max(stamp);
         }
         match self {
-            Self::Primary(p) => p.step(ctx, rt, &partner, now),
-            Self::Standby(s) => s.step(ctx, rt, &partner, now),
-            Self::Down(d) => d.step(ctx, rt, &partner, now),
+            Self::Primary(p) => p.step(ctx, env, &partner, now),
+            Self::Standby(s) => s.step(ctx, env, &partner, now),
+            Self::Down(d) => d.step(ctx, env, &partner, now),
         }
     }
 }
 
 impl Ctx {
-    fn to_witness(&self, rt: &RuntimeInner, msg: FailoverMsg) {
+    fn to_witness(&self, env: &dyn Env, msg: FailoverMsg) {
         if let Arbiter::Witness(witness) = self.cfg.arbiter {
-            transport::send(rt, witness, Frame::Failover(msg));
+            env.send(witness, msg);
         }
     }
 
     /// Whether the witness is heard and hears this node. Without a witness
     /// arbiter, false.
-    fn witness_reachable(&self, rt: &RuntimeInner) -> bool {
+    fn witness_reachable(&self, env: &dyn Env) -> bool {
         let Arbiter::Witness(witness) = self.cfg.arbiter else {
             return false;
         };
-        rt.liveness.reachable(witness) && rt.liveness.beats_from(witness).iter().any(|b| b.live)
+        env.reachable(witness) && env.beats_from(witness).iter().any(|b| b.live)
     }
 
     /// The partner's lease, as far as this node confirmed it, has run out.
@@ -259,14 +292,7 @@ impl Ctx {
     }
 
     /// Send a request to the witness unless one waits for its retry time.
-    fn ask(
-        &mut self,
-        rt: &RuntimeInner,
-        asking: &mut Asking,
-        resume: bool,
-        epoch: u64,
-        now: Instant,
-    ) {
+    fn ask(&mut self, env: &dyn Env, asking: &mut Asking, resume: bool, epoch: u64, now: Instant) {
         if asking.retry_at.is_some_and(|t| now < t) {
             return;
         }
@@ -289,7 +315,7 @@ impl Ctx {
         self.requests.retain(|_, sent| *sent >= horizon);
         let ago = now.duration_since(self.confirmed_at);
         self.to_witness(
-            rt,
+            env,
             FailoverMsg::Request {
                 seq,
                 resume,
@@ -342,13 +368,7 @@ impl Primary {
         }
     }
 
-    fn step(
-        mut self,
-        ctx: &mut Ctx,
-        rt: &RuntimeInner,
-        partner: &PartnerView,
-        now: Instant,
-    ) -> State {
+    fn step(mut self, ctx: &mut Ctx, env: &dyn Env, partner: &PartnerView, now: Instant) -> State {
         // `Fenced` by the partner: it is primary at a higher epoch.
         if let Some(theirs) = partner.primary(false)
             && theirs > self.epoch
@@ -374,7 +394,7 @@ impl Primary {
             let horizon = now.checked_sub(ctx.cfg.lease).unwrap_or(now);
             self.renewals.retain(|_, sent| *sent >= horizon);
             ctx.to_witness(
-                rt,
+                env,
                 FailoverMsg::Renew {
                     seq,
                     epoch: self.epoch,
@@ -407,13 +427,7 @@ impl Standby {
         State::Down(down)
     }
 
-    fn step(
-        mut self,
-        ctx: &mut Ctx,
-        rt: &RuntimeInner,
-        partner: &PartnerView,
-        now: Instant,
-    ) -> State {
+    fn step(mut self, ctx: &mut Ctx, env: &dyn Env, partner: &PartnerView, now: Instant) -> State {
         if let Some(theirs) = partner.primary(false) {
             self.epoch = self.epoch.max(theirs);
         }
@@ -459,13 +473,13 @@ impl Standby {
             Arbiter::Witness(_) => {
                 // `Ask`.
                 let mut asking = self.asking.unwrap_or_default();
-                ctx.ask(rt, &mut asking, false, self.epoch, now);
+                ctx.ask(env, &mut asking, false, self.epoch, now);
                 self.asking = Some(asking);
                 // An operator is asked only while the witness cannot be
                 // reached either. A confirmation, once given, stands even
                 // if the witness is reached again before it takes effect:
                 // the operator's word is final.
-                self.awaiting = !ctx.confirmed_by_operator && !ctx.witness_reachable(rt);
+                self.awaiting = !ctx.confirmed_by_operator && !ctx.witness_reachable(env);
                 // `Override`, once the partner's lease is out.
                 if ctx.confirmed_by_operator && ctx.waited_out(now) {
                     return ctx.promote(self.epoch + 1, None, true);
@@ -510,13 +524,7 @@ impl Down {
         State::Down(self)
     }
 
-    fn step(
-        mut self,
-        ctx: &mut Ctx,
-        rt: &RuntimeInner,
-        partner: &PartnerView,
-        now: Instant,
-    ) -> State {
+    fn step(mut self, ctx: &mut Ctx, env: &dyn Env, partner: &PartnerView, now: Instant) -> State {
         // `Rejoin`: a primary on the link, at no lower an epoch.
         if let Some(theirs) = partner.primary(true)
             && theirs >= self.epoch
@@ -534,7 +542,7 @@ impl Down {
             Arbiter::Witness(_) => {
                 // `Resume`, once its own confirmations are out of date.
                 if ctx.waited_out(now) {
-                    ctx.ask(rt, &mut self.asking, true, self.epoch, now);
+                    ctx.ask(env, &mut self.asking, true, self.epoch, now);
                 }
                 State::Down(self)
             }
@@ -546,7 +554,7 @@ impl Down {
                     .iter()
                     .any(|(_, _, s)| s.standing == Standing::Down);
                 let alone = !partner.any_live && ctx.cfg.arbiter == Arbiter::Paths;
-                if (partner_down && rt.node() < ctx.cfg.partner) || alone {
+                if (partner_down && env.node() < ctx.cfg.partner) || alone {
                     ctx.promote(self.epoch + 1, None, false)
                 } else {
                     State::Down(self)
@@ -724,7 +732,7 @@ pub(super) async fn run(
             _ = ticker.tick() => {
                 let Some(rt) = node.ctx.rt.upgrade() else { return };
                 let now = Instant::now();
-                node.apply(|state, ctx| state.step(ctx, &rt, now));
+                node.apply(|state, ctx| state.step(ctx, &*rt, now));
             }
         }
         let Some(rt) = node.ctx.rt.upgrade() else {
@@ -733,3 +741,7 @@ pub(super) async fn run(
         node.publish(&rt, Instant::now());
     }
 }
+
+#[cfg(test)]
+#[path = "node_tests.rs"]
+mod node_tests;

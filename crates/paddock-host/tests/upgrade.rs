@@ -566,3 +566,57 @@ async fn snapshot____after_exit____not_running() {
 
     assert_eq!(result, Err(paddock_host::SnapshotError::NotRunning));
 }
+
+/// `extra` as a pool of two instances of `name` (`simple_one_for_one`).
+fn pool(name: &str, mut extra: serde_json::Value) -> serde_json::Value {
+    extra["instances"] = json!({ "count": 2 });
+    extra["supervision"] = json!({
+        "strategy": "simple_one_for_one",
+        "intensity": 3,
+        "backoff": { "initial_ms": 10, "max_ms": 20 },
+        "children": [{ "id": "w", "app": name }]
+    });
+    extra
+}
+
+/// The pool's supervisor exits during the rollout: the next instance cannot
+/// move, the revert cannot put the pool's template back either, and the
+/// upgrade's error says so instead of leaving it unsaid.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upgrade____supervisor_exits_mid_rollout____error_says_the_template_was_not_put_back() {
+    let (rt, _) = shared();
+    let name = "up-sup-exit";
+    let apps = rt
+        .start_apps(vec![deployment(name, 1, pool(name, json!({})))])
+        .await
+        .unwrap();
+    let app = apps.app(name).unwrap().clone();
+    running_at(&app, 1).await;
+    let v2 = deployment(
+        name,
+        2,
+        pool(name, json!({ "upgrade": snapshot_mode("^1") })),
+    );
+    let supervisor = app.supervisor().unwrap().clone();
+    let exit = tokio::spawn(async move {
+        // After the first instance moved, during the observe window.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        supervisor.kill();
+    });
+    let options = UpgradeOptions {
+        batch_size: 1,
+        observe: Duration::from_millis(400),
+        max_restarts: 10,
+        ..UpgradeOptions::default()
+    };
+
+    let result = apps.upgrade(name, v2, &options).await;
+    exit.await.unwrap();
+
+    let Err(UpgradeError::Reverted(why)) = &result else {
+        panic!("expected reverted, got {result:?}");
+    };
+    assert!(why.contains("pool template could not be put back"), "{why}");
+    assert!(why.contains("2.0.0"), "{why}");
+    apps.stop().await;
+}

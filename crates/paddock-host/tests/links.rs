@@ -92,7 +92,10 @@ async fn link____partner_exits_normal____non_trapping_instance_keeps_running() {
     let b = rt.spawn(app, spec("")).unwrap();
     ask(&a, &format!("link:{}", pid_text(b.pid()))).await;
 
-    ask(&b, &format!("exit:{}:normal", pid_text(b.pid()))).await;
+    // b may stop before it replies: the call then fails with its exit.
+    let _ = b
+        .call(text(&format!("exit:{}:normal", pid_text(b.pid()))), LONG)
+        .await;
     let reason = b.wait().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 

@@ -228,14 +228,8 @@ impl Gate {
         } else {
             let names: Vec<String> = self.held().iter().map(|h| h.name.clone()).collect();
             for name in names.iter().rev() {
-                if self.apps.app(name).is_none() {
-                    continue;
-                }
-                match self.apps.kill(name).await {
-                    Ok(()) => {
-                        tracing::info!(app = %name, "singleton killed: this node may not run it")
-                    }
-                    Err(e) => tracing::error!(app = %name, error = %e, "cannot kill singleton"),
+                if self.apps.kill(name).await {
+                    tracing::info!(app = %name, "singleton killed: this node may not run it");
                 }
             }
         }
