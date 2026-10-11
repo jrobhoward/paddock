@@ -269,6 +269,13 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Failover: a grant that arrived after the standby had asked again
+  started its lease from the later request, so the new primary's lease
+  could run past the end the witness counted. Requests are now numbered,
+  the witness echoes the number in `Granted`, and the lease runs from when
+  that request was sent. The witness's answers no longer need to arrive
+  within a lease. The failover messages `Request` and `Granted` gain a
+  `seq` field: the pair and the witness must run the same version.
 - Failover witness: a grant is now written to disk before the witness
   applies it. Before, the epoch and promoted node changed in memory first,
   so a failed write left memory ahead of disk and a `Fenced` answer could
@@ -329,6 +336,15 @@ All notable changes are recorded here. The format follows
   both streams have finished, and the leaving node waits for that close.
 
 ### Changed
+
+- Failover with a witness: a standby asks for an operator's
+  confirmation (`awaiting_confirmation`, `paddock failover confirm`) only
+  while its partner is silent on every path and the witness cannot be
+  reached either; while the witness can be reached it decides alone.
+  `paddock failover confirm` is ignored, and says so, when the node is not
+  waiting for one. A confirmation once taken is final: it promotes the
+  standby when the partner's lease has run out even if the witness is
+  reached again meanwhile, and lapses only if the partner is heard first.
 
 - The Modbus server accepts masters from loopback only unless
   `server.allow` lists their networks.

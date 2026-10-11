@@ -49,7 +49,8 @@ pub(super) struct Standby {
     asking: Option<Asking>,
     /// Since when a live path has said the partner is `Down`.
     partner_down_since: Option<Instant>,
-    /// Only an operator's confirmation would promote it.
+    /// Only an operator's confirmation would promote it: the partner is
+    /// silent on every path and the witness cannot be reached.
     awaiting: bool,
 }
 
@@ -64,7 +65,7 @@ pub(super) struct Down {
 /// A request to the witness.
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct Asking {
-    /// When the last request was sent.
+    /// When the last request was sent (a grant is taken while set).
     sent: Option<Instant>,
     /// Its answer has not come yet.
     in_flight: bool,
@@ -89,7 +90,11 @@ pub(super) struct Ctx {
     stamps: BTreeMap<u64, Instant>,
     /// The partner's highest stamp seen, echoed while confirming.
     seen: u64,
-    /// An operator confirmed that the partner is gone.
+    /// When each request sent this episode left, by sequence: a grant's
+    /// lease runs from its own request's send time.
+    requests: BTreeMap<u64, Instant>,
+    next_request: u64,
+    /// An operator confirmed that the partner is gone, when asked.
     confirmed_by_operator: bool,
     /// The last lease end logged as noticed late.
     late_logged: Option<Instant>,
@@ -173,10 +178,10 @@ impl State {
         match (self, msg) {
             (Self::Primary(p), FailoverMsg::LeaseOk { seq }) => p.lease_ok(ctx, seq),
             (Self::Primary(p), FailoverMsg::Fenced { epoch }) => p.fenced(ctx, epoch, now),
-            (Self::Standby(s), FailoverMsg::Granted { epoch }) => s.granted(ctx, epoch),
+            (Self::Standby(s), FailoverMsg::Granted { seq, epoch }) => s.granted(ctx, seq, epoch),
             (Self::Standby(s), FailoverMsg::NotYet { wait_ms }) => s.not_yet(wait_ms, now),
             (Self::Standby(s), FailoverMsg::Refused { epoch }) => s.refused(ctx, epoch, now),
-            (Self::Down(d), FailoverMsg::Granted { epoch }) => d.granted(ctx, epoch),
+            (Self::Down(d), FailoverMsg::Granted { seq, epoch }) => d.granted(ctx, seq, epoch),
             (Self::Down(d), FailoverMsg::NotYet { wait_ms }) => d.not_yet(wait_ms, now),
             (Self::Down(d), FailoverMsg::Refused { epoch }) => d.refused(ctx, epoch, now),
             // Anything else is no news to this standing.
@@ -210,6 +215,15 @@ impl Ctx {
         }
     }
 
+    /// Whether the witness is heard and hears this node. Without a witness
+    /// arbiter, false.
+    fn witness_reachable(&self, rt: &RuntimeInner) -> bool {
+        let Arbiter::Witness(witness) = self.cfg.arbiter else {
+            return false;
+        };
+        rt.liveness.reachable(witness) && rt.liveness.beats_from(witness).iter().any(|b| b.live)
+    }
+
     /// The partner's lease, as far as this node confirmed it, has run out.
     fn waited_out(&self, now: Instant) -> bool {
         now >= self.confirmed_at + self.cfg.lease + self.cfg.margin
@@ -223,6 +237,7 @@ impl Ctx {
     fn down(&mut self, epoch: u64, now: Instant) -> Down {
         self.confirmed_at = now;
         self.confirmed_by_operator = false;
+        self.requests.clear();
         Down {
             epoch,
             asking: Asking::default(),
@@ -233,6 +248,7 @@ impl Ctx {
     /// or none (`Paths`, `Operator`, or an override).
     fn promote(&mut self, epoch: u64, lease_from: Option<Instant>, overridden: bool) -> State {
         self.confirmed_by_operator = false;
+        self.requests.clear();
         State::Primary(Primary {
             epoch,
             lease_until: lease_from.map(|t| t + self.cfg.lease - self.cfg.margin),
@@ -264,15 +280,32 @@ impl Ctx {
             in_flight: true,
             retry_at: Some(now + self.cfg.lease),
         };
+        let seq = self.next_request;
+        self.next_request += 1;
+        self.requests.insert(seq, now);
+        // A grant for a request older than a lease would start a lease
+        // already over.
+        let horizon = now.checked_sub(self.cfg.lease).unwrap_or(now);
+        self.requests.retain(|_, sent| *sent >= horizon);
         let ago = now.duration_since(self.confirmed_at);
         self.to_witness(
             rt,
             FailoverMsg::Request {
+                seq,
                 resume,
                 epoch,
                 confirmed_ago_ms: u64::try_from(ago.as_millis()).unwrap_or(u64::MAX),
             },
         );
+    }
+
+    /// When request `seq` left, if a grant for it is taken: this episode's
+    /// requests, while asking, and not older than a lease. A grant arriving
+    /// after a retry starts the lease from its own request, not the retry,
+    /// so no bound on the witness's answer time is needed.
+    fn granted_request(&self, asking: Option<&Asking>, seq: u64) -> Option<Instant> {
+        asking.and_then(|a| a.sent)?;
+        self.requests.get(&seq).copied()
     }
 }
 
@@ -353,9 +386,10 @@ impl Primary {
 }
 
 impl Standby {
-    /// `Granted`: promoted, with a lease from when the request left.
-    fn granted(self, ctx: &mut Ctx, epoch: u64) -> State {
-        match self.asking.and_then(|a| a.sent) {
+    /// `Granted`: promoted, with a lease from when the granted request
+    /// left.
+    fn granted(self, ctx: &mut Ctx, seq: u64, epoch: u64) -> State {
+        match ctx.granted_request(self.asking.as_ref(), seq) {
             Some(sent) => ctx.promote(epoch, Some(sent), false),
             None => State::Standby(self),
         }
@@ -400,6 +434,7 @@ impl Standby {
                 && partner.primary(false).is_some()
             {
                 self.asking = None;
+                ctx.requests.clear();
             }
             // `StandDown`: neither node leads; step down, as if restarted, so
             // the node the witness last promoted can resume (or the
@@ -426,7 +461,12 @@ impl Standby {
                 let mut asking = self.asking.unwrap_or_default();
                 ctx.ask(rt, &mut asking, false, self.epoch, now);
                 self.asking = Some(asking);
-                // An operator's override, once the partner's lease is out.
+                // An operator is asked only while the witness cannot be
+                // reached either. A confirmation, once given, stands even
+                // if the witness is reached again before it takes effect:
+                // the operator's word is final.
+                self.awaiting = !ctx.confirmed_by_operator && !ctx.witness_reachable(rt);
+                // `Override`, once the partner's lease is out.
                 if ctx.confirmed_by_operator && ctx.waited_out(now) {
                     return ctx.promote(self.epoch + 1, None, true);
                 }
@@ -447,8 +487,8 @@ impl Standby {
 
 impl Down {
     /// `Granted`: resumed as primary.
-    fn granted(self, ctx: &mut Ctx, epoch: u64) -> State {
-        match self.asking.sent {
+    fn granted(self, ctx: &mut Ctx, seq: u64, epoch: u64) -> State {
+        match ctx.granted_request(Some(&self.asking), seq) {
             Some(sent) => ctx.promote(epoch, Some(sent), false),
             None => State::Down(self),
         }
@@ -543,6 +583,8 @@ impl Node {
                 stamp: u64::from(rt.creation()) << 32,
                 stamps: BTreeMap::new(),
                 seen: 0,
+                requests: BTreeMap::new(),
+                next_request: 0,
                 confirmed_by_operator: false,
                 late_logged: None,
                 extended_logged: None,
@@ -616,6 +658,19 @@ impl Node {
         );
     }
 
+    /// An operator's confirmation: taken only while this node awaits one,
+    /// and then kept until it takes effect or the partner is heard again.
+    fn confirm(&mut self) {
+        if matches!(&self.state, State::Standby(s) if s.awaiting) {
+            tracing::warn!("failover: operator confirmed the partner is gone");
+            self.ctx.confirmed_by_operator = true;
+        } else {
+            tracing::info!(
+                "failover: operator confirmation ignored; this node was not waiting for one"
+            );
+        }
+    }
+
     fn publish(&mut self, rt: &RuntimeInner, now: Instant) {
         let status = self.state.status(&self.ctx);
         rt.liveness.set_payload(status.encode());
@@ -663,7 +718,7 @@ pub(super) async fn run(
                 let now = Instant::now();
                 node.apply(|state, ctx| state.on_message(ctx, msg, now));
             }
-            () = confirm.notified() => node.ctx.confirmed_by_operator = true,
+            () = confirm.notified() => node.confirm(),
             () = async { tokio::time::sleep_until(lease_end.unwrap_or(now)).await },
                 if lease_end.is_some() => {}
             _ = ticker.tick() => {

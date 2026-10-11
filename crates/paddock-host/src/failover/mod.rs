@@ -16,8 +16,11 @@
 //!   own record of renewals and by the requester's report of when it last
 //!   confirmed one (R3), one request at a time (R5). A primary stops its
 //!   singletons `margin` before its lease would end, by its own clock (R6).
-//!   Without the witness nothing is promoted; [`FailoverHandle::confirm`]
-//!   lets an operator promote, after waiting out the lease (R7).
+//!   Without the witness nothing is promoted: only while the witness
+//!   cannot be reached either is an operator asked
+//!   ([`Leadership::awaiting_confirmation`]), and a confirmation then
+//!   promotes after waiting out the lease (R7).
+//!   A grant's lease runs from when the request it answers was sent.
 //! - [`Arbiter::Paths`]: the standby promotes itself when every heartbeat
 //!   path is silent. No lease: safe when the serial line fails only with a
 //!   node (S16's `NoLeaseSafe`).
@@ -35,9 +38,8 @@
 //! `RunUntil`). Message delay is not part of it, but for one bound: a lease
 //! runs from when its renewal, or the stamp a confirmation echoes, was
 //! sent, and the witness counts from when it received, so a delay only
-//! makes the witness wait longer. The bound: an answer to a request
-//! arrives within a lease, before its requester asks again, since a grant
-//! starts the lease from the latest request sent.
+//! makes the witness wait longer, and a grant's lease runs from the send
+//! time of the request it answers (numbered, like renewals).
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -80,8 +82,7 @@ pub struct FailoverConfig {
     /// Safety margin: a holder stops this long before its lease ends, and
     /// the witness waits this long after. Twice the margin must exceed the
     /// clocks' drift over a lease plus the time to stop a singleton; message
-    /// delay does not count, if the witness's answers arrive within a lease
-    /// ([`crate::failover`]).
+    /// delay does not count ([`crate::failover`]).
     pub margin: Duration,
     /// The epoch to start at: the highest this node reached before it
     /// stopped, kept on disk, so epochs (fencing tokens) never go back. 0
@@ -162,7 +163,8 @@ pub struct Leadership {
     pub epoch: u64,
     /// Whether singletons may run here now.
     pub may_run: bool,
-    /// The partner looks gone and only an operator's
+    /// The partner looks gone, no witness can decide (none is configured,
+    /// or it cannot be reached), and only an operator's
     /// [`FailoverHandle::confirm`] would promote this node.
     pub awaiting_confirmation: bool,
 }
@@ -181,6 +183,8 @@ pub enum FailoverMsg {
     /// Promote the sender (or, with `resume`, let the node the witness last
     /// promoted take up the role again).
     Request {
+        /// Echoed in [`FailoverMsg::Granted`].
+        seq: u64,
         /// A restarted or stepped-down node resuming, not a standby.
         resume: bool,
         /// The sender's epoch.
@@ -199,8 +203,10 @@ pub enum FailoverMsg {
         epoch: u64,
     },
     /// The request is granted: the sender is primary at `epoch`, with a
-    /// lease from when it sent the request.
+    /// lease from when it sent the request numbered `seq`.
     Granted {
+        /// From [`FailoverMsg::Request`].
+        seq: u64,
         /// The new epoch.
         epoch: u64,
     },
@@ -237,12 +243,15 @@ impl FailoverHandle {
         self.leadership.clone()
     }
 
-    /// An operator confirms that the partner is gone: with
-    /// [`Arbiter::Operator`], or with a witness that cannot be reached,
-    /// the standby is promoted once the partner's lease has run out, and
-    /// runs without a lease until it meets its partner or the witness. The
-    /// confirmation lapses when the standby hears its partner again, steps
-    /// down or rejoins, so it never promotes on a later silence.
+    /// An operator confirms that the partner is gone. Taken only while
+    /// [`Leadership::awaiting_confirmation`] is set (with a witness, while
+    /// the partner is silent on every path and the witness cannot be
+    /// reached either), and ignored otherwise. Once taken it is final: the
+    /// standby is promoted once the partner's lease has run out, even if the
+    /// witness is reached again meanwhile, and with a witness runs without a
+    /// lease until its partner confirms it as standby. It lapses only if the
+    /// standby hears its partner again, steps down or rejoins first, so it
+    /// never promotes on a later silence.
     pub fn confirm(&self) {
         self.confirm.notify_one();
     }

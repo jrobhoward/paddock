@@ -69,12 +69,23 @@ fn start(sim: &Sim, arbiter: Arbiter) -> Pair {
 
 /// [`start`], with the witness keeping its state through `persist`.
 fn start_kept(sim: &Sim, arbiter: Arbiter, persist: Option<WitnessPersist>) -> Pair {
+    start_timed(sim, arbiter, persist, LEASE, MARGIN)
+}
+
+/// [`start_kept`], with another lease and margin.
+fn start_timed(
+    sim: &Sim,
+    arbiter: Arbiter,
+    persist: Option<WitnessPersist>,
+    lease: Duration,
+    margin: Duration,
+) -> Pair {
     sim.mesh.add_path(SERIAL);
     sim.mesh.cut_path(1, 3, SERIAL);
     sim.mesh.cut_path(2, 3, SERIAL);
     let mut witness = WitnessConfig::new([1, 2], 1);
-    witness.lease = LEASE;
-    witness.margin = MARGIN;
+    witness.lease = lease;
+    witness.margin = margin;
     if matches!(arbiter, Arbiter::Witness(_)) {
         sim.node(3).rt.serve_witness_kept(witness, persist).unwrap();
     }
@@ -82,8 +93,8 @@ fn start_kept(sim: &Sim, arbiter: Arbiter, persist: Option<WitnessPersist>) -> P
     let handles = (1..=2)
         .map(|node| {
             let mut cfg = FailoverConfig::new(3 - node, arbiter);
-            cfg.lease = LEASE;
-            cfg.margin = MARGIN;
+            cfg.lease = lease;
+            cfg.margin = margin;
             let handle = sim.node(node).rt.start_failover(cfg).unwrap();
             let mut changes = handle.subscribe();
             let log = log.clone();
@@ -348,6 +359,67 @@ fn operator_confirm____given_while_healthy_then_network_and_serial_cut____no_sec
     assert_eq!(overlap, None);
 }
 
+/// With the witness reachable it decides, so the operator is not asked,
+/// and a confirmation sent anyway is ignored.
+#[test]
+fn operator_confirm____partner_cut_and_witness_reachable____not_asked_and_ignored() {
+    let (two, runners, overlap) = simulate(50, 3, |sim| async move {
+        let pair = start(&sim, witness());
+        pass(3000).await;
+
+        sim.mesh.stall(1, 2);
+        sim.mesh.cut_path(1, 2, SERIAL);
+        pass(3000).await;
+        let two = pair.of(2);
+        pair.handles[1].confirm();
+        pass(6000).await;
+
+        (two, pair.runners(), pair.overlap())
+    });
+
+    assert!(!two.awaiting_confirmation);
+    assert_eq!(two.standing, Standing::Standby);
+    assert_eq!(runners, vec![1]);
+    assert_eq!(overlap, None);
+}
+
+/// The witness's answers to the standby take longer than a lease (but
+/// less than the node timeout) for a while, so its grant arrives after a
+/// later request left. The lease runs from the granted request and is over
+/// on arrival: the new primary runs only once a renewal comes back, not at
+/// once as it would with a lease from the later request.
+#[test]
+fn failover____grant_arrives_after_a_retry____lease_runs_from_the_granted_request() {
+    let lease = Duration::from_millis(400);
+    let (runs_when_promoted, two, overlap) = simulate(51, 3, |sim| async move {
+        let pair = start_timed(&sim, witness(), None, lease, Duration::from_millis(100));
+        let mut changes = pair.handles[1].subscribe();
+        pass(3000).await;
+
+        let slow = Faults {
+            delay: Duration::from_millis(450),
+            ..Faults::default()
+        };
+        sim.mesh.set_faults(3, 2, slow);
+        isolate(&sim, 1);
+        while changes.borrow_and_update().standing != Standing::Primary {
+            changes.changed().await.unwrap();
+        }
+        let runs_when_promoted = changes.borrow().may_run;
+        sim.mesh.set_faults(3, 2, Faults::default());
+        pass(3000).await;
+
+        (runs_when_promoted, pair.of(2), pair.overlap())
+    });
+
+    assert_eq!(
+        (two.standing, two.epoch, two.may_run),
+        (Standing::Primary, 2, true)
+    );
+    assert!(!runs_when_promoted);
+    assert_eq!(overlap, None);
+}
+
 #[test]
 fn failover____network_serial_and_primary_wan_cut____hands_over_then_old_primary_rejoins() {
     let (handed, after_heal, overlap) = simulate(46, 3, |sim| async move {
@@ -384,14 +456,15 @@ fn failover____witness_lost_then_primary_lost____no_promotion_until_an_operator_
 
         isolate(&sim, 1);
         pass(5000).await;
-        let before = (pair.runners(), pair.of(2).standing);
+        let two = pair.of(2);
+        let before = (pair.runners(), two.standing, two.awaiting_confirmation);
         pair.handles[1].confirm();
         pass(3000).await;
 
         (before, pair.runners(), pair.overlap())
     });
 
-    assert_eq!(before, (vec![], Standing::Standby));
+    assert_eq!(before, (vec![], Standing::Standby, true));
     assert_eq!(after, vec![2]);
     assert_eq!(overlap, None);
 }

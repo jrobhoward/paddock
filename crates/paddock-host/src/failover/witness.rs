@@ -40,6 +40,8 @@ pub(super) enum Decision {
 pub(super) struct Grant {
     /// The node granted.
     pub(super) to: u32,
+    /// The request granted, echoed in the answer.
+    pub(super) seq: u64,
     /// The epoch it is granted at.
     pub(super) epoch: u64,
     /// The node promoted at that epoch.
@@ -93,6 +95,7 @@ impl Witness {
                 }
             }
             FailoverMsg::Request {
+                seq,
                 resume,
                 epoch,
                 confirmed_ago_ms,
@@ -124,12 +127,14 @@ impl Witness {
                 Some(Decision::Grant(if resume {
                     Grant {
                         to: from,
+                        seq,
                         epoch: self.epoch,
                         promoted: self.promoted,
                     }
                 } else {
                     Grant {
                         to: from,
+                        seq,
                         epoch: epoch + 1,
                         promoted: from,
                     }
@@ -148,7 +153,10 @@ impl Witness {
             self.renewed.remove(&partner);
         }
         self.renewed.insert(grant.to, Instant::now());
-        FailoverMsg::Granted { epoch: grant.epoch }
+        FailoverMsg::Granted {
+            seq: grant.seq,
+            epoch: grant.epoch,
+        }
     }
 
     /// Drop a grant that could not be kept; the requester asks again.

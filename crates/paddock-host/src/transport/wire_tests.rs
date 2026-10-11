@@ -34,6 +34,7 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
         },
         Frame::Leave,
         Frame::Failover(FailoverMsg::Request {
+            seq: 4,
             resume: true,
             epoch: 7,
             confirmed_ago_ms: 9,

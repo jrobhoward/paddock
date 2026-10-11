@@ -1743,8 +1743,9 @@ impl Node {
 
     /// An operator confirms that the partner is gone, so the standby may
     /// promote itself (`paddock_host::failover::FailoverHandle::confirm`).
-    /// Safe only if the partner is down or cut off: with
-    /// `arbiter = "operator"`, or a witness that cannot be reached.
+    /// Taken only while the node awaits a confirmation: with
+    /// `arbiter = "operator"`, or a witness that cannot be reached. Safe
+    /// only if the partner is down or cut off.
     ///
     /// # Errors
     ///
@@ -1763,7 +1764,8 @@ impl Node {
             message: if now.awaiting_confirmation {
                 "confirmed: this node is promoted once the partner's lease has run out".into()
             } else {
-                "confirmed; this node was not waiting for confirmation, so nothing may change"
+                "ignored: this node was not waiting for a confirmation (with a witness, one is \
+                 needed only while the witness cannot be reached)"
                     .into()
             },
         })

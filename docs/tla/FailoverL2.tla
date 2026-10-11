@@ -31,6 +31,14 @@
  *     steps down after hearing its partner Down for a lease (stand-down).
  *   - Nodes crash and restart Down; their epoch survives only with
  *     PersistEpoch. Replies can be lost with their link.
+ *   - A reply carries its request's age, so a lease (from a renewal or a
+ *     grant) runs from when the request it answers was sent.
+ *   - With OperatorConfirms, an operator may confirm that a standby's
+ *     partner is gone while the standby hears it on no path and cannot
+ *     reach the witness. The operator is right: the partner is down. Once
+ *     the partner's lease is waited out the standby promotes itself without
+ *     a lease (an override), and runs until its partner confirms it as
+ *     standby; the confirmation lapses if it hears its partner first.
  *
  * Rounds. Each tick runs in phases, which keeps the interleavings to those
  * that matter: faults, then delivery of every frame due (in a fixed link
@@ -57,6 +65,8 @@ CONSTANT ForgetRenewals
 CONSTANTS LanFaults, SerialFaults, WanFaults, Crashes, WitnessCrashes
 \* Whether links can hold frames (else only lose them).
 CONSTANT Holds
+\* Whether an operator may confirm a standby's partner gone (R7 at layer 2).
+CONSTANT OperatorConfirms
 
 Pair == {A, B}
 Partner(n) == IF n = A THEN B ELSE A
@@ -86,6 +96,8 @@ VARIABLES
     downAge,      \* ticks the partner has said Down, or -1
     view,         \* [path -> [st, age]]: the partner's last status per path
     seenAge,      \* age of the newest beat seen from the partner, or -1
+    opConfirmed,  \* an operator confirmed the partner gone, not yet acted on
+    overridden,   \* a primary running without a lease by that confirmation
     beaten, stepped,
     wEpoch, wPromoted, wRenewedAge, wAlive,
     chan, q, faults,
@@ -93,11 +105,11 @@ VARIABLES
     first         \* the node whose turn comes first this round
 
 nodeVars == <<role, epoch, alive, lease, asking, asked, inflight, retry, confAge,
-              downAge, view, seenAge, beaten, stepped>>
+              downAge, view, seenAge, opConfirmed, overridden, beaten, stepped>>
 witnessVars == <<wEpoch, wPromoted, wRenewedAge, wAlive>>
 vars == <<nodeVars, witnessVars, chan, q, faults, phase, first>>
 
-Running(n) == alive[n] /\ role[n] = "Primary" /\ lease[n] > 0
+Running(n) == alive[n] /\ role[n] = "Primary" /\ (lease[n] > 0 \/ overridden[n])
 Confirming(n) == role[n] = "Standby" /\ ~asking[n]
 
 Live(n, p) == view[n][p].age <= Timeout
@@ -109,7 +121,7 @@ PartnerDown(n) == \E s \in LiveSt(n, FALSE) : s.role = "Down"
 Push(qq, c, m) ==
     IF chan[c] = "lost" \/ Len(qq[c]) >= QueueLen
     THEN qq
-    ELSE [qq EXCEPT ![c] = Append(@, [m EXCEPT !.age = 0, !.due = Delay])]
+    ELSE [qq EXCEPT ![c] = Append(@, [m EXCEPT !.due = Delay])]
 
 Init ==
     /\ role = [n \in Pair |-> "Down"]
@@ -124,6 +136,8 @@ Init ==
     /\ downAge = [n \in Pair |-> -1]
     /\ view = [n \in Pair |-> [p \in Paths |-> [st |-> None, age |-> 0]]]
     /\ seenAge = [n \in Pair |-> -1]
+    /\ opConfirmed = [n \in Pair |-> FALSE]
+    /\ overridden = [n \in Pair |-> FALSE]
     /\ beaten = [n \in Pair |-> FALSE]
     /\ stepped = [n \in Pair |-> FALSE]
     /\ wEpoch = 1
@@ -156,8 +170,8 @@ Tick ==
     /\ wRenewedAge' = [n \in Pair |-> Older(wRenewedAge[n])]
     /\ beaten' = [n \in Pair |-> FALSE]
     /\ stepped' = [n \in Pair |-> FALSE]
-    /\ UNCHANGED <<role, epoch, alive, asking, asked, inflight, wEpoch, wPromoted,
-                   wAlive, chan, faults>>
+    /\ UNCHANGED <<role, epoch, alive, asking, asked, inflight, opConfirmed, overridden,
+                   wEpoch, wPromoted, wAlive, chan, faults>>
 
 \* ------------------------------------------------------------------ faults
 
@@ -195,6 +209,8 @@ Crash(n) ==
     /\ alive' = [alive EXCEPT ![n] = FALSE]
     /\ role' = [role EXCEPT ![n] = "Down"]
     /\ lease' = [lease EXCEPT ![n] = 0]
+    /\ opConfirmed' = [opConfirmed EXCEPT ![n] = FALSE]
+    /\ overridden' = [overridden EXCEPT ![n] = FALSE]
     /\ faults' = faults + 1
     /\ UNCHANGED <<epoch, asking, asked, inflight, retry, confAge, downAge, view,
                    seenAge, beaten, stepped, witnessVars, chan, q>>
@@ -213,7 +229,8 @@ Restart(n) ==
     /\ downAge' = [downAge EXCEPT ![n] = -1]
     /\ view' = [view EXCEPT ![n] = [p \in Paths |-> [st |-> None, age |-> 0]]]
     /\ seenAge' = [seenAge EXCEPT ![n] = -1]
-    /\ UNCHANGED <<role, lease, beaten, stepped, witnessVars, chan, q, faults>>
+    /\ UNCHANGED <<role, lease, opConfirmed, overridden, beaten, stepped, witnessVars, chan,
+                   q, faults>>
 
 WitnessCrash ==
     /\ WitnessCrashes /\ faults < MaxFaults /\ wAlive
@@ -247,7 +264,7 @@ Beat(n) ==
     /\ beaten' = [beaten EXCEPT ![n] = TRUE]
     /\ confAge' = IF ConfirmOnSend /\ Confirming(n) THEN [confAge EXCEPT ![n] = 0] ELSE confAge
     /\ UNCHANGED <<role, epoch, alive, lease, asking, asked, inflight, retry, downAge,
-                   view, seenAge, stepped, witnessVars, chan, faults>>
+                   view, seenAge, opConfirmed, overridden, stepped, witnessVars, chan, faults>>
 
 \* ------------------------------------------------------------------ steps
 
@@ -260,6 +277,8 @@ StepDown(n, e) ==
     /\ inflight' = [inflight EXCEPT ![n] = FALSE]
     /\ confAge' = [confAge EXCEPT ![n] = 0]
     /\ downAge' = [downAge EXCEPT ![n] = -1]
+    /\ opConfirmed' = [opConfirmed EXCEPT ![n] = FALSE]
+    /\ overridden' = [overridden EXCEPT ![n] = FALSE]
 
 \* Send a request; with ConfirmOnSend, a standby that was confirming until
 \* this step counts now as its last confirmation.
@@ -283,7 +302,7 @@ StepPrimary(n) ==
              /\ UNCHANGED <<retry, q>>
        \/ /\ ~\E e \in PrimaryEpochs(n, FALSE) : e > epoch[n]
           /\ UNCHANGED <<role, epoch, lease, asking, asked, inflight, retry, confAge,
-                         downAge, q>>
+                         downAge, opConfirmed, overridden, q>>
 
 TopEpoch(n) == Max(epoch[n], IF PrimaryEpochs(n, FALSE) = {} THEN 0
                              ELSE CHOOSE x \in PrimaryEpochs(n, FALSE) :
@@ -312,18 +331,32 @@ StandbyHears(n) ==
              /\ inflight' = [inflight EXCEPT ![n] = IF cancel THEN FALSE ELSE @]
              /\ confAge' = [confAge EXCEPT ![n] = conf]
              /\ downAge' = [downAge EXCEPT ![n] = down]
-             /\ UNCHANGED <<role, lease, q>>
+             \* An operator's confirmation is about this silence only.
+             /\ opConfirmed' = [opConfirmed EXCEPT ![n] = FALSE]
+             /\ UNCHANGED <<role, lease, overridden, q>>
 
-\* Silent on every path: `Ask`.
+\* Silent on every path: `Ask`, or with an operator's confirmation and the
+\* partner's lease waited out, `Override`.
 StandbySilent(n) ==
     /\ ~AnyLive(n)
-    /\ epoch' = [epoch EXCEPT ![n] = TopEpoch(n)]
-    /\ asking' = [asking EXCEPT ![n] = TRUE]
-    /\ \/ /\ retry[n] = 0
-          /\ Ask(n, FALSE)
-       \/ /\ retry[n] > 0
-          /\ UNCHANGED <<asked, inflight, retry, confAge, q>>
-    /\ UNCHANGED <<role, lease, downAge>>
+    /\ \/ /\ opConfirmed[n] /\ confAge[n] >= Hold
+          /\ role' = [role EXCEPT ![n] = "Primary"]
+          /\ epoch' = [epoch EXCEPT ![n] = TopEpoch(n) + 1]
+          /\ overridden' = [overridden EXCEPT ![n] = TRUE]
+          /\ opConfirmed' = [opConfirmed EXCEPT ![n] = FALSE]
+          /\ asking' = [asking EXCEPT ![n] = FALSE]
+          /\ asked' = [asked EXCEPT ![n] = FALSE]
+          /\ inflight' = [inflight EXCEPT ![n] = FALSE]
+          /\ retry' = [retry EXCEPT ![n] = 0]
+          /\ UNCHANGED <<lease, confAge, downAge, q>>
+       \/ /\ ~(opConfirmed[n] /\ confAge[n] >= Hold)
+          /\ epoch' = [epoch EXCEPT ![n] = TopEpoch(n)]
+          /\ asking' = [asking EXCEPT ![n] = TRUE]
+          /\ \/ /\ retry[n] = 0
+                /\ Ask(n, FALSE)
+             \/ /\ retry[n] > 0
+                /\ UNCHANGED <<asked, inflight, retry, confAge, q>>
+          /\ UNCHANGED <<role, lease, downAge, opConfirmed, overridden>>
 
 StepStandby(n) ==
     /\ role[n] = "Standby"
@@ -341,14 +374,14 @@ StepDownNode(n) ==
              /\ asked' = [asked EXCEPT ![n] = FALSE]
              /\ retry' = [retry EXCEPT ![n] = 0]
              /\ confAge' = [confAge EXCEPT ![n] = 0]
-             /\ UNCHANGED <<lease, asking, inflight, downAge, q>>
+             /\ UNCHANGED <<lease, asking, inflight, downAge, opConfirmed, overridden, q>>
        \/ \* `Resume`, once its own confirmations are out of date.
           /\ ~RejoinOk(n) /\ confAge[n] >= Hold /\ retry[n] = 0
           /\ Ask(n, TRUE)
-          /\ UNCHANGED <<role, epoch, lease, asking, downAge>>
+          /\ UNCHANGED <<role, epoch, lease, asking, downAge, opConfirmed, overridden>>
        \/ /\ ~RejoinOk(n) /\ ~(confAge[n] >= Hold /\ retry[n] = 0)
           /\ UNCHANGED <<role, epoch, lease, asking, asked, inflight, retry, confAge,
-                         downAge, q>>
+                         downAge, opConfirmed, overridden, q>>
 
 Step(n) ==
     /\ alive[n] /\ ~stepped[n]
@@ -369,11 +402,13 @@ RecvBeat(c, m) ==
        /\ seenAge' = [seenAge EXCEPT ![n] = IF @ < 0 THEN m.age ELSE Min(@, m.age)]
        /\ \/ /\ confirms /\ (~EchoLease \/ m.echo >= 0)
              /\ Renew(n, age)
+             \* Confirmed as primary by its partner: an override ends.
+             /\ overridden' = [overridden EXCEPT ![n] = FALSE]
           \/ /\ ~(confirms /\ (~EchoLease \/ m.echo >= 0))
-             /\ UNCHANGED lease
+             /\ UNCHANGED <<lease, overridden>>
        /\ q' = [q EXCEPT ![c] = Tail(@)]
        /\ UNCHANGED <<role, epoch, asking, asked, inflight, retry, confAge, downAge,
-                      beaten, stepped, witnessVars>>
+                      opConfirmed, beaten, stepped, witnessVars>>
 
 Reply(qq, n, m) == Push(qq, Wan(W, n), m)
 
@@ -403,7 +438,8 @@ RecvAtWitness(c, m) ==
           /\ wRenewedAge' = [wRenewedAge EXCEPT ![n] = 0, ![p] = Cap]
           /\ q' = Reply(qq, n, [k |-> "granted", epoch |-> newEpoch, age |-> m.age, due |-> 0])
 
-Keep(n) == UNCHANGED <<role, epoch, lease, asking, asked, inflight, retry, confAge, downAge>>
+Keep(n) == UNCHANGED <<role, epoch, lease, asking, asked, inflight, retry, confAge, downAge,
+                       opConfirmed, overridden>>
 
 RecvReply(c, m) ==
     LET n == c[3]
@@ -415,7 +451,8 @@ RecvReply(c, m) ==
     IN /\ q' = [q EXCEPT ![c] = Tail(@)]
        /\ \/ /\ leaseOk
              /\ Renew(n, m.age)
-             /\ UNCHANGED <<role, epoch, asking, asked, inflight, retry, confAge, downAge>>
+             /\ UNCHANGED <<role, epoch, asking, asked, inflight, retry, confAge, downAge,
+                            opConfirmed, overridden>>
           \/ /\ fenced
              /\ StepDown(n, m.epoch)
              /\ UNCHANGED retry
@@ -427,11 +464,14 @@ RecvReply(c, m) ==
              /\ asked' = [asked EXCEPT ![n] = FALSE]
              /\ inflight' = [inflight EXCEPT ![n] = FALSE]
              /\ retry' = [retry EXCEPT ![n] = 0]
+             /\ opConfirmed' = [opConfirmed EXCEPT ![n] = FALSE]
+             /\ overridden' = [overridden EXCEPT ![n] = FALSE]
              /\ UNCHANGED <<confAge, downAge>>
           \/ /\ m.k = "notYet"
              /\ inflight' = [inflight EXCEPT ![n] = FALSE]
              /\ retry' = [retry EXCEPT ![n] = m.wait]
-             /\ UNCHANGED <<role, epoch, lease, asking, asked, confAge, downAge>>
+             /\ UNCHANGED <<role, epoch, lease, asking, asked, confAge, downAge, opConfirmed,
+                            overridden>>
           \/ /\ refusedS
              /\ StepDown(n, m.epoch)
              /\ retry' = [retry EXCEPT ![n] = Lease]
@@ -440,7 +480,7 @@ RecvReply(c, m) ==
              /\ asked' = [asked EXCEPT ![n] = FALSE]
              /\ inflight' = [inflight EXCEPT ![n] = FALSE]
              /\ retry' = [retry EXCEPT ![n] = Lease]
-             /\ UNCHANGED <<role, lease, asking, confAge, downAge>>
+             /\ UNCHANGED <<role, lease, asking, confAge, downAge, opConfirmed, overridden>>
           \/ \* Anything else is no news to this standing.
              /\ ~leaseOk /\ ~fenced /\ ~granted /\ m.k # "notYet" /\ ~refusedS /\ ~refusedD
              /\ Keep(n)
@@ -474,7 +514,24 @@ NextDeliverable(c) ==
     /\ Deliverable(c)
     /\ \A i \in 1..Len(Order) : Order[i] = c => \A j \in 1..(i - 1) : ~Deliverable(Order[j])
 
+\* The witness cannot be reached from n: down, or its WAN not up either way.
+WitnessUnreachable(n) == ~wAlive \/ chan[Wan(n, W)] # "up" \/ chan[Wan(W, n)] # "up"
+
+\* An operator, asked by a standby that hears its partner on no path and
+\* cannot reach the witness, confirms the partner gone. The operator is
+\* right: the partner is down. Not a fault.
+OperatorConfirm(n) ==
+    /\ OperatorConfirms
+    /\ alive[n] /\ role[n] = "Standby" /\ ~opConfirmed[n]
+    /\ ~AnyLive(n) /\ WitnessUnreachable(n)
+    /\ ~alive[Partner(n)]
+    /\ opConfirmed' = [opConfirmed EXCEPT ![n] = TRUE]
+    /\ UNCHANGED <<role, epoch, alive, lease, asking, asked, inflight, retry, confAge,
+                   downAge, view, seenAge, overridden, beaten, stepped, witnessVars,
+                   chan, q, faults>>
+
 Env ==
+    \/ \E n \in Pair : OperatorConfirm(n)
     \/ \E c \in Channels : \E both \in BOOLEAN : Hold1(c, both) \/ Lose(c, both)
     \/ \E c \in Channels : Heal(c)
     \/ \E n \in Pair : Crash(n) \/ Restart(n)

@@ -162,6 +162,7 @@ pub(crate) mod failover {
             epoch: u64,
         },
         Request {
+            seq: u64,
             resume: bool,
             epoch: u64,
             confirmed_ago_ms: u64,
@@ -173,6 +174,7 @@ pub(crate) mod failover {
             epoch: u64,
         },
         Granted {
+            seq: u64,
             epoch: u64,
         },
         NotYet {
@@ -187,17 +189,19 @@ pub(crate) mod failover {
         let wire = match *m {
             FailoverMsg::Renew { seq, epoch } => Wire::Renew { seq, epoch },
             FailoverMsg::Request {
+                seq,
                 resume,
                 epoch,
                 confirmed_ago_ms,
             } => Wire::Request {
+                seq,
                 resume,
                 epoch,
                 confirmed_ago_ms,
             },
             FailoverMsg::LeaseOk { seq } => Wire::LeaseOk { seq },
             FailoverMsg::Fenced { epoch } => Wire::Fenced { epoch },
-            FailoverMsg::Granted { epoch } => Wire::Granted { epoch },
+            FailoverMsg::Granted { seq, epoch } => Wire::Granted { seq, epoch },
             FailoverMsg::NotYet { wait_ms } => Wire::NotYet { wait_ms },
             FailoverMsg::Refused { epoch } => Wire::Refused { epoch },
         };
@@ -208,17 +212,19 @@ pub(crate) mod failover {
         Ok(match Wire::deserialize(d)? {
             Wire::Renew { seq, epoch } => FailoverMsg::Renew { seq, epoch },
             Wire::Request {
+                seq,
                 resume,
                 epoch,
                 confirmed_ago_ms,
             } => FailoverMsg::Request {
+                seq,
                 resume,
                 epoch,
                 confirmed_ago_ms,
             },
             Wire::LeaseOk { seq } => FailoverMsg::LeaseOk { seq },
             Wire::Fenced { epoch } => FailoverMsg::Fenced { epoch },
-            Wire::Granted { epoch } => FailoverMsg::Granted { epoch },
+            Wire::Granted { seq, epoch } => FailoverMsg::Granted { seq, epoch },
             Wire::NotYet { wait_ms } => FailoverMsg::NotYet { wait_ms },
             Wire::Refused { epoch } => FailoverMsg::Refused { epoch },
         })

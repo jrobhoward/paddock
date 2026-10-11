@@ -271,7 +271,7 @@ pub(crate) fn failover(f: &paddock::api::FailoverInfo) -> String {
     );
     if f.awaiting_confirmation {
         out.push_str(
-            "\nwaiting:    the partner looks gone; `paddock failover confirm` promotes this node",
+            "\nwaiting:    the partner looks gone and no witness can decide; `paddock failover confirm` promotes this node",
         );
     }
     out

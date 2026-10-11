@@ -41,11 +41,11 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Stage 1: Tooling (S)
 
-Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test run on the Raspberry Pi 5 (CHANGELOG). What the Pi run found is Q4 and Q9.
+Done on 2026-10-10: `scripts/check.sh`, `scripts/soak.sh`, and a build and test run on the Raspberry Pi 5 (CHANGELOG). What the Pi run found is Q9 (Q4 is fixed).
 
 ## Stage 2: Review (M)
 
-Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q10; Q8, Q11 to Q13 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1 to Q3, Q7). W1 finishes both drafts.
+Done on 2026-10-10. Each review wrote its findings as stage 3 items and its decisions into DESIGN.md: R1, the draft [ARCHITECTURE.md](ARCHITECTURE.md); R2, the test audit (Q5); R3, the draft [SECURITY.md](SECURITY.md) (Q6); R4, failover conformance (Q8, Q10 to Q14 are fixed); R5, structure (DESIGN.md, "Operating a node"; Q1, Q2, Q7; Q3 is done). W1 finishes both drafts.
 
 ## Stage 3: Rework (M–L)
 
@@ -62,13 +62,11 @@ From stage 2 and earlier work:
 - [ ] **Q6 Security fixes** from R3 (`docs/SECURITY.md`). S1 to S9 are fixed and the fuzz targets added. Left: a connection cap on the Modbus server (tokio-modbus's server gives no hook for one).
 - [ ] **Q7 Refactors.** Split `node/daemon.rs` by concern (deploy and upgrade, connection apps, cluster and failover start, queries); move the `process` host functions out of `state.rs`; let `list` and `status` read without waiting behind a deploy or upgrade. No new crates.
 - [ ] **Q9 Debug build size.** Debug test binaries are about 530 MB each (full debug info; wasmtime dominates). On the Raspberry Pi 5 (7.7 GiB, no swap) `cargo test --workspace` at the default four jobs had `ld` killed for memory at 1.7 GB resident (2026-10-10); two jobs, or swap, avoid it. Measure `debug = "line-tables-only"` for the dev and test profiles (binary size, link memory, build and test time, backtraces still usable) and adopt it if it holds up.
-- [ ] **Q10 Operator confirmation with a witness.** A stale confirmation no longer promotes (fixed 2026-10-10, VERIFICATION.md bug 4). Left: with a witness arbiter the standby honours a confirmation even while the witness answers and the primary renews there, which makes two runners if the operator is wrong; decide whether a confirmation counts only while the witness is also unreachable. `awaiting_confirmation` is never set with a witness, so `paddock failover confirm` answers "nothing may change" in exactly the case it is for. Model the confirmation in layer 2 (R7 is checked at layer 1 only).
-- [ ] **Q14 A late grant starts the lease too late.** A standby asks again a lease after its request; a `Granted` for the earlier request that arrives after the retry starts the lease from the retry's send time, later than the witness counts it, so the timing assumption needs every answer within a lease (R11). Start a grant's lease from the first request since the node began asking (kept across retries, conservative), which removes that bound; V1 applies.
 
 ### Verification of failover
 
 - **V1 The rule for failover changes.** A change to a transition in `failover/` updates the matching action in `FailoverL2.tla` (CLAUDE.md). Before it lands, rerun the configurations it can affect: `L2_Crashes_Fixed1` (about 20 minutes) for anything touching restarts, epochs or the witness, and `L2_Links_Fixed_holds1` (about 2.5 hours) for heartbeats, leases or links. Random simulation of the two-fault configurations runs for at least 20 minutes. Record the results in VERIFICATION.md.
-- [ ] **V2 Two-fault exhaustive rerun**, once stage 3 is done. `L2_Crashes_Fixed` with every switch as in the code now, which it was not run with (about 20 hours and 250 GB of disk), and `L2_Links_Fixed_loss2` (about 10 hours) if stage 3 changed heartbeats or leases. Add a configuration for the deployment without a serial line (lost from the start, two more faults), and carry reply ages in the model (VERIFICATION.md, "Conformance with the code"). Each uses a fingerprint seed (`-fp`) other than the first run's, which also covers the chance that a fingerprint collision hid a state (about 1 in the first runs). Also rerun before Phase 2b is declared done if failover changed after V2, and before a release.
+- [ ] **V2 Two-fault exhaustive rerun**, once stage 3 is done. `L2_Crashes_Fixed` with every switch as in the code now, which it was not run with (about 20 hours and 250 GB of disk), and `L2_Links_Fixed_loss2` (about 10 hours) if stage 3 changed heartbeats or leases. Add a configuration for the deployment without a serial line (lost from the start, two more faults) (VERIFICATION.md, "Conformance with the code"). Each uses a fingerprint seed (`-fp`) other than the first run's, which also covers the chance that a fingerprint collision hid a state (about 1 in the first runs). Also rerun before Phase 2b is declared done if failover changed after V2, and before a release.
 
 ## Stage 4: Cluster (L)
 

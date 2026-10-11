@@ -12,6 +12,7 @@ fn request(witness: &mut Witness) -> Option<FailoverMsg> {
 
 fn request_msg() -> FailoverMsg {
     FailoverMsg::Request {
+        seq: 5,
         resume: false,
         epoch: 1,
         confirmed_ago_ms: 5_000,
@@ -40,7 +41,7 @@ async fn Witness____fresh_and_partner_long_unconfirmed____grants() {
 
     let answer = request(&mut witness);
 
-    assert_eq!(answer, Some(FailoverMsg::Granted { epoch: 2 }));
+    assert_eq!(answer, Some(FailoverMsg::Granted { seq: 5, epoch: 2 }));
 }
 
 #[tokio::test(start_paused = true)]
@@ -53,7 +54,7 @@ async fn Witness____resumed____waits_a_lease_from_the_restart() {
     let after_hold = request(&mut witness);
 
     assert_eq!(at_restart, Some(FailoverMsg::NotYet { wait_ms: 3_501 }));
-    assert_eq!(after_hold, Some(FailoverMsg::Granted { epoch: 2 }));
+    assert_eq!(after_hold, Some(FailoverMsg::Granted { seq: 5, epoch: 2 }));
 }
 
 #[tokio::test(start_paused = true)]
@@ -75,6 +76,7 @@ async fn Witness____grant_decided_not_yet_kept____state_unchanged_and_the_pair_u
         grant,
         Grant {
             to: 2,
+            seq: 5,
             epoch: 2,
             promoted: 2
         }
@@ -82,7 +84,7 @@ async fn Witness____grant_decided_not_yet_kept____state_unchanged_and_the_pair_u
     assert_eq!(state_while_keeping, (1, 1));
     assert_eq!(renewal, None);
     assert_eq!(second, None);
-    assert_eq!(granted, FailoverMsg::Granted { epoch: 2 });
+    assert_eq!(granted, FailoverMsg::Granted { seq: 5, epoch: 2 });
     assert_eq!((witness.epoch, witness.promoted), (2, 2));
     assert_eq!(old_primary_after, Some(FailoverMsg::Fenced { epoch: 2 }));
 }
@@ -97,5 +99,5 @@ async fn Witness____grant_not_kept____abandoned_and_asked_again() {
     let again = request(&mut witness);
 
     assert!(matches!(first, Some(Decision::Grant(_))), "{first:?}");
-    assert_eq!(again, Some(FailoverMsg::Granted { epoch: 2 }));
+    assert_eq!(again, Some(FailoverMsg::Granted { seq: 5, epoch: 2 }));
 }
