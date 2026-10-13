@@ -24,7 +24,7 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | D10 (an hour of the failover soak passing), C4, D3 to D9, D11 |
 | 3: application server | One real workload runs a full release cycle with zero downtime | See "Phase 3" |
 
-The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md)), apart from one rerun (V2).
+The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
 ## Order
 
@@ -49,12 +49,12 @@ Done on 2026-10-10. Each review wrote its findings as stage 3 items and its deci
 
 ## Stage 3: Rework (M–L)
 
-Every item from stage 2 is done (2026-10-11, CHANGELOG); V2 is what is left.
+Done on 2026-10-13: every item from stage 2 (CHANGELOG), and V2, the two-fault exhaustive runs (VERIFICATION.md).
 
 ### Verification of failover
 
 - **V1 The rule for failover changes.** A change to a transition in `failover/` updates the matching action in `FailoverL2.tla` (CLAUDE.md). Before it lands, rerun the configurations it can affect: `L2_Crashes_Fixed1` (about 20 minutes) for anything touching restarts, epochs or the witness, and `L2_Links_Fixed_holds1` (about 2.5 hours) for heartbeats, leases or links. Random simulation of the two-fault configurations runs for at least 20 minutes. Record the results in VERIFICATION.md.
-- [ ] **V2 Two-fault exhaustive rerun**, once stage 3 is done. `L2_Crashes_Fixed` with every switch as in the code now, which it was not run with (about 20 hours and 250 GB of disk), and `L2_Links_Fixed_loss2` (about 10 hours) if stage 3 changed heartbeats or leases. Add a configuration for the deployment without a serial line (lost from the start, two more faults) (VERIFICATION.md, "Conformance with the code"). Each uses a fingerprint seed (`-fp`) other than the first run's, which also covers the chance that a fingerprint collision hid a state (about 1 in the first runs). Also rerun before Phase 2b is declared done if failover changed after V2, and before a release.
+- **V2 The two-fault runs.** `L2_NoSerial` (about 1 hour), `L2_Links_Fixed_loss2` (about 12 hours) and `L2_Crashes_Fixed` (about 18 hours, 250 GB of disk), exhaustive, on an idle machine, each with a fingerprint polynomial (`-fp`) not used before. Rerun before Phase 2b is declared done if `failover/` changed after 2026-10-13, and before a release.
 
 ## Stage 4: Cluster (L)
 
