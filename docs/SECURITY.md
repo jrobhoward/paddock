@@ -74,7 +74,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Secrets and keys
 
 - **Controls.** Secret values are read on each access and never printed: errors name the secret, and `Debug` shows only the source. Keys are written with mode 0600, and the cluster key and signer keys are refused on load if their group or others may access them, as ssh does.
-- **Gaps.** S9 is fixed. No test asserts that a secret's value stays out of logs and errors (ROADMAP Q5).
+- **Gaps.** None found; S9 is fixed. A test asserts that a secret's value appears in no log record, at any level or target, and in no error (`paddock-host` `tests/secrets.rs`).
 
 ## Findings
 

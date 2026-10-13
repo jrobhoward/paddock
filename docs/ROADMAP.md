@@ -1,6 +1,6 @@
 # Paddock: Roadmap
 
-2026-10-10 · Companion to [DESIGN.md](DESIGN.md)
+2026-10-13 · Companion to [DESIGN.md](DESIGN.md)
 
 The single plan for remaining work: what is left, in what order, and which part of the code each piece touches. Finished work is not tracked here: [CHANGELOG.md](../CHANGELOG.md) records what landed and DESIGN.md why. The plan as it stood before 2026-10-10, with the detail of every finished item, is in git history (`git log -- docs/ROADMAP.md`).
 
@@ -26,11 +26,20 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 
 The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
+## Next
+
+Stages 1 to 3 are done (2026-10-13); stage 4 is next, starting with D10:
+
+1. **D10**, on an idle machine: `scripts/soak.sh --hours 1 --only failover` (failover runs of 10 minutes each, from random seeds; a failed run keeps its directory under `target/soak/` with its seed, and `target/release/paddock-soak failover --dir DIR --seed SEED` replays it). Fix what it finds; a change to a failover transition follows V1.
+2. **C4** (spike S12), alongside or right after: the TLA+ model of remote links and monitors that D3 builds on.
+3. **D3**, then the rest of stage 4 in the order listed. D11's first step (a redirect from the standby) needs no D3 and can come early.
+
 ## Order
 
 ```
 1 Tooling ─► 2 Review ─► 3 Rework ─► V2 ─► 4 Cluster ─► 5 Platform features ─► 6 Platforms and benchmarks ─► 7 Docs
    (S)         (M)        (M–L)     (20 h)     (L)              (L)                       (M)                  (M)
+  done        done        done       done      next
 ```
 
 - **Tools first.** The checks, the soak runner and the benchmark runner are each one command, so every later stage runs them instead of re-deriving them.
@@ -118,7 +127,8 @@ Docs known to be out of date, cleared by W1:
 - DESIGN.md places SQL datasources in Phase 3; E5 is now in stage 5.
 - DESIGN.md's roadmap section repeats parts of this plan.
 - DESIGN.md, `docs/REVIEW_HAPPLIANCE_OTP.md`, `docs/tla` and `spikes/s16` describe HAppliance, a private project, in detail (see W1).
-- DESIGN.md, WRITING_APPS.md and BASELINE.md cite finished roadmap items by id (A5, A6, E1, E1b, F2, F3, F6, H1 to H4, 0.5). Those ids are no longer in this file and the CHANGELOG does not use them; W1 replaces each with the feature's name.
+- DESIGN.md, WRITING_APPS.md and BASELINE.md cite finished roadmap items by id (A5, A6, E1, E1b, F2, F3, F6, H1 to H4, 0.5), and DESIGN.md, SECURITY.md and `docs/tla/VERIFICATION.md` cite stage 3's (Q1 to Q15, V2). Those ids are no longer in this file and the CHANGELOG does not use them; W1 replaces each with the feature's name.
+- ARCHITECTURE.md (drafted 2026-10-10) does not describe what stage 3 changed: the HTTP ingress behind the `http` and `tls` features (`node/daemon/ingress.rs`), the gate checking held singletons and retrying failed starts, the failover transitions' `Env` trait, and the Modbus guest interface on `State`.
 
 ## Phase 3
 
