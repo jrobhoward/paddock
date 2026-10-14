@@ -14,6 +14,11 @@
 //! ([`LinkTable::on_node_down`]). Monitor references carry the node id in
 //! their high bits, so references made by different nodes never collide in
 //! one table.
+//!
+//! Removing a remote link is acknowledged, as in OTP 23: until the other
+//! node answers, a link request from it for the same pair is ignored, since
+//! it was sent before the other node removed its side and the unlink will
+//! remove the side it came from ([`LinkTable::unlink_remote`]; spike S12).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,6 +33,19 @@ struct Tables {
     monitors: HashMap<Pid, HashMap<u64, Pid>>,
     /// Monitors by watcher: reference → target, for `demonitor` and cleanup.
     watching: HashMap<Pid, HashMap<u64, Pid>>,
+    /// Remote unlinks awaiting their acknowledgement: (local, remote) → id.
+    unlinking: HashMap<(Pid, Pid), u64>,
+}
+
+/// What a link request from another node did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkFrom {
+    /// The local side of the link was recorded.
+    Linked,
+    /// The local instance is dead: answer `noproc`.
+    Dead,
+    /// The local instance is unlinking from the requester: ignored.
+    Unlinking,
 }
 
 /// Links and monitors for every instance on the node.
@@ -101,19 +119,62 @@ impl LinkTable {
         t.watching.get(&watcher).map_or(0, HashMap::len)
     }
 
+    /// Record the local side of a link that `remote` on another node asked
+    /// for with `local`, unless `local` is dead or unlinking from `remote`.
+    pub(crate) fn link_from(
+        &self,
+        local: Pid,
+        remote: Pid,
+        alive: impl Fn(Pid) -> bool,
+    ) -> LinkFrom {
+        let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        if t.unlinking.contains_key(&(local, remote)) {
+            return LinkFrom::Unlinking;
+        }
+        if !alive(local) {
+            return LinkFrom::Dead;
+        }
+        t.links.entry(local).or_default().insert(remote);
+        t.links.entry(remote).or_default().insert(local);
+        LinkFrom::Linked
+    }
+
     /// Remove a link in both directions. Returns whether there was one.
     pub(crate) fn unlink(&self, a: Pid, b: Pid) -> bool {
         let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut found = false;
-        for (from, to) in [(a, b), (b, a)] {
-            if let Some(set) = t.links.get_mut(&from) {
-                found |= set.remove(&to);
-                if set.is_empty() {
-                    t.links.remove(&from);
-                }
-            }
+        remove_link(&mut t, a, b)
+    }
+
+    /// Remove local `a`'s link with `b` on another node, and return the
+    /// id the other node must acknowledge, or `None` if there was no link
+    /// (then nothing is sent). Until the acknowledgement, a link request
+    /// from `b` is ignored ([`LinkTable::link_from`]).
+    pub(crate) fn unlink_remote(&self, a: Pid, b: Pid) -> Option<u64> {
+        let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        if !remove_link(&mut t, a, b) {
+            return None;
         }
-        found
+        let id = self.next_reference();
+        t.unlinking.insert((a, b), id);
+        Some(id)
+    }
+
+    /// The other node acknowledged unlink `id` between local `a` and `b`.
+    pub(crate) fn unlinked(&self, a: Pid, b: Pid, id: u64) {
+        let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        if t.unlinking.get(&(a, b)) == Some(&id) {
+            t.unlinking.remove(&(a, b));
+        }
+    }
+
+    /// Unlinks awaiting acknowledgement, for tests.
+    #[cfg(test)]
+    pub(crate) fn unlinking(&self) -> usize {
+        self.tables
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .unlinking
+            .len()
     }
 
     /// Have `watcher` monitor `target`. Returns the reference, and whether
@@ -176,6 +237,7 @@ impl LinkTable {
     /// Remove everything about `pid` and return who must be told it exited.
     pub(crate) fn on_exit(&self, pid: Pid) -> ExitNotices {
         let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        t.unlinking.retain(|(local, _), _| *local != pid);
         let mut linked: Vec<Pid> = t
             .links
             .remove(&pid)
@@ -230,6 +292,7 @@ impl LinkTable {
     /// local side must be told (`noconnection`).
     pub(crate) fn on_node_down(&self, node: u32) -> NodeDown {
         let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        t.unlinking.retain(|(_, remote), _| remote.node != node);
         let mut down = NodeDown::default();
         let locals: Vec<Pid> = t.links.keys().copied().filter(|p| p.node != node).collect();
         for local in locals {
@@ -281,6 +344,21 @@ impl LinkTable {
         down.monitors.sort();
         down
     }
+}
+
+/// Remove the link between `a` and `b` in both directions. Returns whether
+/// there was one.
+fn remove_link(t: &mut Tables, a: Pid, b: Pid) -> bool {
+    let mut found = false;
+    for (from, to) in [(a, b), (b, a)] {
+        if let Some(set) = t.links.get_mut(&from) {
+            found |= set.remove(&to);
+            if set.is_empty() {
+                t.links.remove(&from);
+            }
+        }
+    }
+    found
 }
 
 #[cfg(test)]

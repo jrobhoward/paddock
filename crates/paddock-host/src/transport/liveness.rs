@@ -116,6 +116,9 @@ pub struct PeerStatus {
     pub session: u64,
     /// Whether frames to it are sent.
     pub reachable: bool,
+    /// Whether a frame from its current start has been heard. Until then,
+    /// links and monitors with its pids fail with `noconnection`.
+    pub contacted: bool,
     /// Each path ([`LINK`] first) and whether it was heard within
     /// `node_timeout`.
     pub paths: Vec<(String, bool)>,
@@ -323,6 +326,11 @@ impl Liveness {
         self.peers().remove(&node);
     }
 
+    /// Whether `node` is watched.
+    pub(crate) fn watches(&self, node: u32) -> bool {
+        self.peers().contains_key(&node)
+    }
+
     /// `node`'s creation, if a frame from it has been seen; 0 if not.
     pub(crate) fn creation(&self, node: u32) -> u32 {
         self.peers()
@@ -363,6 +371,7 @@ impl Liveness {
         Some(PeerStatus {
             session: peer.session,
             reachable: peer.reachable,
+            contacted: peer.creation.is_some(),
             paths,
         })
     }

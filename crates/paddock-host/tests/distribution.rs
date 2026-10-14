@@ -51,18 +51,23 @@ impl Node {
     }
 }
 
-/// Nodes 1 and 2, joined by a fresh mesh.
-fn two_nodes(seed: u64) -> (Node, Node, Mesh) {
+/// Nodes 1 and 2, joined by a fresh mesh, once each has heard the other:
+/// before that, links and monitors between them fail with `noconnection`.
+async fn two_nodes(seed: u64) -> (Node, Node, Mesh) {
     let (a, b) = (Node::new(1), Node::new(2));
     let mesh = Mesh::new(seed);
     mesh.join(&a.rt).unwrap();
     mesh.join(&b.rt).unwrap();
+    let heard = |from: &Node, to: &Node| from.rt.peer_status(to.id()).is_some_and(|s| s.contacted);
+    while !(heard(&a, &b) && heard(&b, &a)) {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
     (a, b, mesh)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote____call_and_cast____reach_the_other_node() {
-    let (n1, n2, _mesh) = two_nodes(1);
+    let (n1, n2, _mesh) = two_nodes(1).await;
     let a = n1.spawn("");
     let b = n2.spawn("");
     let to_b = pid_text(b.pid());
@@ -140,7 +145,7 @@ async fn remote____calls_from_a_peer_at_its_limit____overloaded_until_one_ends()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote____link____exits_cross_both_ways() {
-    let (n1, n2, _mesh) = two_nodes(2);
+    let (n1, n2, _mesh) = two_nodes(2).await;
     let a = n1.spawn("trap-exits");
     let b = n2.spawn("trap-exits");
     let c = n2.spawn("");
@@ -168,7 +173,7 @@ async fn remote____link____exits_cross_both_ways() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote____exit_signal____kills_target() {
-    let (n1, n2, _mesh) = two_nodes(3);
+    let (n1, n2, _mesh) = two_nodes(3).await;
     let a = n1.spawn("");
     let b = n2.spawn("");
 
@@ -181,7 +186,7 @@ async fn remote____exit_signal____kills_target() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote____monitor____down_on_exit_none_after_demonitor() {
-    let (n1, n2, _mesh) = two_nodes(4);
+    let (n1, n2, _mesh) = two_nodes(4).await;
     let a = n1.spawn("");
     let b = n2.spawn("");
     let c = n2.spawn("");
@@ -210,7 +215,7 @@ async fn remote____monitor____down_on_exit_none_after_demonitor() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn partition____links_monitors_calls____end_with_noconnection() {
-    let (n1, n2, mesh) = two_nodes(5);
+    let (n1, n2, mesh) = two_nodes(5).await;
     let a = n1.spawn("trap-exits");
     let b = n2.spawn("trap-exits");
     let c = n2.spawn("");
@@ -245,7 +250,7 @@ async fn partition____links_monitors_calls____end_with_noconnection() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn heal____after_partition____traffic_flows_old_links_stay_gone() {
-    let (n1, n2, mesh) = two_nodes(6);
+    let (n1, n2, mesh) = two_nodes(6).await;
     let a = n1.spawn("trap-exits");
     let b = n2.spawn("trap-exits");
     let to_b = pid_text(b.pid());
@@ -267,7 +272,7 @@ async fn heal____after_partition____traffic_flows_old_links_stay_gone() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn faults____delay_and_jitter____slower_but_in_order() {
-    let (n1, n2, mesh) = two_nodes(7);
+    let (n1, n2, mesh) = two_nodes(7).await;
     let faults = Faults {
         delay: Duration::from_millis(40),
         jitter: Duration::from_millis(20),
@@ -291,7 +296,7 @@ async fn faults____delay_and_jitter____slower_but_in_order() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn faults____every_frame_dropped____casts_lost_calls_time_out() {
-    let (n1, n2, mesh) = two_nodes(8);
+    let (n1, n2, mesh) = two_nodes(8).await;
     mesh.set_default_faults(Faults {
         drop: 1.0,
         ..Faults::default()

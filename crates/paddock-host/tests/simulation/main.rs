@@ -3,7 +3,8 @@
 //! (ROADMAP C3). `liveness` covers heartbeats and silent failures (C5),
 //! `membership` joining, restarts and leaving (D2), `failover` an HA pair
 //! with a witness (D10);
-//! `random` runs seeded random scenarios against the distribution rules.
+//! `random` runs seeded random scenarios against the distribution rules;
+//! `agreement` replays spike S12's counterexamples (C6).
 //!
 //! Each targeted test fixes a frame delay, puts an event inside that window,
 //! and asserts the one outcome DESIGN.md's "Distribution" rules allow.
@@ -12,6 +13,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+mod agreement;
 #[path = "../common/mod.rs"]
 mod common;
 mod failover;

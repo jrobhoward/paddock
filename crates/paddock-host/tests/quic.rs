@@ -268,6 +268,55 @@ async fn peer____restarts____monitor_gets_noconnection_then_the_lower_node_redia
     again.quic.shutdown();
 }
 
+/// Spike S12, rule R2: frames queued on a connection that a redial
+/// replaces are lost with it, so its close ends the session even though a
+/// newer connection is current. Without R2 the monitor below would stay,
+/// whatever was lost.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connection____replaced_by_a_redial____session_ends_and_the_new_one_carries_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Keys::new(dir.path(), &[1, 2]);
+    let peers = keys.peers("peers", &[(1, 1), (2, 2)]);
+    let n1 = Node::start(1, 1, free_udp(), keys.identity(1, &peers));
+    let n2 = Node::start(2, 1, free_udp(), keys.identity(2, &peers));
+    n2.quic.join_seed(n1.address).await.unwrap();
+    until("contact", || {
+        n1.rt
+            .peer_status(2)
+            .is_some_and(|s| s.contacted && s.reachable)
+            && n2
+                .rt
+                .peer_status(1)
+                .is_some_and(|s| s.contacted && s.reachable)
+    })
+    .await;
+    let watcher = n1.spawn();
+    let target = n2.spawn();
+    ask(&watcher, &format!("monitor:{}", pid_text(target.pid()))).await;
+    let before = n1.rt.peer_status(2).unwrap().session;
+
+    n2.quic.join_seed(n1.address).await.unwrap();
+    let downs = ask_until(&watcher, "infos", |i| i.contains("noconnection")).await;
+    until("reachable again", || {
+        n1.rt.peer_status(2).is_some_and(|s| s.reachable)
+    })
+    .await;
+    let call = ask(
+        &watcher,
+        &format!("call:{}:2000:echo:still-here", pid_text(target.pid())),
+    )
+    .await;
+
+    assert!(downs.contains("noconnection"), "{downs}");
+    assert!(n1.rt.peer_status(2).unwrap().session > before);
+    assert_eq!(n1.quic.connected(), vec![2]);
+    assert_eq!(call, "ok:still-here");
+    watcher.kill();
+    target.kill();
+    n1.quic.shutdown();
+    n2.quic.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn node____leaves_then_restarts____rejoins_through_the_seed() {
     let dir = tempfile::tempdir().unwrap();

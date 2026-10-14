@@ -12,11 +12,14 @@ use serde::{Deserialize, Serialize};
 
 use super::Packet;
 
-/// The protocol version this node writes.
-pub const VERSION: u16 = 1;
+/// The protocol version this node writes. Version 2 acknowledges unlinks
+/// (`Unlink` carries an id, `UnlinkAck` answers it).
+pub const VERSION: u16 = 2;
 
-/// The oldest protocol version this node reads.
-pub const MIN_VERSION: u16 = 1;
+/// The oldest protocol version this node reads. Version 1 had no unlink
+/// acknowledgement, without which the two sides of a link can disagree
+/// (spike S12), so it is not spoken.
+pub const MIN_VERSION: u16 = 2;
 
 /// The first message each side of a connection sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -10,7 +10,13 @@
 //!   [`Transport`](crate::transport::Transport). With no transport, or a
 //!   node it cannot reach, the pid gets `noconnection` semantics: calls fail
 //!   with `noconnection`, casts and exit signals are dropped, and links and
-//!   monitors fire at once with `noconnection`.
+//!   monitors fire at once with `noconnection`. Links and monitors also
+//!   fire at once with `noconnection` until a frame from the node's current
+//!   start has been heard.
+//!
+//! Exit and down notices, unlinks and demonitors that cannot be sent end
+//! the session with their node, so both nodes drop the entries they were
+//! about ([`transport::send_notice`]; spike S12).
 //!
 //! These are Erlang's rules for unreachable nodes (DESIGN.md, "Failure
 //! handling").
@@ -108,10 +114,14 @@ pub(crate) fn exit_signal(
 
 /// Link local `a` with `b`. `Err` carries the exit reason `a` must receive
 /// at once because `b` cannot be linked: `noproc` for a dead pid,
-/// `noconnection` for an unreachable node. A remote `b` that turns out to be
-/// dead answers later with a `noproc` link exit.
+/// `noconnection` for a node that is unreachable or not yet heard from. A
+/// remote `b` that turns out to be dead answers later with a `noproc` link
+/// exit.
 pub(crate) fn link(rt: &RuntimeInner, a: Pid, b: Pid) -> Result<(), ExitReason> {
     if let Route::Remote(node) = route(rt, b) {
+        if !transport::contacted(rt, node) {
+            return Err(ExitReason::Noconnection);
+        }
         rt.links.link(a, b, |_| true);
         if transport::send(rt, node, Frame::Link { from: a, to: b }) {
             return Ok(());
@@ -127,12 +137,16 @@ pub(crate) fn link(rt: &RuntimeInner, a: Pid, b: Pid) -> Result<(), ExitReason> 
     }
 }
 
-/// Remove the link between local `a` and `b`, if any, on both nodes.
+/// Remove the link between local `a` and `b`, if any, on both nodes. A
+/// remote unlink is acknowledged ([`crate::links::LinkTable::unlink_remote`]).
 pub(crate) fn unlink(rt: &RuntimeInner, a: Pid, b: Pid) {
-    rt.links.unlink(a, b);
     if let Route::Remote(node) = route(rt, b) {
-        transport::send(rt, node, Frame::Unlink { from: a, to: b });
+        if let Some(id) = rt.links.unlink_remote(a, b) {
+            transport::send_notice(rt, node, Frame::Unlink { from: a, to: b, id });
+        }
+        return;
     }
+    rt.links.unlink(a, b);
 }
 
 /// Have local `watcher` monitor `target`. Returns the reference, and the
@@ -142,6 +156,10 @@ pub(crate) fn unlink(rt: &RuntimeInner, a: Pid, b: Pid) {
 pub(crate) fn monitor(rt: &RuntimeInner, watcher: Pid, target: Pid) -> (u64, Option<ExitReason>) {
     if let Route::Remote(node) = route(rt, target) {
         let (reference, _) = rt.links.monitor(watcher, target, |_| true);
+        if !transport::contacted(rt, node) {
+            rt.links.demonitor(watcher, reference);
+            return (reference, Some(ExitReason::Noconnection));
+        }
         let sent = transport::send(
             rt,
             node,
@@ -169,7 +187,7 @@ pub(crate) fn demonitor(rt: &RuntimeInner, watcher: Pid, reference: u64) {
     if let Some(target) = rt.links.demonitor(watcher, reference)
         && let Route::Remote(node) = route(rt, target)
     {
-        transport::send(rt, node, Frame::Demonitor { watcher, reference });
+        transport::send_notice(rt, node, Frame::Demonitor { watcher, reference });
     }
 }
 
@@ -183,7 +201,7 @@ pub(crate) fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
             Route::Local(target) => target.exit_signal(pid, reason.clone(), false),
             Route::Dead => {}
             Route::Remote(node) => {
-                transport::send(
+                transport::send_notice(
                     rt,
                     node,
                     Frame::LinkExit {
@@ -204,7 +222,7 @@ pub(crate) fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
             }),
             Route::Dead => {}
             Route::Remote(node) => {
-                transport::send(
+                transport::send_notice(
                     rt,
                     node,
                     Frame::Down {
@@ -219,7 +237,7 @@ pub(crate) fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
     }
     for (reference, target) in notices.held {
         if let Route::Remote(node) = route(rt, target) {
-            transport::send(
+            transport::send_notice(
                 rt,
                 node,
                 Frame::Demonitor {

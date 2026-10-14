@@ -295,6 +295,23 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Links and monitors between nodes could end up on one node only, so an
+  instance was never told that its partner on the other node had exited
+  (spike S12's model of links and sessions found four ways):
+  - A link crossing an unlink from the other side survived on one node.
+    Unlinking a remote pid is now acknowledged, as in OTP 23, and a link
+    request crossing it is ignored.
+  - An exit or down notice, an unlink or demonitor, or a `noproc` answer
+    that could not be sent (the peer counted unreachable for a moment, or
+    a full send queue) was dropped while the session went on. Such a
+    notice now ends the session with that node, so both sides drop what
+    it was about with `noconnection`.
+  - A QUIC connection replaced by a redial lost the frames queued on it
+    without ending the session. Its close now ends the session too.
+  - A restarted node could link to a peer it had not yet heard from, and
+    the peer could drop that link without the restarted node learning of
+    it. Links and monitors with a node now fail with `noconnection` until
+    a frame from its current start has been heard.
 - The test `link____partner_exits_normal____non_trapping_instance_keeps_running`
   failed about one run in thirty: the instance asked to exit could stop
   before replying. It now accepts either.
@@ -377,6 +394,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Cluster wire format version 2 (unlink acknowledgement: `Unlink` carries
+  an id, and `UnlinkAck` answers it). Nodes speak version 2 only, so a
+  cluster upgrades all its nodes together.
+- Linking or monitoring a pid on a node fails at once with `noconnection`
+  until a frame from that node's current start has been heard; right
+  after a node starts, that is until its first heartbeat.
+  `PeerStatus::contacted` says whether it has.
 - `Apps::kill` returns whether the app was there to kill, instead of an
   error for one that was not: the gate no longer has a failure path that
   only a race could reach.

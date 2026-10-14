@@ -48,6 +48,16 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
             id: 11,
             result: Err(CallError::Exited(ExitReason::Crashed("boom".into()))),
         },
+        Frame::Unlink {
+            from: pid(5),
+            to: pid(6),
+            id: 13,
+        },
+        Frame::UnlinkAck {
+            from: pid(6),
+            to: pid(5),
+            id: 13,
+        },
         Frame::Down {
             reference: 12,
             target: pid(3),
@@ -80,9 +90,9 @@ fn encode____body____a_byte_string_not_an_array() {
 #[test]
 fn decode____other_version_or_garbage____refused() {
     let p = packet(Frame::Leave);
-    let at_two = encode(2, &p).unwrap();
+    let at_next = encode(VERSION + 1, &p).unwrap();
 
-    assert!(decode(VERSION, &at_two).is_err());
+    assert!(decode(VERSION, &at_next).is_err());
     assert!(decode(VERSION, b"\\xff\\x00garbage").is_err());
 }
 
@@ -95,11 +105,17 @@ fn agree____overlapping_and_disjoint_ranges____highest_common_or_none() {
         ..Hello::new(2, 1)
     };
     let too_new = Hello {
-        min_version: 2,
-        max_version: 3,
+        min_version: VERSION + 1,
+        max_version: VERSION + 2,
+        ..Hello::new(2, 1)
+    };
+    let too_old = Hello {
+        min_version: 1,
+        max_version: MIN_VERSION - 1,
         ..Hello::new(2, 1)
     };
 
     assert_eq!(agree(&mine, &newer), Some(VERSION));
     assert_eq!(agree(&mine, &too_new), None);
+    assert_eq!(agree(&mine, &too_old), None);
 }

@@ -29,6 +29,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::delivery::{self, Route};
+use crate::links::LinkFrom;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
 use crate::probe;
@@ -133,12 +134,26 @@ pub enum Frame {
         /// The one it linked to.
         to: Pid,
     },
-    /// Remove the link between `from` and `to`.
+    /// Remove the link between `from` and `to`; the receiver answers with
+    /// [`Frame::UnlinkAck`]. Until then the sender ignores a [`Frame::Link`]
+    /// from `to`, sent before `to` saw this frame (OTP 23's unlink protocol;
+    /// spike S12).
     Unlink {
         /// The instance that unlinked.
         from: Pid,
         /// Its partner.
         to: Pid,
+        /// Names this unlink in its acknowledgement.
+        id: u64,
+    },
+    /// The receiver of [`Frame::Unlink`] `id` removed its side of the link.
+    UnlinkAck {
+        /// The partner that was unlinked.
+        from: Pid,
+        /// The instance that unlinked, on the receiving node.
+        to: Pid,
+        /// The unlink's id.
+        id: u64,
     },
     /// `watcher` (on the sending node) monitors `target`.
     Monitor {
@@ -357,6 +372,25 @@ fn incoming_call(
     }
 }
 
+/// Send a notice to `node`: an exit, a down, an unlink or demonitor, or an
+/// answer to one. A notice that cannot be sent ends the session with
+/// `node`, so the other side drops what the notice was about with
+/// `noconnection` instead of keeping it forever (spike S12, R1).
+pub(crate) fn send_notice(rt: &RuntimeInner, node: u32, frame: Frame) {
+    if !send(rt, node, frame) && rt.liveness.watches(node) {
+        tracing::debug!(node, "a notice could not be sent; ending the session");
+        end_session(rt, node);
+    }
+}
+
+/// Whether links and monitors with `node`'s pids may be made: a frame from
+/// its current start has been heard. Before that, its session numbering is
+/// adopted on first contact without ending anything, which is safe only
+/// while nothing exists with it yet (spike S12, R4).
+pub(crate) fn contacted(rt: &RuntimeInner, node: u32) -> bool {
+    rt.liveness.creation(node) != 0
+}
+
 /// Send to `node`, in the current session, if a transport is set and
 /// `node` is reachable.
 pub(crate) fn send(rt: &RuntimeInner, node: u32, frame: Frame) -> bool {
@@ -506,8 +540,8 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
         }
         Frame::Link { from, to } => {
             let table = &rt.table;
-            if !rt.links.link(from, to, |p| table.lookup(p).is_some()) {
-                send(
+            if rt.links.link_from(to, from, |p| table.lookup(p).is_some()) == LinkFrom::Dead {
+                send_notice(
                     rt,
                     from_node,
                     Frame::LinkExit {
@@ -518,9 +552,19 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 );
             }
         }
-        Frame::Unlink { from, to } => {
+        Frame::Unlink { from, to, id } => {
             rt.links.unlink(from, to);
+            send_notice(
+                rt,
+                from_node,
+                Frame::UnlinkAck {
+                    from: to,
+                    to: from,
+                    id,
+                },
+            );
         }
+        Frame::UnlinkAck { from, to, id } => rt.links.unlinked(to, from, id),
         Frame::Monitor {
             watcher,
             target,
@@ -531,7 +575,7 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 .links
                 .monitor_with(watcher, target, reference, |p| table.lookup(p).is_some())
             {
-                send(
+                send_notice(
                     rt,
                     from_node,
                     Frame::Down {

@@ -118,8 +118,23 @@ where
                 node
             })
             .collect();
-        scenario(Sim { mesh, nodes }).await
+        let sim = Sim { mesh, nodes };
+        until_contacted(&sim).await;
+        scenario(sim).await
     })
+}
+
+/// Wait until every node has heard every other: links and monitors with a
+/// node not yet heard fail with `noconnection`.
+async fn until_contacted(sim: &Sim) {
+    let ids: Vec<u32> = sim.nodes.iter().map(|n| n.rt.node()).collect();
+    while !sim.nodes.iter().all(|n| {
+        ids.iter()
+            .filter(|&&id| id != n.rt.node())
+            .all(|&id| n.rt.peer_status(id).is_some_and(|s| s.contacted))
+    }) {
+        pass(1).await;
+    }
 }
 
 /// The events received so far, without waiting.

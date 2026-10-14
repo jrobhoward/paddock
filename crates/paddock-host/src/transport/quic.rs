@@ -21,8 +21,8 @@
 //! connection dialed by the lower node id is kept.
 //!
 //! **Loss.** When a connection closes (the peer went away, QUIC's idle
-//! timeout, a bad frame), the session with that node ends
-//! (`end_session`): links and monitors with it end with
+//! timeout, a bad frame, or a newer connection replaced it), the session
+//! with that node ends (`end_session`): links and monitors with it end with
 //! `noconnection`. The node with the lower id redials a member it knows
 //! (and any node redials its seeds), with backoff; heartbeats
 //! ([`super::liveness`]) find a peer that stalls without the connection
@@ -657,6 +657,12 @@ async fn reader(
 
 /// When `conn` closes: forget it, end the session, and redial if this
 /// node should.
+///
+/// A connection replaced by a newer one (a redial that won the race to be
+/// kept) still ends the session when it closes: frames queued on it are
+/// lost with it, and the other side, having seen its own end of it close,
+/// has ended the session too (spike S12, R2). Only the current connection
+/// is forgotten and redialed.
 async fn watch_close(inner: Arc<Inner>, conn: Connection, node: u32) {
     let reason = conn.closed().await;
     let current = {
@@ -669,13 +675,18 @@ async fn watch_close(inner: Arc<Inner>, conn: Connection, node: u32) {
         }
         current
     };
-    if !current || *inner.stop.borrow() {
+    if *inner.stop.borrow() {
         return;
     }
-    tracing::info!(node, %reason, "cluster connection lost");
     let Some(rt) = inner.rt.upgrade() else {
         return;
     };
+    if !current {
+        tracing::info!(node, %reason, "replaced cluster connection closed");
+        super::end_session(&rt, node);
+        return;
+    }
+    tracing::info!(node, %reason, "cluster connection lost");
     super::end_session(&rt, node);
     let address = rt
         .membership
