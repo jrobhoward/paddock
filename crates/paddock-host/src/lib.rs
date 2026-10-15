@@ -56,6 +56,7 @@ pub use config::{
 pub use error::HostError;
 pub use instance::{InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;
+pub use links::LinkInfo;
 pub use listener::{CONNECTION_WORLD, Listener, ListenerSpec, ListenerStats, LoadedConnection};
 pub use message::{CallError, Envelope, ExitReason};
 pub use paddock_bundle::manifest::{RestartType, Strategy};

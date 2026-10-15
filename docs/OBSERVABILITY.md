@@ -16,6 +16,8 @@ What an operator can see on a running node: instance stats, direct calls to one 
 | `RESTARTS` | Times its supervisor restarted it (the incarnation minus one). |
 | `LAST EXIT` | Why the previous incarnation exited, as its supervisor saw it. |
 
+`paddock --json ps` also lists each instance's links and monitors as its node records them: `links` (pids, on any node), `monitoring` (monitors it holds: `reference` and target `pid`) and `monitored_by` (monitors others hold on it: `reference` and watcher `pid`). For a link or monitor between nodes, each node lists its own side, so once the cluster is quiet the two sides match (spike S12).
+
 `paddock state <pid>` shows an instance's state through its `save-snapshot`.
 
 Connection handlers do not appear in `ps` (an instance per connection, with no mailbox). `paddock status <app>` lists their listeners instead: address, connections open now, and totals accepted, refused (over `max_connections`), crashed and closed by the idle timeout.

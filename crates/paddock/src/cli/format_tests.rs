@@ -92,6 +92,9 @@ fn instances____restarted_instance____memory_restarts_and_last_exit() {
         memory_bytes: 3 << 19,
         restarts: 1,
         last_exit: Some("killed".into()),
+        links: Vec::new(),
+        monitoring: Vec::new(),
+        monitored_by: Vec::new(),
     };
 
     let out = instances(&[info]);

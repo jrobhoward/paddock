@@ -121,6 +121,25 @@ pub struct InstanceInfo {
     /// Why its previous incarnation exited, if its supervisor restarted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_exit: Option<String>,
+    /// Pids it is linked to, on any node.
+    #[serde(default)]
+    pub links: Vec<String>,
+    /// Monitors it holds on others.
+    #[serde(default)]
+    pub monitoring: Vec<MonitorInfo>,
+    /// Monitors others hold on it.
+    #[serde(default)]
+    pub monitored_by: Vec<MonitorInfo>,
+}
+
+/// One monitor in [`InstanceInfo`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonitorInfo {
+    /// The monitor's reference.
+    pub reference: u64,
+    /// The other end: the target for `monitoring`, the watcher for
+    /// `monitored_by`.
+    pub pid: String,
 }
 
 /// An instance's state, from its `save-snapshot`.

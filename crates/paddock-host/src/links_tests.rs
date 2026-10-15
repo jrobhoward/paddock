@@ -186,3 +186,18 @@ fn unlinking____local_exits_or_node_lost____forgotten() {
 
     assert_eq!(table.unlinking(), 0);
 }
+
+#[test]
+fn info____links_and_monitors_both_ways____each_listed_sorted() {
+    let table = LinkTable::default();
+    table.link(pid(1), remote(3), alive);
+    table.link(pid(1), remote(2), alive);
+    let (held, _) = table.monitor(pid(1), remote(4), alive);
+    table.monitor_with(remote(5), pid(1), 77, alive);
+
+    let info = table.info(pid(1));
+
+    assert_eq!(info.links, vec![remote(2), remote(3)]);
+    assert_eq!(info.monitoring, vec![(held, remote(4))]);
+    assert_eq!(info.monitored_by, vec![(77, remote(5))]);
+}

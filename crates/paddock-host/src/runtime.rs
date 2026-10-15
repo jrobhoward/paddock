@@ -19,7 +19,7 @@ use crate::delivery;
 use crate::deny;
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
-use crate::links::LinkTable;
+use crate::links::{LinkInfo, LinkTable};
 use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
 use crate::message::{CallError, Envelope};
 use crate::metrics::Metrics;
@@ -573,6 +573,13 @@ impl Runtime {
     #[must_use]
     pub fn peer_status(&self, node: u32) -> Option<PeerStatus> {
         self.inner.liveness.status(node)
+    }
+
+    /// `pid`'s links and monitors as this node records them; for a pid on
+    /// another node, the entries this node keeps with it.
+    #[must_use]
+    pub fn links(&self, pid: Pid) -> LinkInfo {
+        self.inner.links.info(pid)
     }
 
     /// Every live instance, ordered by pid.

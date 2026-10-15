@@ -7,6 +7,10 @@
 #             proxies, under link cuts, holds and loss, SIGKILL and SIGSTOP
 #             (paddock-soak failover); fails on any moment when both nodes
 #             ran the singleton, or a heal after which other than one runs it
+#   cluster   three member nodes behind the same proxies, their instances
+#             linking, monitoring and killing each other at random under the
+#             same faults (paddock-soak cluster); fails when, after a heal,
+#             the nodes disagree on a link or monitor
 #   chaos     the chaos example on one node under failing commands
 #             (paddock-soak chaos)
 #
@@ -20,14 +24,15 @@
 #   --seed N              the first seed (default: random); each run takes
 #                         the next
 #   --failover-minutes M  length of each failover run (default 10)
+#   --cluster-minutes M   length of each cluster run (default 10)
 #   --chaos-minutes M     length of each chaos run (default 5)
 #   --sim-seeds N         random scenarios per sim run (default 200)
-#   --only KIND           run only sim, failover or chaos
+#   --only KIND           run only sim, failover, cluster or chaos
 #   --keep                keep the directories of runs that passed
 #
 # Each run gets a directory named <round>-<kind>-<seed> with its seed, logs
 # and result; a run that passed is removed unless --keep. summary.txt in
-# --dir lists every run. Rerun a failover or chaos run with the same seed:
+# --dir lists every run. Rerun a failover, cluster or chaos run with the same seed:
 #   target/release/paddock-soak failover --dir DIR --seed SEED
 # (timing still differs between runs, so a seed does not replay exactly),
 # and recheck a failover run's logs with paddock-soak check DIR. Replay a
@@ -47,6 +52,7 @@ hours=""
 dir=""
 seed=$(( (RANDOM << 15 | RANDOM) ))
 failover_minutes=10
+cluster_minutes=10
 chaos_minutes=5
 sim_seeds=200
 only=""
@@ -57,6 +63,7 @@ while [ "$#" -gt 0 ]; do
         --dir) dir=${2:-}; shift ;;
         --seed) seed=${2:-}; shift ;;
         --failover-minutes) failover_minutes=${2:-}; shift ;;
+        --cluster-minutes) cluster_minutes=${2:-}; shift ;;
         --chaos-minutes) chaos_minutes=${2:-}; shift ;;
         --sim-seeds) sim_seeds=${2:-}; shift ;;
         --only) only=${2:-}; shift ;;
@@ -71,9 +78,9 @@ if [ -z "$hours" ]; then
     exit 2
 fi
 case "$only" in
-    "") kinds="sim failover chaos" ;;
-    sim | failover | chaos) kinds=$only ;;
-    *) echo "soak: --only takes sim, failover or chaos" >&2; exit 2 ;;
+    "") kinds="sim failover cluster chaos" ;;
+    sim | failover | cluster | chaos) kinds=$only ;;
+    *) echo "soak: --only takes sim, failover, cluster or chaos" >&2; exit 2 ;;
 esac
 [ -n "$dir" ] || dir=target/soak/$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$dir"
@@ -81,7 +88,8 @@ summary=$dir/summary.txt
 
 echo "soak: building (release)"
 cargo build --release --locked -p paddock -p paddock-soak || exit 1
-cargo build --release --locked --target wasm32-wasip2 -p example-counter -p example-chaos || exit 1
+cargo build --release --locked --target wasm32-wasip2 -p example-counter -p example-chaos \
+    -p paddock-fixture-chaos || exit 1
 
 now() { date +%s; }
 deadline=$(awk -v h="$hours" -v t="$(now)" 'BEGIN { printf "%d", t + h * 3600 }')
@@ -108,6 +116,10 @@ while [ "$(now)" -lt "$deadline" ]; do
             failover)
                 target/release/paddock-soak failover --dir "$run" --seed "$seed" \
                     --minutes "$(fit "$failover_minutes")" > "$run/output.txt" 2>&1
+                ;;
+            cluster)
+                target/release/paddock-soak cluster --dir "$run" --seed "$seed" \
+                    --minutes "$(fit "$cluster_minutes")" > "$run/output.txt" 2>&1
                 ;;
             chaos)
                 target/release/paddock-soak chaos --dir "$run" --seed "$seed" \

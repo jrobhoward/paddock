@@ -2,6 +2,7 @@
 
 pub(crate) mod chaos;
 pub(crate) mod check;
+pub(crate) mod cluster;
 pub(crate) mod events;
 pub(crate) mod failover;
 pub(crate) mod node;
@@ -43,6 +44,20 @@ enum Command {
         lease_ms: u64,
         #[arg(long, default_value_t = 300)]
         margin_ms: u64,
+    },
+    /// Three member nodes behind UDP proxies, their instances linking and
+    /// monitoring each other at random, under link and node faults; fails
+    /// when, after a heal, the nodes disagree on a link or monitor.
+    Cluster {
+        #[command(flatten)]
+        run: Run,
+        /// Length of each episode of faults before everything is healed.
+        #[arg(long, default_value_t = 30)]
+        episode_s: u64,
+        #[arg(long, default_value_t = 200)]
+        heartbeat_ms: u64,
+        #[arg(long, default_value_t = 1000)]
+        node_timeout_ms: u64,
     },
     /// The chaos example on one node under random failing commands.
     Chaos {
@@ -117,6 +132,25 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
                     lease_ms,
                     margin_ms,
                 },
+            })
+            .await
+        }
+        Command::Cluster {
+            run,
+            episode_s,
+            heartbeat_ms,
+            node_timeout_ms,
+        } => {
+            let (dir, root, paddock, seed, minutes) = prepare(run)?;
+            cluster::run(&cluster::Args {
+                dir,
+                root,
+                paddock,
+                seed,
+                minutes,
+                episode: Duration::from_secs(episode_s),
+                heartbeat_ms,
+                node_timeout_ms,
             })
             .await
         }

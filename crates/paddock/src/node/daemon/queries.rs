@@ -3,8 +3,10 @@
 
 use std::time::Duration;
 
-use crate::api::{AppDetail, AppSummary, Done, InstanceInfo, LogLine, StateResponse, Target};
-use paddock_host::{AppHandle, AppStatus, CallError, Envelope, InstanceHandle, Pid};
+use crate::api::{
+    AppDetail, AppSummary, Done, InstanceInfo, LogLine, MonitorInfo, StateResponse, Target,
+};
+use paddock_host::{AppHandle, AppStatus, CallError, Envelope, InstanceHandle, Pid, Runtime};
 use serde_json::json;
 
 use super::Node;
@@ -38,8 +40,17 @@ pub(super) fn status_text(status: &AppStatus) -> (String, Option<String>) {
     }
 }
 
-pub(super) fn instance_info(h: &InstanceHandle) -> InstanceInfo {
+pub(super) fn instance_info(rt: &Runtime, h: &InstanceHandle) -> InstanceInfo {
     let pid = h.pid();
+    let links = rt.links(pid);
+    let monitors = |v: &[(u64, Pid)]| {
+        v.iter()
+            .map(|(reference, pid)| MonitorInfo {
+                reference: *reference,
+                pid: pid.text(),
+            })
+            .collect()
+    };
     InstanceInfo {
         pid: pid.text(),
         app: h.app().to_string(),
@@ -50,6 +61,9 @@ pub(super) fn instance_info(h: &InstanceHandle) -> InstanceInfo {
         memory_bytes: h.memory_bytes(),
         restarts: h.restarts(),
         last_exit: h.last_exit().map(|r| r.to_string()),
+        links: links.links.iter().map(|p| p.text()).collect(),
+        monitoring: monitors(&links.monitoring),
+        monitored_by: monitors(&links.monitored_by),
     }
 }
 
@@ -157,7 +171,12 @@ impl Node {
                 .and_then(AppHandle::supervisor)
                 .map_or(0, paddock_host::SupervisorHandle::restart_count),
             instance_list: handle
-                .map(|h| h.instances().iter().map(instance_info).collect())
+                .map(|h| {
+                    h.instances()
+                        .iter()
+                        .map(|i| instance_info(&self.rt, i))
+                        .collect()
+                })
                 .unwrap_or_default(),
             listeners: self
                 .connection_apps()
@@ -170,7 +189,11 @@ impl Node {
     /// Every live instance.
     #[must_use]
     pub fn ps(&self) -> Vec<InstanceInfo> {
-        self.rt.instances().iter().map(instance_info).collect()
+        self.rt
+            .instances()
+            .iter()
+            .map(|i| instance_info(&self.rt, i))
+            .collect()
     }
 
     /// An app's last `lines` log records.

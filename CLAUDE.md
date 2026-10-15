@@ -42,8 +42,9 @@ scripts/check.sh --quick
 scripts/check.sh clippy guests
 
 # Soak (not in CI): simulation seeds, failover between node processes under
-# faults, and the chaos app, in turn; each failure keeps a run directory
-# under target/soak/ with its seed and logs.
+# faults, links and monitors across three nodes, and the chaos app, in turn;
+# each failure keeps a run directory under target/soak/ with its seed and
+# logs.
 scripts/soak.sh --hours 1
 
 # Coverage per file (cargo install cargo-llvm-cov once). Tests that start
@@ -214,7 +215,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-soak`: the `paddock-soak` binary behind `scripts/soak.sh`
   (Unix only): `failover` runs a witness and a pair as `paddock node`
   processes behind UDP proxies (each node binds `cluster.address` and
-  advertises its proxy's) under seeded faults, `chaos` the chaos example on
+  advertises its proxy's) under seeded faults, `cluster` three member nodes
+  behind the same proxies whose `paddock-fixture-chaos` instances link and
+  monitor each other at random, checked after each heal for agreement
+  between every node's `ps` links and monitors, `chaos` the chaos example on
   one node, and `check` reads a failover run's events and node logs for
   any moment when both nodes ran the singleton. It reads the gate's
   `singleton starting` and `singleton killed` log records, the failover

@@ -6,6 +6,10 @@
 //!   between two nodes, with `SIGKILL` and `SIGSTOP` of nodes, on a schedule
 //!   drawn from a seed. Every so often everything is healed and exactly one
 //!   node must run the singleton.
+//! - `cluster`: three member nodes behind the same proxies, their instances
+//!   linking and monitoring each other at random under link and node
+//!   faults; after each heal every link and monitor must be listed on both
+//!   nodes (ROADMAP D3, spike S12).
 //! - `chaos`: the chaos example on one node, sent random commands that trap,
 //!   spin and allocate; the node must keep answering.
 //! - `check`: reads a failover run's directory and fails on any moment when

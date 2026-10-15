@@ -293,6 +293,15 @@ All notable changes are recorded here. The format follows
   environment (`failover::node`'s `Env` trait), among them `NotYet` to a
   node that is down, and one where a pool's supervisor exits mid-rollout.
 
+- `paddock --json ps` lists each instance's links and monitors (`links`,
+  `monitoring`, `monitored_by`), as its node records them;
+  `Runtime::links` returns them.
+- `scripts/soak.sh` runs `paddock-soak cluster`: three member nodes behind
+  UDP proxies, their instances linking, monitoring and killing each other
+  at random under link cuts, holds and loss, `SIGKILL` and `SIGSTOP`; after
+  each heal, every link and monitor must be listed on both of its nodes and
+  name a live instance (`--cluster-minutes`, `--only cluster`).
+
 ### Fixed
 
 - wasmtime 49.0.3 and rustls 0.23.46, for the advisories published against

@@ -69,6 +69,18 @@ pub(crate) struct ExitNotices {
     pub(crate) held: Vec<(u64, Pid)>,
 }
 
+/// One instance's entries, for introspection (`paddock ps`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LinkInfo {
+    /// Pids it is linked to, on any node.
+    pub links: Vec<Pid>,
+    /// Monitors it holds: (reference, target).
+    pub monitoring: Vec<(u64, Pid)>,
+    /// Monitors others hold on it: (reference, watcher).
+    pub monitored_by: Vec<(u64, Pid)>,
+}
+
 /// What losing a node means for this node's tables.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct NodeDown {
@@ -164,6 +176,29 @@ impl LinkTable {
         let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
         if t.unlinking.get(&(a, b)) == Some(&id) {
             t.unlinking.remove(&(a, b));
+        }
+    }
+
+    /// `pid`'s links and monitors, each list sorted.
+    pub(crate) fn info(&self, pid: Pid) -> LinkInfo {
+        let t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut links: Vec<Pid> = t
+            .links
+            .get(&pid)
+            .map(|s| s.iter().copied().collect())
+            .unwrap_or_default();
+        links.sort();
+        let pairs = |m: Option<&HashMap<u64, Pid>>| {
+            let mut v: Vec<(u64, Pid)> = m
+                .map(|m| m.iter().map(|(r, p)| (*r, *p)).collect())
+                .unwrap_or_default();
+            v.sort();
+            v
+        };
+        LinkInfo {
+            links,
+            monitoring: pairs(t.watching.get(&pid)),
+            monitored_by: pairs(t.monitors.get(&pid)),
         }
     }
 
