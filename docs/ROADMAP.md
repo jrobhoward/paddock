@@ -104,7 +104,7 @@ Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an 
   - Secrets: Vault or another store (an extension or a source kind), caching with a TTL.
   - Groups: probes for join and publish.
   - B6: a node watchdog (the epoch ticker pats it; a wedged node is restarted by its service manager).
-  - Flaky under heavy load (seen once each on 2026-10-14, with TLC on 15 of 16 cores; both passed alone): `apps.rs` `start_apps____dependencies____providers_start_first_and_stop_last` records stop order from two waiter tasks, which can run in either order once both instances exited; `examples.rs` `examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed` saw 50 downs where it expects 1 (cause not looked into).
+  - Flaky under heavy load (seen once each on 2026-10-14, with TLC on 15 of 16 cores; both passed alone): `apps.rs` `start_apps____dependencies____providers_start_first_and_stop_last` records stop order from two waiter tasks, which can run in either order once both instances exited; `examples.rs` `examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed` saw 50 and 29 downs where it expects 1, probably because on each `down`, `ping` monitors whatever `whereis("pong")` returns, and while the supervisor has yet to restart `pong` that is a dead pid, whose `noproc` down counts again (the example should count only `down`s of the pid it watched as live, or retry later).
 
 ## Stage 6: Platforms and benchmarks (M)
 

@@ -295,6 +295,11 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- wasmtime 49.0.3 and rustls 0.23.46, for the advisories published against
+  49.0.2 and 0.23.45 (RUSTSEC-2026-0346 to 0349 and 0352 to 0364), among
+  them a filesystem sandbox escape in `wasmtime-wasi` when renaming
+  symlinks with trailing slashes (RUSTSEC-2026-0352) and several host
+  panics a guest could cause.
 - Links and monitors between nodes could end up on one node only, so an
   instance was never told that its partner on the other node had exited
   (spike S12's model of links and sessions found four ways):
