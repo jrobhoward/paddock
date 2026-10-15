@@ -309,6 +309,15 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- Passivation, off by default (spike S11, `spikes/s11`):
+  `InstanceSpec::passivate_after` passivates an idle instance (its
+  `save-snapshot` kept, its Store dropped, lifecycle state `Passive`), and
+  the next message, signal or operation wakes it with `load-snapshot` of its
+  own version, keeping its pid, mailbox, links, names and timers.
+  `RuntimeConfig::max_processes` lets more instances exist than Store
+  slots; an instance waiting for a slot has an idle one passivate early.
+  Connection handlers now hold a Store slot too. `Runtime::store_count`;
+  example `passivation_cost`. Not yet in manifests or node config.
 - The standby redirects to the primary (ROADMAP D11, step 1): with
   `partner_url` on an `[http.<name>]` listener, a request for a singleton
   that runs on the partner is answered `307 Temporary Redirect` to the

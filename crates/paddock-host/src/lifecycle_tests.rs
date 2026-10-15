@@ -16,6 +16,9 @@ use super::LifecycleState::{self, *};
 #[case(Active, Failed)]
 #[case(Upgrading, Active)]
 #[case(Upgrading, Failed)]
+#[case(Active, Passive)]
+#[case(Passive, Active)]
+#[case(Passive, Failed)]
 #[case(Stopping, Stopped)]
 #[case(Stopping, Failed)]
 #[case(Stopped, Starting)]
@@ -41,6 +44,8 @@ fn can_transition_to____allowed____returns_true(
 #[case(Stopped, Failed)]
 #[case(Failed, Failed)]
 #[case(Upgrading, Stopping)]
+#[case(Passive, Stopping)]
+#[case(Passive, Upgrading)]
 fn can_transition_to____not_allowed____returns_false(
     #[case] from: LifecycleState,
     #[case] to: LifecycleState,
@@ -49,13 +54,13 @@ fn can_transition_to____not_allowed____returns_false(
 }
 
 #[test]
-fn handles_messages____only_active____returns_true() {
+fn handles_messages____active_or_passive____returns_true() {
     let handling: Vec<LifecycleState> = [
-        Installed, Starting, Active, Upgrading, Stopping, Stopped, Failed, Restarting,
+        Installed, Starting, Active, Upgrading, Passive, Stopping, Stopped, Failed, Restarting,
     ]
     .into_iter()
     .filter(|s| s.handles_messages())
     .collect();
 
-    assert_eq!(handling, vec![Active]);
+    assert_eq!(handling, vec![Active, Passive]);
 }

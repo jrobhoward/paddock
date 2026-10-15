@@ -9,7 +9,7 @@ What an operator can see on a running node: instance stats, direct calls to one 
 | Column | Meaning |
 | --- | --- |
 | `PID` | `node.serial.incarnation@creation`. The serial stays across restarts of the instance; the incarnation grows by one each time; the creation counts the node's starts, so a pid from before a node restart never names a later instance. The instance id is the creation in its high 24 bits and the serial in its low 40. |
-| `APP`, `VERSION`, `STATE` | What it runs, and its lifecycle state (`active`, `upgrading`, ...). |
+| `APP`, `VERSION`, `STATE` | What it runs, and its lifecycle state (`active`, `upgrading`, `passive`, ...). |
 | `QUEUED` | Messages waiting in its mailbox. |
 | `DROPPED` | Casts and timer messages dropped because its mailbox was full. |
 | `MEMORY` | Linear memory it has grown to. Wasm memory does not shrink, so this is its high-water mark. |

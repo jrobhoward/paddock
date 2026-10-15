@@ -157,6 +157,8 @@ impl Node {
             RuntimeConfig {
                 node: config.node,
                 max_instances: config.max_instances,
+                // Passivation is not in node config yet (ROADMAP E7).
+                max_processes: None,
                 memory_profile: match config.memory_profile {
                     MemoryProfile::Standard => HostProfile::Standard,
                     MemoryProfile::Dense => HostProfile::Dense,

@@ -149,8 +149,15 @@ pub struct RuntimeConfig {
     /// This node's id, carried in every pid.
     pub node: u32,
     /// Most instances alive at once. Sizes the pooling allocator, including
-    /// one fiber stack per instance.
+    /// one fiber stack per instance. With passivation
+    /// ([`crate::InstanceSpec::passivate_after`]) it counts instances that
+    /// hold a Store; a passivated one holds none.
     pub max_instances: u32,
+    /// Most instances in the process table, passivated or not; `None` is
+    /// `max_instances`. Above `max_instances` only with passivation: an
+    /// instance starting or waking while every Store slot is taken waits
+    /// for one (spike S11).
+    pub max_processes: Option<u32>,
     /// Address-space reservation per linear memory.
     pub memory_profile: MemoryProfile,
     /// Epoch tick: the granularity of deadlines and of preemption between
@@ -199,6 +206,7 @@ impl Default for RuntimeConfig {
         Self {
             node: 0,
             max_instances: 1_000,
+            max_processes: None,
             memory_profile: MemoryProfile::Standard,
             epoch_tick: Duration::from_millis(2),
             data_dir: None,

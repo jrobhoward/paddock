@@ -158,8 +158,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   host implements, for deny-stub tests; nodes refuse that build, so node tests
   build it without the feature into `target/fixtures/services-plain`.
 - `crates/paddock-fixture-counter`: a stateful counter built three ways by
-  feature (v1, v2, a broken v3) for upgrade tests; each version builds into
-  its own target directory.
+  feature (v1, v2, a broken v3) for upgrade and passivation tests
+  (`tests/passivation.rs`, `examples/passivation_cost.rs`); each version
+  builds into its own target directory.
 - `crates/paddock-fixture-echo`: the smallest app implementing the `app`
   world; a guest test fixture. Generated bindings live in a `bindings` module
   with a scoped `#[allow(missing_docs, clippy::too_many_arguments)]`. 

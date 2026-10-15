@@ -184,6 +184,15 @@ impl InstanceState {
         to.timers = std::mem::take(&mut self.timers);
     }
 
+    /// Whether the guest can be dropped and rebuilt from a snapshot without
+    /// anyone noticing: no caller waits on a deferred reply, and the guest
+    /// holds no host resource (a bucket, a watch, a stream), which a new
+    /// guest could not name.
+    pub(crate) fn passivable(&mut self) -> bool {
+        self.pending.retain(|_, waiting| !waiting.is_closed());
+        self.pending.is_empty() && self.table.is_empty()
+    }
+
     /// Remember a caller until its reply is sent. Callers that gave up (timed
     /// out) are pruned so an app that never answers does not leak them.
     pub(crate) fn await_reply(&mut self, call_ref: u64, reply: oneshot::Sender<Envelope>) {

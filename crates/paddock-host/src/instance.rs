@@ -9,12 +9,21 @@
 //! Killing an instance drops the in-flight call future and discards the
 //! Store. A Store whose call was dropped is poisoned, so it is never reused
 //! (spike S1).
+//!
+//! An instance with [`InstanceSpec::passivate_after`] is passivated after
+//! that long with nothing to do (spike S11): `save-snapshot`, then the Store
+//! is dropped and its data kept (timers, waiting callers, services; the pid,
+//! mailbox, links, monitors and names live outside it). It holds no Store
+//! slot then. The next message, signal or operation takes a slot, builds a
+//! new Store on the kept data and runs `load-snapshot` with the instance's
+//! own version; a `snapshot` operation is answered from the kept bytes
+//! without waking it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tracing::Instrument;
 use wasmtime::{Store, Trap, UpdateDeadline};
 
@@ -72,6 +81,26 @@ pub enum SnapshotError {
     /// instance exited with this reason and its supervisor restarts it.
     #[error("save-snapshot failed: {0}")]
     Failed(ExitReason),
+}
+
+/// How often an instance waiting for a Store slot asks an idle one to
+/// passivate.
+const SLOT_ASK_AGAIN: Duration = Duration::from_millis(10);
+
+/// How [`InstanceTask::serve`] ended without a failure.
+enum Served {
+    /// A stop was requested, with this reason.
+    Stop(ExitReason),
+    /// Nothing to do for `passivate_after`.
+    Idle,
+}
+
+/// What [`InstanceTask::receive`] found.
+enum Next {
+    Message(Message),
+    /// Nothing to handle yet: check for a stop and receive again.
+    Again,
+    Done(Result<Served, ExitReason>),
 }
 
 /// A stop request. A kill overrides a graceful shutdown; nothing overrides a
@@ -472,6 +501,13 @@ pub(crate) struct InstanceTask {
     exit: watch::Sender<Option<ExitReason>>,
     /// The app's host counters.
     stats: Arc<AppStats>,
+    /// What woke a passivated instance, handled first once it is awake.
+    held: Option<Message>,
+    held_op: Option<Op>,
+    /// The next call reference, unique for the instance's whole life: a
+    /// guest woken from a snapshot may still hold the reference of a call
+    /// whose caller gave up.
+    next_ref: u64,
 }
 
 /// A pid's handle and process context with no mailbox behind them, for a
@@ -539,6 +575,9 @@ pub(crate) fn prepare(
         control: control_rx,
         state: state_tx,
         exit: exit_tx,
+        held: None,
+        held_op: None,
+        next_ref: 1,
     };
     (handle, task)
 }
@@ -603,6 +642,7 @@ impl InstanceTask {
     ) -> ExitReason {
         let engine = rt.engine.clone();
         let weak = Arc::downgrade(&rt);
+        let rt_slots = rt.clone();
         let ctx = ProcessContext {
             rt,
             me: self.me.clone(),
@@ -612,6 +652,10 @@ impl InstanceTask {
         let state = match InstanceState::new(self.pid, spec, ctx) {
             Ok(state) => state,
             Err(why) => return ExitReason::Crashed(why),
+        };
+        let mut slot = match self.take_slot(&rt_slots).await {
+            Ok(slot) => slot,
+            Err(reason) => return reason,
         };
         let mut store = new_store(&engine, state);
         let mut spec = spec.clone();
@@ -627,9 +671,39 @@ impl InstanceTask {
             .health
             .map(|check| AbortOnDrop(tokio::spawn(health::watch(weak, self.me.clone(), check))));
 
-        let stop = match self.serve(&mut store, &mut instance, &mut spec).await {
-            Ok(stop) => stop,
-            Err(reason) => return reason,
+        let stop = loop {
+            match self.serve(&mut store, &mut instance, &mut spec).await {
+                Ok(Served::Stop(stop)) => break stop,
+                Err(reason) => return reason,
+                Ok(Served::Idle) => {}
+            }
+            let snapshot = match self.save(&mut store, &instance, &spec).await {
+                Ok(snapshot) => snapshot,
+                Err(reason) => return reason,
+            };
+            if self.has_work() {
+                // Something arrived during `save-snapshot`: stay live.
+                continue;
+            }
+            let state = store.into_data();
+            drop(slot);
+            self.me.memory_counter().store(0, Ordering::Relaxed);
+            self.set_state(LifecycleState::Passive);
+            tracing::debug!(bytes = snapshot.len(), "passivated");
+            if let Some(reason) = self.passive(&snapshot).await {
+                return reason;
+            }
+            let started = std::time::Instant::now();
+            slot = match self.take_slot(&rt_slots).await {
+                Ok(slot) => slot,
+                Err(reason) => return reason,
+            };
+            store = new_store(&engine, state);
+            instance = match self.wake(&mut store, app, &spec, &snapshot).await {
+                Ok(instance) => instance,
+                Err(reason) => return reason,
+            };
+            tracing::debug!(wake_us = started.elapsed().as_micros(), "woken");
         };
 
         self.set_state(LifecycleState::Stopping);
@@ -668,52 +742,30 @@ impl InstanceTask {
         }
     }
 
-    /// Handle messages until a stop is requested (`Ok` with the reason) or
-    /// the instance fails (`Err`).
+    /// Handle messages until a stop is requested (`Stop` with the reason),
+    /// the instance has had nothing to do for `passivate_after` and may be
+    /// passivated (`Idle`), or it fails (`Err`).
     async fn serve(
         &mut self,
         store: &mut Store<InstanceState>,
         instance: &mut PaddockApp,
         spec: &mut InstanceSpec,
-    ) -> Result<ExitReason, ExitReason> {
-        let mut next_ref: u64 = 1;
+    ) -> Result<Served, ExitReason> {
         loop {
             match self.control.borrow_and_update().clone() {
                 Control::Run => {}
-                Control::Shutdown(reason) => return Ok(reason),
+                Control::Shutdown(reason) => return Ok(Served::Stop(reason)),
                 Control::Kill(reason) => return Err(reason),
             }
-            let message = tokio::select! {
-                biased;
-                changed = self.control.changed() => {
-                    if changed.is_err() {
-                        return Err(ExitReason::Killed);
-                    }
-                    continue;
-                }
-                Some(op) = self.ops.recv() => {
-                    if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
-                        return Err(stop);
-                    }
-                    if let Some(reason) = self.operate(store, instance, spec, op).await {
-                        return Err(reason);
-                    }
-                    continue;
-                }
-                Some(info) = self.signals.recv() => match info.resolve() {
-                    Some(info) => Some(Message::Info(info)),
-                    // A withdrawn notice (an ended watch).
-                    None => continue,
-                },
-                message = self.mailbox.recv() => message,
-            };
-            let Some(message) = message else {
-                return Ok(ExitReason::Shutdown);
+            let message = match self.receive(store, instance, spec).await {
+                Next::Message(message) => message,
+                Next::Again => continue,
+                Next::Done(served) => return served,
             };
             // Out of lease, the message waits here; a stop drops it.
             if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
                 return match *self.control.borrow() {
-                    Control::Shutdown(_) => Ok(stop),
+                    Control::Shutdown(_) => Ok(Served::Stop(stop)),
                     Control::Run | Control::Kill(_) => Err(stop),
                 };
             }
@@ -727,8 +779,8 @@ impl InstanceTask {
             probe::callback_start(self.pid, kind);
             let outcome = match message {
                 Message::Call { msg, reply } => {
-                    let call_ref = next_ref;
-                    next_ref += 1;
+                    let call_ref = self.next_ref;
+                    self.next_ref += 1;
                     store.data_mut().await_reply(call_ref, reply);
                     let msg = msg.into();
                     let call = instance.call_handle_call(&mut *store, call_ref, &msg);
@@ -770,6 +822,75 @@ impl InstanceTask {
                 tracing::debug!(error = %describe(&err), "callback failed");
                 return Err(classify(&err, store.data()));
             }
+        }
+    }
+
+    /// The next message to handle, after any operation or signal that
+    /// comes first; `Done` once a stop is requested, the mailbox closes or
+    /// the instance may be passivated.
+    async fn receive(
+        &mut self,
+        store: &mut Store<InstanceState>,
+        instance: &mut PaddockApp,
+        spec: &mut InstanceSpec,
+    ) -> Next {
+        if let Some(op) = self.held_op.take() {
+            return self.run_op(store, instance, spec, op).await;
+        }
+        if let Some(message) = self.held.take() {
+            return Next::Message(message);
+        }
+        let idle = spec
+            .passivate_after
+            .filter(|_| store.data_mut().passivable());
+        // Asked to passivate early, while idle, for an instance waiting
+        // for a Store slot.
+        let rt = idle.map(|_| store.data().ctx.rt.clone());
+        let wanted = async {
+            match &rt {
+                Some(rt) => rt.slot_wanted.notified().await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            biased;
+            changed = self.control.changed() => {
+                if changed.is_err() {
+                    return Next::Done(Err(ExitReason::Killed));
+                }
+                Next::Again
+            }
+            Some(op) = self.ops.recv() => self.run_op(store, instance, spec, op).await,
+            Some(info) = self.signals.recv() => match info.resolve() {
+                Some(info) => Next::Message(Message::Info(info)),
+                // A withdrawn notice (an ended watch).
+                None => Next::Again,
+            },
+            message = self.mailbox.recv() => match message {
+                Some(message) => Next::Message(message),
+                None => Next::Done(Ok(Served::Stop(ExitReason::Shutdown))),
+            },
+            () = tokio::time::sleep(idle.unwrap_or_default()), if idle.is_some() => {
+                Next::Done(Ok(Served::Idle))
+            }
+            () = wanted, if idle.is_some() => Next::Done(Ok(Served::Idle)),
+        }
+    }
+
+    /// Run a host operation once the lease allows guest code.
+    async fn run_op(
+        &mut self,
+        store: &mut Store<InstanceState>,
+        instance: &mut PaddockApp,
+        spec: &mut InstanceSpec,
+        op: Op,
+    ) -> Next {
+        if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
+            return Next::Done(Err(stop));
+        }
+        match self.operate(store, instance, spec, op).await {
+            Some(reason) => Next::Done(Err(reason)),
+            None => Next::Again,
         }
     }
 
@@ -920,6 +1041,129 @@ impl InstanceTask {
                 Err(err)
             }
         }
+    }
+
+    /// A Store slot, waiting for one if every slot is taken (only with
+    /// passivation, which lets more instances exist than slots); an idle
+    /// instance is asked to passivate early to free one. A kill meanwhile
+    /// returns its reason.
+    async fn take_slot(&mut self, rt: &RuntimeInner) -> Result<OwnedSemaphorePermit, ExitReason> {
+        let slots: &Arc<Semaphore> = &rt.slots;
+        if let Ok(slot) = slots.clone().try_acquire_owned() {
+            return Ok(slot);
+        }
+        // Ask again until a slot frees: a request made while no idle
+        // instance was listening is kept only once, however many there were.
+        let acquire = slots.clone().acquire_owned();
+        tokio::pin!(acquire);
+        loop {
+            rt.slot_wanted.notify_one();
+            let waited = tokio::time::timeout(SLOT_ASK_AGAIN, &mut acquire);
+            match killable(&mut self.control, waited).await? {
+                Ok(Ok(slot)) => return Ok(slot),
+                // The semaphore is never closed.
+                Ok(Err(_closed)) => return Err(ExitReason::Killed),
+                Err(_elapsed) => {}
+            }
+        }
+    }
+
+    /// `save-snapshot`, within the callback deadline. A failure ends the
+    /// instance, as in an upgrade.
+    async fn save(
+        &mut self,
+        store: &mut Store<InstanceState>,
+        instance: &PaddockApp,
+        spec: &InstanceSpec,
+    ) -> Result<Vec<u8>, ExitReason> {
+        store.data_mut().clock.start(spec.callback_deadline);
+        match killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await? {
+            Ok(bytes) => Ok(bytes),
+            Err(err) => Err(classify(&err, store.data())),
+        }
+    }
+
+    /// Whether a message, signal or operation is waiting.
+    fn has_work(&self) -> bool {
+        !self.mailbox.is_empty() || !self.signals.is_empty() || !self.ops.is_empty()
+    }
+
+    /// Wait, passivated, for something to wake the instance; it is kept in
+    /// `held` or `held_op`. A `snapshot` operation is answered from
+    /// `snapshot` without waking. Returns the reason of a kill, which ends
+    /// the instance without waking it; a graceful stop wakes it to run
+    /// `terminate`.
+    async fn passive(&mut self, snapshot: &[u8]) -> Option<ExitReason> {
+        loop {
+            match self.control.borrow_and_update().clone() {
+                Control::Run => {}
+                Control::Shutdown(_) => return None,
+                Control::Kill(reason) => return Some(reason),
+            }
+            tokio::select! {
+                biased;
+                changed = self.control.changed() => if changed.is_err() {
+                    return Some(ExitReason::Killed);
+                },
+                Some(op) = self.ops.recv() => match op {
+                    Op::Snapshot { reply } => {
+                        let _ = reply.send(Ok(snapshot.to_vec()));
+                    }
+                    op => {
+                        self.held_op = Some(op);
+                        return None;
+                    }
+                },
+                Some(info) = self.signals.recv() => if let Some(info) = info.resolve() {
+                    self.held = Some(Message::Info(info));
+                    return None;
+                },
+                // `None`: the mailbox closed, and `serve` stops.
+                message = self.mailbox.recv() => {
+                    self.held = message;
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Instantiate the component on a Store built from the kept data and
+    /// run `load-snapshot(own version, snapshot)` within the init timeout.
+    /// A failure ends the instance: its state is lost.
+    async fn wake(
+        &mut self,
+        store: &mut Store<InstanceState>,
+        app: &LoadedApp,
+        spec: &InstanceSpec,
+        snapshot: &[u8],
+    ) -> Result<PaddockApp, ExitReason> {
+        if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
+            return Err(stop);
+        }
+        store.data_mut().clock.start(spec.init_timeout);
+        let load = tokio::time::timeout(spec.init_timeout, async {
+            let instance = app.pre.instantiate_async(&mut *store).await?;
+            let result = instance
+                .call_load_snapshot(&mut *store, &spec.version, snapshot)
+                .await?;
+            wasmtime::Result::Ok((instance, result))
+        });
+        let crashed = |why: &str| ExitReason::Crashed(why.to_string());
+        let instance = match killable(&mut self.control, load).await? {
+            Err(_elapsed) => return Err(crashed("wake_timeout")),
+            Ok(Err(_)) if store.data().clock.timed_out => return Err(crashed("wake_timeout")),
+            Ok(Err(err)) => return Err(classify(&err, store.data())),
+            Ok(Ok((_, Err(msg)))) => {
+                return Err(ExitReason::Crashed(format!(
+                    "wake: load-snapshot refused: {msg}"
+                )));
+            }
+            Ok(Ok((instance, Ok(())))) => instance,
+        };
+        self.set_state(LifecycleState::Active);
+        // The new guest starts with fresh statics, as after an upgrade.
+        self.announce(store);
+        Ok(instance)
     }
 
     /// Wait until guest code may run: the instance's lease, if it is bound

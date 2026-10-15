@@ -309,6 +309,17 @@ async fn serve(rt: &Arc<RuntimeInner>, shared: &Shared, stream: TcpStream, peer:
             return;
         }
     };
+    // A Store slot, as an instance holds; none free ends the connection,
+    // as a full pooling allocator would.
+    let Ok(_slot) = rt.slots.clone().try_acquire_owned() else {
+        finish(
+            rt,
+            shared,
+            pid,
+            End::Done(ExitReason::Crashed("no instance slot".into())),
+        );
+        return;
+    };
     let mut store = new_store(&rt.engine, state);
     let activity = Arc::new(Activity::new());
     let (read, write) = stream.into_split();

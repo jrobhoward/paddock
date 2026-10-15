@@ -11,7 +11,6 @@ use tokio::sync::watch;
 
 use crate::error::HostError;
 use crate::instance::InstanceHandle;
-use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason};
 use crate::pid::Pid;
 use crate::pool::Pool;
@@ -927,7 +926,7 @@ async fn wait_started(supervisor: &SupervisorHandle, budget: Duration) -> Result
         // for good (a transient that exited normally) does not hold up the
         // app.
         let all_active = supervisor.children().iter().all(|c| match &c.handle {
-            Some(ChildHandle::Instance(h)) => h.state() == LifecycleState::Active,
+            Some(ChildHandle::Instance(h)) => h.state().handles_messages(),
             Some(ChildHandle::Supervisor(_)) => true,
             None => !c.restarting,
         });

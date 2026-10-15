@@ -68,6 +68,15 @@ pub struct InstanceSpec {
     /// Which apps this instance may send to and accept from (the
     /// manifest's `messaging_acl`; [`crate::acl`]).
     pub acl: Acl,
+    /// Passivate the instance after this long with nothing to do (spike
+    /// S11): run `save-snapshot`, drop the Store and keep the pid, mailbox,
+    /// links, monitors, names and timers; the next message, signal or
+    /// operation builds a new Store and runs `load-snapshot` with the
+    /// instance's own version. Only for an app whose `load-snapshot` reads
+    /// its own snapshots. An instance waiting to answer a deferred call or
+    /// holding a host resource (a bucket, a watch) stays live. `None`
+    /// never passivates.
+    pub passivate_after: Option<Duration>,
 }
 
 /// A host directory visible to the guest.
@@ -152,6 +161,7 @@ impl InstanceSpec {
                     may_call: a.may_call.clone(),
                 })
                 .unwrap_or_default(),
+            passivate_after: None,
             health: spec.health.as_ref().map(|h| HealthCheck {
                 interval: Duration::from_millis(h.interval_ms),
                 failure_threshold: h.failure_threshold,

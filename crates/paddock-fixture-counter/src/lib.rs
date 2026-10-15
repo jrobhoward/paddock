@@ -9,7 +9,11 @@
 //!
 //! Commands: `inc` (reply the new count), `get` (reply
 //! `<version> count=<n>` and, from v2 on, ` history=<h1,h2,...>`), `self`
-//! (reply the pid), `trap` (panic).
+//! (reply the pid), `trap` (panic). For passivation tests: a cast `inc`, and
+//! the calls `after:<ms>` (a timer that adds one when it fires),
+//! `trap-link:<name>` (trap exits and link to the instance registered as
+//! `<name>`; its exit adds one), `hold` (no reply until `release`) and
+//! `release`.
 
 #[allow(missing_docs, clippy::too_many_arguments)]
 mod bindings {
@@ -38,6 +42,8 @@ const HISTORY: bool = cfg!(any(feature = "v2", feature = "v3"));
 struct State {
     count: u64,
     history: Vec<u64>,
+    /// A call answered later, by `release`.
+    held: Option<CallRef>,
 }
 
 thread_local! {
@@ -53,6 +59,17 @@ fn text(body: String) -> Envelope {
         schema: None,
         body: body.into_bytes(),
     }
+}
+
+fn inc(s: &mut State) -> String {
+    s.count += 1;
+    if HISTORY {
+        s.history.push(s.count);
+        if s.history.len() > 3 {
+            s.history.remove(0);
+        }
+    }
+    s.count.to_string()
 }
 
 fn describe(s: &State) -> String {
@@ -75,19 +92,36 @@ impl Guest for Counter {
         Ok(())
     }
 
-    fn handle_call(_caller: CallRef, msg: Envelope) -> CallResult {
+    fn handle_call(caller: CallRef, msg: Envelope) -> CallResult {
         let command = String::from_utf8_lossy(&msg.body).into_owned();
         let reply = match command.as_str() {
-            "inc" => STATE.with_borrow_mut(|s| {
-                s.count += 1;
-                if HISTORY {
-                    s.history.push(s.count);
-                    if s.history.len() > 3 {
-                        s.history.remove(0);
-                    }
+            "inc" => STATE.with_borrow_mut(inc),
+            "hold" => {
+                STATE.with_borrow_mut(|s| s.held = Some(caller));
+                return CallResult::Noreply;
+            }
+            "release" => match STATE.with_borrow_mut(|s| s.held.take()) {
+                Some(held) => {
+                    process::reply(held, &text("released".into()));
+                    "ok".into()
                 }
-                s.count.to_string()
-            }),
+                None => "nothing held".into(),
+            },
+            other if other.starts_with("after:") => {
+                let ms = other["after:".len()..].parse().unwrap_or(0);
+                process::send_after(ms, &text("tick".into()));
+                "ok".into()
+            }
+            other if other.starts_with("trap-link:") => {
+                match process::whereis(&other["trap-link:".len()..]) {
+                    Some(pid) => {
+                        process::trap_exits(true);
+                        process::link(pid);
+                        "ok".into()
+                    }
+                    None => "no such name".into(),
+                }
+            }
             "get" => STATE.with_borrow(describe),
             "self" => {
                 let p = process::self_();
@@ -105,8 +139,17 @@ impl Guest for Counter {
         CallResult::Reply(text(reply))
     }
 
-    fn handle_cast(_msg: Envelope) {}
-    fn handle_info(_msg: Info) {}
+    fn handle_cast(msg: Envelope) {
+        if msg.body == b"inc" {
+            STATE.with_borrow_mut(inc);
+        }
+    }
+
+    fn handle_info(msg: Info) {
+        if matches!(msg, Info::Timer(_) | Info::Exit(_)) {
+            STATE.with_borrow_mut(inc);
+        }
+    }
     fn terminate(_reason: ExitReason) {}
 
     fn save_snapshot() -> Vec<u8> {

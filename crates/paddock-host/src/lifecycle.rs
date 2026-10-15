@@ -13,6 +13,9 @@ pub enum LifecycleState {
     Active,
     /// Swapping to a new version between messages.
     Upgrading,
+    /// Idle, with its Store dropped and its state in a snapshot; the next
+    /// message wakes it (spike S11).
+    Passive,
     /// Running `terminate` before a graceful stop.
     Stopping,
     /// Stopped normally.
@@ -28,27 +31,29 @@ impl LifecycleState {
     #[must_use]
     pub fn can_transition_to(self, target: Self) -> bool {
         use LifecycleState::{
-            Active, Failed, Installed, Restarting, Starting, Stopped, Stopping, Upgrading,
+            Active, Failed, Installed, Passive, Restarting, Starting, Stopped, Stopping, Upgrading,
         };
         matches!(
             (self, target),
             (Installed | Stopped | Restarting, Starting)
                 | (Starting | Upgrading, Active)
                 | (Starting | Active, Stopping)
-                | (Active, Upgrading)
+                | (Active, Upgrading | Passive)
+                | (Passive, Active)
                 | (Stopping, Stopped)
                 | (Failed | Stopped, Restarting)
                 | (
-                    Installed | Starting | Active | Upgrading | Stopping | Restarting,
+                    Installed | Starting | Active | Upgrading | Passive | Stopping | Restarting,
                     Failed
                 )
         )
     }
 
-    /// Whether an instance in this state takes messages from its mailbox.
+    /// Whether an instance in this state takes messages from its mailbox
+    /// (a passivated one wakes for them).
     #[must_use]
     pub fn handles_messages(self) -> bool {
-        self == Self::Active
+        matches!(self, Self::Active | Self::Passive)
     }
 
     /// Whether this state is final for one incarnation.

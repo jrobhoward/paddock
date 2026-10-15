@@ -64,6 +64,13 @@ pub(crate) struct RuntimeInner {
     pub(crate) liveness: Liveness,
     pub(crate) membership: Membership,
     pub(crate) failover: crate::failover::Shared,
+    /// One permit per Store the pooling allocator has room for, held by
+    /// each instance while it has a Store (not while passivated).
+    pub(crate) slots: Arc<tokio::sync::Semaphore>,
+    /// Signalled once for each instance that waits for a slot: one idle
+    /// instance that may be passivated is, at once. Waiters are woken in
+    /// the order they began waiting, so the one idle longest goes first.
+    pub(crate) slot_wanted: tokio::sync::Notify,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -223,6 +230,10 @@ impl Runtime {
                 config.role,
             )),
             failover: crate::failover::Shared::default(),
+            slots: Arc::new(tokio::sync::Semaphore::new(
+                usize::try_from(config.max_instances).unwrap_or(usize::MAX),
+            )),
+            slot_wanted: tokio::sync::Notify::new(),
             next_id: AtomicU64::new(crate::pid::instance_id(config.creation, 1)),
             config,
             _ticker: ticker,
@@ -610,10 +621,17 @@ impl Runtime {
         self.inner.metrics.render(&self.instances())
     }
 
-    /// Number of live instances.
+    /// Number of live instances, passivated or not.
     #[must_use]
     pub fn instance_count(&self) -> usize {
         self.inner.table.len()
+    }
+
+    /// Number of instances holding a Store now: those not passivated.
+    #[must_use]
+    pub fn store_count(&self) -> usize {
+        let slots = usize::try_from(self.inner.config.max_instances).unwrap_or(usize::MAX);
+        slots.saturating_sub(self.inner.slots.available_permits())
     }
 
     fn start(
@@ -648,13 +666,15 @@ impl Runtime {
             incarnation,
         };
         let (handle, task) = instance::prepare(pid, &spec, self.inner.metrics.stats(&spec.app));
-        let capacity = usize::try_from(self.inner.config.max_instances).unwrap_or(usize::MAX);
+        let config = &self.inner.config;
+        let processes = config.max_processes.unwrap_or(config.max_instances);
+        let capacity = usize::try_from(processes).unwrap_or(usize::MAX);
         self.inner
             .table
             .insert(handle.clone(), capacity)
             .map_err(|holder| match holder {
                 Some(pid) => HostError::StillRunning(pid),
-                None => HostError::InstanceLimit(self.inner.config.max_instances),
+                None => HostError::InstanceLimit(processes),
             })?;
         tokio::spawn(task.run(self.inner.clone(), app.clone(), spec));
         Ok(handle)
