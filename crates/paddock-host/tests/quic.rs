@@ -107,6 +107,7 @@ impl Node {
                 bind: address,
                 identity,
                 idle_timeout: Duration::from_secs(2),
+                send_buffer_bytes: paddock_host::transport::quic::SEND_BUFFER_BYTES,
             },
         )
         .unwrap();

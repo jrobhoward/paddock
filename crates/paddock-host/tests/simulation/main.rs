@@ -4,7 +4,8 @@
 //! `membership` joining, restarts and leaving (D2), `failover` an HA pair
 //! with a witness (D10);
 //! `random` runs seeded random scenarios against the distribution rules;
-//! `agreement` replays spike S12's counterexamples (C6).
+//! `agreement` replays spike S12's counterexamples (C6); `backpressure` a
+//! congested link (D8).
 //!
 //! Each targeted test fixes a frame delay, puts an event inside that window,
 //! and asserts the one outcome DESIGN.md's "Distribution" rules allow.
@@ -14,6 +15,7 @@
 #![allow(clippy::expect_used)]
 
 mod agreement;
+mod backpressure;
 #[path = "../common/mod.rs"]
 mod common;
 mod failover;

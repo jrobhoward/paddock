@@ -55,6 +55,7 @@ impl Node {
                     peers: peers.clone(),
                 },
                 idle_timeout: Duration::from_millis(cluster.node_timeout_ms.max(1) * 2),
+                send_buffer_bytes: cluster.send_buffer_bytes,
             },
         )
         .map_err(|e| NodeError::Invalid(e.to_string()))?;

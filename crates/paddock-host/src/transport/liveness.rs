@@ -571,7 +571,9 @@ fn round(rt: &Arc<RuntimeInner>) {
     let payload = liveness.payload();
     for (node, to_creation, session, hears_you) in liveness.beats() {
         if let Some(transport) = rt.transport() {
-            transport.send(
+            // A beat that cannot be sent is missed; the peer's timeout
+            // decides what that means.
+            let _ = transport.send(
                 node,
                 Packet {
                     creation,

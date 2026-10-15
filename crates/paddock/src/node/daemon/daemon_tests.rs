@@ -48,3 +48,30 @@ async fn changes____one_in_progress____the_next_waits_for_it() {
     ));
     node.shutdown().await;
 }
+
+#[test]
+fn cluster_metrics____two_peers____queued_bytes_and_refused_per_node() {
+    let mut a = paddock_host::transport::LaneStats::default();
+    a.queued_bytes = 512;
+    a.refused = 3;
+    let b = paddock_host::transport::LaneStats::default();
+
+    let text = cluster_metrics(&[(2, a), (3, b)]);
+
+    assert!(
+        text.contains("paddock_cluster_send_queue_bytes{node=\"2\"} 512\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("paddock_cluster_send_refused_total{node=\"2\"} 3\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("paddock_cluster_send_refused_total{node=\"3\"} 0\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("# TYPE paddock_cluster_send_queue_bytes gauge\n"),
+        "{text}"
+    );
+}

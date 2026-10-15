@@ -61,7 +61,7 @@ pub struct Node {
     /// checks.
     stop: tokio::sync::watch::Sender<bool>,
     /// The cluster transport, with `cluster.address`.
-    quic: std::sync::Mutex<Option<QuicTransport>>,
+    quic: Arc<std::sync::Mutex<Option<QuicTransport>>>,
     /// The singletons, with `[failover]`.
     gate: Option<Arc<Gate>>,
     /// This node's failover, once started.
@@ -232,7 +232,7 @@ impl Node {
             extensions: std::sync::Mutex::default(),
             ingress,
             stop,
-            quic: std::sync::Mutex::default(),
+            quic: Arc::default(),
             gate,
             failover: std::sync::OnceLock::new(),
             config,
@@ -241,8 +241,8 @@ impl Node {
             let listener = tokio::net::TcpListener::bind(binding.address)
                 .await
                 .map_err(|e| NodeError::Invalid(format!("metrics: {}: {e}", binding.address)))?;
-            let (rt, ingress) = (node.rt.clone(), node.ingress.clone());
-            let render = move || metrics_text(&rt, &ingress);
+            let (rt, ingress, quic) = (node.rt.clone(), node.ingress.clone(), node.quic.clone());
+            let render = move || metrics_text(&rt, &ingress, &quic);
             tokio::spawn(super::server::serve_metrics(
                 listener,
                 render,
@@ -306,7 +306,7 @@ impl Node {
     /// the runtime's, then the HTTP ingress's.
     #[must_use]
     pub fn metrics(&self) -> String {
-        metrics_text(&self.rt, &self.ingress)
+        metrics_text(&self.rt, &self.ingress, &self.quic)
     }
 
     /// Reload every HTTPS ingress's certificates from their files. An
@@ -346,10 +346,53 @@ impl Node {
     }
 }
 
-/// The runtime's metrics, then the HTTP ingress's.
-fn metrics_text(rt: &Runtime, ingress: &Ingress) -> String {
+/// The runtime's metrics, then the HTTP ingress's, then the cluster
+/// transport's.
+fn metrics_text(
+    rt: &Runtime,
+    ingress: &Ingress,
+    quic: &std::sync::Mutex<Option<QuicTransport>>,
+) -> String {
     let mut text = rt.render_metrics();
     text.push_str(&ingress.metrics());
+    let quic = quic
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if let Some(quic) = quic {
+        text.push_str(&cluster_metrics(&quic.send_stats()));
+    }
+    text
+}
+
+/// Each peer's data lane in the Prometheus text format.
+fn cluster_metrics(stats: &[(u32, paddock_host::transport::LaneStats)]) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "# HELP paddock_cluster_send_queue_bytes Bytes of messages queued for another node.\n\
+         # TYPE paddock_cluster_send_queue_bytes gauge"
+    );
+    for (node, s) in stats {
+        let _ = writeln!(
+            text,
+            "paddock_cluster_send_queue_bytes{{node=\"{node}\"}} {}",
+            s.queued_bytes
+        );
+    }
+    let _ = writeln!(
+        text,
+        "# HELP paddock_cluster_send_refused_total Messages and notices refused for a congested link to another node.\n\
+         # TYPE paddock_cluster_send_refused_total counter"
+    );
+    for (node, s) in stats {
+        let _ = writeln!(
+            text,
+            "paddock_cluster_send_refused_total{{node=\"{node}\"}} {}",
+            s.refused
+        );
+    }
     text
 }
 

@@ -51,9 +51,10 @@ pub use identity::{NodeIdentity, PublicKey, generate_key, public_key_of};
 
 use identity::{Loaded, PinnedKeys};
 
+use super::lane::{Class, Lane, LaneStats, Ticket};
 use super::liveness::NodeEvent;
 use super::wire::{self, Hello};
-use super::{Frame, Packet, Transport};
+use super::{Packet, SendError, Transport, control};
 use crate::error::HostError;
 use crate::runtime::{Runtime, RuntimeInner};
 
@@ -67,8 +68,15 @@ pub const MAX_FRAME: u32 = 64 << 20;
 /// What each side sends once it has checked the other's hello and key.
 const ACCEPTED: &[u8] = b"accepted";
 
-/// Frames queued per stream before sends report the node unreachable.
+/// Control frames queued before sends report the node unreachable.
 const QUEUE: usize = 4_096;
+
+/// Data frames (messages and notices) queued before a send is refused as
+/// full ([`super::lane`]): the peer has stopped reading.
+const DATA_FRAMES_MAX: usize = 65_536;
+
+/// The default message budget per peer ([`QuicConfig::send_buffer_bytes`]).
+pub const SEND_BUFFER_BYTES: u64 = 64 << 20;
 
 /// How the transport runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +88,12 @@ pub struct QuicConfig {
     /// A connection silent this long closes (QUIC's idle timeout, a
     /// backstop to heartbeats).
     pub idle_timeout: Duration,
+    /// Bytes of messages (casts, calls, replies) queued for one peer before
+    /// more are refused as busy: a cast is then dropped and counted, a call
+    /// fails with `overloaded`. Link and monitor notices are let in past it
+    /// (see DESIGN.md, "Backpressure between nodes"). [`SEND_BUFFER_BYTES`]
+    /// by default.
+    pub send_buffer_bytes: u64,
 }
 
 /// The QUIC transport. Cheap to clone.
@@ -108,6 +122,8 @@ struct Inner {
     stamps: Mutex<[Option<std::time::SystemTime>; 2]>,
     client: RwLock<quinn::ClientConfig>,
     peers: Mutex<HashMap<u32, Peer>>,
+    /// Sends refused per peer since the transport started: busy or full.
+    refused: Mutex<HashMap<u32, u64>>,
     /// Seed addresses, redialed whenever their connection is lost.
     seeds: Mutex<Vec<SocketAddr>>,
     stop: watch::Sender<bool>,
@@ -119,7 +135,9 @@ struct Peer {
     dialer: u32,
     version: u16,
     control: mpsc::Sender<Vec<u8>>,
-    data: mpsc::Sender<Vec<u8>>,
+    /// Messages and notices, let in by `lane`.
+    data: mpsc::UnboundedSender<(Vec<u8>, Ticket)>,
+    lane: Arc<Lane>,
     /// The tasks writing the two streams; they end once the queues are
     /// written and the senders dropped.
     writers: Vec<tokio::task::JoinHandle<()>>,
@@ -213,18 +231,6 @@ async fn next_frame(stream: &mut RecvStream) -> Result<Option<Vec<u8>>, String> 
     Ok(Some(buf))
 }
 
-/// Whether `frame` travels on the control stream.
-fn control(frame: &Frame) -> bool {
-    matches!(
-        frame,
-        Frame::Heartbeat { .. }
-            | Frame::Join { .. }
-            | Frame::Members { .. }
-            | Frame::Leave
-            | Frame::Failover(_)
-    )
-}
-
 impl QuicTransport {
     /// Listen on `config.bind` and become `rt`'s transport. Call inside the
     /// tokio runtime.
@@ -249,6 +255,7 @@ impl QuicTransport {
             loaded: RwLock::new(loaded),
             client: RwLock::new(client),
             peers: Mutex::default(),
+            refused: Mutex::default(),
             seeds: Mutex::default(),
             stop: watch::channel(false).0,
         });
@@ -348,7 +355,35 @@ impl QuicTransport {
         nodes
     }
 
-    /// Write what is queued to every peer (a [`Frame::Leave`], say) and
+    /// Each peer's data lane: messages and frames queued now (for a peer
+    /// with a connection), and sends refused as busy or full since the
+    /// transport started.
+    #[must_use]
+    pub fn send_stats(&self) -> Vec<(u32, LaneStats)> {
+        let refused = self
+            .inner
+            .refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let mut stats: std::collections::BTreeMap<u32, LaneStats> = self
+            .inner
+            .peers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(&node, peer)| (node, peer.lane.stats()))
+            .collect();
+        for s in stats.values_mut() {
+            s.refused = 0;
+        }
+        for (node, count) in refused {
+            stats.entry(node).or_default().refused = count;
+        }
+        stats.into_iter().collect()
+    }
+
+    /// Write what is queued to every peer (a [`super::Frame::Leave`], say) and
     /// wait until each has read it and closed the connection, for up to a
     /// second in all; then close every connection and stop listening and
     /// redialing.
@@ -400,24 +435,38 @@ impl QuicTransport {
 }
 
 impl Transport for QuicTransport {
-    fn send(&self, node: u32, packet: Packet) -> bool {
+    fn send(&self, node: u32, packet: Packet) -> Result<(), SendError> {
         let peers = self
             .inner
             .peers
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let Some(peer) = peers.get(&node) else {
-            return false;
+        let peer = peers.get(&node).ok_or(SendError::Unreachable)?;
+        let bytes = wire::encode(peer.version, &packet).map_err(|_| SendError::Unreachable)?;
+        if control(&packet.frame) {
+            return peer
+                .control
+                .try_send(bytes)
+                .map_err(|_| SendError::Unreachable);
+        }
+        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let ticket = match peer.lane.admit(Class::of(&packet.frame), size) {
+            Ok(ticket) => ticket,
+            Err(why) => {
+                drop(peers);
+                *self
+                    .inner
+                    .refused
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .entry(node)
+                    .or_default() += 1;
+                return Err(why);
+            }
         };
-        let Ok(bytes) = wire::encode(peer.version, &packet) else {
-            return false;
-        };
-        let stream = if control(&packet.frame) {
-            &peer.control
-        } else {
-            &peer.data
-        };
-        stream.try_send(bytes).is_ok()
+        peer.data
+            .send((bytes, ticket))
+            .map_err(|_| SendError::Unreachable)
     }
 }
 
@@ -546,10 +595,11 @@ async fn establish(inner: &Arc<Inner>, conn: Connection, dialer: bool) -> Result
     let node = theirs.node;
     let dialer_node = if dialer { inner.node } else { node };
     let (control, control_queue) = mpsc::channel(QUEUE);
-    let (data, data_queue) = mpsc::channel(QUEUE);
+    let (data, data_queue) = mpsc::unbounded_channel();
+    let lane = Arc::new(Lane::new(inner.config.send_buffer_bytes, DATA_FRAMES_MAX));
     let writers = vec![
         tokio::spawn(writer(control_tx, control_queue)),
-        tokio::spawn(writer(data_tx, data_queue)),
+        tokio::spawn(data_writer(data_tx, data_queue, lane.clone())),
     ];
     {
         let mut peers = inner.peers.lock().unwrap_or_else(PoisonError::into_inner);
@@ -569,6 +619,7 @@ async fn establish(inner: &Arc<Inner>, conn: Connection, dialer: bool) -> Result
                 version,
                 control,
                 data,
+                lane,
                 writers,
             },
         ) {
@@ -598,6 +649,25 @@ async fn establish(inner: &Arc<Inner>, conn: Connection, dialer: bool) -> Result
     }
     tracing::info!(node, version, dialer, "cluster connection up");
     Ok(node)
+}
+
+/// The data stream's writer: as [`writer`], giving each frame's ticket
+/// back to the lane once it is written.
+async fn data_writer(
+    mut stream: SendStream,
+    mut queue: mpsc::UnboundedReceiver<(Vec<u8>, Ticket)>,
+    lane: Arc<Lane>,
+) {
+    while let Some((bytes, ticket)) = queue.recv().await {
+        let written = write_frame(&mut stream, &bytes).await;
+        lane.done(ticket);
+        if written.is_err() {
+            return;
+        }
+    }
+    if stream.finish().is_ok() {
+        let _ = stream.stopped().await;
+    }
 }
 
 async fn writer(mut stream: SendStream, mut queue: mpsc::Receiver<Vec<u8>>) {

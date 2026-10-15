@@ -309,6 +309,15 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- Backpressure between nodes: `[cluster] send_buffer_bytes` (64 MiB by
+  default) bounds the messages queued for each peer. Past it, a cast is
+  dropped and counted and a call fails with `overloaded`, as at a full
+  mailbox; link and monitor notices are still queued, so congestion no
+  longer ends a session and drops every link and monitor with that node.
+  Metrics per peer: `paddock_cluster_send_queue_bytes`,
+  `paddock_cluster_send_refused_total`. `Mesh::set_send_budget` gives the
+  in-memory transport the same budget for tests.
+
 ### Fixed
 
 - The tests `start_apps____dependencies____providers_start_first_and_stop_last`
@@ -426,6 +435,10 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `Transport::send` returns `Result<(), SendError>` (`Unreachable`,
+  `Busy`, `Full`) instead of a `bool`. A call to a node whose link is
+  congested fails with `overloaded`, not `noconnection`. The QUIC data
+  stream's queue is bounded by bytes of messages, not 4,096 frames.
 - Cluster wire format version 2 (unlink acknowledgement: `Unlink` carries
   an id, and `UnlinkAck` answers it). Nodes speak version 2 only, so a
   cluster upgrades all its nodes together.

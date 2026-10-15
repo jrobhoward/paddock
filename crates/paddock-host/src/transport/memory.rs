@@ -46,8 +46,9 @@ use std::time::Duration;
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 
+use super::lane::{Class, Lane, Ticket};
 use super::liveness::HeartbeatPath;
-use super::{Frame, Packet, Transport};
+use super::{Frame, Packet, SendError, Transport};
 use crate::error::HostError;
 use crate::runtime::{Runtime, RuntimeInner};
 
@@ -100,16 +101,25 @@ struct State {
     paths: BTreeSet<String>,
     /// Cut directions of extra paths: (path, from, to).
     path_cut: HashSet<(String, u32, u32)>,
+    /// Each direction's message budget ([`Mesh::set_send_budget`]); none
+    /// by default.
+    send_budget: u64,
     rng: SplitMix64,
 }
 
 /// Which frame [`Mesh::lose_next`] drops.
 type LoseIf = Box<dyn Fn(&Frame) -> bool + Send>;
 
+/// A frame on its way: when it is due, the partition generation it was
+/// sent in, and the data lane's ticket, if it took one.
+type InFlight = (Instant, u64, Packet, Option<Ticket>);
+
 struct Queue {
-    tx: mpsc::UnboundedSender<(Instant, u64, Packet)>,
+    tx: mpsc::UnboundedSender<InFlight>,
     /// When the last frame queued is due, so a later one is never earlier.
     last_due: Instant,
+    /// What the direction lets in; given back as frames arrive or are lost.
+    lane: Arc<Lane>,
 }
 
 fn pair(a: u32, b: u32) -> (u32, u32) {
@@ -121,12 +131,12 @@ impl Shared {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn send(self: &Arc<Self>, from: u32, to: u32, packet: Packet) -> bool {
+    fn send(self: &Arc<Self>, from: u32, to: u32, packet: Packet) -> Result<(), SendError> {
         let mut state = self.state();
         if state.partitioned.contains(&pair(from, to))
             || !state.nodes.get(&to).is_some_and(|rt| rt.strong_count() > 0)
         {
-            return false;
+            return Err(SendError::Unreachable);
         }
         let faults = state
             .faults
@@ -134,7 +144,7 @@ impl Shared {
             .copied()
             .unwrap_or(state.default_faults);
         if faults.drop > 0.0 && state.rng.unit() < faults.drop {
-            return true;
+            return Ok(());
         }
         if let Some(i) = state
             .lose
@@ -142,7 +152,7 @@ impl Shared {
             .position(|(f, t, matches)| *f == from && *t == to && matches(&packet.frame))
         {
             drop(state.lose.remove(i));
-            return true;
+            return Ok(());
         }
         let jitter = if faults.jitter.is_zero() {
             Duration::ZERO
@@ -151,20 +161,36 @@ impl Shared {
         };
         let generation = state.generation.get(&pair(from, to)).copied().unwrap_or(0);
         let now = Instant::now();
+        let budget = state.send_budget;
         let queue = match state.queues.entry((from, to)) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
                 let Ok(handle) = tokio::runtime::Handle::try_current() else {
-                    return false;
+                    return Err(SendError::Unreachable);
                 };
                 let (tx, rx) = mpsc::unbounded_channel();
-                handle.spawn(carry(Arc::downgrade(self), from, to, rx));
-                e.insert(Queue { tx, last_due: now })
+                let lane = Arc::new(Lane::new(budget, usize::MAX));
+                handle.spawn(carry(Arc::downgrade(self), from, to, rx, lane.clone()));
+                e.insert(Queue {
+                    tx,
+                    last_due: now,
+                    lane,
+                })
             }
+        };
+        let ticket = if super::control(&packet.frame) {
+            None
+        } else {
+            let bytes = super::wire::encode(super::wire::VERSION, &packet)
+                .map_or(0, |b| u64::try_from(b.len()).unwrap_or(u64::MAX));
+            Some(queue.lane.admit(Class::of(&packet.frame), bytes)?)
         };
         let due = (now + faults.delay + jitter).max(queue.last_due);
         queue.last_due = due;
-        queue.tx.send((due, generation, packet)).is_ok()
+        queue
+            .tx
+            .send((due, generation, packet, ticket))
+            .map_err(|_| SendError::Unreachable)
     }
 
     fn stalled(&self, from: u32, to: u32) -> bool {
@@ -198,9 +224,10 @@ async fn carry(
     shared: Weak<Shared>,
     from: u32,
     to: u32,
-    mut rx: mpsc::UnboundedReceiver<(Instant, u64, Packet)>,
+    mut rx: mpsc::UnboundedReceiver<InFlight>,
+    lane: Arc<Lane>,
 ) {
-    while let Some((due, generation, packet)) = rx.recv().await {
+    while let Some((due, generation, packet, ticket)) = rx.recv().await {
         tokio::time::sleep_until(due).await;
         let Some(shared) = shared.upgrade() else {
             return;
@@ -223,6 +250,10 @@ async fn carry(
                 state.nodes.get(&to).and_then(Weak::upgrade)
             }
         };
+        // Delivered or lost, the frame no longer counts against the lane.
+        if let Some(ticket) = ticket {
+            lane.done(ticket);
+        }
         if let Some(rt) = target {
             super::deliver(&rt, from, packet);
         }
@@ -236,10 +267,11 @@ struct Port {
 }
 
 impl Transport for Port {
-    fn send(&self, node: u32, packet: Packet) -> bool {
+    fn send(&self, node: u32, packet: Packet) -> Result<(), SendError> {
         self.shared
             .upgrade()
-            .is_some_and(|shared| shared.send(self.node, node, packet))
+            .ok_or(SendError::Unreachable)?
+            .send(self.node, node, packet)
     }
 }
 
@@ -275,6 +307,7 @@ impl Mesh {
                     lose: Vec::new(),
                     paths: BTreeSet::new(),
                     path_cut: HashSet::new(),
+                    send_budget: u64::MAX,
                     rng: SplitMix64(seed),
                 }),
                 healed: Notify::new(),
@@ -404,6 +437,18 @@ impl Mesh {
     /// Faults on frames from `from` to `to` (one direction).
     pub fn set_faults(&self, from: u32, to: u32, faults: Faults) {
         self.shared.state().faults.insert((from, to), faults);
+    }
+
+    /// Give every direction a message budget of `bytes`, as QUIC's
+    /// `send_buffer_bytes` does: past it a cast, call or reply is refused
+    /// as busy, while link and monitor notices are still let in (see
+    /// `transport::lane`). Frames count until they arrive, so a stalled or
+    /// delayed direction fills up. Set it before the nodes send anything:
+    /// it starts each direction's queue afresh.
+    pub fn set_send_budget(&self, bytes: u64) {
+        let mut state = self.shared.state();
+        state.send_budget = bytes;
+        state.queues.clear();
     }
 
     /// Faults on every pair without its own.

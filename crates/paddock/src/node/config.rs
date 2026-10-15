@@ -54,6 +54,7 @@
 //! seeds = ["10.0.0.2:7400"]
 //! key = "/etc/paddock/node.key" # paddock cluster keygen
 //! peers = "/etc/paddock/peers.toml"
+//! send_buffer_bytes = 67108864  # messages queued per peer; more: overloaded
 //!
 //! # One node of an HA pair: `singleton` apps run only on the primary;
 //! # `hot-standby` apps run on both and are told the role.
@@ -338,6 +339,16 @@ pub struct ClusterConfig {
     /// is answered `overloaded`. 0 for no limit.
     #[serde(default = "default_incoming_calls_max")]
     pub incoming_calls_max: u32,
+    /// Bytes of messages (casts, calls, replies) queued for one other
+    /// node before more are refused: a cast is dropped and counted, a call
+    /// fails with `overloaded`, as at a full mailbox. Link and monitor
+    /// notices are queued past it.
+    #[serde(default = "default_send_buffer_bytes")]
+    pub send_buffer_bytes: u64,
+}
+
+fn default_send_buffer_bytes() -> u64 {
+    paddock_host::transport::quic::SEND_BUFFER_BYTES
 }
 
 fn default_incoming_calls_max() -> u32 {
@@ -361,6 +372,7 @@ impl Default for ClusterConfig {
             peers: None,
             identity_reload_s: default_identity_reload_s(),
             incoming_calls_max: default_incoming_calls_max(),
+            send_buffer_bytes: default_send_buffer_bytes(),
         }
     }
 }

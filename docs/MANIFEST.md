@@ -280,6 +280,7 @@ key = "/etc/paddock/node.key"          # this node's private key: paddock cluste
 peers = "/etc/paddock/peers.toml"      # every node's public key: [peers] 2 = ["ed25519:..."]
 identity_reload_s = 60                 # reload key and peers on change; also SIGHUP, paddock reload-tls
 incoming_calls_max = 10000             # calls from one peer handled at once; beyond: overloaded; 0: no limit
+send_buffer_bytes = 67108864           # messages queued for one peer; beyond: cast dropped, call overloaded (notices still queued)
 
 [limits]                               # host objects per instance; the value for apps that
 timers_max = 10000                     # set none, and the most a manifest may ask for (a

@@ -65,6 +65,7 @@ async fn join_seed____peer_completes_the_handshake_but_never_says_hello____gives
                 peers,
             },
             idle_timeout,
+            send_buffer_bytes: SEND_BUFFER_BYTES,
         },
     )
     .unwrap();

@@ -16,6 +16,7 @@
 //! session it belongs to, so both sides end a session together and nothing
 //! from an ended session is acted on.
 
+mod lane;
 pub mod liveness;
 pub mod membership;
 pub mod memory;
@@ -34,6 +35,7 @@ use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
 use crate::probe;
 use crate::runtime::RuntimeInner;
+pub use lane::{LaneStats, SendError};
 use liveness::{NodeEvent, Session};
 use membership::Member;
 
@@ -186,9 +188,14 @@ pub enum Frame {
 
 /// Carries packets to other nodes.
 pub trait Transport: Send + Sync + 'static {
-    /// Send `packet` to `node`. Returns `false` if `node` cannot be reached
-    /// now; the packet is then dropped.
-    fn send(&self, node: u32, packet: Packet) -> bool;
+    /// Send `packet` to `node`.
+    ///
+    /// # Errors
+    ///
+    /// Why the packet was dropped: `node` cannot be reached now, or its
+    /// link is congested ([`SendError::Busy`] for a cast, call or reply
+    /// past the message budget; [`SendError::Full`] past the frame cap).
+    fn send(&self, node: u32, packet: Packet) -> Result<(), SendError>;
 }
 
 /// Where a call's reply goes.
@@ -377,8 +384,10 @@ fn incoming_call(
 /// `node`, so the other side drops what the notice was about with
 /// `noconnection` instead of keeping it forever (spike S12, R1).
 pub(crate) fn send_notice(rt: &RuntimeInner, node: u32, frame: Frame) {
-    if !send(rt, node, frame) && rt.liveness.watches(node) {
-        tracing::debug!(node, "a notice could not be sent; ending the session");
+    if let Err(why) = try_send(rt, node, frame)
+        && rt.liveness.watches(node)
+    {
+        tracing::debug!(node, %why, "a notice could not be sent; ending the session");
         end_session(rt, node);
     }
 }
@@ -391,14 +400,42 @@ pub(crate) fn contacted(rt: &RuntimeInner, node: u32) -> bool {
     rt.liveness.creation(node) != 0
 }
 
+/// Whether `frame` is control traffic (heartbeats, membership, failover):
+/// on its own stream, outside the data lane's budget ([`lane`]).
+pub(crate) fn control(frame: &Frame) -> bool {
+    matches!(
+        frame,
+        Frame::Heartbeat { .. }
+            | Frame::Join { .. }
+            | Frame::Members { .. }
+            | Frame::Leave
+            | Frame::Failover(_)
+    )
+}
+
+/// What a caller or caster is told when its message was not sent: the rule
+/// for a full mailbox for a congested link (`overloaded`), `noconnection`
+/// otherwise.
+pub(crate) fn refused(why: SendError) -> CallError {
+    match why {
+        SendError::Busy | SendError::Full => CallError::Overloaded,
+        SendError::Unreachable => CallError::Noconnection,
+    }
+}
+
+/// Send to `node`, in the current session; whether it was sent.
+pub(crate) fn send(rt: &RuntimeInner, node: u32, frame: Frame) -> bool {
+    try_send(rt, node, frame).is_ok()
+}
+
 /// Send to `node`, in the current session, if a transport is set and
 /// `node` is reachable.
-pub(crate) fn send(rt: &RuntimeInner, node: u32, frame: Frame) -> bool {
+pub(crate) fn try_send(rt: &RuntimeInner, node: u32, frame: Frame) -> Result<(), SendError> {
     if !rt.liveness.reachable(node) {
-        return false;
+        return Err(SendError::Unreachable);
     }
     let Some(transport) = rt.transport() else {
-        return false;
+        return Err(SendError::Unreachable);
     };
     let packet = Packet {
         creation: rt.creation(),
@@ -420,7 +457,7 @@ pub(crate) async fn call(
 ) -> Result<Envelope, CallError> {
     let (id, reply) = rt.pending_calls.add(node);
     let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
-    if !send(
+    if let Err(why) = try_send(
         rt,
         node,
         Frame::Call {
@@ -432,7 +469,7 @@ pub(crate) async fn call(
         },
     ) {
         rt.pending_calls.take(id);
-        return Err(CallError::Noconnection);
+        return Err(refused(why));
     }
     match tokio::time::timeout(timeout, reply).await {
         Ok(Ok(result)) => result,

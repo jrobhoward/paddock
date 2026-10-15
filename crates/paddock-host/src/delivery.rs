@@ -61,11 +61,7 @@ pub(crate) fn cast(
         Route::Local(target) => target.cast_from(from, msg),
         Route::Dead => Err(CallError::Noproc),
         Route::Remote(node) => {
-            if transport::send(rt, node, Frame::Cast { from, to, msg }) {
-                Ok(())
-            } else {
-                Err(CallError::Noconnection)
-            }
+            transport::try_send(rt, node, Frame::Cast { from, to, msg }).map_err(transport::refused)
         }
     }
 }
