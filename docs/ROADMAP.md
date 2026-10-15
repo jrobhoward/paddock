@@ -21,17 +21,16 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | Phase | Exit | Left |
 | --- | --- | --- |
 | 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Throughput and baseline numbers on an idle machine and the Pi (B7, G2) |
-| 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | C4 (exhaustive runs), D3, D11 |
+| 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | D3, D11 |
 | 3: application server | One real workload runs a full release cycle with zero downtime | See "Phase 3" |
 
 The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
 ## Next
 
-Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6, D7, D8, D5, D6 and D4 are done (2026-10-14), and D11's first step and D9, spike S11 (2026-10-15).
+Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6, D7, D8, D5, D6 and D4 are done (2026-10-14), and C4, D11's first step and D9, spike S11 (2026-10-15).
 
-1. **C4** (spike S12): the model is written and found four ways for two nodes to disagree on a link or monitor ([spikes/s12](../spikes/s12/README.md)); C6 put the four fixes in the code. Left: the exhaustive runs of the fixed model (`~/tla-runs/c4-2026-10-14/run.sh`, `summary.txt` there); record them in the spike's README.
-2. **D3**, then the rest of stage 4 in the order listed.
+1. **D3**, then the rest of stage 4 in the order listed.
 
 ## Order
 
@@ -68,12 +67,11 @@ Done on 2026-10-13: every item from stage 2 (CHANGELOG), and V2, the two-fault e
 
 DESIGN.md "Distribution", on the transport, membership and failover that exist. No item needs consensus; Raft (or HAppliance-style replication) comes with Phase 3's replicated buckets.
 
-Done on 2026-10-15: D9, spike S11, passivation ([spikes/s11](../spikes/s11/README.md); the prototype is in `paddock-host`, off by default, decided 2026-10-15; E7 exposes it).
+Done on 2026-10-15: C4, spike S12's runs of the fixed model ([spikes/s12](../spikes/s12/README.md)): full send queues and the liveness properties pass exhaustively; the configs with closes and timeouts, and with crashes, show no violation up to about 840 and 890 million distinct states, stopped after 15 hours each at the time box. D9, spike S11, passivation ([spikes/s11](../spikes/s11/README.md); the prototype is in `paddock-host`, off by default, decided 2026-10-15; E7 exposes it).
 
 Done on 2026-10-14: D4, process groups across nodes as OTP's `pg` (every group spans the cluster; `publish` checks the messaging ACLs per member; decided 2026-10-14), with tutorial chapter 3 as its demo. D6, the remote admin API over TLS with pinned keys, as the cluster (decided 2026-10-14; SECURITY.md lists its gaps: no read-only operators, no connection limit). D5, messaging ACLs (receiving node checks both lists from a stamp on each frame; calls, casts, exits and links; app names only; decided 2026-10-14; MANIFEST.md `messaging_acl`, SECURITY.md). D8, backpressure between nodes: a congested link follows the full-mailbox rule, notices exempt (decided 2026-10-14; DESIGN.md, "Backpressure between nodes"). D7, health checks as calls with a reserved schema (`paddock/health`, answered by the SDK's `App::health`; decided 2026-10-14 over a new export, so the app world stays frozen; MANIFEST.md `health`). C6, the four rules from S12 that keep both sides of a link or monitor in step (CHANGELOG; DESIGN.md, "Agreement on links and monitors"). D10, an hour of `scripts/soak.sh --only failover` (six runs of 10 minutes, seeds 394302291 to 394302296, all passed; TLC ran on 3 of the 16 cores meanwhile, at low priority). The criterion with the serial line up (network cut: nobody promotes) needs a serial path between processes, so it moved to F5 with the serial heartbeat on real hardware.
 
 - [ ] **D10b Planned switchover.** `paddock failover switchover`: the primary stands down and the standby takes over without waiting for a node timeout, for maintenance and to swap roles between hot-standby instances on purpose. A new transition, so V1 applies; the model gains the action first.
-- [ ] **C4 Spike S12.** A TLA+ model of remote links, monitors and `noconnection` with pid incarnations and C5's sessions (numbers on frames, `hears_you`, ending on either side), checked with a safe and an adversarial network. Time-box 3 days. If a rule does not hold, narrow Phase 2's guarantees to what the model shows. Before D3. Model and counterexamples done on 2026-10-14 ([spikes/s12](../spikes/s12/README.md)); the exhaustive runs of the fixed model, crashes and liveness are left.
 - [ ] **D3 Remote pids, calls, casts, links and monitors between processes**, on the QUIC transport and the versioned wire format (D1). Instance ids hold the node's creation (settled 2026-10-08). From D1: QUIC over loopback in the simulation harness, and a throughput figure between nodes (B7). Three-node partition runs for Phase 2b's exit join `scripts/soak.sh` (`paddock-soak`). Discovery across nodes stays with D4's groups (decided 2026-10-14); until then a guest learns a remote pid from a message. Done on 2026-10-14: the three-node runs (`paddock-soak cluster`, links and monitors per instance in `ps --json`); against a node built without remote `LinkExit` notices, its first check failed as it should. They run QUIC over loopback under faults, which stands in for QUIC in the simulation harness (whose paused clock would fire QUIC's own timers). Left: an hour of it passing on an idle machine (with D10's failover runs, Phase 2b's exit), and the throughput figure (B7).
 - [ ] **D11 Reaching the primary without root.** Step 1, the standby's redirect (`partner_url`), is done (2026-10-15; DESIGN.md, "HTTP ingress"). Left, in order:
   1. With D3: the standby's ingress forwards the request to the primary's instance, so either address works.
@@ -224,7 +222,7 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | S9 | Debugging guests | Parked (Investigations) |
 | S10 | New `info` cases and old guests | Done; `host-event` reserved ([spikes/s10](../spikes/s10/README.md)) |
 | S11 | Passivation | Works, off by default; 100,000 instances on 1,000 Store slots, wakes in about 50 to 80 µs; numbers provisional (taken under load) until rerun idle ([spikes/s11](../spikes/s11/README.md)) |
-| S12 | TLA+ model of remote links and monitors | Four ways for the nodes to disagree, each fixed by a rule (done in C6); exhaustive runs left ([spikes/s12](../spikes/s12/README.md)) |
+| S12 | TLA+ model of remote links and monitors | Four ways for the nodes to disagree, each fixed by a rule (done in C6); with them no violation found: full queues and liveness exhaustive, closes and crashes up to about 840 and 890 million states ([spikes/s12](../spikes/s12/README.md)) |
 | S13 | Host-owned TCP listeners and guest streams | Guest streams at native throughput with an instance per connection ([spikes/s13](../spikes/s13/README.md)) |
 | S14 | Storage in the guest versus host services | About 140 ns per host import; keyvalue reads 1.2 µs over native ([spikes/s14](../spikes/s14/README.md)) |
 | S15 | HTTP in the guest versus the host | Host HTTP plus an instance call keeps about 75% of native; an instance per request about 15% ([spikes/s15](../spikes/s15/README.md)) |

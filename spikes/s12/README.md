@@ -18,7 +18,9 @@ With four changes, no reachable state of the configs checked so far has the two 
 
 **The guarantee needs a transport that loses frames only with the connection.** QUIC does: each stream is ordered and reliable until the connection closes. The in-memory mesh's random `drop` and `lose_next` lose a frame while the session continues, and then no rule can keep both sides in agreement (`Drop` below). `tests/simulation/random.rs` already stops requiring notices in its runs with drops.
 
-Not yet finished (see "Results"): the exhaustive runs of the fixed model, with and without crashes, and the liveness properties `LinkEnds`, `DownArrives` and `NoMonitorLeak`.
+With R1 to R4, no run found a violation:
+- **Exhaustive:** full send queues (`QueueFullFixed`, 188 million distinct states) and the liveness properties `LinkEnds`, `DownArrives` and `NoMonitorLeak` (`Liveness`, 2.0 million, at smaller bounds) were explored completely.
+- **Stopped at the time box:** the configs with stalls, closes and timeouts (`QuicFixed`, 839 million distinct states) and with crashes as well (`Crashes`, 886 million) were stopped after 15 hours each, with states still queued. They show no violation up to that many states, not that none exists.
 
 ## How to run
 
@@ -56,13 +58,15 @@ Checked on 2026-10-14 with TLC 2026.02.28 (OpenJDK 21) on the 16-core developmen
 | `NoR1` | as `Quic` | R2, R3 | 59,922 (stopped) | `Agreement` violated: refused `noproc` answer (2) |
 | `NoR2` | as `Quic` | R1, R3 | 16,051 (stopped) | `Agreement` violated: ignored close (3) |
 | `NoR3` | as `Quic` | R1, R2 | 6,370 (stopped) | `Agreement` violated: crossed link and unlink (1) |
-| `QuicFixed` | as `Quic` | R1, R2, R3 | | |
+| `QuicFixed` | as `Quic` | R1, R2, R3 | 839,113,617 (stopped after 15.0 h, 143,487,909 queued) | no violation found |
 | `QueueFull` | full send queues only | R3 | 83 (stopped) | `Agreement` violated: refused `Unlink` (2) |
-| `QueueFullFixed` | spurious timeouts, full queues | R1, R2, R3 | | |
+| `QueueFullFixed` | spurious timeouts, full queues | R1, R2, R3 | 188,099,852 (13.3 h) | pass |
 | `Drop` | frames lost in a live session | R1, R2, R3 | 9 (stopped) | `Agreement` violated, as expected |
 | `CrashesR1R3` | as `Quic`, plus crashes (`MaxCr = 2`) | R1, R2, R3 | 126,330 (stopped) | `Agreement` violated: link before first contact (4) |
-| `Crashes` | as `CrashesR1R3` | R1 to R4 | | |
-| `Liveness` | as `Quic`, `MaxFaults = 1` | R1 to R4 | | |
+| `Crashes` | as `CrashesR1R3` | R1 to R4 | 885,580,757 (stopped after 15.0 h, 367,352,448 queued) | no violation found |
+| `Liveness` | as `Quic`, `MaxFaults = 1`, `MaxInc = 1`, `MaxSession = 2` | R1 to R4 | 2,010,268 (6.8 h) | pass: `LinkEnds`, `DownArrives`, `NoMonitorLeak` |
+
+The four runs of the fixed model ran from 2026-10-14 23:31 UTC beside each other on the same machine (6, 5, 2 and 2 workers), with checkpoints every 30 minutes. `QuicFixed` and `Crashes` were stopped by hand on 2026-10-15 at 14:32 UTC, with their queues no longer shrinking (`QuicFixed` level at about 143 million, `Crashes` still growing). `Liveness` first ran at `MaxInc = 2` and `MaxSession = 3`, and was stopped after 29 minutes at 79,320 distinct states with 50,606 queued, too slow to finish; `Liveness.cfg` holds the smaller bounds it passed with.
 
 Each fix is needed: without any one of them (`NoR1`, `NoR2`, `NoR3`, `CrashesR1R3`), `Agreement` fails again with the counterexample that fix addresses. R4 changes nothing in configs with one creation per node, where every node has heard its peer from the start.
 
