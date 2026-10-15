@@ -309,6 +309,16 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- Tutorial chapter 3 (`examples/tutorial/03-hot-standby.sh`): the board
+  example as a hot standby (`examples/board/hot-standby.toml`), its
+  primary putting each write on the standby's board through a process
+  group before answering, so the count survives `kill -9` of the primary.
+- Process groups across the cluster, as OTP's `pg`: `members` lists
+  members on every node, and `publish` reaches them, one copy per node
+  with members, which fans it out. Each node sends the others a snapshot
+  of its members per session and each join and leave; a node cut off
+  stops being listed until it is heard again. `publish` now skips members
+  the messaging ACLs keep apart, on one node too.
 - The remote admin API (`[admin]` in node config): the admin socket's
   routes over TCP with TLS 1.3 and pinned keys both ways, for operators on
   other machines. Operators' public keys go in an operators file (reread on
@@ -451,6 +461,8 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Cluster wire format version 4: group frames (`GroupSync`, `GroupJoin`,
+  `GroupLeave`, `GroupPublish`). Nodes speak version 4 only.
 - Cluster wire format version 3: casts, calls, exit signals and links
   carry the sender's app and `may_call` (`acl::Stamp`). Nodes speak
   version 3 only, so a cluster upgrades all its nodes together.

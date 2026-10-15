@@ -385,7 +385,7 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 | Supervision | Host-native; `paddock:runtime/supervisor` for dynamic children | `supervisor` | — | 1 |
 | Failure detection | Host-native | Links, `heart` | Health checks | 1 |
 | Registry | `process` (local); groups and global later | `register`, `pg`, `global` | JNDI | 1–3 |
-| Process groups and publish | `paddock:groups`: join, leave, members, and `publish`, which the host fans out to every member; members leave when they exit. Local first, gossiped across nodes later | `pg`, `gen_event` | JMS topics (loosely) | 2a (local), 2b (cluster) |
+| Process groups and publish | `paddock:groups`: join, leave, members, and `publish`, which the host fans out to every member; members leave when they exit. Each node owns its members and sends a snapshot per session and every join and leave to the others; a publish sends one copy per node with members, which fans it out under the messaging ACLs | `pg`, `gen_event` | JMS topics (loosely) | 2a (local), 2b (cluster) |
 | Shared buckets and watches | `wasi:keyvalue` buckets bound in node config and granted to several apps; `paddock:watch` for revisioned change notices and compare-and-swap on revision | ETS (public tables), `mnesia:subscribe` | Infinispan listeners | 2a |
 | Logging | `wasi:logging`; host adds app, version, pid, node, trace id | `logger` | Logging subsystem | 1 |
 | Config | `wasi:config` | `application:get_env` | System properties | 1 |

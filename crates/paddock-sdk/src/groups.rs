@@ -1,5 +1,7 @@
-//! Process groups on this node, with publish, through `paddock:groups`
-//! (cargo feature `groups`).
+//! Process groups across the cluster, with publish, through
+//! `paddock:groups` (cargo feature `groups`), as OTP's `pg`: membership is
+//! eventual, and a node cut off from another stops listing its members
+//! until they hear each other again.
 //!
 //! Declare the `paddock:groups` capability in the manifest with the groups
 //! the app may join and publish to. An instance leaves every group when it
@@ -70,7 +72,7 @@ pub fn leave(group: &str) -> Result<(), GroupError> {
     Ok(wit::leave(group)?)
 }
 
-/// The members of `group` on this node, ordered by pid.
+/// The members of `group` on every node this node hears, ordered by pid.
 ///
 /// # Errors
 ///
@@ -80,8 +82,10 @@ pub fn members(group: &str) -> Result<Vec<Pid>, GroupError> {
     Ok(wit::members(group)?.into_iter().map(Pid::from).collect())
 }
 
-/// Cast `msg` to every member of `group`, this instance too if it is one.
-/// Returns how many members' mailboxes took it; members with a full
+/// Cast `msg` to every member of `group` on any node, this instance too if
+/// it is one, except members the messaging ACLs keep apart. Returns how
+/// many members took it: on this node, those whose mailboxes did; on
+/// another node, all its members once the copy is sent. Members with a full
 /// mailbox, or a `message_max_bytes` below the body's size, miss it.
 ///
 /// # Errors

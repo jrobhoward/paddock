@@ -1,27 +1,45 @@
-//! `paddock:groups`: process groups on one node, with publish.
+//! `paddock:groups`: process groups across the cluster, with publish
+//! (ROADMAP H2 on one node, D4 across nodes, as OTP's `pg`).
 //!
-//! The table is node-wide and keyed by pid, so an upgrade (same pid, new
-//! Store) keeps an instance's groups, and an exit removes them
-//! (the services' exit hook). `publish` takes the message from the guest once
-//! and casts a copy into each member's mailbox, outside the table's lock;
-//! a full mailbox drops it and counts a dropped cast on that member, as any
-//! cast does. Joins count against `limits.groups_max`
-//! ([`HostObjects::groups`](crate::HostObjects)). Cluster-wide groups are
-//! ROADMAP D4.
+//! Each node owns its own members. The table is keyed by pid, so an upgrade
+//! (same pid, new Store) keeps an instance's groups, and an exit removes them
+//! (the services' exit hook). Joins count against `limits.groups_max`
+//! ([`HostObjects::groups`](crate::HostObjects)).
+//!
+//! Other nodes learn a node's members from it: a full snapshot
+//! (`GroupSync`) once per session, sent from the heartbeat round when a
+//! peer's session or creation changed, then each join and leave as it
+//! happens (`GroupJoin`, `GroupLeave`, sent as notices, so one that cannot
+//! be sent ends the session and the next session sends a fresh snapshot).
+//! One lock orders every group frame this node sends, so a snapshot never
+//! overtakes the updates after it. When a session ends, the node forgets
+//! that peer's members; groups merge again when the next session's
+//! snapshot arrives. Membership is eventual and never blocks.
+//!
+//! `publish` takes the message from the guest once, casts a copy into each
+//! local member's mailbox the messaging ACL allows ([`crate::acl`]), and
+//! sends one `GroupPublish` to each other node with members, which fans it
+//! out to its own members under the same check against the publisher's
+//! stamp. A full mailbox drops a copy and counts a dropped cast on that
+//! member, as any cast does.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use paddock_bundle::manifest::{AppSpec, Capability, GroupsScope};
 use wasmtime::Result;
 use wasmtime::component::Linker;
 
 use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use crate::acl::{self, Stamp};
 use crate::config::RuntimeConfig;
+use crate::delivery::{self, Origin};
 use crate::error::HostError;
 use crate::instance::InstanceHandle;
 use crate::message::Envelope;
 use crate::pid::Pid;
+use crate::runtime::RuntimeInner;
+use crate::transport::{self, Frame};
 
 mod bindings {
     // Generated code carries no doc comments.
@@ -58,66 +76,272 @@ pub struct GroupsSpec {
     pub scope: GroupsScope,
 }
 
-/// Every group on the node.
+/// Every group, as this node knows it.
 #[derive(Default)]
 pub(crate) struct Shared {
     tables: Mutex<Tables>,
+    /// Held while computing and sending group frames to other nodes, so
+    /// they leave in the order the table changed. Never taken under
+    /// `tables`.
+    sending: Mutex<()>,
+    rt: OnceLock<Weak<RuntimeInner>>,
 }
 
 #[derive(Default)]
 struct Tables {
-    /// Members of each group, by pid.
+    /// This node's members of each group, by pid.
     members: HashMap<String, BTreeMap<Pid, InstanceHandle>>,
-    /// The groups each instance is in.
+    /// The groups each local instance is in.
     joined: HashMap<Pid, BTreeSet<String>>,
+    /// Other nodes' members, by node and group.
+    remote: BTreeMap<u32, BTreeMap<String, BTreeSet<Pid>>>,
+    /// The peers holding this node's snapshot, and the (creation,
+    /// session) it was sent in.
+    synced: HashMap<u32, (u32, u64)>,
+}
+
+/// Each group and this node's members of it, as a snapshot carries them.
+type Snapshot = Vec<(String, Vec<Pid>)>;
+
+/// A peer's current start and session, as this node knows them.
+fn session_of(rt: &RuntimeInner, node: u32) -> (u32, u64) {
+    (rt.liveness.creation(node), rt.liveness.session(node))
 }
 
 impl Shared {
-    fn join(&self, me: &InstanceHandle, group: &str, max: usize) -> Result<(), groups::Error> {
-        let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-        let pid = me.pid();
-        let joined = t.joined.entry(pid).or_default();
-        if joined.contains(group) {
-            return Ok(());
-        }
-        if joined.len() >= max {
-            if joined.is_empty() {
-                t.joined.remove(&pid);
+    /// The runtime the table sends through.
+    pub(crate) fn attach(&self, rt: &Arc<RuntimeInner>) {
+        let _ = self.rt.set(Arc::downgrade(rt));
+    }
+
+    fn runtime(&self) -> Option<Arc<RuntimeInner>> {
+        self.rt.get().and_then(Weak::upgrade)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Tables> {
+        self.tables.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Peers holding this node's snapshot in their current session; the
+    /// others are dropped from `synced`, to be sent a fresh one.
+    fn in_step(rt: &RuntimeInner, t: &mut Tables) -> Vec<u32> {
+        t.synced.retain(|&node, at| session_of(rt, node) == *at);
+        t.synced.keys().copied().collect()
+    }
+
+    /// Change the local table with `change` and tell every peer in step
+    /// with the frames it returns.
+    fn change(&self, change: impl FnOnce(&mut Tables) -> Vec<Frame>) {
+        let _sending = self.sending.lock().unwrap_or_else(PoisonError::into_inner);
+        let rt = self.runtime();
+        let (frames, peers) = {
+            let mut t = self.lock();
+            let frames = change(&mut t);
+            let peers = match &rt {
+                Some(rt) if !frames.is_empty() => Self::in_step(rt, &mut t),
+                _ => Vec::new(),
+            };
+            (frames, peers)
+        };
+        if let Some(rt) = rt {
+            for node in peers {
+                for frame in &frames {
+                    transport::send_notice(&rt, node, frame.clone());
+                }
             }
-            return Err(groups::Error::LimitReached);
         }
-        joined.insert(group.to_string());
-        t.members
-            .entry(group.to_string())
-            .or_default()
-            .insert(pid, me.clone());
-        Ok(())
+    }
+
+    fn join(&self, me: &InstanceHandle, group: &str, max: usize) -> Result<(), groups::Error> {
+        let mut result = Ok(());
+        let pid = me.pid();
+        self.change(|t| {
+            let joined = t.joined.entry(pid).or_default();
+            if joined.contains(group) {
+                return Vec::new();
+            }
+            if joined.len() >= max {
+                if joined.is_empty() {
+                    t.joined.remove(&pid);
+                }
+                result = Err(groups::Error::LimitReached);
+                return Vec::new();
+            }
+            joined.insert(group.to_string());
+            t.members
+                .entry(group.to_string())
+                .or_default()
+                .insert(pid, me.clone());
+            vec![Frame::GroupJoin {
+                group: group.to_string(),
+                pid,
+            }]
+        });
+        result
     }
 
     fn leave(&self, pid: Pid, group: &str) {
-        let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(joined) = t.joined.get_mut(&pid) {
-            joined.remove(group);
-            if joined.is_empty() {
+        self.change(|t| {
+            let was = t.joined.get_mut(&pid).is_some_and(|j| j.remove(group));
+            if t.joined.get(&pid).is_some_and(BTreeSet::is_empty) {
                 t.joined.remove(&pid);
             }
-        }
-        remove_member(&mut t.members, group, pid);
+            remove_member(&mut t.members, group, pid);
+            if was {
+                vec![Frame::GroupLeave {
+                    group: group.to_string(),
+                    pid,
+                }]
+            } else {
+                Vec::new()
+            }
+        });
     }
 
-    /// The group's members, ordered by pid.
-    fn members(&self, group: &str) -> Vec<InstanceHandle> {
-        let t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-        t.members
+    fn exited(&self, pid: Pid) {
+        self.change(|t| {
+            let groups = t.joined.remove(&pid).unwrap_or_default();
+            groups
+                .into_iter()
+                .map(|group| {
+                    remove_member(&mut t.members, &group, pid);
+                    Frame::GroupLeave { group, pid }
+                })
+                .collect()
+        });
+    }
+
+    /// This node's members of `group`, ordered by pid.
+    fn local_members(&self, group: &str) -> Vec<InstanceHandle> {
+        self.lock()
+            .members
             .get(group)
             .map(|m| m.values().cloned().collect())
             .unwrap_or_default()
     }
 
-    fn exited(&self, pid: Pid) {
-        let mut t = self.tables.lock().unwrap_or_else(PoisonError::into_inner);
-        for group in t.joined.remove(&pid).unwrap_or_default() {
-            remove_member(&mut t.members, &group, pid);
+    /// Every member of `group` on any node, ordered by pid.
+    fn members(&self, group: &str) -> Vec<Pid> {
+        let t = self.lock();
+        let mut all: BTreeSet<Pid> = t
+            .members
+            .get(group)
+            .map(|m| m.keys().copied().collect())
+            .unwrap_or_default();
+        for groups in t.remote.values() {
+            if let Some(pids) = groups.get(group) {
+                all.extend(pids.iter().copied());
+            }
+        }
+        all.into_iter().collect()
+    }
+
+    /// The other nodes with members of `group`, and how many each has.
+    fn remote_members(&self, group: &str) -> Vec<(u32, usize)> {
+        self.lock()
+            .remote
+            .iter()
+            .filter_map(|(&node, groups)| groups.get(group).map(|p| (node, p.len())))
+            .collect()
+    }
+
+    /// Send this node's snapshot to every reachable peer whose session or
+    /// creation changed since it last had one. Called every heartbeat
+    /// round.
+    pub(crate) fn sync(&self, rt: &RuntimeInner) {
+        let _sending = self.sending.lock().unwrap_or_else(PoisonError::into_inner);
+        let due: Vec<(u32, Snapshot)> = {
+            let mut t = self.lock();
+            let snapshot: Snapshot = t
+                .members
+                .iter()
+                .map(|(g, m)| (g.clone(), m.keys().copied().collect()))
+                .collect();
+            let mut due = Vec::new();
+            for node in rt.liveness.watched() {
+                let at = session_of(rt, node);
+                if t.synced.get(&node) == Some(&at)
+                    || !transport::contacted(rt, node)
+                    || !rt.liveness.reachable(node)
+                {
+                    continue;
+                }
+                t.synced.insert(node, at);
+                due.push((node, snapshot.clone()));
+            }
+            due
+        };
+        for (node, groups) in due {
+            transport::send_notice(rt, node, Frame::GroupSync { groups });
+        }
+    }
+
+    /// The session with `node` ended: forget its members, and send it a
+    /// fresh snapshot in the next.
+    pub(crate) fn forget(&self, node: u32) {
+        let mut t = self.lock();
+        t.remote.remove(&node);
+        t.synced.remove(&node);
+    }
+
+    /// `node`'s snapshot: replaces what was known of its members.
+    pub(crate) fn synced_from(&self, node: u32, groups: Vec<(String, Vec<Pid>)>) {
+        let groups: BTreeMap<String, BTreeSet<Pid>> = groups
+            .into_iter()
+            .map(|(g, pids)| {
+                let pids: BTreeSet<Pid> = pids.into_iter().filter(|p| p.node == node).collect();
+                (g, pids)
+            })
+            .filter(|(_, pids)| !pids.is_empty())
+            .collect();
+        self.lock().remote.insert(node, groups);
+    }
+
+    /// `pid` on `node` joined `group`.
+    pub(crate) fn joined_on(&self, node: u32, group: String, pid: Pid) {
+        self.lock()
+            .remote
+            .entry(node)
+            .or_default()
+            .entry(group)
+            .or_default()
+            .insert(pid);
+    }
+
+    /// `pid` on `node` left `group`.
+    pub(crate) fn left_on(&self, node: u32, group: &str, pid: Pid) {
+        let mut t = self.lock();
+        if let Some(groups) = t.remote.get_mut(&node)
+            && let Some(pids) = groups.get_mut(group)
+        {
+            pids.remove(&pid);
+            if pids.is_empty() {
+                groups.remove(group);
+            }
+        }
+    }
+
+    /// A publish from another node's `from`, with its `stamp`: cast to each
+    /// local member of `group` the messaging ACL allows.
+    pub(crate) fn published_from(
+        &self,
+        group: &str,
+        from: Pid,
+        stamp: Option<&Stamp>,
+        msg: &Envelope,
+    ) {
+        let Some(stamp) = stamp else {
+            return;
+        };
+        for member in self.local_members(group) {
+            if acl::allowed(
+                &stamp.app,
+                &stamp.may_call,
+                member.app(),
+                &member.acl().accept_from,
+            ) {
+                let _ = member.cast_from(Some(from), msg.clone());
+            }
         }
     }
 }
@@ -217,8 +441,8 @@ impl groups::Host for ServiceCtx<'_, Instance> {
         Ok(Ok(state
             .shared
             .members(&group)
-            .iter()
-            .map(|m| m.pid().into())
+            .into_iter()
+            .map(Into::into)
             .collect()))
     }
 
@@ -232,13 +456,30 @@ impl groups::Host for ServiceCtx<'_, Instance> {
             return Ok(Err(groups::Error::AccessDenied));
         }
         let msg = Envelope::from(msg);
-        let from = Some(state.me.pid());
-        let delivered = state
+        let me = Origin::Local(&state.me);
+        let mut delivered = state
             .shared
-            .members(&group)
+            .local_members(&group)
             .iter()
-            .filter(|member| member.cast_from(from, msg.clone()).is_ok())
+            .filter(|member| {
+                delivery::permits(me, member) && member.cast_from(me.pid(), msg.clone()).is_ok()
+            })
             .count();
+        // One copy per other node with members, counted as reaching them
+        // all once queued: that node fans it out, under the same ACL.
+        if let Some(rt) = state.shared.runtime() {
+            for (node, count) in state.shared.remote_members(&group) {
+                let frame = Frame::GroupPublish {
+                    group: group.clone(),
+                    from: state.me.pid(),
+                    sender: delivery::stamp(me),
+                    msg: msg.clone(),
+                };
+                if transport::try_send(&rt, node, frame).is_ok() {
+                    delivered += count;
+                }
+            }
+        }
         Ok(Ok(u32::try_from(delivered).unwrap_or(u32::MAX)))
     }
 }

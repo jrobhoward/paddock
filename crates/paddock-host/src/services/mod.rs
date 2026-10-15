@@ -274,6 +274,11 @@ impl Shared {
         })
     }
 
+    /// Process groups, which other nodes' frames update (ROADMAP D4).
+    pub(crate) fn groups(&self) -> &Arc<groups::Shared> {
+        &self.groups
+    }
+
     /// Tell every service that `pid` exited.
     pub(crate) fn exited(&self, pid: Pid) {
         config::Config::exited(&self.config, pid);

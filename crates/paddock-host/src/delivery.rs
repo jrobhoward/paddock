@@ -71,7 +71,7 @@ impl Origin<'_> {
 
 /// Whether `from` may send to the local instance `target` ([`crate::acl`]).
 /// The host may; an instance on another node was checked on arrival.
-fn permits(from: Origin<'_>, target: &InstanceHandle) -> bool {
+pub(crate) fn permits(from: Origin<'_>, target: &InstanceHandle) -> bool {
     let Origin::Local(sender) = from else {
         return true;
     };

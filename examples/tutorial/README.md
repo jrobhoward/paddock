@@ -11,6 +11,7 @@ minutes.
 ```bash
 examples/tutorial/01-one-node.sh
 examples/tutorial/02-failover.sh
+examples/tutorial/03-hot-standby.sh
 AUTO=1 examples/tutorial/02-failover.sh    # no pauses: kills node 1 itself
 ```
 
@@ -104,15 +105,46 @@ then needs no network privileges.
 What this shows: failover moves where an app runs, not its state. The next
 chapters move the state too.
 
-## Chapter 3 (planned): hot standby
+## Chapter 3: a hot standby
 
-The board app runs on both nodes (`placement.mode = "hot-standby"`) and
-learns its role from the `failover-role` host event. The primary sends each
-write to the standby's instance before it answers the client, so a write
-the client saw is already on node 2 when node 1 is lost, and the count
-survives a `kill -9`. This needs the primary to find the standby's instance
-across nodes: process groups across nodes (ROADMAP D4), with this chapter
-as their acceptance demo.
+`03-hot-standby.sh` starts the same three nodes as chapter 2 and deploys
+the board as a hot standby ([`hot-standby.toml`](../board/hot-standby.toml)):
+`placement.mode = "hot-standby"` runs it on both nodes of the pair, and
+each instance learns its role from the `failover-role` host event. Every
+instance joins the `board` process group, which spans the cluster. The
+primary writes each new count to its own board, then calls every other
+member of the group with it, and answers the client only after:
+
+```text
+$ curl -s -X POST http://127.0.0.1:8081/board
+{"count":3,"pid":"<1.1.1@1>","replicas":1}
+$ curl -s http://127.0.0.1:8082/board
+{"count":3,"pid":"<2.1.1@1>"}
+$ curl -s -X POST http://127.0.0.1:8082/board
+standby: writes go to the primary
+```
+
+The standby serves reads from its own board, which the primary keeps
+current, and refuses writes (503). Kill the primary with `kill -9`, and a
+few seconds later node 2 is the primary with the count where node 1 left
+it, since every write node 1 answered was already on node 2's board:
+
+```text
+$ curl -s -X POST http://127.0.0.1:8082/board
+{"count":4,"pid":"<2.1.1@1>","replicas":0}
+```
+
+The app did not have to start on node 2; it was running all along and was
+told its new role. When node 1 comes back it rejoins as the standby, its
+instance joins the group again, and the next write brings its board up to
+date.
+
+What this shows: a hot standby keeps state on two nodes by sending every
+write to the standby before answering, at the cost of a call between the
+nodes per write. If the standby cannot be reached, the primary still
+answers, with `"replicas":0`, and the standby's board falls behind until
+the next write after it is back. An app that cannot accept that waits for
+the standby, or refuses the write.
 
 ## Chapter 4 (later): replicated buckets
 

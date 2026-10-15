@@ -56,7 +56,10 @@ pub(crate) enum Class {
 impl Class {
     pub(crate) fn of(frame: &Frame) -> Self {
         match frame {
-            Frame::Cast { .. } | Frame::Call { .. } | Frame::Reply { .. } => Self::Message,
+            Frame::Cast { .. }
+            | Frame::Call { .. }
+            | Frame::Reply { .. }
+            | Frame::GroupPublish { .. } => Self::Message,
             _ => Self::Notice,
         }
     }

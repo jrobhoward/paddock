@@ -28,4 +28,8 @@ timeout_ms = 5000
 [appserver.capabilities."wasi:keyvalue".shared]
 board = "rw"
 
+# The component imports process groups for its hot-standby mode
+# (hot-standby.toml); declared without groups here, it is never called.
+[appserver.capabilities."paddock:groups"]
+
 [appserver.capabilities."wasi:logging"]

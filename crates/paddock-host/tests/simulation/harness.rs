@@ -23,10 +23,11 @@ use std::future::Future;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use paddock_bundle::manifest::{Capability, GroupsScope};
 use paddock_host::acl::Acl;
 use paddock_host::transport::liveness::NodeEvent;
 use paddock_host::transport::memory::Mesh;
-use paddock_host::{InstanceHandle, LoadedApp, Role, Runtime, RuntimeConfig};
+use paddock_host::{InstanceHandle, InstanceSpec, LoadedApp, Role, Runtime, RuntimeConfig};
 use tokio::sync::broadcast;
 
 use crate::common::{fixture, spec};
@@ -42,10 +43,18 @@ fn chaos() -> &'static [u8] {
     BYTES.get_or_init(|| fixture("paddock_fixture_chaos"))
 }
 
-/// One node: a runtime running the chaos app.
+/// The SDK fixture's bytes, read once.
+fn sdk() -> &'static [u8] {
+    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
+    BYTES.get_or_init(|| fixture("paddock_fixture_sdk"))
+}
+
+/// One node: a runtime running the chaos app (and the SDK fixture, loaded
+/// on first use).
 pub struct SimNode {
     pub rt: Runtime,
     app: LoadedApp,
+    sdk: OnceLock<LoadedApp>,
 }
 
 impl SimNode {
@@ -67,12 +76,34 @@ impl SimNode {
         })
         .unwrap();
         let app = rt.load(chaos()).unwrap();
-        Self { rt, app }
+        Self {
+            rt,
+            app,
+            sdk: OnceLock::new(),
+        }
     }
 
     /// Start a chaos instance with `init_args` (`trap-exits`, or empty).
     pub fn spawn(&self, init_args: &str) -> InstanceHandle {
         self.rt.spawn(&self.app, spec(init_args)).unwrap()
+    }
+
+    /// Start an SDK fixture instance as app `app`, granted `paddock:groups`
+    /// for `groups` (join and publish), with messaging routes `acl`.
+    pub fn spawn_sdk(&self, app: &str, groups: &[&str], acl: Acl) -> InstanceHandle {
+        let loaded = self.sdk.get_or_init(|| self.rt.load(sdk()).unwrap());
+        let mut s = InstanceSpec {
+            callback_deadline: Duration::from_secs(5),
+            granted: [Capability::Groups].into(),
+            acl,
+            ..InstanceSpec::new(app, "1.0.0")
+        };
+        let names: Vec<String> = groups.iter().map(ToString::to_string).collect();
+        s.services.groups.scope = GroupsScope {
+            join: names.clone(),
+            publish: names,
+        };
+        self.rt.spawn(loaded, s).unwrap()
     }
 
     /// Start a chaos instance as app `app` with messaging routes `acl`.

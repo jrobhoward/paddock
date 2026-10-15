@@ -1,8 +1,12 @@
 package paddock:groups@0.1.0;
 
-/// Process groups on one node, with publish. Separate from
-/// `paddock:runtime` so the frozen app world does not change; an app
-/// imports it only if it calls it.
+/// Process groups across the cluster, with publish, as OTP's `pg`.
+/// Separate from `paddock:runtime` so the frozen app world does not change;
+/// an app imports it only if it calls it.
+///
+/// Each node owns its members and tells the other nodes; membership is
+/// eventual and never blocks. A node cut off from another stops listing
+/// that node's members until they hear each other again.
 ///
 /// An app declares the groups it may join and publish to in its manifest
 /// (`capabilities."paddock:groups"`), and the operator grants the
@@ -29,12 +33,17 @@ interface groups {
   /// Leave a group. Leaving a group the instance is not in does nothing.
   leave: func(group: string) -> result<_, error>;
 
-  /// The group's members on this node, ordered by pid.
+  /// The group's members on every node this node hears, ordered by pid.
   members: func(group: string) -> result<list<pid>, error>;
 
-  /// Cast `msg` to every member, including the publisher if it is one.
-  /// Returns how many members' mailboxes took it. A member whose mailbox is
-  /// full drops it and counts it as a dropped cast; a member whose
-  /// `message_max_bytes` is smaller than the body does not receive it.
+  /// Cast `msg` to every member, including the publisher if it is one, on
+  /// any node; one copy goes to each other node with members, which fans it
+  /// out. A member whose app's messaging ACL refuses the publisher's app,
+  /// or whose app the publisher's `may_call` omits, is skipped. Returns how
+  /// many members took it: on this node, those whose mailboxes did; on
+  /// another node, all its members once the copy is sent (that node may
+  /// still skip some). A member whose mailbox is full drops it and counts it
+  /// as a dropped cast; a member whose `message_max_bytes` is smaller than
+  /// the body does not receive it.
   publish: func(group: string, msg: envelope) -> result<u32, error>;
 }

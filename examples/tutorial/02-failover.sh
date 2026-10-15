@@ -122,8 +122,8 @@ cat <<'EOF'
 The count is back to 0. The board app moved, but its board did not: a
 disk bucket lives on one node, and node 1's copy went down with it. To
 keep the count across nodes, the app's state has to reach node 2 before
-node 1 is lost: chapter 3 (hot standby, after ROADMAP D4) and replicated
-buckets (Phase 3).
+node 1 is lost: chapter 3 (a hot standby) and replicated buckets
+(Phase 3).
 EOF
 
 pause "restart node 1"

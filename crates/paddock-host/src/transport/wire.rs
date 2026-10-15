@@ -15,13 +15,14 @@ use super::Packet;
 /// The protocol version this node writes. Version 2 acknowledges unlinks
 /// (`Unlink` carries an id, `UnlinkAck` answers it); version 3 stamps
 /// casts, calls, exit signals and links with the sender's app and routes
-/// for messaging ACLs.
-pub const VERSION: u16 = 3;
+/// for messaging ACLs; version 4 carries process groups across nodes
+/// (`GroupSync`, `GroupJoin`, `GroupLeave`, `GroupPublish`).
+pub const VERSION: u16 = 4;
 
-/// The oldest protocol version this node reads. Earlier versions carry no
-/// sender stamp, without which messaging ACLs cannot be checked, so they
-/// are not spoken.
-pub const MIN_VERSION: u16 = 3;
+/// The oldest protocol version this node reads. Version 3 has no group
+/// frames, without which a node would miss its peers' groups, so it is not
+/// spoken.
+pub const MIN_VERSION: u16 = 4;
 
 /// The first message each side of a connection sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

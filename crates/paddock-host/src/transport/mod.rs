@@ -182,6 +182,37 @@ pub enum Frame {
         /// The reference.
         reference: u64,
     },
+    /// Every member the sender has in each process group, replacing what
+    /// the receiver knew of the sender's members (ROADMAP D4).
+    GroupSync {
+        /// Each group and the sender's members in it.
+        groups: Vec<(String, Vec<Pid>)>,
+    },
+    /// `pid`, on the sender, joined `group`.
+    GroupJoin {
+        /// The group.
+        group: String,
+        /// The member.
+        pid: Pid,
+    },
+    /// `pid`, on the sender, left `group` (or exited).
+    GroupLeave {
+        /// The group.
+        group: String,
+        /// The member.
+        pid: Pid,
+    },
+    /// A publish to `group`, for the receiver's members of it.
+    GroupPublish {
+        /// The group.
+        group: String,
+        /// The publisher.
+        from: Pid,
+        /// The publisher's app and routes ([`crate::acl`]).
+        sender: Option<Stamp>,
+        /// The message.
+        msg: Envelope,
+    },
     /// `target` exited (or could not be monitored); tell `watcher`.
     Down {
         /// The monitor's reference.
@@ -526,6 +557,8 @@ fn sender_on(frame: &Frame, from_node: u32) -> bool {
         | Frame::Unlink { from, .. }
         | Frame::UnlinkAck { from, .. } => Some(*from),
         Frame::Monitor { watcher, .. } | Frame::Demonitor { watcher, .. } => Some(*watcher),
+        Frame::GroupJoin { pid, .. } | Frame::GroupLeave { pid, .. } => Some(*pid),
+        Frame::GroupPublish { from, .. } => Some(*from),
         Frame::Down { target, .. } => Some(*target),
         _ => None,
     };
@@ -710,6 +743,18 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 );
             }
         }
+        Frame::GroupSync { groups } => rt.services.groups().synced_from(from_node, groups),
+        Frame::GroupJoin { group, pid } => rt.services.groups().joined_on(from_node, group, pid),
+        Frame::GroupLeave { group, pid } => rt.services.groups().left_on(from_node, &group, pid),
+        Frame::GroupPublish {
+            group,
+            from,
+            sender,
+            msg,
+        } => rt
+            .services
+            .groups()
+            .published_from(&group, from, sender.as_ref(), &msg),
         Frame::Demonitor { watcher, reference } => {
             rt.links.demonitor(watcher, reference);
         }
@@ -800,6 +845,7 @@ fn ended(rt: &RuntimeInner, node: u32, session: u64) {
         }
     }
     rt.pending_calls.fail_node(node);
+    rt.services.groups().forget(node);
     probe::node_down(node, session);
     rt.liveness.announce(NodeEvent::Down { node, session });
 }

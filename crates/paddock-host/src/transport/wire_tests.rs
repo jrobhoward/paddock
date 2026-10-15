@@ -106,7 +106,7 @@ fn agree____overlapping_and_disjoint_ranges____highest_common_or_none() {
     let mine = Hello::new(1, 1);
     let newer = Hello {
         min_version: 1,
-        max_version: 3,
+        max_version: VERSION + 1,
         ..Hello::new(2, 1)
     };
     let too_new = Hello {

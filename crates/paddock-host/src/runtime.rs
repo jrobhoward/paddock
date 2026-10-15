@@ -202,33 +202,33 @@ impl Runtime {
         let services = services::Shared::new(&config)?;
         let ticker = Ticker::start(engine.clone(), config.epoch_tick)
             .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
-        Ok(Self {
-            inner: Arc::new(RuntimeInner {
-                engine,
-                table: ProcessTable::default(),
-                registry: Registry::default(),
-                links: LinkTable::new(config.node),
-                pools: RwLock::default(),
-                services,
-                metrics: Metrics::default(),
-                failover_role: RwLock::default(),
-                extensions,
-                transport: std::sync::OnceLock::new(),
-                pending_calls: PendingCalls::default(),
-                incoming_calls: IncomingCalls::new(config.incoming_calls_per_peer),
-                liveness: Liveness::new(config.heartbeat_interval, config.node_timeout),
-                membership: Membership::new(Member::new(
-                    config.node,
-                    config.creation,
-                    config.address.clone(),
-                    config.role,
-                )),
-                failover: crate::failover::Shared::default(),
-                next_id: AtomicU64::new(crate::pid::instance_id(config.creation, 1)),
-                config,
-                _ticker: ticker,
-            }),
-        })
+        let inner = Arc::new(RuntimeInner {
+            engine,
+            table: ProcessTable::default(),
+            registry: Registry::default(),
+            links: LinkTable::new(config.node),
+            pools: RwLock::default(),
+            services,
+            metrics: Metrics::default(),
+            failover_role: RwLock::default(),
+            extensions,
+            transport: std::sync::OnceLock::new(),
+            pending_calls: PendingCalls::default(),
+            incoming_calls: IncomingCalls::new(config.incoming_calls_per_peer),
+            liveness: Liveness::new(config.heartbeat_interval, config.node_timeout),
+            membership: Membership::new(Member::new(
+                config.node,
+                config.creation,
+                config.address.clone(),
+                config.role,
+            )),
+            failover: crate::failover::Shared::default(),
+            next_id: AtomicU64::new(crate::pid::instance_id(config.creation, 1)),
+            config,
+            _ticker: ticker,
+        });
+        inner.services.groups().attach(&inner);
+        Ok(Self { inner })
     }
 
     /// Compile a component and link it against the host. Imported

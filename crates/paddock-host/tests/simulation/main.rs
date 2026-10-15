@@ -5,7 +5,7 @@
 //! with a witness (D10);
 //! `random` runs seeded random scenarios against the distribution rules;
 //! `agreement` replays spike S12's counterexamples (C6); `backpressure` a
-//! congested link (D8).
+//! congested link (D8); `groups` process groups across nodes (D4).
 //!
 //! Each targeted test fixes a frame delay, puts an event inside that window,
 //! and asserts the one outcome DESIGN.md's "Distribution" rules allow.
@@ -19,6 +19,7 @@ mod backpressure;
 #[path = "../common/mod.rs"]
 mod common;
 mod failover;
+mod groups;
 mod harness;
 mod liveness;
 mod membership;

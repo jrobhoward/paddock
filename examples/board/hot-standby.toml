@@ -1,0 +1,32 @@
+# The board as a hot standby (tutorial chapter 3): runs on both nodes of an
+# HA pair, and the primary writes each count to the standby's board before
+# it answers. Needs, on each node of the pair, what paddock.toml needs, and
+# in policy `paddock:groups` granted too:
+#
+#   [apps.board]
+#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging", "paddock:groups"]
+#   buckets = ["board"]
+[app]
+name = "board"
+version = "1.0.0"
+description = "A counter on a shared disk bucket, kept on both nodes of an HA pair (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.lifecycle]
+start_args = { replicate = true }
+
+[appserver.placement]
+mode = "hot-standby"
+
+[appserver.capabilities."wasi:http/incoming-handler"]
+routes = [{ path_prefix = "/board" }]
+max_body = "1KiB"
+timeout_ms = 5000
+
+[appserver.capabilities."wasi:keyvalue".shared]
+board = "rw"
+
+[appserver.capabilities."paddock:groups"]
+join = ["board"]
+
+[appserver.capabilities."wasi:logging"]

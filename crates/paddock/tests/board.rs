@@ -233,3 +233,201 @@ async fn board____crash_and_node_restart____count_survives_and_watcher_logs_chan
     assert_eq!(after_restart.0, 3);
     node.close().await;
 }
+
+// ------------------------------------------------- chapter 3: hot standby
+
+/// The cluster tables of node `n`'s config (its `node` id goes first): a pair (1, 2) with a witness (3),
+/// short timings, keys in `dir`.
+fn pair_config(n: u32, dir: &Path, addresses: &[String; 3]) -> String {
+    let i = usize::try_from(n - 1).unwrap();
+    let seeds = if n == 3 {
+        String::new()
+    } else {
+        format!("seeds = [\"{}\"]\n", addresses[2])
+    };
+    let mut c = format!(
+        "[cluster]\naddress = \"{}\"\n{seeds}key = {:?}\npeers = {:?}\n\
+         heartbeat_interval_ms = 100\nnode_timeout_ms = 1000\n",
+        addresses[i],
+        dir.join(format!("node-{n}.key")),
+        dir.join("peers.toml"),
+    );
+    if n == 3 {
+        c += "role = \"witness\"\n[witness]\npair = [1, 2]\nfirst = 1\n";
+    } else {
+        c += &format!(
+            "[failover]\npartner = {}\narbiter = \"witness\"\nwitness = 3\n",
+            3 - n
+        );
+    }
+    c + "lease_ms = 1000\nmargin_ms = 200\n"
+}
+
+/// A `paddock node` process, killed when dropped.
+struct Process {
+    child: tokio::process::Child,
+    socket: PathBuf,
+}
+
+impl Process {
+    async fn start(dir: &Path, n: u32, toml: &str) -> Self {
+        let socket = dir.join(format!("n{n}.sock"));
+        let _ = std::fs::remove_file(&socket);
+        let path = dir.join(format!("node-{n}.toml"));
+        std::fs::write(&path, toml).unwrap();
+        let log = std::fs::File::create(dir.join(format!("node-{n}.log"))).unwrap();
+        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+            .args(["node", "--config"])
+            .arg(&path)
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        for _ in 0..400 {
+            if socket.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        Self { child, socket }
+    }
+
+    async fn role(&self) -> String {
+        paddock::api::Client::new(&self.socket)
+            .failover()
+            .await
+            .map(|f| f.role)
+            .unwrap_or_default()
+    }
+}
+
+/// A write to the board on `port`: (status, count, replicas).
+async fn write(port: u16) -> (u16, i64, i64) {
+    let (status, body) = http(port, "POST", "/board").await.unwrap();
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    (
+        status,
+        v["count"].as_i64().unwrap_or(-1),
+        v["replicas"].as_i64().unwrap_or(-1),
+    )
+}
+
+async fn until<F, Fut>(what: &str, mut done: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    for _ in 0..500 {
+        if done().await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+/// Tutorial chapter 3 (ROADMAP D4's demo): the board as a hot standby on an
+/// HA pair. The primary puts each write on the standby's board, through a
+/// process group across the nodes, before it answers, so the count survives
+/// `kill -9` of the primary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board____hot_standby_primary_killed____count_survives_on_the_standby() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let wasm = build();
+    // A short directory: the admin sockets live in it.
+    let dir = tempfile::Builder::new()
+        .prefix("pbh")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let d = dir.path();
+    let socket = d.join("cli.sock");
+    let (ok, signer, err) = paddock(&socket, &["keygen", "--no-password", s(&d.join("k"))]).await;
+    assert!(ok, "{err}");
+    let bundle = d.join("board.rbp");
+    let manifest = root().join("examples/board/hot-standby.toml");
+    let (ok, _, err) = paddock(
+        &socket,
+        &[
+            "bundle",
+            s(&manifest),
+            s(&wasm),
+            "--key",
+            s(&d.join("k.key")),
+            "-o",
+            s(&bundle),
+        ],
+    )
+    .await;
+    assert!(ok, "{err}");
+    let mut peers = String::from("[peers]\n");
+    for n in 1..=3 {
+        let (private, public) = paddock_host::transport::quic::generate_key().unwrap();
+        let key = d.join(format!("node-{n}.key"));
+        std::fs::write(&key, private).unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        peers.push_str(&format!("{n} = [\"{public}\"]\n"));
+    }
+    std::fs::write(d.join("peers.toml"), peers).unwrap();
+    std::fs::write(
+        d.join("policy.toml"),
+        "[apps.board]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \
+         \"wasi:logging\", \"paddock:groups\"]\nbuckets = [\"board\"]\n",
+    )
+    .unwrap();
+    let addresses = [0, 1, 2].map(|_| {
+        std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .to_string()
+    });
+    let ports = [free_port(), free_port()];
+    let toml = |n: u32| {
+        let mut t = format!(
+            "node = {n}\ndata_dir = {:?}\nadmin_socket = {:?}\nmax_instances = 32\ntrusted_keys = [{signer:?}]\n\
+             policy = {:?}\n",
+            d.join(format!("data-{n}")),
+            d.join(format!("n{n}.sock")),
+            d.join("policy.toml"),
+        );
+        if n != 3 {
+            let port = ports[usize::try_from(n - 1).unwrap()];
+            t += &format!(
+                "[http.main]\naddress = \"127.0.0.1:{port}\"\n[buckets.board]\ndurability = \"disk\"\n"
+            );
+        }
+        t + &pair_config(n, d, &addresses)
+    };
+    let _witness = Process::start(d, 3, &toml(3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(d, 1, &toml(1)).await;
+    let n2 = Process::start(d, 2, &toml(2)).await;
+    for p in [&n1, &n2] {
+        let (ok, _, err) = paddock(&p.socket, &["deploy", s(&bundle)]).await;
+        assert!(ok, "{err}");
+    }
+    until("node 1 primary", || async { n1.role().await == "primary" }).await;
+    until("node 2 standby", || async { n2.role().await == "standby" }).await;
+    // The primary must see the standby's instance in the group first.
+    until("a write reaches the standby", || async {
+        write(ports[0]).await.2 == 1
+    })
+    .await;
+
+    for _ in 0..2 {
+        write(ports[0]).await;
+    }
+    let (primary_count, _) = board(ports[0]).await;
+    let (standby_count, _) = board(ports[1]).await;
+    let standby_write = write(ports[1]).await.0;
+    n1.child.kill().await.unwrap();
+    until("node 2 primary", || async { n2.role().await == "primary" }).await;
+    let after = write(ports[1]).await;
+
+    assert_eq!(standby_count, primary_count);
+    assert_eq!(standby_write, 503);
+    assert_eq!(after.0, 200);
+    assert_eq!(after.1, primary_count + 1, "the count survived the primary");
+}

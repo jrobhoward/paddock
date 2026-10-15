@@ -326,6 +326,11 @@ impl Liveness {
         self.peers().remove(&node);
     }
 
+    /// Every node watched.
+    pub(crate) fn watched(&self) -> Vec<u32> {
+        self.peers().keys().copied().collect()
+    }
+
     /// Whether `node` is watched.
     pub(crate) fn watches(&self, node: u32) -> bool {
         self.peers().contains_key(&node)
@@ -593,4 +598,6 @@ fn round(rt: &Arc<RuntimeInner>) {
     for node in liveness.check(Instant::now()) {
         super::end_session(rt, node);
     }
+    // Process groups: a snapshot to each peer in a new session (ROADMAP D4).
+    rt.services.groups().sync(rt);
 }
