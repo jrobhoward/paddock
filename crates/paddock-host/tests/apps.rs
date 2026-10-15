@@ -228,11 +228,13 @@ async fn whereis____app_name_while_its_member_restarts____never_a_pid_that_has_e
     // exit notices and the supervisor noticing the exit, the pool still
     // lists the dead member.
     for _ in 0..20_000 {
+        // Gone from the table before the lookup: it must not come back.
+        let gone = !rt.instances().iter().any(|i| i.pid() == old);
         if let Some(h) = rt.whereis("wh-restart") {
             if h.pid() != old {
                 break;
             }
-            if !rt.instances().iter().any(|i| i.pid() == old) {
+            if gone {
                 stale += 1;
             }
         }

@@ -192,34 +192,47 @@ impl Loaded {
         self.peers.get(&node).is_some_and(|keys| keys.contains(key))
     }
 
-    fn known(&self, der: &[u8]) -> bool {
-        let key = PublicKey::from_der(der);
-        self.peers.values().any(|keys| keys.contains(&key))
+    fn known(&self, key: &PublicKey) -> bool {
+        self.peers.values().any(|keys| keys.contains(key))
     }
 }
 
-/// Accepts a peer's raw public key if the peers file lists it; which node
-/// it belongs to is checked against the peer's hello afterwards.
-#[derive(Debug)]
+/// Which public keys a TLS endpoint accepts from the other side. Asked on
+/// every handshake, so it may follow a file that is reloaded.
+pub type Accepts = Arc<dyn Fn(&PublicKey) -> bool + Send + Sync>;
+
+/// Accepts the other side's raw public key if `accepts` does: for the
+/// cluster, any key in the peers file (which node it belongs to is checked
+/// against the peer's hello afterwards).
 pub(crate) struct PinnedKeys {
-    loaded: Loaded,
+    accepts: Accepts,
     algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl std::fmt::Debug for PinnedKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PinnedKeys").finish_non_exhaustive()
+    }
 }
 
 impl PinnedKeys {
     pub(crate) fn new(loaded: Loaded) -> Self {
+        Self::accepting(Arc::new(move |key: &PublicKey| loaded.known(key)))
+    }
+
+    fn accepting(accepts: Accepts) -> Self {
         Self {
-            loaded,
+            accepts,
             algorithms: default_provider().signature_verification_algorithms,
         }
     }
 
     fn check(&self, end_entity: &CertificateDer<'_>) -> Result<(), rustls::Error> {
-        if self.loaded.known(end_entity.as_ref()) {
+        if (self.accepts)(&PublicKey::from_der(end_entity.as_ref())) {
             Ok(())
         } else {
             Err(rustls::Error::General(
-                "the peer's key is not in the peers file".into(),
+                "the other side's key is not listed".into(),
             ))
         }
     }
@@ -319,6 +332,89 @@ impl ClientCertVerifier for PinnedKeys {
     fn requires_raw_public_keys(&self) -> bool {
         true
     }
+}
+
+/// TLS for a node's remote admin API (ROADMAP D6): TLS 1.3 with raw public
+/// keys, the node presenting the key in `key` and accepting a client only
+/// if `accepts` its key (the operators file).
+///
+/// # Errors
+///
+/// [`HostError::Listen`] if `key` cannot be read or used.
+pub fn admin_server_tls(key: &Path, accepts: Accepts) -> Result<rustls::ServerConfig, HostError> {
+    let (certified, _) = load_key(key)?;
+    let pinned = Arc::new(PinnedKeys::accepting(accepts));
+    Ok(
+        rustls::ServerConfig::builder_with_provider(Arc::new(default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(identity_error)?
+            .with_client_cert_verifier(pinned)
+            .with_cert_resolver(Arc::new(
+                rustls::server::AlwaysResolvesServerRawPublicKeys::new(certified),
+            )),
+    )
+}
+
+/// TLS for an operator reaching a node's remote admin API: presents the key
+/// in `key`, and accepts the node only if it presents `node`.
+///
+/// # Errors
+///
+/// [`HostError::Listen`] if `key` cannot be read or used.
+pub fn admin_client_tls(key: &Path, node: PublicKey) -> Result<rustls::ClientConfig, HostError> {
+    let (certified, _) = load_key(key)?;
+    let pinned = Arc::new(PinnedKeys::accepting(Arc::new(move |k: &PublicKey| {
+        *k == node
+    })));
+    Ok(
+        rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(identity_error)?
+            .dangerous()
+            .with_custom_certificate_verifier(pinned)
+            .with_client_cert_resolver(Arc::new(
+                rustls::client::AlwaysResolvesClientRawPublicKeys::new(certified),
+            )),
+    )
+}
+
+/// The raw public key the other side of a TLS connection presented, from
+/// its peer certificates.
+#[must_use]
+pub fn presented_key(certificates: Option<&[CertificateDer<'_>]>) -> Option<PublicKey> {
+    certificates?
+        .first()
+        .map(|k| PublicKey::from_der(k.as_ref()))
+}
+
+/// Parse an operators file's text: each operator's name and accepted keys.
+///
+/// ```toml
+/// [operators]
+/// alice = ["ed25519:MCowBQYDK2VwAyEA..."]
+/// ```
+///
+/// # Errors
+///
+/// A message naming what is wrong.
+pub fn parse_operators(text: &str) -> Result<BTreeMap<String, Vec<PublicKey>>, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct OperatorsFile {
+        #[serde(default)]
+        operators: BTreeMap<String, Vec<String>>,
+    }
+    let file: OperatorsFile = toml::from_str(text).map_err(|e| e.to_string())?;
+    file.operators
+        .into_iter()
+        .map(|(name, keys)| {
+            let keys = keys
+                .iter()
+                .map(|k| k.parse().map_err(|e| format!("operators.{name}: {e}")))
+                .collect::<Result<Vec<PublicKey>, String>>()?;
+            Ok((name, keys))
+        })
+        .collect()
 }
 
 #[cfg(test)]

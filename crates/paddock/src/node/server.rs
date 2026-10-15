@@ -242,7 +242,7 @@ async fn body(req: Request<Incoming>) -> Result<(String, Vec<u8>), NodeError> {
     Ok((content_type, bytes.to_vec()))
 }
 
-async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
+pub(crate) async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();

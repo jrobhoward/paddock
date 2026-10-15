@@ -1,4 +1,5 @@
-//! A client for the admin API over a Unix socket.
+//! A client for the admin API: over the node's Unix socket, or (with the
+//! `node` feature) over TLS to its remote admin API (`[admin]`, ROADMAP D6).
 
 use std::path::{Path, PathBuf};
 
@@ -32,15 +33,45 @@ pub enum ClientError {
     /// The node's answer was not what the client expected.
     #[error("unexpected response: {0}")]
     Decode(String),
+    /// The node is not reachable at its remote admin address, or the TLS
+    /// handshake failed (an unlisted key on either side).
+    #[error("cannot reach the node at {address}: {source}")]
+    RemoteConnect {
+        /// The address.
+        address: String,
+        /// The I/O or TLS error.
+        #[source]
+        source: std::io::Error,
+    },
     /// This platform has no Unix sockets.
     #[error("the admin API needs Unix domain sockets, which this platform lacks")]
     Unsupported,
 }
 
-/// A client bound to one node's admin socket.
-#[derive(Debug, Clone)]
+/// A client bound to one node's admin API.
+#[derive(Clone)]
 pub struct Client {
     socket: PathBuf,
+    #[cfg(feature = "tls")]
+    remote: Option<Remote>,
+}
+
+/// A node's remote admin address and the TLS to reach it with.
+#[cfg(feature = "tls")]
+#[derive(Clone)]
+struct Remote {
+    address: String,
+    tls: tokio_rustls::TlsConnector,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("Client");
+        d.field("socket", &self.socket);
+        #[cfg(feature = "tls")]
+        d.field("remote", &self.remote.as_ref().map(|r| r.address.clone()));
+        d.finish()
+    }
 }
 
 impl Client {
@@ -49,6 +80,27 @@ impl Client {
     pub fn new(socket: impl AsRef<Path>) -> Self {
         Self {
             socket: socket.as_ref().to_path_buf(),
+            #[cfg(feature = "tls")]
+            remote: None,
+        }
+    }
+
+    /// A client for the node whose remote admin API listens at `address`
+    /// (`host:port`), reached with `tls` (from
+    /// `paddock_host::transport::quic::admin_client_tls`: the operator's
+    /// key, and the node's pinned key).
+    #[cfg(feature = "tls")]
+    #[must_use]
+    pub fn remote(
+        address: impl Into<String>,
+        tls: std::sync::Arc<tokio_rustls::rustls::ClientConfig>,
+    ) -> Self {
+        Self {
+            socket: PathBuf::new(),
+            remote: Some(Remote {
+                address: address.into(),
+                tls: tokio_rustls::TlsConnector::from(tls),
+            }),
         }
     }
 
@@ -357,62 +409,48 @@ impl Client {
         serde_json::from_slice(&bytes).map_err(|e| ClientError::Decode(e.to_string()))
     }
 
-    #[cfg(unix)]
     async fn send(
         &self,
         method: Method,
         path: &str,
         body: Option<(&str, Vec<u8>)>,
     ) -> Result<(StatusCode, String, Vec<u8>), ClientError> {
-        use bytes::Bytes;
-        use http_body_util::{BodyExt, Full};
-        use hyper::Request;
+        #[cfg(feature = "tls")]
+        if let Some(remote) = &self.remote {
+            let failed = |source: std::io::Error| ClientError::RemoteConnect {
+                address: remote.address.clone(),
+                source,
+            };
+            let stream = tokio::net::TcpStream::connect(&remote.address)
+                .await
+                .map_err(failed)?;
+            // Raw public keys: the name is not checked, the pinned key is.
+            let name = tokio_rustls::rustls::pki_types::ServerName::try_from("paddock")
+                .map_err(|e| ClientError::Http(e.to_string()))?;
+            let tls = remote.tls.connect(name, stream).await.map_err(failed)?;
+            return exchange(tls, method, path, body).await;
+        }
+        self.send_local(method, path, body).await
+    }
 
-        let http = |e: &dyn std::fmt::Display| ClientError::Http(e.to_string());
+    #[cfg(unix)]
+    async fn send_local(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<(&str, Vec<u8>)>,
+    ) -> Result<(StatusCode, String, Vec<u8>), ClientError> {
         let stream = tokio::net::UnixStream::connect(&self.socket)
             .await
             .map_err(|source| ClientError::Connect {
                 path: self.socket.clone(),
                 source,
             })?;
-        let (mut sender, connection) =
-            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
-                .await
-                .map_err(|e| http(&e))?;
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        let mut request = Request::builder()
-            .method(method)
-            .uri(path)
-            .header(hyper::header::HOST, "paddock");
-        let payload = match body {
-            Some((content_type, bytes)) => {
-                request = request.header(hyper::header::CONTENT_TYPE, content_type);
-                Bytes::from(bytes)
-            }
-            None => Bytes::new(),
-        };
-        let request = request.body(Full::new(payload)).map_err(|e| http(&e))?;
-        let response = sender.send_request(request).await.map_err(|e| http(&e))?;
-        let status = response.status();
-        let content_type = response
-            .headers()
-            .get(hyper::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| http(&e))?
-            .to_bytes();
-        Ok((status, content_type, bytes.to_vec()))
+        exchange(stream, method, path, body).await
     }
 
     #[cfg(not(unix))]
-    async fn send(
+    async fn send_local(
         &self,
         _method: Method,
         _path: &str,
@@ -420,6 +458,57 @@ impl Client {
     ) -> Result<(StatusCode, String, Vec<u8>), ClientError> {
         Err(ClientError::Unsupported)
     }
+}
+
+/// One HTTP/1.1 request and its response over `stream`.
+async fn exchange<S>(
+    stream: S,
+    method: Method,
+    path: &str,
+    body: Option<(&str, Vec<u8>)>,
+) -> Result<(StatusCode, String, Vec<u8>), ClientError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use bytes::Bytes;
+    use http_body_util::{BodyExt, Full};
+    use hyper::Request;
+
+    let http = |e: &dyn std::fmt::Display| ClientError::Http(e.to_string());
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
+            .await
+            .map_err(|e| http(&e))?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(hyper::header::HOST, "paddock");
+    let payload = match body {
+        Some((content_type, bytes)) => {
+            request = request.header(hyper::header::CONTENT_TYPE, content_type);
+            Bytes::from(bytes)
+        }
+        None => Bytes::new(),
+    };
+    let request = request.body(Full::new(payload)).map_err(|e| http(&e))?;
+    let response = sender.send_request(request).await.map_err(|e| http(&e))?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(hyper::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .map_err(|e| http(&e))?
+        .to_bytes();
+    Ok((status, content_type, bytes.to_vec()))
 }
 
 fn error_from(body: &[u8]) -> ClientError {

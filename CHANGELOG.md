@@ -309,6 +309,14 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- The remote admin API (`[admin]` in node config): the admin socket's
+  routes over TCP with TLS 1.3 and pinned keys both ways, for operators on
+  other machines. Operators' public keys go in an operators file (reread on
+  SIGHUP and `paddock reload-tls`); the CLI reaches a node with `--remote`,
+  `--node-key` and `--key` (or `PADDOCK_REMOTE`, `PADDOCK_NODE_KEY`,
+  `PADDOCK_KEY`). Each change is audited with the operator's name.
+  `Client::remote`; `admin_server_tls`, `admin_client_tls`,
+  `parse_operators` in `paddock_host::transport::quic`.
 - Messaging ACLs (manifest `messaging_acl`, by app name): a call, cast,
   `process.exit` or link between apps passes only when the sender's
   `may_call` and the target's `accept_from` allow it (empty: any); a

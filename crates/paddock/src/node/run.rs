@@ -86,6 +86,7 @@ async fn serve(
     extensions: Vec<Arc<dyn Extension>>,
 ) -> anyhow::Result<()> {
     let node = Arc::new(Node::open_with(config, ring, extensions).await?);
+    node.start_remote_admin().await?;
     #[cfg(unix)]
     reload_on_hangup(node.clone());
     super::serve(node.clone(), shutdown_signal())

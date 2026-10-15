@@ -6,6 +6,8 @@ mod connections;
 mod deploy;
 mod ingress;
 mod queries;
+#[cfg(feature = "tls")]
+mod remote;
 mod upgrade;
 
 use std::collections::HashMap;
@@ -62,6 +64,9 @@ pub struct Node {
     stop: tokio::sync::watch::Sender<bool>,
     /// The cluster transport, with `cluster.address`.
     quic: Arc<std::sync::Mutex<Option<QuicTransport>>>,
+    /// Who may use the remote admin API (`[admin] operators`).
+    #[cfg(feature = "tls")]
+    operators: remote::Operators,
     /// The singletons, with `[failover]`.
     gate: Option<Arc<Gate>>,
     /// This node's failover, once started.
@@ -233,6 +238,8 @@ impl Node {
             ingress,
             stop,
             quic: Arc::default(),
+            #[cfg(feature = "tls")]
+            operators: Arc::default(),
             gate,
             failover: std::sync::OnceLock::new(),
             config,
@@ -317,6 +324,10 @@ impl Node {
     /// [`NodeError::Invalid`] naming each ingress that failed.
     pub fn reload_tls(&self) -> Result<Done, NodeError> {
         let (ingresses, mut failed) = self.ingress.reload_tls();
+        #[cfg(feature = "tls")]
+        if let Err(e) = self.reload_operators() {
+            failed.push(e.to_string());
+        }
         let quic = self
             .quic
             .lock()
@@ -394,6 +405,25 @@ fn cluster_metrics(stats: &[(u32, paddock_host::transport::LaneStats)]) -> Strin
         );
     }
     text
+}
+
+/// Without the `tls` feature there is no remote admin API.
+#[cfg(not(feature = "tls"))]
+impl Node {
+    /// Refuse `[admin]`: this build has no TLS.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Invalid`] if the config has an `[admin]` section.
+    #[allow(clippy::unused_async)] // The same signature as with `tls`.
+    pub async fn start_remote_admin(self: &Arc<Self>) -> Result<(), NodeError> {
+        if self.config.admin.is_some() {
+            return Err(NodeError::Invalid(
+                "[admin] needs a paddock built with the `tls` feature".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

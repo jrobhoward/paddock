@@ -31,6 +31,7 @@ Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back t
 | --- | --- | --- |
 | `PADDOCK_CONFIG` | `paddock node` | The node config file, instead of `--config` |
 | `PADDOCK_SOCKET` | every admin command | The admin socket, instead of `--socket` (default `/var/lib/paddock/admin.sock`) |
+| `PADDOCK_REMOTE`, `PADDOCK_NODE_KEY`, `PADDOCK_KEY` | every admin command | A node's remote admin API (`host:port`), its public key, and the operator's private key, instead of `--remote`, `--node-key` and `--key` |
 | `PADDOCK_KEY_PASSWORD` | `paddock bundle`, `paddock keygen` | The signing key's password, instead of a prompt |
 | `RUST_LOG` | `paddock node` | Log filter (default `info`), for example `info,paddock::lease=debug` |
 

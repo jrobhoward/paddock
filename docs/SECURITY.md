@@ -16,7 +16,7 @@ The threat model as built: what Paddock protects, whom it trusts, each boundary 
 
 | Party | Trusted to | Not trusted to |
 | --- | --- | --- |
-| The operator (anyone who can open the admin socket: the node's user, mode 0600) | everything: deploy, kill, confirm failover, read state | — |
+| The operator (anyone who can open the admin socket: the node's user, mode 0600; or holds a key the `[admin]` operators file lists) | everything: deploy, kill, confirm failover, read state | — |
 | A signer in `trusted_keys` | publish code the node may run | do anything its grant does not allow; the sandbox and the grant are the boundary even for signed code |
 | An app | use what it was granted | reach other apps' data, the host, or other apps' messages beyond what routing allows |
 | A cluster member (a node whose key is in the peers file) | what its own instances could do on the node: call, cast, link and send exit signals within the messaging ACLs, as its stamp on each frame says; take part in failover | speak for another node's instances (a frame whose sender pid is on another node is dropped); its stamps are trusted, so a member that lies about its senders' apps passes ACLs it should not |
@@ -38,10 +38,10 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 - **Controls.** Buckets namespaced by app; shared buckets by grant, read-only or read-write; secrets by name and grant; groups by manifest scope; registered names limited to those the manifest lists; messaging ACLs (`messaging_acl.accept_from`, `may_call`, by app name) on calls, casts, exit signals and links, checked on the target's node against the host-stamped sender.
 - **Gaps.** S1 is fixed. Without a `messaging_acl`, an app may call, cast, link or send exit signals to any pid it learns, as before; the lists are opt-in. Monitors are not checked (they only observe).
 
-### The admin socket
+### The admin socket and the remote admin API
 
-- **Controls.** A Unix socket created owner-only; bundles verified against `trusted_keys` whoever uploads them; uploads capped at 512 MiB; changes recorded in `audit.log`.
-- **Gaps.** None beyond the trust above. The remote admin API (D6) needs authentication of its own.
+- **Controls.** A Unix socket created owner-only; bundles verified against `trusted_keys` whoever uploads them; uploads capped at 512 MiB; changes recorded in `audit.log`. The remote admin API (`[admin]`) is TLS 1.3 with raw public keys both ways: the node presents its key, which the operator pins (`--node-key`), and accepts only a key its operators file lists; a handshake has 10 s to finish; every request but a `GET` is recorded in `audit.log` with the operator's name.
+- **Gaps.** Every listed operator has every right the socket gives: there are no read-only operators. Anyone who can reach the address can open connections and start handshakes; there is no limit on either, so put the address on a management network. Removing an operator stops new connections, not one already open.
 
 ### Node and node
 

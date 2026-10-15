@@ -47,7 +47,10 @@ use tokio::sync::{mpsc, watch};
 
 pub mod identity;
 
-pub use identity::{NodeIdentity, PublicKey, generate_key, public_key_of};
+pub use identity::{
+    Accepts, NodeIdentity, PublicKey, admin_client_tls, admin_server_tls, generate_key,
+    parse_operators, presented_key, public_key_of,
+};
 
 use identity::{Loaded, PinnedKeys};
 

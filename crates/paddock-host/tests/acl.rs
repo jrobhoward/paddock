@@ -94,7 +94,7 @@ async fn link____refused_sender____noproc_at_once_and_the_target_untouched() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn same_app_monitor_and_host____not_checked() {
+async fn exemptions____same_app_monitor_and_host____not_checked() {
     let (rt, _) = shared();
     let a = up("acl5-orders", "", &["acl5-web"], &["acl5-web"]);
     let b = up("acl5-orders", "", &["acl5-web"], &["acl5-web"]);

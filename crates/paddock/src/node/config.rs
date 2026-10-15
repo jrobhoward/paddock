@@ -39,6 +39,12 @@
 //! tls = [{ cert = "/etc/paddock/shop.pem", key = "/etc/paddock/shop.key", hosts = ["shop.example"] }]
 //! tls_reload_s = 60             # check the files for changes; also SIGHUP
 //!
+//! # The admin API for other machines: TLS 1.3, pinned keys both ways.
+//! [admin]
+//! address = "10.0.0.1:7443"
+//! operators = "/etc/paddock/operators.toml"  # [operators] alice = ["ed25519:..."]
+//! # key = "/etc/paddock/node.key"           # default: [cluster] key
+//!
 //! # Prometheus scrape endpoint (GET /metrics). Unauthenticated.
 //! [metrics]
 //! address = "127.0.0.1:9100"
@@ -161,6 +167,9 @@ pub struct NodeConfig {
     /// Where Prometheus scrapes the node's metrics.
     #[serde(default)]
     pub metrics: Option<MetricsBinding>,
+    /// The admin API over TLS, for operators on other machines.
+    #[serde(default)]
+    pub admin: Option<AdminBinding>,
     /// This node's part in a cluster.
     #[serde(default)]
     pub cluster: ClusterConfig,
@@ -451,6 +460,24 @@ pub struct ListenerBinding {
     /// Tasks accepting connections at once.
     #[serde(default = "default_acceptors")]
     pub acceptors: usize,
+}
+
+/// `[admin]`: the admin API over TCP with TLS 1.3 and pinned keys, for
+/// operators on other machines (ROADMAP D6). The node presents `key`'s
+/// public key; an operator connects only with a key the operators file
+/// lists, and has every right the admin socket gives.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdminBinding {
+    /// The TCP address to listen on, `ip:port`.
+    pub address: std::net::SocketAddr,
+    /// The operators file: each operator's name and public keys
+    /// (`[operators]`, `name = ["ed25519:..."]`). Read again on SIGHUP and
+    /// `paddock reload-tls`.
+    pub operators: PathBuf,
+    /// The node's private key; `[cluster] key` if unset.
+    #[serde(default)]
+    pub key: Option<PathBuf>,
 }
 
 /// `[metrics]`: an address serving `GET /metrics` in the Prometheus text

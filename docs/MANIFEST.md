@@ -262,6 +262,11 @@ file = "/run/secrets/db-password"      # or env = "DB_PASSWORD"; read on every a
 [metrics]
 address = "127.0.0.1:9100"             # GET /metrics for Prometheus; unauthenticated, keep it off public networks
 
+[admin]
+address = "10.0.0.1:7443"              # the admin API over TCP with TLS 1.3 (cargo feature `tls`, on by default), for operators on other machines
+operators = "/etc/paddock/operators.toml"  # [operators] alice = ["ed25519:..."]; reread on SIGHUP and `paddock reload-tls`
+key = "/etc/paddock/node.key"          # default: [cluster] key; operators pin its public key (`paddock cluster pubkey`)
+
 [http.main]
 address = "0.0.0.0:8080"               # HTTP ingress (cargo feature `http`, on by default): serves every app's routes
 acceptors = 4                          # default 4

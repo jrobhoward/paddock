@@ -23,6 +23,21 @@ struct Cli {
         global = true
     )]
     socket: PathBuf,
+    /// Reach the node's remote admin API at this `host:port` (its `[admin]
+    /// address`) instead of the socket.
+    #[cfg(feature = "tls")]
+    #[arg(long, env = "PADDOCK_REMOTE", global = true, requires_all = ["node_key", "key"])]
+    remote: Option<String>,
+    /// With --remote: the node's public key (`ed25519:...`); the connection
+    /// is refused if the node presents another.
+    #[cfg(feature = "tls")]
+    #[arg(long, env = "PADDOCK_NODE_KEY", global = true)]
+    node_key: Option<String>,
+    /// With --remote: the operator's private key (`paddock cluster keygen`
+    /// makes one; its public key goes into the node's operators file).
+    #[cfg(feature = "tls")]
+    #[arg(long, env = "PADDOCK_KEY", global = true)]
+    key: Option<PathBuf>,
     /// Print JSON instead of text.
     #[arg(long, global = true)]
     json: bool,
@@ -182,8 +197,8 @@ enum Command {
     Ps,
     /// Print the node's metrics (Prometheus text).
     Metrics,
-    /// Reload the HTTPS ingress certificates and the cluster key and peers
-    /// files.
+    /// Reload the HTTPS ingress certificates, the cluster key and peers
+    /// files, and the remote admin operators file.
     ReloadTls,
     /// List the cluster's members as the node knows them.
     Members,
@@ -279,7 +294,25 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("cannot start the async runtime")?
-        .block_on(run(&Client::new(&args.socket), args.json, args.command))
+        .block_on(async {
+            let client = client(&args)?;
+            run(&client, args.json, args.command).await
+        })
+}
+
+/// The admin API client the options ask for: the socket, or the remote
+/// admin API over TLS.
+fn client(args: &Cli) -> anyhow::Result<Client> {
+    #[cfg(feature = "tls")]
+    if let (Some(remote), Some(node_key), Some(key)) = (&args.remote, &args.node_key, &args.key) {
+        let node_key = node_key
+            .parse()
+            .map_err(|e| anyhow::anyhow!("--node-key: {e}"))?;
+        let tls = paddock_host::transport::quic::admin_client_tls(key, node_key)
+            .with_context(|| format!("--key {}", key.display()))?;
+        return Ok(Client::remote(remote.clone(), std::sync::Arc::new(tls)));
+    }
+    Ok(Client::new(&args.socket))
 }
 
 fn print<T: Serialize>(
