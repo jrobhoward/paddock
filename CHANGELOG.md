@@ -309,6 +309,13 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- The standby redirects to the primary (ROADMAP D11, step 1): with
+  `partner_url` on an `[http.<name>]` listener, a request for a singleton
+  that runs on the partner is answered `307 Temporary Redirect` to the
+  same path and query there, while the partner is heard; otherwise 503 as
+  before. Clients that follow redirects can use either node's address.
+  Metric `paddock_http_redirected_total`; `IngressListen::partner_url`,
+  `HttpIngress::set_elsewhere`. Tutorial chapter 2 shows it.
 - Tutorial chapter 3 (`examples/tutorial/03-hot-standby.sh`): the board
   example as a hot standby (`examples/board/hot-standby.toml`), its
   primary putting each write on the standby's board through a process

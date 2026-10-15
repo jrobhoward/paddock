@@ -234,6 +234,51 @@ fn NodeConfig____failover____read_with_defaults() {
     );
 }
 
+const PAIRED: &str = "[failover]\npartner = 2\narbiter = \"paths\"\n";
+
+#[test]
+fn NodeConfig____partner_url_with_failover____read() {
+    let config = NodeConfig::from_toml_str(&format!(
+        "{CLUSTERED}{PAIRED}[http.main]\naddress = \"0.0.0.0:8080\"\n\
+         partner_url = \"https://node2.example:8443/\"\n"
+    ))
+    .unwrap();
+
+    assert_eq!(
+        config.http["main"].partner_url.as_deref(),
+        Some("https://node2.example:8443/")
+    );
+}
+
+#[test]
+fn NodeConfig____partner_url_bad_or_without_failover____refused() {
+    let listener =
+        |url: &str| format!("[http.main]\naddress = \"0.0.0.0:8080\"\npartner_url = \"{url}\"\n");
+    let refused = |text: String| NodeConfig::from_toml_str(&text).unwrap_err().to_string();
+
+    let alone = refused(format!("{CLUSTERED}{}", listener("http://10.0.0.2:8080")));
+    let bad: Vec<String> = [
+        "10.0.0.2:8080",
+        "ftp://10.0.0.2",
+        "http://",
+        "http:///board",
+        "http://10.0.0.2/?a=1",
+        "http://u@10.0.0.2",
+        "http://10.0.0.2/a b",
+    ]
+    .iter()
+    .map(|u| refused(format!("{CLUSTERED}{PAIRED}{}", listener(u))))
+    .collect();
+
+    assert!(
+        alone.contains("http.main.partner_url needs [failover]"),
+        "{alone}"
+    );
+    for err in &bad {
+        assert!(err.contains("is not http(s)://host"), "{err}");
+    }
+}
+
 #[test]
 fn NodeConfig____witness____read_with_defaults() {
     let config = NodeConfig::from_toml_str(&format!(

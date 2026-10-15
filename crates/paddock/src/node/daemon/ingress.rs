@@ -52,6 +52,10 @@ impl Ingress {
             listen.header_timeout = Duration::from_millis(binding.header_timeout_ms.max(1));
             listen.body_timeout = Duration::from_millis(binding.body_timeout_ms.max(1));
             listen.max_response = binding.max_response.bytes();
+            listen.partner_url = binding
+                .partner_url
+                .as_ref()
+                .map(|u| u.trim_end_matches('/').to_string());
             if !binding.tls.is_empty() {
                 #[cfg(feature = "tls")]
                 {
@@ -105,6 +109,14 @@ impl Ingress {
                 "http.{name}: this build of paddock has no HTTP ingress (cargo feature `http`)"
             ))),
             None => Ok(Self::default()),
+        }
+    }
+
+    /// Tell the ingress which apps run on the failover partner now.
+    #[cfg(feature = "http")]
+    pub(super) fn set_elsewhere(&self, elsewhere: paddock_host::http::Elsewhere) {
+        if let Some(http) = &self.http {
+            http.set_elsewhere(elsewhere);
         }
     }
 
@@ -219,6 +231,11 @@ impl Ingress {
                     "paddock_http_not_found_total",
                     "HTTP requests that matched no route.",
                     s.not_found,
+                ),
+                (
+                    "paddock_http_redirected_total",
+                    "HTTP requests redirected to the failover partner.",
+                    s.redirected,
                 ),
                 (
                     "paddock_http_refused_connections_total",

@@ -54,8 +54,10 @@ reads), and the supervisor's restart is the recovery.
 `02-failover.sh` starts three nodes on loopback: a witness (node 3) and an
 HA pair (nodes 1 and 2), each member with its own HTTP ingress (ports 8081
 and 8082) and its own `board` bucket. The board app is deployed to both,
-with `placement.mode = "singleton"`: it runs on the primary only. The
-standby answers `503 app not running`.
+with `placement.mode = "singleton"`: it runs on the primary only. Each
+node's listener names its partner's (`partner_url` under `[http.main]`),
+so the standby answers the board's requests with `307 Temporary Redirect`
+to the same path on the primary, and `curl -L` follows it.
 
 The script prints each node's process id. Kill the primary as a power cut
 would, `kill -9 <node 1's process>`, and read node 2 a few seconds later:
@@ -83,11 +85,16 @@ says so; the script waits for it). A node still starting is `down`, and a
 window, nobody takes over until it returns. This is an open question for
 the failover protocol (DESIGN.md, "Open questions").
 
-Clients need one address that reaches whichever node is primary. With
-HTTP, a load balancer in front of both nodes does it without new
-features: the standby answers a singleton's routes with `503 app not
-running`, so a health check on the app's own route (here `GET /board`)
-marks only the primary up. For example, with HAProxy:
+Clients that follow redirects can use either node's address, as the
+script's `curl -L` does: a request to the standby goes on to the primary.
+307 keeps the method and body, so a `POST` is repeated there. The
+standby redirects only while it hears the primary; during a takeover it
+answers `503 app not running`, as it does without `partner_url`.
+
+For one address that reaches whichever node is primary, put a load
+balancer in front of both nodes. A health check on the app's own route
+(here `GET /board`) expecting 200 marks only the primary up, since the
+standby answers 307 or 503. For example, with HAProxy:
 
 ```text
 backend board

@@ -53,6 +53,8 @@ struct Served {
     tight: SocketAddr,
     /// One connection at a time.
     capped: SocketAddr,
+    /// With a `partner_url`, where `ghost` runs (`phantom` runs nowhere).
+    partnered: SocketAddr,
     /// HTTPS with certificates for `web.example` (the default) and
     /// `*.shop.example`.
     tls: SocketAddr,
@@ -105,7 +107,7 @@ fn start() -> Served {
     let (web_cert, web_entry) = cert(certs.path(), "web", &["web.example"]);
     let (shop_cert, shop_entry) = cert(certs.path(), "shop", &["*.shop.example"]);
     let tls_certs = IngressTls::load(vec![web_entry, shop_entry]).unwrap();
-    let (apps, ingress, address, tight, capped, tls) = tokio.block_on(async {
+    let (apps, ingress, address, tight, capped, partnered, tls) = tokio.block_on(async {
         let apps = rt
             .start_apps(vec![AppDeployment::new(web, app)])
             .await
@@ -113,6 +115,11 @@ fn start() -> Served {
         let ingress = HttpIngress::new(apps.clone());
         ingress.set_routes("web", routes).unwrap();
         ingress.set_routes("ghost", vec![route("/ghost")]).unwrap();
+        ingress
+            .set_routes("phantom", vec![route("/phantom")])
+            .unwrap();
+        // `web` too: an app that runs here is served here.
+        ingress.set_elsewhere(Arc::new(|app| app == "ghost" || app == "web"));
         let any = "127.0.0.1:0".parse().unwrap();
         let address = ingress.listen(IngressListen::new(any)).await.unwrap();
         let tight = ingress
@@ -131,6 +138,13 @@ fn start() -> Served {
             })
             .await
             .unwrap();
+        let partnered = ingress
+            .listen(IngressListen {
+                partner_url: Some("https://partner.example:8443".into()),
+                ..IngressListen::new(any)
+            })
+            .await
+            .unwrap();
         let tls = ingress
             .listen(IngressListen {
                 tls: Some(tls_certs),
@@ -138,7 +152,7 @@ fn start() -> Served {
             })
             .await
             .unwrap();
-        (apps, ingress, address, tight, capped, tls)
+        (apps, ingress, address, tight, capped, partnered, tls)
     });
     Served {
         _tokio: tokio,
@@ -148,6 +162,7 @@ fn start() -> Served {
         address,
         tight,
         capped,
+        partnered,
         tls,
         web_cert,
         shop_cert,
@@ -295,6 +310,29 @@ async fn replies____plain_status_and_failures____mapped_to_http() {
     assert_eq!(crash.status, 502);
     assert_eq!(big.status, 413);
     assert_eq!(ghost.status, 503);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn partner_url____app_runs_on_the_partner____307_to_the_same_path() {
+    let s = served();
+
+    let moved = request(s.partnered, "POST", "/ghost/a?b=1", &[], "hi").await;
+    let no_partner_url = get("/ghost/a", &[]).await;
+    let nowhere = request(s.partnered, "GET", "/phantom", &[], "").await;
+    let here = request(s.partnered, "GET", "/api/plain", &[], "").await;
+
+    assert_eq!(moved.status, 307);
+    assert!(
+        moved
+            .head
+            .contains("location: https://partner.example:8443/ghost/a?b=1"),
+        "{}",
+        moved.head
+    );
+    assert_eq!(no_partner_url.status, 503);
+    assert_eq!(nowhere.status, 503);
+    assert_eq!((here.status, here.body.as_str()), (200, "plain"));
+    assert!(s.ingress.stats().redirected >= 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

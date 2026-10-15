@@ -327,31 +327,35 @@ where
     panic!("timed out waiting for {what}");
 }
 
-/// Tutorial chapter 3 (ROADMAP D4's demo): the board as a hot standby on an
-/// HA pair. The primary puts each write on the standby's board, through a
-/// process group across the nodes, before it answers, so the count survives
-/// `kill -9` of the primary.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn board____hot_standby_primary_killed____count_survives_on_the_standby() {
+/// Three `paddock node` processes in `d`: a witness and the pair, each of
+/// the pair with an HTTP listener on its own port and `http_extra(n)` in
+/// that listener's table, and the board bundled from `manifest` deployed to
+/// both. Waits for node 1 primary and node 2 standby.
+struct Pair {
+    _witness: Process,
+    n1: Process,
+    n2: Process,
+    ports: [u16; 2],
+}
+
+async fn start_pair(
+    d: &Path,
+    manifest: &Path,
+    grant: &str,
+    http_extra: impl Fn(u32, &[u16; 2]) -> String,
+) -> Pair {
     use std::os::unix::fs::PermissionsExt;
 
     let wasm = build();
-    // A short directory: the admin sockets live in it.
-    let dir = tempfile::Builder::new()
-        .prefix("pbh")
-        .tempdir_in("/tmp")
-        .unwrap();
-    let d = dir.path();
     let socket = d.join("cli.sock");
     let (ok, signer, err) = paddock(&socket, &["keygen", "--no-password", s(&d.join("k"))]).await;
     assert!(ok, "{err}");
     let bundle = d.join("board.rbp");
-    let manifest = root().join("examples/board/hot-standby.toml");
     let (ok, _, err) = paddock(
         &socket,
         &[
             "bundle",
-            s(&manifest),
+            s(manifest),
             s(&wasm),
             "--key",
             s(&d.join("k.key")),
@@ -372,8 +376,7 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby() 
     std::fs::write(d.join("peers.toml"), peers).unwrap();
     std::fs::write(
         d.join("policy.toml"),
-        "[apps.board]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \
-         \"wasi:logging\", \"paddock:groups\"]\nbuckets = [\"board\"]\n",
+        format!("[apps.board]\ngrant = [{grant}]\nbuckets = [\"board\"]\n"),
     )
     .unwrap();
     let addresses = [0, 1, 2].map(|_| {
@@ -395,14 +398,15 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby() 
         if n != 3 {
             let port = ports[usize::try_from(n - 1).unwrap()];
             t += &format!(
-                "[http.main]\naddress = \"127.0.0.1:{port}\"\n[buckets.board]\ndurability = \"disk\"\n"
+                "[http.main]\naddress = \"127.0.0.1:{port}\"\n{}[buckets.board]\ndurability = \"disk\"\n",
+                http_extra(n, &ports)
             );
         }
         t + &pair_config(n, d, &addresses)
     };
-    let _witness = Process::start(d, 3, &toml(3)).await;
+    let witness = Process::start(d, 3, &toml(3)).await;
     tokio::time::sleep(Duration::from_millis(1_500)).await;
-    let mut n1 = Process::start(d, 1, &toml(1)).await;
+    let n1 = Process::start(d, 1, &toml(1)).await;
     let n2 = Process::start(d, 2, &toml(2)).await;
     for p in [&n1, &n2] {
         let (ok, _, err) = paddock(&p.socket, &["deploy", s(&bundle)]).await;
@@ -410,6 +414,38 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby() 
     }
     until("node 1 primary", || async { n1.role().await == "primary" }).await;
     until("node 2 standby", || async { n2.role().await == "standby" }).await;
+    Pair {
+        _witness: witness,
+        n1,
+        n2,
+        ports,
+    }
+}
+
+/// A short directory: the admin sockets live in it.
+fn short_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("pbh")
+        .tempdir_in("/tmp")
+        .unwrap()
+}
+
+/// Tutorial chapter 3 (ROADMAP D4's demo): the board as a hot standby on an
+/// HA pair. The primary puts each write on the standby's board, through a
+/// process group across the nodes, before it answers, so the count survives
+/// `kill -9` of the primary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board____hot_standby_primary_killed____count_survives_on_the_standby() {
+    let dir = short_dir();
+    let manifest = root().join("examples/board/hot-standby.toml");
+    let grant =
+        "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\", \"paddock:groups\"";
+    let Pair {
+        _witness,
+        mut n1,
+        n2,
+        ports,
+    } = start_pair(dir.path(), &manifest, grant, |_, _| String::new()).await;
     // The primary must see the standby's instance in the group first.
     until("a write reaches the standby", || async {
         write(ports[0]).await.2 == 1
@@ -424,10 +460,84 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby() 
     let standby_write = write(ports[1]).await.0;
     n1.child.kill().await.unwrap();
     until("node 2 primary", || async { n2.role().await == "primary" }).await;
-    let after = write(ports[1]).await;
+    // The app hears its role a moment after the node does; until then it
+    // refuses writes, which change nothing.
+    let mut after = write(ports[1]).await;
+    for _ in 0..250 {
+        if after.0 != 503 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        after = write(ports[1]).await;
+    }
 
     assert_eq!(standby_count, primary_count);
     assert_eq!(standby_write, 503);
     assert_eq!(after.0, 200);
     assert_eq!(after.1, primary_count + 1, "the count survived the primary");
+}
+
+/// One request on its own connection: (status, `location` header).
+async fn location(port: u16, method: &str, path: &str) -> (u16, String) {
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let req = format!(
+        "{method} {path} HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\ncontent-length: 0\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).await.unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).await.unwrap();
+    let head = raw.split_once("\r\n\r\n").map_or(raw.as_str(), |(h, _)| h);
+    let status = head.split(' ').nth(1).unwrap().parse().unwrap();
+    let to = head
+        .lines()
+        .find_map(|l| {
+            l.split_once(':')
+                .filter(|(k, _)| k.eq_ignore_ascii_case("location"))
+        })
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_default();
+    (status, to)
+}
+
+/// ROADMAP D11, step 1: the board as a singleton on an HA pair (tutorial
+/// chapter 2) with `partner_url` on each listener. The standby redirects
+/// the board's requests to the primary (307, path and query kept); after
+/// the primary is killed, node 2 serves the board itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_the_primary() {
+    let dir = short_dir();
+    let d = dir.path();
+    let manifest = d.join("singleton.toml");
+    let base = std::fs::read_to_string(root().join("examples/board/paddock.toml")).unwrap();
+    std::fs::write(
+        &manifest,
+        format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
+    )
+    .unwrap();
+    let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
+    let Pair {
+        _witness,
+        mut n1,
+        n2,
+        ports,
+    } = start_pair(d, &manifest, grant, |n, ports| {
+        let partner = ports[usize::try_from(2 - n).unwrap()];
+        format!("partner_url = \"http://127.0.0.1:{partner}/\"\n")
+    })
+    .await;
+    board(ports[0]).await;
+
+    let (status, to) = location(ports[1], "POST", "/board?by=2").await;
+    let other = location(ports[1], "GET", "/elsewhere").await.0;
+    n1.child.kill().await.unwrap();
+    until("node 2 primary", || async { n2.role().await == "primary" }).await;
+    // The singleton starts a moment after the promotion; `board` waits.
+    let (after, _) = board(ports[1]).await;
+
+    assert_eq!(status, 307);
+    assert_eq!(to, format!("http://127.0.0.1:{}/board?by=2", ports[0]));
+    assert_eq!(other, 404, "no route: not redirected");
+    assert_eq!(after, 0, "node 2 serves its own board");
 }

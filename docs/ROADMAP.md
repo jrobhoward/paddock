@@ -28,10 +28,10 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Next
 
-Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6, D7, D8, D5, D6 and D4 are done (2026-10-14).
+Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6, D7, D8, D5, D6 and D4 are done (2026-10-14), and D11's first step (2026-10-15).
 
 1. **C4** (spike S12): the model is written and found four ways for two nodes to disagree on a link or monitor ([spikes/s12](../spikes/s12/README.md)); C6 put the four fixes in the code. Left: the exhaustive runs of the fixed model (`~/tla-runs/c4-2026-10-14/run.sh`, `summary.txt` there); record them in the spike's README.
-2. **D3**, then the rest of stage 4 in the order listed. D11's first step (a redirect from the standby) needs no D3 and can come early.
+2. **D3**, then the rest of stage 4 in the order listed.
 
 ## Order
 
@@ -73,10 +73,9 @@ Done on 2026-10-14: D4, process groups across nodes as OTP's `pg` (every group s
 - [ ] **D10b Planned switchover.** `paddock failover switchover`: the primary stands down and the standby takes over without waiting for a node timeout, for maintenance and to swap roles between hot-standby instances on purpose. A new transition, so V1 applies; the model gains the action first.
 - [ ] **C4 Spike S12.** A TLA+ model of remote links, monitors and `noconnection` with pid incarnations and C5's sessions (numbers on frames, `hears_you`, ending on either side), checked with a safe and an adversarial network. Time-box 3 days. If a rule does not hold, narrow Phase 2's guarantees to what the model shows. Before D3. Model and counterexamples done on 2026-10-14 ([spikes/s12](../spikes/s12/README.md)); the exhaustive runs of the fixed model, crashes and liveness are left.
 - [ ] **D3 Remote pids, calls, casts, links and monitors between processes**, on the QUIC transport and the versioned wire format (D1). Instance ids hold the node's creation (settled 2026-10-08). From D1: QUIC over loopback in the simulation harness, and a throughput figure between nodes (B7). Three-node partition runs for Phase 2b's exit join `scripts/soak.sh` (`paddock-soak`). Discovery across nodes stays with D4's groups (decided 2026-10-14); until then a guest learns a remote pid from a message. Done on 2026-10-14: the three-node runs (`paddock-soak cluster`, links and monitors per instance in `ps --json`); against a node built without remote `LinkExit` notices, its first check failed as it should. They run QUIC over loopback under faults, which stands in for QUIC in the simulation harness (whose paused clock would fire QUIC's own timers). Left: an hour of it passing on an idle machine (with D10's failover runs, Phase 2b's exit), and the throughput figure (B7).
-- [ ] **D11 Reaching the primary without root.** In order:
-  1. Any node answers. The standby answers a singleton's HTTP route with a redirect to the primary's ingress address, which `paddock failover` knows. This needs no D3, and clients that follow redirects need no load balancer. Today the standby answers 503, which suits a load balancer's health check (tutorial chapter 2).
-  2. With D3: the standby's ingress forwards the request to the primary's instance, so either address works.
-  3. A way to follow leadership from outside the node (`paddock failover --watch`, streaming), so an external virtual-IP agent (`ip addr` and `arping` with `CAP_NET_ADMIN` and `CAP_NET_RAW` only, or a cloud provider's API) can move an address. Only for sites that need one address; `paddock node` itself never gets network privileges. keepalived following Paddock's role is documented as a fallback.
+- [ ] **D11 Reaching the primary without root.** Step 1, the standby's redirect (`partner_url`), is done (2026-10-15; DESIGN.md, "HTTP ingress"). Left, in order:
+  1. With D3: the standby's ingress forwards the request to the primary's instance, so either address works.
+  2. A way to follow leadership from outside the node (`paddock failover --watch`, streaming), so an external virtual-IP agent (`ip addr` and `arping` with `CAP_NET_ADMIN` and `CAP_NET_RAW` only, or a cloud provider's API) can move an address. Only for sites that need one address; `paddock node` itself never gets network privileges. keepalived following Paddock's role is documented as a fallback.
 - [ ] **D9 Spike S11: passivation** of idle instances through the snapshot pair (snapshot, drop the Store, rebuild on the next message), for address-space headroom. Time-box 2 days. Shares the mechanism of S17.
 
 Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an hour, and D10's exit criteria hold under it.

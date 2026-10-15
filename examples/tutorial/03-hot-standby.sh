@@ -112,6 +112,9 @@ else
 fi
 start=$(date +%s%N)
 until_ok 60 role 2 primary
+# The app hears its role a moment after the node: until it takes a write
+# (adding 0 changes nothing).
+until_ok 10 curl -sf -X POST -d 0 "$(url 2)"
 echo "node 2 is the primary $((($(date +%s%N) - start) / 1000000)) ms later:"
 show curl -s "$(url 2)"
 show curl -s -X POST "$(url 2)"

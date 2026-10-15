@@ -56,6 +56,8 @@ for n in 1 2 3; do
     if [ "$n" -ne 3 ]; then
       echo "[http.main]"
       echo "address = \"127.0.0.1:$((HTTP_PORT + n - 1))\""
+      # The partner's listener: the standby redirects the board there.
+      echo "partner_url = \"http://127.0.0.1:$((HTTP_PORT + 2 - n))\""
       echo "[buckets.board]"
       echo "durability = \"disk\""
     fi
@@ -72,7 +74,9 @@ mode = "singleton"'
 deploy_board 1 "$ROOT/examples/board/paddock.toml" "$SINGLETON"
 deploy_board 2 "$ROOT/examples/board/paddock.toml" "$SINGLETON"
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }
-until_ok 30 curl -sf "$(url 1)"
+# Node N serves the board itself (not a redirect).
+serves() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$(url "$1")")" = 200 ]; }
+until_ok 30 serves 1
 # Node 2 takes over only once it has become the standby (a node still
 # starting does not ask to be promoted; see the README).
 until_ok 30 role 2 standby
@@ -89,7 +93,8 @@ The board on node 1 counts to 3 already. From another terminal:
   export PATH="$(dirname "$PADDOCK"):\$PATH"
   curl -s $(url 1)
   curl -s -X POST $(url 1)
-  curl -s $(url 2)                 # 503: the standby does not run it
+  curl -si $(url 2)                # 307 to node 1: the standby does not run it
+  curl -sL $(url 2)                # follows the redirect
   paddock --socket $(sock 1) failover
   paddock --socket $(sock 2) status board
 
@@ -103,7 +108,8 @@ EOF
 
 pause "the board on each node"
 show curl -s "$(url 1)"
-show curl -s -w '%{http_code}\n' "$(url 2)"
+show curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "$(url 2)"
+show curl -sL "$(url 2)"
 showp 2 failover
 
 if [ "$AUTO" = 1 ]; then
@@ -114,7 +120,7 @@ else
   pause "kill node 1 now (kill -9 ${NODE_PIDS[1]}), then"
 fi
 start=$(date +%s%N)
-until_ok 60 curl -sf "$(url 2)"
+until_ok 60 serves 2
 echo "node 2 serves the board $((($(date +%s%N) - start) / 1000000)) ms later:"
 show curl -s "$(url 2)"
 showp 2 failover
@@ -130,7 +136,10 @@ pause "restart node 1"
 start_node 1
 until_ok 30 role 1 standby
 showp 1 failover
-echo "Node 1 rejoins as the standby; node 2 keeps the board until it fails."
+until_ok 10 curl -sf -o /dev/null "$(url 1)"
+show curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "$(url 1)"
+echo "Node 1 rejoins as the standby, and redirects to node 2, which keeps"
+echo "the board until it fails."
 echo "Node 1's own board still holds 3: it would come back if node 1 were"
 echo "promoted again, stale. That is the other half of why state must move."
 

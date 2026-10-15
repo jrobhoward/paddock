@@ -50,4 +50,4 @@ Secrets may also come from variables the node config names (`[secrets.<name>] en
 - `dialout` for serial lines (Modbus RTU and the failover serial heartbeat, both planned), with `PrivateDevices` off.
 - `StateDirectory` creates `data_dir` owned by the service user, mode 0750; the node creates what is under it.
 
-Reaching the primary of a pair from outside without root (redirects, a virtual IP moved by a separate agent) is ROADMAP D11.
+Reaching the primary of a pair from outside needs no root. Either put a load balancer in front of both nodes, with a health check on the app's own route expecting 200, or set `partner_url` on each node's `[http.<name>]` listener to the other node's address for it, as clients reach it: the standby then answers a singleton's requests with `307 Temporary Redirect` to the primary, and clients that follow redirects can use either address (tutorial chapter 2). A virtual IP moved by a separate agent is ROADMAP D11.

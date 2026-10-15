@@ -129,6 +129,18 @@ impl Node {
             .start_failover(cfg)
             .map_err(|e| NodeError::Invalid(format!("failover: {e}")))?;
         tracing::info!(partner = f.partner, epoch, "failover started");
+        #[cfg(feature = "http")]
+        {
+            // A singleton runs on the partner while this node is its
+            // standby and hears it.
+            let (gate, rt, partner) = (gate.clone(), self.rt.clone(), f.partner);
+            let leadership = handle.subscribe();
+            self.ingress.set_elsewhere(std::sync::Arc::new(move |app| {
+                leadership.borrow().standing == paddock_host::failover::Standing::Standby
+                    && gate.holds(app)
+                    && rt.peer_status(partner).is_some_and(|s| s.reachable)
+            }));
+        }
         tokio::spawn(gate::follow(
             gate.clone(),
             self.rt.clone(),

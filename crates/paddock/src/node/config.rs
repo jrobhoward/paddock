@@ -38,6 +38,8 @@
 //! max_response = "16MiB"        # larger app replies become 502
 //! tls = [{ cert = "/etc/paddock/shop.pem", key = "/etc/paddock/shop.key", hosts = ["shop.example"] }]
 //! tls_reload_s = 60             # check the files for changes; also SIGHUP
+//! partner_url = "https://node2.example:8443"  # with [failover]: the standby
+//!                               # redirects a singleton's requests there (307)
 //!
 //! # The admin API for other machines: TLS 1.3, pinned keys both ways.
 //! [admin]
@@ -519,6 +521,12 @@ pub struct HttpBinding {
     /// reload-tls`).
     #[serde(default = "default_tls_reload_s")]
     pub tls_reload_s: u64,
+    /// With `[failover]`: the partner's address for this listener, as
+    /// clients reach it (`scheme://host[:port][/path]`). A request for a
+    /// singleton that runs on the partner is redirected there (307);
+    /// without it, the standby answers 503.
+    #[serde(default)]
+    pub partner_url: Option<String>,
 }
 
 /// One certificate of an HTTPS ingress.
@@ -532,6 +540,22 @@ pub struct TlsBinding {
     /// Host names it serves, for SNI (`shop.example`, `*.example.com`).
     #[serde(default)]
     pub hosts: Vec<String>,
+}
+
+/// Whether `url` is `http(s)://host[:port][/path]`, with no query,
+/// fragment or user, and nothing a header value cannot carry.
+fn partner_url_ok(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or_default();
+    !host.is_empty()
+        && !host.contains('@')
+        && rest.bytes().all(|b| b.is_ascii_graphic())
+        && !rest.contains(['?', '#'])
 }
 
 fn default_tls_reload_s() -> u64 {
@@ -608,6 +632,22 @@ impl NodeConfig {
             }
         }
         config.check_failover()?;
+        for (name, binding) in &config.http {
+            let Some(url) = &binding.partner_url else {
+                continue;
+            };
+            if config.failover.is_none() {
+                return Err(NodeError::Invalid(format!(
+                    "node config: http.{name}.partner_url needs [failover]"
+                )));
+            }
+            if !partner_url_ok(url) {
+                return Err(NodeError::Invalid(format!(
+                    "node config: http.{name}.partner_url '{url}' is not \
+                     http(s)://host[:port][/path], without a query"
+                )));
+            }
+        }
         for (name, bucket) in &config.buckets {
             let problem = if bucket.scope == BucketScope::Cluster {
                 Some("scope \"cluster\" is not supported until Phase 3")

@@ -24,6 +24,13 @@
 //! 504, the instance exiting before replying, a malformed reply or one
 //! over `max_response` 502.
 //!
+//! A listener with a `partner_url` answers a request for an app that does
+//! not run here, but runs on the node's partner now
+//! ([`HttpIngress::set_elsewhere`]), with `307 Temporary Redirect` to the
+//! same path and query under that URL (ROADMAP D11): the standby of an HA
+//! pair sends clients to the primary's singletons. 307 keeps the method and
+//! body, so a client that follows redirects repeats a POST there.
+//!
 //! Each listener caps its open connections and the time a client may take
 //! to send its headers and its body ([`IngressListen`]), so slow or idle
 //! clients cannot hold the node's connections. HTTP parsing runs in the
@@ -49,7 +56,9 @@ use bytes::Bytes;
 use ciborium::Value;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
-use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderName, HeaderValue, RETRY_AFTER};
+use hyper::header::{
+    CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderName, HeaderValue, LOCATION, RETRY_AFTER,
+};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use paddock_bundle::manifest::{AppManifest, ByteSize};
@@ -86,6 +95,10 @@ pub struct IngressListen {
     pub body_timeout: Duration,
     /// Largest reply body from an app, in bytes (502 above it).
     pub max_response: u64,
+    /// The partner node's address for this listener, as clients reach it
+    /// (`https://node2.example:8443`, no trailing `/`): requests for an app
+    /// that runs there now are redirected to it. `None` answers 503.
+    pub partner_url: Option<String>,
     /// Serve HTTPS with these certificates; `None` serves plain HTTP.
     #[cfg(feature = "tls")]
     pub tls: Option<IngressTls>,
@@ -103,6 +116,7 @@ impl IngressListen {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(30),
             max_response: 16 << 20,
+            partner_url: None,
             #[cfg(feature = "tls")]
             tls: None,
         }
@@ -179,6 +193,8 @@ pub struct IngressStats {
     pub not_found: u64,
     /// Connections closed on accept, over `max_connections`.
     pub refused: u64,
+    /// Of the requests, redirected to the partner node.
+    pub redirected: u64,
 }
 
 #[derive(Debug, Default)]
@@ -187,6 +203,29 @@ struct Counters {
     server_errors: AtomicU64,
     not_found: AtomicU64,
     refused: AtomicU64,
+    redirected: AtomicU64,
+}
+
+/// Whether an app that does not run here runs on the partner now.
+pub type Elsewhere = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+#[derive(Default)]
+struct ElsewhereSlot(RwLock<Option<Elsewhere>>);
+
+impl std::fmt::Debug for ElsewhereSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ElsewhereSlot")
+    }
+}
+
+impl ElsewhereSlot {
+    fn runs(&self, app: &str) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|f| f(app))
+    }
 }
 
 /// The node's HTTP ingress. Cheap to clone; clones share the route table
@@ -204,6 +243,7 @@ struct Inner {
     routes: RwLock<BTreeMap<String, Vec<HttpRoute>>>,
     stop: watch::Sender<bool>,
     counters: Counters,
+    elsewhere: ElsewhereSlot,
 }
 
 impl HttpIngress {
@@ -216,6 +256,7 @@ impl HttpIngress {
                 routes: RwLock::default(),
                 stop: watch::channel(false).0,
                 counters: Counters::default(),
+                elsewhere: ElsewhereSlot::default(),
             }),
         }
     }
@@ -305,6 +346,18 @@ impl HttpIngress {
             .unwrap_or_default()
     }
 
+    /// Tell the ingress which apps run on the partner node now, for
+    /// listeners with a `partner_url`. Called for a request whose app does
+    /// not run here, so it must be cheap.
+    pub fn set_elsewhere(&self, elsewhere: Elsewhere) {
+        *self
+            .inner
+            .elsewhere
+            .0
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(elsewhere);
+    }
+
     /// What this ingress has served.
     #[must_use]
     pub fn stats(&self) -> IngressStats {
@@ -314,6 +367,7 @@ impl HttpIngress {
             server_errors: c.server_errors.load(Ordering::Relaxed),
             not_found: c.not_found.load(Ordering::Relaxed),
             refused: c.refused.load(Ordering::Relaxed),
+            redirected: c.redirected.load(Ordering::Relaxed),
         }
     }
 
@@ -406,6 +460,22 @@ fn status(code: StatusCode, text: &str) -> Reply {
     r
 }
 
+/// `307` to `uri`'s path and query under `base`; 503 if that is not a
+/// valid header value.
+fn redirect(base: &str, uri: &hyper::Uri) -> Reply {
+    let rest = uri.path_and_query().map_or("/", |pq| pq.as_str());
+    let to = format!("{base}{rest}");
+    let Ok(location) = HeaderValue::from_str(&to) else {
+        return status(StatusCode::SERVICE_UNAVAILABLE, "app not running");
+    };
+    let mut r = status(
+        StatusCode::TEMPORARY_REDIRECT,
+        &format!("runs on the partner node: {to}"),
+    );
+    r.headers_mut().insert(LOCATION, location);
+    r
+}
+
 /// The best route for a request: longest prefix, and a route naming the
 /// host before one that does not.
 fn pick(
@@ -436,6 +506,9 @@ async fn serve(
     if reply.status() == StatusCode::NOT_FOUND {
         c.not_found.fetch_add(1, Ordering::Relaxed);
     }
+    if reply.status() == StatusCode::TEMPORARY_REDIRECT {
+        c.redirected.fetch_add(1, Ordering::Relaxed);
+    }
     reply
 }
 
@@ -459,6 +532,12 @@ async fn handle(
     let Some((app, route)) = picked else {
         return status(StatusCode::NOT_FOUND, "no route");
     };
+    if let Some(base) = &spec.partner_url
+        && inner.apps.app(&app).is_none()
+        && inner.elsewhere.runs(&app)
+    {
+        return redirect(base, req.uri());
+    }
     let declared = req
         .headers()
         .get(CONTENT_LENGTH)
