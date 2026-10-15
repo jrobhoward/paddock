@@ -272,6 +272,12 @@ impl Apps {
         self.set().order.clone()
     }
 
+    /// The runtime the apps run in, for the HTTP ingress.
+    #[cfg(feature = "http")]
+    pub(crate) fn runtime(&self) -> &Runtime {
+        &self.rt
+    }
+
     /// The app called `name`.
     #[must_use]
     pub fn app(&self, name: &str) -> Option<AppHandle> {

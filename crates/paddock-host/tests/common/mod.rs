@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
 use paddock_host::{Envelope, InstanceSpec, LoadedApp, Runtime, RuntimeConfig};
 
 fn workspace_root() -> PathBuf {
@@ -153,4 +154,30 @@ pub fn counter(version: u8) -> Vec<u8> {
     });
     let path = target_dir.join("wasm32-wasip2/release/paddock_fixture_counter.wasm");
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// A manifest for app `name` with this `appserver` section, unsigned (for
+/// app sets built directly on a runtime).
+pub fn app_manifest(name: &str, appserver: serde_json::Value) -> AppManifest {
+    AppManifest {
+        app: AppInfo {
+            name: name.into(),
+            version: "1.0.0".parse().unwrap(),
+            description: None,
+            authors: vec![],
+            license: None,
+            repository: None,
+        },
+        component: ComponentRef {
+            path: String::new(),
+            checksum: String::new(),
+            world: "paddock:runtime/app@0.1.0".into(),
+        },
+        provenance: Provenance {
+            signer_key: String::new(),
+            build_info: None,
+            sbom: None,
+        },
+        spec: AppSpec::from_json_value(&appserver).unwrap(),
+    }
 }

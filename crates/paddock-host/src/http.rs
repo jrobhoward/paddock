@@ -24,12 +24,14 @@
 //! 504, the instance exiting before replying, a malformed reply or one
 //! over `max_response` 502.
 //!
-//! A listener with a `partner_url` answers a request for an app that does
-//! not run here, but runs on the node's partner now
-//! ([`HttpIngress::set_elsewhere`]), with `307 Temporary Redirect` to the
-//! same path and query under that URL (ROADMAP D11): the standby of an HA
-//! pair sends clients to the primary's singletons. 307 keeps the method and
-//! body, so a client that follows redirects repeats a POST there.
+//! A request for an app that does not run here, but runs on the node's
+//! partner now ([`HttpIngress::set_elsewhere`]), is answered as the
+//! listener's [`Standby`] says (ROADMAP D11): the standby of an HA pair
+//! refuses it (503), redirects it with `307 Temporary Redirect` to the same
+//! path and query under the partner's URL (307 keeps the method and body,
+//! so a client that follows redirects repeats a POST there), or forwards it
+//! over the cluster to the app on the partner, whose pool answers it
+//! ([`crate::Runtime::call_app_on`]).
 //!
 //! Each listener caps its open connections and the time a client may take
 //! to send its headers and its body ([`IngressListen`]), so slow or idle
@@ -95,10 +97,9 @@ pub struct IngressListen {
     pub body_timeout: Duration,
     /// Largest reply body from an app, in bytes (502 above it).
     pub max_response: u64,
-    /// The partner node's address for this listener, as clients reach it
-    /// (`https://node2.example:8443`, no trailing `/`): requests for an app
-    /// that runs there now are redirected to it. `None` answers 503.
-    pub partner_url: Option<String>,
+    /// What to do with a request for an app that runs on the partner node
+    /// now, not here.
+    pub standby: Standby,
     /// Serve HTTPS with these certificates; `None` serves plain HTTP.
     #[cfg(feature = "tls")]
     pub tls: Option<IngressTls>,
@@ -116,11 +117,28 @@ impl IngressListen {
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(30),
             max_response: 16 << 20,
-            partner_url: None,
+            standby: Standby::Refuse,
             #[cfg(feature = "tls")]
             tls: None,
         }
     }
+}
+
+/// What a listener does with a request for an app that runs on the
+/// partner node now, not here.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Standby {
+    /// Answer `503 app not running`, as a load balancer's health check
+    /// expects of the node that does not run the app.
+    #[default]
+    Refuse,
+    /// `307 Temporary Redirect` to the same path and query under the
+    /// partner's address for this listener, as clients reach it
+    /// (`https://node2.example:8443`, no trailing `/`).
+    Redirect(String),
+    /// Send the request over the cluster to the app on the partner, and
+    /// answer with its reply.
+    Forward,
 }
 
 /// One route an app owns.
@@ -195,6 +213,8 @@ pub struct IngressStats {
     pub refused: u64,
     /// Of the requests, redirected to the partner node.
     pub redirected: u64,
+    /// Of the requests, forwarded to the partner node.
+    pub forwarded: u64,
 }
 
 #[derive(Debug, Default)]
@@ -204,10 +224,12 @@ struct Counters {
     not_found: AtomicU64,
     refused: AtomicU64,
     redirected: AtomicU64,
+    forwarded: AtomicU64,
 }
 
-/// Whether an app that does not run here runs on the partner now.
-pub type Elsewhere = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// The node an app that does not run here runs on now, if it is the
+/// partner and can be reached.
+pub type Elsewhere = Arc<dyn Fn(&str) -> Option<u32> + Send + Sync>;
 
 #[derive(Default)]
 struct ElsewhereSlot(RwLock<Option<Elsewhere>>);
@@ -219,12 +241,12 @@ impl std::fmt::Debug for ElsewhereSlot {
 }
 
 impl ElsewhereSlot {
-    fn runs(&self, app: &str) -> bool {
+    fn runs(&self, app: &str) -> Option<u32> {
         self.0
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
-            .is_some_and(|f| f(app))
+            .and_then(|f| f(app))
     }
 }
 
@@ -347,8 +369,8 @@ impl HttpIngress {
     }
 
     /// Tell the ingress which apps run on the partner node now, for
-    /// listeners with a `partner_url`. Called for a request whose app does
-    /// not run here, so it must be cheap.
+    /// listeners that redirect or forward them ([`Standby`]). Called for a
+    /// request whose app does not run here, so it must be cheap.
     pub fn set_elsewhere(&self, elsewhere: Elsewhere) {
         *self
             .inner
@@ -368,6 +390,7 @@ impl HttpIngress {
             not_found: c.not_found.load(Ordering::Relaxed),
             refused: c.refused.load(Ordering::Relaxed),
             redirected: c.redirected.load(Ordering::Relaxed),
+            forwarded: c.forwarded.load(Ordering::Relaxed),
         }
     }
 
@@ -532,12 +555,16 @@ async fn handle(
     let Some((app, route)) = picked else {
         return status(StatusCode::NOT_FOUND, "no route");
     };
-    if let Some(base) = &spec.partner_url
-        && inner.apps.app(&app).is_none()
-        && inner.elsewhere.runs(&app)
-    {
-        return redirect(base, req.uri());
-    }
+    let partner = match &spec.standby {
+        Standby::Refuse => None,
+        _ if inner.apps.app(&app).is_some() => None,
+        standby => inner.elsewhere.runs(&app).map(|node| (standby, node)),
+    };
+    let forward_to = match partner {
+        Some((Standby::Redirect(base), _)) => return redirect(base, req.uri()),
+        Some((_, node)) => Some(node),
+        None => None,
+    };
     let declared = req
         .headers()
         .get(CONTENT_LENGTH)
@@ -577,10 +604,19 @@ async fn handle(
         Ok(Err(_)) => return status(StatusCode::BAD_REQUEST, "unreadable body"),
     };
     let msg = request_envelope(scheme, &method, &path, query, &headers, &body, key);
-    let Some(target) = inner.apps.app(&app) else {
-        return status(StatusCode::SERVICE_UNAVAILABLE, "app not running");
+    let result = match (forward_to, inner.apps.app(&app)) {
+        (Some(node), _) => {
+            inner.counters.forwarded.fetch_add(1, Ordering::Relaxed);
+            inner
+                .apps
+                .runtime()
+                .call_app_on(node, &app, msg, route.timeout)
+                .await
+        }
+        (None, Some(target)) => target.call(msg, route.timeout).await,
+        (None, None) => return status(StatusCode::SERVICE_UNAVAILABLE, "app not running"),
     };
-    match target.call(msg, route.timeout).await {
+    match result {
         Ok(reply) if u64::try_from(reply.body.len()).unwrap_or(u64::MAX) > spec.max_response => {
             tracing::debug!(
                 app,

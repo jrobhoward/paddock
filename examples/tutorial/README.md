@@ -91,6 +91,11 @@ script's `curl -L` does: a request to the standby goes on to the primary.
 standby redirects only while it hears the primary; during a takeover it
 answers `503 app not running`, as it does without `partner_url`.
 
+For clients that do not follow redirects, a listener can forward instead:
+with `standby = "forward"` under `[http.main]`, the standby sends the
+request over the cluster to the board on the primary and answers with its
+reply, so either address works for any client.
+
 For one address that reaches whichever node is primary, put a load
 balancer in front of both nodes. A health check on the app's own route
 (here `GET /board`) expecting 200 marks only the primary up, since the

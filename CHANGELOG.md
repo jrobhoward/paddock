@@ -309,6 +309,14 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- A standby can forward instead of redirecting (ROADMAP D11, step 2):
+  `[http.<name>] standby = "forward"` sends a request for a singleton that
+  runs on the partner over the cluster to the app there, whose pool routes
+  it, and answers with its reply; `"redirect"` and `"refuse"` name the
+  existing behaviours (unset: redirect with `partner_url`, else refuse).
+  New frame `AppCall`, wire format version 5 (version 4 is no longer
+  spoken); `Runtime::call_app_on`, `http::Standby` (replacing
+  `IngressListen::partner_url`); metric `paddock_http_forwarded_total`.
 - `scripts/bench.sh` (ROADMAP B7): runs every benchmark one at a time,
   each under GNU time for CPU time and peak memory, and writes a dated
   section for `docs/BASELINE.md` to `target/bench/`; refuses to start on a

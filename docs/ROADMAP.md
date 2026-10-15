@@ -21,14 +21,14 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | Phase | Exit | Left |
 | --- | --- | --- |
 | 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Baseline numbers on the Pi (G2) |
-| 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | D11's steps 2 and 3 |
+| 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | D11's last step |
 | 3: application server | One real workload runs a full release cycle with zero downtime | See "Phase 3" |
 
 The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
 ## Next
 
-Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6, D7, D8, D5, D6 and D4 are done (2026-10-14), and C4, D3, D11's first step, D9 (spike S11) and B7 (2026-10-15).
+Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6, D7, D8, D5, D6 and D4 are done (2026-10-14), and C4, D3, D11's first two steps, D9 (spike S11) and B7 (2026-10-15).
 
 1. **D3**, then the rest of stage 4 in the order listed.
 
@@ -72,9 +72,8 @@ Done on 2026-10-15: D3, remote pids, calls, casts, links and monitors: an hour o
 Done on 2026-10-14: D4, process groups across nodes as OTP's `pg` (every group spans the cluster; `publish` checks the messaging ACLs per member; decided 2026-10-14), with tutorial chapter 3 as its demo. D6, the remote admin API over TLS with pinned keys, as the cluster (decided 2026-10-14; SECURITY.md lists its gaps: no read-only operators, no connection limit). D5, messaging ACLs (receiving node checks both lists from a stamp on each frame; calls, casts, exits and links; app names only; decided 2026-10-14; MANIFEST.md `messaging_acl`, SECURITY.md). D8, backpressure between nodes: a congested link follows the full-mailbox rule, notices exempt (decided 2026-10-14; DESIGN.md, "Backpressure between nodes"). D7, health checks as calls with a reserved schema (`paddock/health`, answered by the SDK's `App::health`; decided 2026-10-14 over a new export, so the app world stays frozen; MANIFEST.md `health`). C6, the four rules from S12 that keep both sides of a link or monitor in step (CHANGELOG; DESIGN.md, "Agreement on links and monitors"). D10, an hour of `scripts/soak.sh --only failover` (six runs of 10 minutes, seeds 394302291 to 394302296, all passed; TLC ran on 3 of the 16 cores meanwhile, at low priority). The criterion with the serial line up (network cut: nobody promotes) needs a serial path between processes, so it moved to F5 with the serial heartbeat on real hardware.
 
 - [ ] **D10b Planned switchover.** `paddock failover switchover`: the primary stands down and the standby takes over without waiting for a node timeout, for maintenance and to swap roles between hot-standby instances on purpose. A new transition, so V1 applies; the model gains the action first.
-- [ ] **D11 Reaching the primary without root.** Step 1, the standby's redirect (`partner_url`), is done (2026-10-15; DESIGN.md, "HTTP ingress"). Left, in order:
-  1. With D3: the standby's ingress forwards the request to the primary's instance, so either address works.
-  2. A way to follow leadership from outside the node (`paddock failover --watch`, streaming), so an external virtual-IP agent (`ip addr` and `arping` with `CAP_NET_ADMIN` and `CAP_NET_RAW` only, or a cloud provider's API) can move an address. Only for sites that need one address; `paddock node` itself never gets network privileges. keepalived following Paddock's role is documented as a fallback.
+- [ ] **D11 Reaching the primary without root.** The standby's redirect (`partner_url`) and forwarding (`standby = "forward"`) are done (2026-10-15; DESIGN.md, "HTTP ingress"). Left:
+  1. A way to follow leadership from outside the node (`paddock failover --watch`, streaming), so an external virtual-IP agent (`ip addr` and `arping` with `CAP_NET_ADMIN` and `CAP_NET_RAW` only, or a cloud provider's API) can move an address. Only for sites that need one address; `paddock node` itself never gets network privileges. keepalived following Paddock's role is documented as a fallback.
 
 Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an hour, and D10's exit criteria hold under it.
 

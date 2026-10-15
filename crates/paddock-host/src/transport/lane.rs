@@ -59,6 +59,7 @@ impl Class {
             Frame::Cast { .. }
             | Frame::Call { .. }
             | Frame::Reply { .. }
+            | Frame::AppCall { .. }
             | Frame::GroupPublish { .. } => Self::Message,
             _ => Self::Notice,
         }

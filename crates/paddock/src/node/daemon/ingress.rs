@@ -7,13 +7,15 @@
 use std::time::Duration;
 
 #[cfg(feature = "http")]
-use paddock_host::http::{HttpIngress, HttpRoute, IngressListen};
+use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, Standby};
 #[cfg(feature = "tls")]
 use paddock_host::http::{IngressTls, TlsCertificate};
 use paddock_host::{AppDeployment, Apps};
 use tokio::sync::watch;
 
 use crate::node::config::NodeConfig;
+#[cfg(feature = "http")]
+use crate::node::config::StandbyMode;
 use crate::node::error::NodeError;
 
 /// The node's ingress, if node config has `[http]` addresses.
@@ -52,10 +54,14 @@ impl Ingress {
             listen.header_timeout = Duration::from_millis(binding.header_timeout_ms.max(1));
             listen.body_timeout = Duration::from_millis(binding.body_timeout_ms.max(1));
             listen.max_response = binding.max_response.bytes();
-            listen.partner_url = binding
-                .partner_url
-                .as_ref()
-                .map(|u| u.trim_end_matches('/').to_string());
+            listen.standby = match (binding.standby_mode(), &binding.partner_url) {
+                (StandbyMode::Redirect, Some(url)) => {
+                    Standby::Redirect(url.trim_end_matches('/').to_string())
+                }
+                (StandbyMode::Forward, _) => Standby::Forward,
+                // Config checks refuse a redirect without a URL.
+                _ => Standby::Refuse,
+            };
             if !binding.tls.is_empty() {
                 #[cfg(feature = "tls")]
                 {
@@ -236,6 +242,11 @@ impl Ingress {
                     "paddock_http_redirected_total",
                     "HTTP requests redirected to the failover partner.",
                     s.redirected,
+                ),
+                (
+                    "paddock_http_forwarded_total",
+                    "HTTP requests forwarded to the failover partner.",
+                    s.forwarded,
                 ),
                 (
                     "paddock_http_refused_connections_total",

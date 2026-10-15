@@ -136,9 +136,10 @@ impl Node {
             let (gate, rt, partner) = (gate.clone(), self.rt.clone(), f.partner);
             let leadership = handle.subscribe();
             self.ingress.set_elsewhere(std::sync::Arc::new(move |app| {
-                leadership.borrow().standing == paddock_host::failover::Standing::Standby
+                (leadership.borrow().standing == paddock_host::failover::Standing::Standby
                     && gate.holds(app)
-                    && rt.peer_status(partner).is_some_and(|s| s.reachable)
+                    && rt.peer_status(partner).is_some_and(|s| s.reachable))
+                .then_some(partner)
             }));
         }
         tokio::spawn(gate::follow(

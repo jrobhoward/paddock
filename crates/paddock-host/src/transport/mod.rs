@@ -224,6 +224,20 @@ pub enum Frame {
         /// Why.
         reason: ExitReason,
     },
+    /// A call from the sending node's host to the app called `app` on the
+    /// receiving node, whose pool picks the instance as for a local caller
+    /// (an HTTP request forwarded from a standby's ingress, ROADMAP D11);
+    /// answered with [`Frame::Reply`].
+    AppCall {
+        /// The caller's node's id for this call.
+        id: u64,
+        /// The app.
+        app: String,
+        /// The message.
+        msg: Envelope,
+        /// How long the caller waits.
+        timeout_ms: u64,
+    },
 }
 
 /// Carries packets to other nodes.
@@ -377,12 +391,19 @@ impl Drop for IncomingCall {
 /// Handle a call from `from_node`: run it in a task of its own and send the
 /// reply, or answer `overloaded` at once if that node has as many calls
 /// running as it may.
+/// What an incoming call is addressed to.
+enum CallTo {
+    /// An instance, from the sending node's `from` (its host if `None`).
+    Pid { from: Option<Pid>, to: Pid },
+    /// An app's pool, from the sending node's host.
+    App(String),
+}
+
 fn incoming_call(
     rt: &Arc<RuntimeInner>,
     from_node: u32,
     id: u64,
-    from: Option<Pid>,
-    to: Pid,
+    to: CallTo,
     msg: Envelope,
     timeout_ms: u64,
 ) {
@@ -395,8 +416,16 @@ fn incoming_call(
             tokio::spawn(async move {
                 let rt = &slot.rt;
                 let timeout = Duration::from_millis(timeout_ms);
-                let origin = from.map_or(Origin::Host, Origin::Remote);
-                let result = delivery::call(rt, origin, to, msg, timeout).await;
+                let result = match to {
+                    CallTo::Pid { from, to } => {
+                        let origin = from.map_or(Origin::Host, Origin::Remote);
+                        delivery::call(rt, origin, to, msg, timeout).await
+                    }
+                    CallTo::App(app) => match rt.route_app(&app, &msg) {
+                        Some(target) => target.call(msg, timeout).await,
+                        None => Err(CallError::Noproc),
+                    },
+                };
                 send(rt, from_node, Frame::Reply { id, result });
             });
         }
@@ -497,20 +526,46 @@ pub(crate) async fn call(
     msg: Envelope,
     timeout: Duration,
 ) -> Result<Envelope, CallError> {
+    send_call(rt, node, timeout, |id, timeout_ms| Frame::Call {
+        id,
+        from,
+        sender,
+        to,
+        msg,
+        timeout_ms,
+    })
+    .await
+}
+
+/// Call the app called `app` on `node`, from this node's host; its pool
+/// picks the instance.
+pub(crate) async fn call_app(
+    rt: &RuntimeInner,
+    node: u32,
+    app: String,
+    msg: Envelope,
+    timeout: Duration,
+) -> Result<Envelope, CallError> {
+    send_call(rt, node, timeout, |id, timeout_ms| Frame::AppCall {
+        id,
+        app,
+        msg,
+        timeout_ms,
+    })
+    .await
+}
+
+/// Send the call `frame(id, timeout_ms)` makes and wait up to `timeout`
+/// for its [`Frame::Reply`].
+async fn send_call(
+    rt: &RuntimeInner,
+    node: u32,
+    timeout: Duration,
+    frame: impl FnOnce(u64, u64) -> Frame,
+) -> Result<Envelope, CallError> {
     let (id, reply) = rt.pending_calls.add(node);
     let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
-    if let Err(why) = try_send(
-        rt,
-        node,
-        Frame::Call {
-            id,
-            from,
-            sender,
-            to,
-            msg,
-            timeout_ms,
-        },
-    ) {
+    if let Err(why) = try_send(rt, node, frame(id, timeout_ms)) {
         rt.pending_calls.take(id);
         return Err(refused(why));
     }
@@ -655,7 +710,7 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
             timeout_ms,
         } => {
             if admits(rt, from, sender.as_ref(), to) {
-                incoming_call(rt, from_node, id, from, to, msg, timeout_ms);
+                incoming_call(rt, from_node, id, CallTo::Pid { from, to }, msg, timeout_ms);
             } else {
                 send(
                     rt,
@@ -672,6 +727,12 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 let _ = tx.send(result);
             }
         }
+        Frame::AppCall {
+            id,
+            app,
+            msg,
+            timeout_ms,
+        } => incoming_call(rt, from_node, id, CallTo::App(app), msg, timeout_ms),
         Frame::Exit {
             from,
             sender,

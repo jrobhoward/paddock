@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 
 use common::fixture;
 use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
-use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, IngressTls, TlsCertificate};
+use paddock_host::http::{
+    HttpIngress, HttpRoute, IngressListen, IngressTls, Standby, TlsCertificate,
+};
 use paddock_host::{AppDeployment, Apps, Runtime, RuntimeConfig};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -46,15 +48,20 @@ struct Served {
     /// The ingress and apps run here, outliving every test's own runtime.
     _tokio: tokio::runtime::Runtime,
     _rt: Runtime,
-    _apps: Apps,
+    _apps: (Apps, Apps),
     ingress: HttpIngress,
     address: SocketAddr,
     /// 300 ms for headers and body, 1,000-byte replies.
     tight: SocketAddr,
     /// One connection at a time.
     capped: SocketAddr,
-    /// With a `partner_url`, where `ghost` runs (`phantom` runs nowhere).
+    /// Redirecting to the partner, where `ghost` runs (`phantom` runs
+    /// nowhere).
     partnered: SocketAddr,
+    /// Forwarding to the partner: `far` runs there (an app set of its own
+    /// on this runtime stands in for the partner node, node 0), and
+    /// `ghost` on node 9, which cannot be reached.
+    forwarding: SocketAddr,
     /// HTTPS with certificates for `web.example` (the default) and
     /// `*.shop.example`.
     tls: SocketAddr,
@@ -107,62 +114,83 @@ fn start() -> Served {
     let (web_cert, web_entry) = cert(certs.path(), "web", &["web.example"]);
     let (shop_cert, shop_entry) = cert(certs.path(), "shop", &["*.shop.example"]);
     let tls_certs = IngressTls::load(vec![web_entry, shop_entry]).unwrap();
-    let (apps, ingress, address, tight, capped, partnered, tls) = tokio.block_on(async {
-        let apps = rt
-            .start_apps(vec![AppDeployment::new(web, app)])
-            .await
-            .unwrap();
-        let ingress = HttpIngress::new(apps.clone());
-        ingress.set_routes("web", routes).unwrap();
-        ingress.set_routes("ghost", vec![route("/ghost")]).unwrap();
-        ingress
-            .set_routes("phantom", vec![route("/phantom")])
-            .unwrap();
-        // `web` too: an app that runs here is served here.
-        ingress.set_elsewhere(Arc::new(|app| app == "ghost" || app == "web"));
-        let any = "127.0.0.1:0".parse().unwrap();
-        let address = ingress.listen(IngressListen::new(any)).await.unwrap();
-        let tight = ingress
-            .listen(IngressListen {
-                header_timeout: Duration::from_millis(300),
-                body_timeout: Duration::from_millis(300),
-                max_response: 1_000,
-                ..IngressListen::new(any)
-            })
-            .await
-            .unwrap();
-        let capped = ingress
-            .listen(IngressListen {
-                max_connections: 1,
-                ..IngressListen::new(any)
-            })
-            .await
-            .unwrap();
-        let partnered = ingress
-            .listen(IngressListen {
-                partner_url: Some("https://partner.example:8443".into()),
-                ..IngressListen::new(any)
-            })
-            .await
-            .unwrap();
-        let tls = ingress
-            .listen(IngressListen {
-                tls: Some(tls_certs),
-                ..IngressListen::new(any)
-            })
-            .await
-            .unwrap();
-        (apps, ingress, address, tight, capped, partnered, tls)
-    });
+    let far = manifest("far", json!({}));
+    let (apps, far_apps, ingress, address, tight, capped, partnered, forwarding, tls) = tokio
+        .block_on(async {
+            let apps = rt
+                .start_apps(vec![AppDeployment::new(web, app.clone())])
+                .await
+                .unwrap();
+            let far_apps = rt
+                .start_apps(vec![AppDeployment::new(far, app)])
+                .await
+                .unwrap();
+            let ingress = HttpIngress::new(apps.clone());
+            ingress.set_routes("web", routes).unwrap();
+            ingress.set_routes("ghost", vec![route("/ghost")]).unwrap();
+            ingress
+                .set_routes("phantom", vec![route("/phantom")])
+                .unwrap();
+            ingress.set_routes("far", vec![route("/far")]).unwrap();
+            // `web` too: an app that runs here is served here.
+            ingress.set_elsewhere(Arc::new(|app| match app {
+                "ghost" | "web" => Some(9),
+                "far" => Some(0),
+                _ => None,
+            }));
+            let any = "127.0.0.1:0".parse().unwrap();
+            let address = ingress.listen(IngressListen::new(any)).await.unwrap();
+            let tight = ingress
+                .listen(IngressListen {
+                    header_timeout: Duration::from_millis(300),
+                    body_timeout: Duration::from_millis(300),
+                    max_response: 1_000,
+                    ..IngressListen::new(any)
+                })
+                .await
+                .unwrap();
+            let capped = ingress
+                .listen(IngressListen {
+                    max_connections: 1,
+                    ..IngressListen::new(any)
+                })
+                .await
+                .unwrap();
+            let partnered = ingress
+                .listen(IngressListen {
+                    standby: Standby::Redirect("https://partner.example:8443".into()),
+                    ..IngressListen::new(any)
+                })
+                .await
+                .unwrap();
+            let forwarding = ingress
+                .listen(IngressListen {
+                    standby: Standby::Forward,
+                    ..IngressListen::new(any)
+                })
+                .await
+                .unwrap();
+            let tls = ingress
+                .listen(IngressListen {
+                    tls: Some(tls_certs),
+                    ..IngressListen::new(any)
+                })
+                .await
+                .unwrap();
+            (
+                apps, far_apps, ingress, address, tight, capped, partnered, forwarding, tls,
+            )
+        });
     Served {
         _tokio: tokio,
         _rt: rt,
-        _apps: apps,
+        _apps: (apps, far_apps),
         ingress,
         address,
         tight,
         capped,
         partnered,
+        forwarding,
         tls,
         web_cert,
         shop_cert,
@@ -313,11 +341,11 @@ async fn replies____plain_status_and_failures____mapped_to_http() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn partner_url____app_runs_on_the_partner____307_to_the_same_path() {
+async fn standby_redirect____app_runs_on_the_partner____307_to_the_same_path() {
     let s = served();
 
     let moved = request(s.partnered, "POST", "/ghost/a?b=1", &[], "hi").await;
-    let no_partner_url = get("/ghost/a", &[]).await;
+    let refused = get("/ghost/a", &[]).await;
     let nowhere = request(s.partnered, "GET", "/phantom", &[], "").await;
     let here = request(s.partnered, "GET", "/api/plain", &[], "").await;
 
@@ -329,10 +357,30 @@ async fn partner_url____app_runs_on_the_partner____307_to_the_same_path() {
         "{}",
         moved.head
     );
-    assert_eq!(no_partner_url.status, 503);
+    assert_eq!(refused.status, 503);
     assert_eq!(nowhere.status, 503);
     assert_eq!((here.status, here.body.as_str()), (200, "plain"));
     assert!(s.ingress.stats().redirected >= 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn standby_forward____app_runs_on_the_partner____its_reply_or_503_if_unreachable() {
+    let s = served();
+
+    let forwarded = request(s.forwarding, "GET", "/far/plain", &[], "").await;
+    let echoed = request(s.forwarding, "POST", "/far/x?q=1", &[], "hi").await;
+    let unreachable = request(s.forwarding, "GET", "/ghost", &[], "").await;
+
+    assert_eq!((forwarded.status, forwarded.body.as_str()), (200, "plain"));
+    assert!(
+        echoed
+            .body
+            .starts_with("POST /far/x?q=1 key=- body=hi scheme=http pid="),
+        "{}",
+        echoed.body
+    );
+    assert_eq!(unreachable.status, 503);
+    assert!(s.ingress.stats().forwarded >= 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -11,9 +11,11 @@ mod common;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use common::{LONG, ask, ask_until, body, fixture, pid_text, spec, text};
+use common::{LONG, app_manifest, ask, ask_until, body, fixture, pid_text, spec, text};
 use paddock_host::transport::memory::{Faults, Mesh};
-use paddock_host::{CallError, ExitReason, InstanceHandle, LoadedApp, Runtime, RuntimeConfig};
+use paddock_host::{
+    AppDeployment, CallError, ExitReason, InstanceHandle, LoadedApp, Runtime, RuntimeConfig,
+};
 
 /// The chaos component's bytes, read once.
 fn chaos() -> &'static [u8] {
@@ -86,6 +88,38 @@ async fn remote____call_and_cast____reach_the_other_node() {
     assert_eq!(to_dead, "err:noproc");
     a.kill();
     b.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn call_app_on____app_on_the_other_node____its_pool_answers() {
+    let (n1, n2, mesh) = two_nodes(12).await;
+    let apps = n2
+        .rt
+        .start_apps(vec![AppDeployment::new(
+            app_manifest("far", serde_json::json!({ "instances": { "count": 2 } })),
+            n2.app.clone(),
+        )])
+        .await
+        .unwrap();
+
+    let there = n1.rt.call_app_on(2, "far", text("echo:across"), LONG).await;
+    let pids: std::collections::BTreeSet<String> = {
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..4 {
+            let pid = n1.rt.call_app_on(2, "far", text("self"), LONG).await;
+            seen.insert(body(&pid.unwrap()));
+        }
+        seen
+    };
+    let missing = n1.rt.call_app_on(2, "nowhere", text("echo:x"), LONG).await;
+    mesh.partition(1, 2);
+    let cut = n1.rt.call_app_on(2, "far", text("echo:x"), LONG).await;
+
+    assert_eq!(body(&there.unwrap()), "across");
+    assert_eq!(pids.len(), 2, "spread over the pool: {pids:?}");
+    assert_eq!(missing, Err(CallError::Noproc));
+    assert_eq!(cut, Err(CallError::Noconnection));
+    apps.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

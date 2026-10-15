@@ -16,13 +16,15 @@ use super::Packet;
 /// (`Unlink` carries an id, `UnlinkAck` answers it); version 3 stamps
 /// casts, calls, exit signals and links with the sender's app and routes
 /// for messaging ACLs; version 4 carries process groups across nodes
-/// (`GroupSync`, `GroupJoin`, `GroupLeave`, `GroupPublish`).
-pub const VERSION: u16 = 4;
+/// (`GroupSync`, `GroupJoin`, `GroupLeave`, `GroupPublish`); version 5
+/// calls an app on another node by name (`AppCall`, for requests a
+/// standby's ingress forwards).
+pub const VERSION: u16 = 5;
 
-/// The oldest protocol version this node reads. Version 3 has no group
-/// frames, without which a node would miss its peers' groups, so it is not
-/// spoken.
-pub const MIN_VERSION: u16 = 4;
+/// The oldest protocol version this node reads. A version 4 node cannot
+/// read `AppCall`, and a node does not track which version each peer
+/// agreed, so version 4 is not spoken.
+pub const MIN_VERSION: u16 = 5;
 
 /// The first message each side of a connection sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -541,3 +541,51 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
     assert_eq!(other, 404, "no route: not redirected");
     assert_eq!(after, 0, "node 2 serves its own board");
 }
+
+/// ROADMAP D11, step 2: the board as a singleton on an HA pair with
+/// `standby = "forward"` on each listener. The standby's ingress sends the
+/// board's requests over the cluster to the primary's board, so either
+/// address serves it; after the primary is killed, node 2 serves its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board____singleton_on_a_pair_with_standby_forward____either_address_serves_the_primary() {
+    let dir = short_dir();
+    let d = dir.path();
+    let manifest = d.join("singleton.toml");
+    let base = std::fs::read_to_string(root().join("examples/board/paddock.toml")).unwrap();
+    std::fs::write(
+        &manifest,
+        format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
+    )
+    .unwrap();
+    let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
+    let Pair {
+        _witness,
+        mut n1,
+        n2,
+        ports,
+    } = start_pair(d, &manifest, grant, |_, _| "standby = \"forward\"\n".into()).await;
+    let (_, primary_pid) = board(ports[0]).await;
+    // Forwarding starts once the standby hears the primary.
+    until("the standby forwards", || async {
+        http(ports[1], "GET", "/board")
+            .await
+            .is_some_and(|r| r.0 == 200)
+    })
+    .await;
+
+    let via_standby = write(ports[1]).await;
+    let (on_primary, _) = board(ports[0]).await;
+    let (_, answered_by) = board(ports[1]).await;
+    n1.child.kill().await.unwrap();
+    until("node 2 primary", || async { n2.role().await == "primary" }).await;
+    let (after, own_pid) = board(ports[1]).await;
+
+    assert_eq!(via_standby.0, 200);
+    assert_eq!(
+        via_standby.1, on_primary,
+        "the write landed on the primary's board"
+    );
+    assert_eq!(answered_by, primary_pid, "the primary's instance answered");
+    assert_eq!(after, 0, "node 2 serves its own board");
+    assert!(own_pid.starts_with("<2."), "{own_pid}");
+}

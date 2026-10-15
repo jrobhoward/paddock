@@ -38,8 +38,12 @@
 //! max_response = "16MiB"        # larger app replies become 502
 //! tls = [{ cert = "/etc/paddock/shop.pem", key = "/etc/paddock/shop.key", hosts = ["shop.example"] }]
 //! tls_reload_s = 60             # check the files for changes; also SIGHUP
-//! partner_url = "https://node2.example:8443"  # with [failover]: the standby
-//!                               # redirects a singleton's requests there (307)
+//! # With [failover], what the standby does with a request for a singleton
+//! # that runs on the primary: "refuse" (503, for load balancers),
+//! # "redirect" (307 to partner_url) or "forward" (over the cluster to the
+//! # primary's app). Default: "redirect" with partner_url, else "refuse".
+//! standby = "forward"
+//! partner_url = "https://node2.example:8443"  # the partner's listener
 //!
 //! # The admin API for other machines: TLS 1.3, pinned keys both ways.
 //! [admin]
@@ -522,11 +526,43 @@ pub struct HttpBinding {
     #[serde(default = "default_tls_reload_s")]
     pub tls_reload_s: u64,
     /// With `[failover]`: the partner's address for this listener, as
-    /// clients reach it (`scheme://host[:port][/path]`). A request for a
-    /// singleton that runs on the partner is redirected there (307);
-    /// without it, the standby answers 503.
+    /// clients reach it (`scheme://host[:port][/path]`), where `standby =
+    /// "redirect"` sends a request for a singleton that runs on the
+    /// partner (307).
     #[serde(default)]
     pub partner_url: Option<String>,
+    /// With `[failover]`: what this listener does with a request for a
+    /// singleton that runs on the partner. Unset: `redirect` with
+    /// `partner_url`, `refuse` without.
+    #[serde(default)]
+    pub standby: Option<StandbyMode>,
+}
+
+impl HttpBinding {
+    /// What this listener does with a singleton's request on the standby.
+    #[must_use]
+    pub fn standby_mode(&self) -> StandbyMode {
+        self.standby.unwrap_or(if self.partner_url.is_some() {
+            StandbyMode::Redirect
+        } else {
+            StandbyMode::Refuse
+        })
+    }
+}
+
+/// What a listener on the standby of an HA pair does with a request for a
+/// singleton that runs on the primary: `[http.<name>] standby`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StandbyMode {
+    /// `503 app not running`, which a load balancer's health check reads
+    /// as down.
+    Refuse,
+    /// `307 Temporary Redirect` to the same path under `partner_url`.
+    Redirect,
+    /// Over the cluster to the app on the primary, whose reply it answers
+    /// with.
+    Forward,
 }
 
 /// One certificate of an HTTPS ingress.
@@ -633,14 +669,22 @@ impl NodeConfig {
         }
         config.check_failover()?;
         for (name, binding) in &config.http {
+            let invalid =
+                |m: String| Err(NodeError::Invalid(format!("node config: http.{name}.{m}")));
+            if config.failover.is_none() {
+                if binding.partner_url.is_some() {
+                    return invalid("partner_url needs [failover]".into());
+                }
+                if binding.standby.is_some() {
+                    return invalid("standby needs [failover]".into());
+                }
+            }
+            if binding.standby == Some(StandbyMode::Redirect) && binding.partner_url.is_none() {
+                return invalid("standby \"redirect\" needs partner_url".into());
+            }
             let Some(url) = &binding.partner_url else {
                 continue;
             };
-            if config.failover.is_none() {
-                return Err(NodeError::Invalid(format!(
-                    "node config: http.{name}.partner_url needs [failover]"
-                )));
-            }
             if !partner_url_ok(url) {
                 return Err(NodeError::Invalid(format!(
                     "node config: http.{name}.partner_url '{url}' is not \

@@ -61,7 +61,7 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `paddock_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox. |
 | `paddock_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
 
-With an HTTP ingress, also (no labels): `paddock_http_requests_total`, `paddock_http_server_errors_total`, `paddock_http_not_found_total`, `paddock_http_refused_connections_total`.
+With an HTTP ingress, also (no labels): `paddock_http_requests_total`, `paddock_http_server_errors_total`, `paddock_http_not_found_total`, `paddock_http_redirected_total` and `paddock_http_forwarded_total` (requests a standby redirected or forwarded to its failover partner), `paddock_http_refused_connections_total`.
 
 With a cluster transport, also, labelled `node` (the other node): `paddock_cluster_send_queue_bytes` (gauge: bytes of casts, calls and replies queued for it) and `paddock_cluster_send_refused_total` (counter: messages refused past `[cluster] send_buffer_bytes`, and notices refused past the frame cap, since the node started).
 

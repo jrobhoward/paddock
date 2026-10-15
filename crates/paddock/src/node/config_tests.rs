@@ -280,6 +280,45 @@ fn NodeConfig____partner_url_bad_or_without_failover____refused() {
 }
 
 #[test]
+fn NodeConfig____standby_mode____set_or_from_partner_url() {
+    let listener = |extra: &str| {
+        let text = format!("{CLUSTERED}{PAIRED}[http.main]\naddress = \"0.0.0.0:8080\"\n{extra}");
+        NodeConfig::from_toml_str(&text).unwrap().http["main"].standby_mode()
+    };
+
+    let unset = listener("");
+    let with_url = listener("partner_url = \"http://10.0.0.2:8080\"\n");
+    let forward = listener("standby = \"forward\"\n");
+    let refuse_with_url =
+        listener("standby = \"refuse\"\npartner_url = \"http://10.0.0.2:8080\"\n");
+
+    assert_eq!(unset, StandbyMode::Refuse);
+    assert_eq!(with_url, StandbyMode::Redirect);
+    assert_eq!(forward, StandbyMode::Forward);
+    assert_eq!(refuse_with_url, StandbyMode::Refuse);
+}
+
+#[test]
+fn NodeConfig____standby_without_failover_or_redirect_without_url____refused() {
+    let refused = |text: String| NodeConfig::from_toml_str(&text).unwrap_err().to_string();
+    let listener = "[http.main]\naddress = \"0.0.0.0:8080\"\n";
+
+    let alone = refused(format!("{CLUSTERED}{listener}standby = \"forward\"\n"));
+    let no_url = refused(format!(
+        "{CLUSTERED}{PAIRED}{listener}standby = \"redirect\"\n"
+    ));
+
+    assert!(
+        alone.contains("http.main.standby needs [failover]"),
+        "{alone}"
+    );
+    assert!(
+        no_url.contains("http.main.standby \"redirect\" needs partner_url"),
+        "{no_url}"
+    );
+}
+
+#[test]
 fn NodeConfig____witness____read_with_defaults() {
     let config = NodeConfig::from_toml_str(&format!(
         "{}role = \"witness\"\n[witness]\npair = [2, 3]\nfirst = 2\n",

@@ -110,6 +110,17 @@ impl RuntimeInner {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// The instance of the running app called `name` that `msg` routes to
+    /// under its `instances.routing`, as for a local caller.
+    pub(crate) fn route_app(&self, name: &str, msg: &Envelope) -> Option<InstanceHandle> {
+        self.pools
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .cloned()?
+            .pick(Some(msg))
+    }
+
     /// A live instance of the running app called `name`, round-robin. A
     /// member that has exited is skipped, though its supervisor may not have
     /// noticed yet: its exit notices go out first, and a watcher asking for
@@ -484,6 +495,29 @@ impl Runtime {
     /// for [`InstanceHandle::cast`].
     pub fn cast(&self, to: Pid, msg: Envelope) -> Result<(), CallError> {
         delivery::cast(&self.inner, Origin::Host, to, msg)
+    }
+
+    /// Call the app called `app` on node `node`, from this node's host. That
+    /// node's pool for the app picks the instance under its
+    /// `instances.routing`, as for one of its own callers.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Noconnection`] if `node` cannot be reached,
+    /// [`CallError::Noproc`] if the app does not run there, and as for
+    /// [`InstanceHandle::call`].
+    pub async fn call_app_on(
+        &self,
+        node: u32,
+        app: &str,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<Envelope, CallError> {
+        if node == self.inner.node() {
+            let target = self.inner.route_app(app, &msg).ok_or(CallError::Noproc)?;
+            return target.call(msg, timeout).await;
+        }
+        transport::call_app(&self.inner, node, app.to_string(), msg, timeout).await
     }
 
     /// Call a pid.
