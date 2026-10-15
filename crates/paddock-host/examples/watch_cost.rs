@@ -6,14 +6,18 @@
 //! The guest is `paddock-fixture-sdk`: `set:<bucket>:<key>:<value>` writes
 //! with `wasi:keyvalue`, `watch:<bucket>:<key>` watches with
 //! `paddock:watch`, and `changes` lists the notices it has handled. The
-//! bucket is a shared `memory` bucket, so storage is a map insert.
+//! bucket is a shared `memory` bucket, so storage is a map insert, or with
+//! `disk` a bucket on disk (redb, a commit per write) in a temporary
+//! directory: revision writes on `disk` buckets.
 //!
 //! ```sh
 //! cargo build --release --target wasm32-wasip2 -p paddock-fixture-sdk
 //! cargo run --release -p paddock-host --example watch_cost -- 4
+//! cargo run --release -p paddock-host --example watch_cost -- 4 disk
 //! ```
 //!
-//! Argument: tokio worker threads (default 4).
+//! Arguments: tokio worker threads (default 4), and `memory` (default) or
+//! `disk`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -33,6 +37,11 @@ fn main() {
     let workers: usize = std::env::args()
         .nth(1)
         .map_or(4, |w| w.parse().expect("worker threads"));
+    let durability = match std::env::args().nth(2).as_deref() {
+        None | Some("memory") => Durability::Memory,
+        Some("disk") => Durability::Disk,
+        Some(other) => panic!("memory or disk, not {other}"),
+    };
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/wasm32-wasip2/release/paddock_fixture_sdk.wasm"
@@ -43,7 +52,7 @@ fn main() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async move { tokio::spawn(run(component, workers)).await })
+        .block_on(async move { tokio::spawn(run(component, workers, durability)).await })
         .unwrap();
 }
 
@@ -83,22 +92,24 @@ async fn write_cost(writer: &InstanceHandle, key: &str) -> Duration {
     median(samples)
 }
 
-async fn run(component: Vec<u8>, workers: usize) {
+async fn run(component: Vec<u8>, workers: usize, durability: Durability) {
+    let dir = tempfile::tempdir().unwrap();
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 1_100,
         buckets: BTreeMap::from([(
             "board".to_string(),
             SharedBucket {
-                durability: Durability::Memory,
+                durability,
                 quota: None,
             },
         )]),
+        data_dir: Some(dir.path().to_path_buf()),
         ..RuntimeConfig::default()
     })
     .unwrap();
     let app = rt.load(&component).unwrap();
     let writer = spawn(&rt, &app, "writer");
-    println!("{workers} worker threads; median of {WRITES} writes each");
+    println!("{workers} worker threads, a {durability:?} bucket; median of {WRITES} writes each");
 
     // Write cost against the number of watchers on the key.
     let mut watchers: Vec<InstanceHandle> = Vec::new();

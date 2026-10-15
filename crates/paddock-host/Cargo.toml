@@ -62,5 +62,9 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time
 name = "http"
 required-features = ["tls"]
 
+[[example]]
+name = "ingress_throughput"
+required-features = ["http"]
+
 [lints]
 workspace = true

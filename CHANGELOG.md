@@ -309,6 +309,14 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- `scripts/bench.sh` (ROADMAP B7): runs every benchmark one at a time,
+  each under GNU time for CPU time and peak memory, and writes a dated
+  section for `docs/BASELINE.md` to `target/bench/`; refuses to start on a
+  busy machine unless `--busy`, which marks the numbers provisional. New
+  benchmarks: `cluster_throughput` (calls, casts and payloads between two
+  nodes over QUIC), `ingress_throughput` (the HTTP ingress), `publish_cost`
+  (a publish to 1 to 1,000 group members), and `watch_cost ... disk`
+  (revision writes on a `disk` bucket).
 - Passivation, off by default (spike S11, `spikes/s11`):
   `InstanceSpec::passivate_after` passivates an idle instance (its
   `save-snapshot` kept, its Store dropped, lifecycle state `Passive`), and

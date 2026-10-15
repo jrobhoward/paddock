@@ -8,11 +8,11 @@
 
 Neither is in manifests or node config yet (ROADMAP, follow-up below).
 - **Same pid and state.** A passivated counter keeps its pid, incarnation, registered name, links and timers. A call, a cast, a timer firing and a trapped exit signal each wake it, and it carries on from its count. No increment was lost in any run: 140,847 of 140,847, spread at random over 100,000 instances on 1,000 Store slots.
-- **Wake cost.** About 50 to 80 µs at p50 for a call that wakes its instance (instantiate plus `load-snapshot`), against 4 to 7 µs for a call to a live instance. S5's swaps took 0.2 to 0.35 ms, but those included `save-snapshot` and a version change.
+- **Wake cost.** About 64 to 101 µs at p50 for a call that wakes its instance (instantiate plus `load-snapshot`), against 6 to 10 µs for a call to a live instance. S5's swaps took 0.2 to 0.35 ms, but those included `save-snapshot` and a version change.
 - **Address space, not RAM, was the limit, and passivation lifts it.** The pooling allocator reserves address space for `max_instances` Stores when the runtime starts: about 8 GiB each with the standard memory profile, so about 15,000 per node (S2). A passivated instance holds no Store, so the node holds `max_processes` instances on `max_instances` slots: 100,000 on 1,000 here. RAM is then the limit: about 25 KiB per passivated instance against 69 KiB per idle live one.
-- **Eviction under pressure is needed.** With only idle timers, a woken instance keeps its slot for `passivate_after` (20 ms here), which caps calls that wake instances at slots ÷ idle time: 4,908 calls per second with 100 slots, the 5,000 that predicts. An instance that needs a slot now asks one idle instance to passivate at once, and the instance idle longest goes first. With that, about 27,000 to 30,000 calls per second, each waking its instance.
+- **Eviction under pressure is needed.** With only idle timers, a woken instance keeps its slot for `passivate_after` (20 ms here), which caps calls that wake instances at slots ÷ idle time: 4,908 calls per second with 100 slots, the 5,000 that predicts. An instance that needs a slot now asks one idle instance to passivate at once, and the instance idle longest goes first. With that, about 29,000 to 31,000 calls per second, nearly each waking its instance.
 
-Measured on 2026-10-15 with wasmtime 49.0.3 and rustc 1.99, on a 16-core x86-64 Linux machine with 62 GiB of RAM, **while TLC runs kept its load at 12 to 15**. The numbers below are provisional until rerun on an idle machine.
+Measured on 2026-10-15 with wasmtime 49.0.3 and rustc 1.99, on an AMD Threadripper 1950X (16 threads, 63 GiB, Linux 6.8), idle (`scripts/bench.sh passivation`; `docs/BASELINE.md`, 2026-10-15). The idle-timer-only row was taken earlier the same day under load (TLC, load average 12 to 15), before eviction under pressure was added.
 
 ## How to run
 
@@ -65,14 +65,14 @@ What wakes a passivated instance, and what does not:
 
 ## Results
 
-Provisional (machine under load, 2026-10-15). 4 tokio workers; passivated after 20 ms idle.
+4 tokio workers; passivated after 20 ms idle.
 
 | Run | Slots | Instances | RSS each | Wake call p50 / p99 | Live call p50 / p99 | Random calls per second (p50) |
 | --- | --- | --- | --- | --- | --- | --- |
-| No passivation | 1,000 | 1,000 | 69 KiB | none | 3 / 3 µs | 327,698 (130 µs) |
-| Idle timer only | 100 | 2,000 | 26 KiB | 67 / 2,204 µs | 6 / 226 µs | 4,908 (14.2 ms) |
-| Eviction under pressure | 100 | 2,000 | 25 KiB | 72 / 144 µs | 6 / 11 µs | 29,459 (2.2 ms) |
-| Eviction under pressure | 1,000 | 100,000 | 25 KiB | 49 / 157 µs | 4 / 13 µs | 27,369 (1.8 ms) |
+| No passivation | 1,000 | 1,000 | 69 KiB | none | 3 / 5 µs | 381,689 (111 µs) |
+| Idle timer only (under load) | 100 | 2,000 | 26 KiB | 67 / 2,204 µs | 6 / 226 µs | 4,908 (14.2 ms) |
+| Eviction under pressure | 100 | 2,000 | 24.5 KiB | 101 / 145 µs | 10 / 13 µs | 30,871 (2.1 ms) |
+| Eviction under pressure | 1,000 | 100,000 | 25.0 KiB | 64 / 253 µs | 6 / 18 µs | 29,433 (1.8 ms) |
 
 - **Address space.** With the standard profile it was about 8,259,000 MiB (about 7.9 TiB) for 1,000 slots, and about 806 GiB for 100, whatever the number of instances. Each passivated instance added about 25 KiB.
 - **Random calls under passivation:** nearly every one wakes its instance and passivates another. The rate is bounded by the four workers running `save-snapshot`, instantiation and `load-snapshot`, not by slots.
