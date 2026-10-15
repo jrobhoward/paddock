@@ -309,6 +309,14 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- Messaging ACLs (manifest `messaging_acl`, by app name): a call, cast,
+  `process.exit` or link between apps passes only when the sender's
+  `may_call` and the target's `accept_from` allow it (empty: any); a
+  refused call fails with `access-denied`, a refused cast or exit is
+  dropped, a refused link exits at once with `noproc`. Checked on the
+  target's node, also across nodes; instances of the same app, the host
+  and monitors are not checked. A node drops a frame whose sender pid is
+  on another node.
 - Backpressure between nodes: `[cluster] send_buffer_bytes` (64 MiB by
   default) bounds the messages queued for each peer. Past it, a cast is
   dropped and counted and a call fails with `overloaded`, as at a full
@@ -435,6 +443,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Cluster wire format version 3: casts, calls, exit signals and links
+  carry the sender's app and `may_call` (`acl::Stamp`). Nodes speak
+  version 3 only, so a cluster upgrades all its nodes together.
 - `Transport::send` returns `Result<(), SendError>` (`Unreachable`,
   `Busy`, `Full`) instead of a `bool`. A call to a node whose link is
   congested fails with `overloaded`, not `noconnection`. The QUIC data

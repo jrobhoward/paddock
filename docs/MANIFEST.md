@@ -137,6 +137,15 @@ The app's root supervisor, with OTP semantics.
 | `pending_calls_max` | node's `[limits]` (10000) | Most calls answered `noreply` and not yet replied to. One more crashes the instance with `pending_call_limit`, and its waiting callers get `exited`. |
 | `fuel_per_message`, `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
 
+### `messaging_acl`
+
+Which apps this app's instances may send to, and which may send to them, by app name. A call, cast, `process.exit` or link from an instance of app A to one of app B passes when A's `may_call` lists B and B's `accept_from` lists A; an empty or missing list allows any. Instances of the same app always pass, and senders that are not instances (the admin API, the HTTP ingress, health checks, extensions) are not checked; neither are monitors. The check runs on the target's node, against the sender's app as its node stamps it, so it holds across nodes. A refused call fails with `access-denied`; a refused cast or exit signal is dropped; a refused link answers at once with an exit `noproc`, as a dead pid does. An upgrade's lists apply from the swap.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `accept_from` | `[]` (any) | Apps that may send to this app. |
+| `may_call` | `[]` (any) | Apps this app may send to. |
+
 ### `health`
 
 With this section, the host checks each instance on a timer, from the moment `init` returns: it calls the instance with a `text/plain` envelope of schema `paddock/health`. A reply whose body is `ok` is healthy; any other reply, an error, or no reply within the interval is a failure, logged with the reply's text. After `failure_threshold` failures in a row the instance is killed with `crashed: unhealthy`, and its supervisor restarts it. The call goes through the mailbox, so an instance that has stopped taking messages fails it too. `paddock-sdk` answers the call from `App::health` (healthy unless overridden); an app without the SDK answers it in `handle-call`. Without the section, nothing is checked.
@@ -222,7 +231,6 @@ Names are unique within an app and follow the app-name rules. Upgrades keep the 
 | Section | Status |
 | --- | --- |
 | `api.messages` | The app's message catalog (`name`, `pattern` = `call` or `cast`, `content_type`, `request_schema`, `response_schema`, `description`). Documentation; messages are not checked against it. |
-| `messaging_acl` | `accept_from`, `may_call`; *not enforced* (Phase 2). |
 | `placement` | `required_labels`, `preferred_labels`, `spread` (a node label to spread instances across), and `mode`: `any` (default; as many instances as `instances` asks for, on any eligible nodes), `singleton` (one instance across the cluster, moved when its node fails; `instances` may not ask for more than one), `all-nodes` (one on every eligible node), or `hot-standby` (one on every eligible node, one of which leads and each told its role through a `host-event`). On a node with `[failover]`, `singleton` runs on the pair's primary only, and its instances run guest code only while the node's lease is current: out of lease a message waits, and a callback running when the lease ends is ended with `crashed: lease_ended`; `hot-standby` runs on both nodes, each told `host-event("failover-role", "primary" \| "standby" \| "down")`. *Not enforced* (Phase 3): `all-nodes`, labels and `spread`. |
 
 ## Operator side

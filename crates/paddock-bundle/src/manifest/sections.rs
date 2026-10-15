@@ -159,17 +159,25 @@ impl From<RegisteredName> for RegisteredNameRepr {
     }
 }
 
-/// The `messaging_acl` section. Not enforced until Phase 2.
+/// The `messaging_acl` section: which apps this app's instances may send
+/// to and accept from (calls, casts, exit signals and links), checked on
+/// the target's node. Instances of the same app always reach each other.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MessagingAcl {
-    /// Apps or registered names that may call or cast this app. Empty means
-    /// any.
+    /// Apps whose instances may send to this app's. Empty means any.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub accept_from: Vec<String>,
-    /// Apps or registered names this app may call or cast. Empty means any.
+    /// Apps this app's instances may send to. Empty means any.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub may_call: Vec<String>,
+}
+
+impl MessagingAcl {
+    pub(crate) fn validate(&self, v: &mut Validator) {
+        v.unique_names("accept_from", self.accept_from.iter().map(String::as_str));
+        v.unique_names("may_call", self.may_call.iter().map(String::as_str));
+    }
 }
 
 /// The `config` section: the app's own configuration keys.

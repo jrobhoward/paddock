@@ -18,6 +18,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::Instrument;
 use wasmtime::{Store, Trap, UpdateDeadline};
 
+use crate::acl::Acl;
 use crate::bindings::{CallResult, PaddockApp};
 use crate::delivery;
 use crate::error::describe;
@@ -99,6 +100,8 @@ struct Shared {
     state: watch::Receiver<LifecycleState>,
     exit: watch::Receiver<Option<ExitReason>>,
     message_max_bytes: AtomicU64,
+    /// Which apps it may send to and accept from; replaced at an upgrade.
+    acl: std::sync::RwLock<Arc<Acl>>,
     dropped: Arc<AtomicU64>,
     ops: mpsc::UnboundedSender<Op>,
     /// Exit and down notifications. Unbounded: OTP never drops signals, and
@@ -123,6 +126,16 @@ impl InstanceHandle {
     #[must_use]
     pub fn app(&self) -> &str {
         &self.shared.app
+    }
+
+    /// Which apps it may send to and accept from, as its current version's
+    /// manifest says.
+    pub(crate) fn acl(&self) -> Arc<Acl> {
+        self.shared
+            .acl
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// The version it runs (changes on upgrade).
@@ -505,6 +518,7 @@ pub(crate) fn prepare(
             state: state_rx,
             exit: exit_rx,
             message_max_bytes: AtomicU64::new(spec.message_max_bytes),
+            acl: std::sync::RwLock::new(Arc::new(spec.acl.clone())),
             dropped: dropped.clone(),
             ops: ops_tx,
             signals: signals_tx,
@@ -875,6 +889,13 @@ impl InstanceTask {
                     .shared
                     .message_max_bytes
                     .store(next.message_max_bytes, Ordering::Relaxed);
+                *self
+                    .me
+                    .shared
+                    .acl
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Arc::new(next.acl.clone());
                 *spec = next;
                 *self
                     .me

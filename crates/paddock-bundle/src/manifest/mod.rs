@@ -178,6 +178,9 @@ impl AppSpec {
         if let Some(health) = &self.health {
             v.at("health", |v| health.validate(v));
         }
+        if let Some(acl) = &self.messaging_acl {
+            v.at("messaging_acl", |v| acl.validate(v));
+        }
         v.at("observability", |v| self.observability.validate(v));
         for (i, l) in self.listeners.iter().enumerate() {
             v.at(format!("listeners[{i}]"), |v| l.validate(v));

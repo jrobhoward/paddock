@@ -155,6 +155,7 @@ fn packet____for_or_from_an_earlier_creation____discarded() {
             session: 0,
             frame: Frame::Cast {
                 from: None,
+                sender: None,
                 to: b.pid(),
                 msg: text("count"),
             },

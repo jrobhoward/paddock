@@ -4,7 +4,7 @@
 //! connection) has its test in `tests/quic.rs`.
 
 use paddock_host::Role;
-use paddock_host::transport::Frame;
+use paddock_host::transport::{Frame, Packet};
 
 use crate::common::{ask, pid_text};
 use crate::delay;
@@ -121,4 +121,89 @@ fn link____node_not_yet_heard____noconnection_then_links_once_heard() {
         after,
         format!("exit:{to_c}:noconnection;exit:{to_c}:killed")
     );
+}
+
+fn acl(accept_from: &[&str], may_call: &[&str]) -> paddock_host::acl::Acl {
+    paddock_host::acl::Acl {
+        accept_from: accept_from.iter().map(|a| (*a).to_string()).collect(),
+        may_call: may_call.iter().map(|a| (*a).to_string()).collect(),
+    }
+}
+
+/// Messaging ACLs across nodes (ROADMAP D5): the target's node checks the
+/// sender's stamp. A refused link leaves no side on either node.
+#[test]
+fn acl____across_nodes____checked_on_the_target_node() {
+    let (refused, allowed, cast_count, link_infos, sides, to_orders) =
+        simulate(64, 2, |sim| async move {
+            let orders = sim.node(2).spawn_as("orders", "", acl(&["web"], &[]));
+            let web = sim.node(1).spawn_as("web", "", acl(&[], &["orders"]));
+            let admin = sim.node(1).spawn_as("admin", "trap-exits", acl(&[], &[]));
+            let to = pid_text(orders.pid());
+
+            let refused = ask(&admin, &format!("call:{to}:1000:echo:x")).await;
+            let allowed = ask(&web, &format!("call:{to}:1000:echo:x")).await;
+            ask(&admin, &format!("cast:{to}:count")).await;
+            ask(&admin, &format!("link:{to}")).await;
+            pass(50).await;
+            let cast_count = ask(&orders, "count").await;
+            let sides = (
+                sim.node(1).rt.links(admin.pid()).links.len(),
+                sim.node(2).rt.links(orders.pid()).links.len(),
+            );
+
+            (
+                refused,
+                allowed,
+                cast_count,
+                ask(&admin, "infos").await,
+                sides,
+                to,
+            )
+        });
+
+    assert_eq!(refused, "err:access-denied");
+    assert_eq!(allowed, "ok:x");
+    assert_eq!(cast_count, "1");
+    assert_eq!(link_infos, format!("exit:{to_orders}:noproc"));
+    assert_eq!(sides, (0, 0));
+}
+
+/// A node speaks only for its own instances: a frame from node 1 whose
+/// sender pid is on node 3 is dropped.
+#[test]
+fn frame____sender_pid_on_another_node____dropped() {
+    let counts = simulate(65, 2, |sim| async move {
+        let target = sim.node(2).spawn("");
+        let n2 = &sim.node(2).rt;
+        let session = n2.peer_status(1).unwrap().session;
+        let cast = |node: u32| Packet {
+            creation: 1,
+            to_creation: 1,
+            session,
+            frame: Frame::Cast {
+                from: Some(paddock_host::Pid {
+                    node,
+                    id: 7,
+                    incarnation: 1,
+                }),
+                sender: Some(paddock_host::acl::Stamp {
+                    app: "chaos".into(),
+                    may_call: Vec::new(),
+                }),
+                to: target.pid(),
+                msg: crate::common::text("count"),
+            },
+        };
+
+        n2.deliver(1, cast(3));
+        pass(10).await;
+        let forged = ask(&target, "count").await;
+        n2.deliver(1, cast(1));
+        pass(10).await;
+        let genuine = ask(&target, "count").await;
+        (forged, genuine)
+    });
+
+    assert_eq!(counts, ("1".to_string(), "3".to_string()));
 }

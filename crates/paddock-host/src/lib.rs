@@ -18,6 +18,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod acl;
 mod apps;
 mod bindings;
 mod compiled;

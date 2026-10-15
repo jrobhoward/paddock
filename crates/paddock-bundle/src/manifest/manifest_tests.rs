@@ -242,6 +242,8 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "listeners": [{ "name": "a", "max_connections": 0 }] }), "listeners[0].max_connections")]
 #[case(json!({ "listeners": [{ "name": "a" }, { "name": "a" }] }), "listeners[1]")]
 #[case(json!({ "health": { "interval_ms": 0 } }), "health.interval_ms")]
+#[case(json!({ "messaging_acl": { "accept_from": ["web", "web"] } }), "messaging_acl.accept_from[1]")]
+#[case(json!({ "messaging_acl": { "may_call": ["Bad Name"] } }), "messaging_acl.may_call[0]")]
 #[case(json!({ "observability": { "trace_sampling": 1.5 } }), "observability.trace_sampling")]
 fn AppSpec____rule_broken____invalid_at_path(#[case] value: serde_json::Value, #[case] path: &str) {
     let err = AppSpec::from_json_value(&value).unwrap_err();
@@ -319,7 +321,6 @@ fn unenforced_fields____design_example____lists_later_phase_fields() {
         fields,
         vec![
             "capabilities.wasi:http/outgoing-handler is not enforced until Phase 2",
-            "messaging_acl is not enforced until Phase 2",
             "config.secrets is not enforced until Phase 2",
         ]
     );

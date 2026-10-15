@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Capability};
 
+use crate::acl::Acl;
 use crate::config::HostObjectRequest;
 use crate::health::HealthCheck;
 use crate::services::ServiceSpecs;
@@ -64,6 +65,9 @@ pub struct InstanceSpec {
     /// Check the instance's health on a timer (the manifest's `health`
     /// section; [`crate::health`]).
     pub health: Option<HealthCheck>,
+    /// Which apps this instance may send to and accept from (the
+    /// manifest's `messaging_acl`; [`crate::acl`]).
+    pub acl: Acl,
 }
 
 /// A host directory visible to the guest.
@@ -140,6 +144,14 @@ impl InstanceSpec {
                 .placement
                 .as_ref()
                 .is_some_and(|p| p.mode == paddock_bundle::manifest::PlacementMode::Singleton),
+            acl: spec
+                .messaging_acl
+                .as_ref()
+                .map(|a| Acl {
+                    accept_from: a.accept_from.clone(),
+                    may_call: a.may_call.clone(),
+                })
+                .unwrap_or_default(),
             health: spec.health.as_ref().map(|h| HealthCheck {
                 interval: Duration::from_millis(h.interval_ms),
                 failure_threshold: h.failure_threshold,

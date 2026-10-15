@@ -29,7 +29,8 @@ use std::time::Duration;
 
 use tokio::sync::oneshot;
 
-use crate::delivery::{self, Route};
+use crate::acl::{self, Stamp};
+use crate::delivery::{self, Origin, Route};
 use crate::links::LinkFrom;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
@@ -84,6 +85,8 @@ pub enum Frame {
     Cast {
         /// The sender, if an instance.
         from: Option<Pid>,
+        /// The sender's app and routes, if an instance ([`crate::acl`]).
+        sender: Option<Stamp>,
         /// The target, on the receiving node.
         to: Pid,
         /// The message.
@@ -95,6 +98,8 @@ pub enum Frame {
         id: u64,
         /// The caller, if an instance.
         from: Option<Pid>,
+        /// The caller's app and routes, if an instance ([`crate::acl`]).
+        sender: Option<Stamp>,
         /// The target, on the receiving node.
         to: Pid,
         /// The message.
@@ -113,6 +118,8 @@ pub enum Frame {
     Exit {
         /// The sender.
         from: Pid,
+        /// The sender's app and routes ([`crate::acl`]).
+        sender: Option<Stamp>,
         /// The target, on the receiving node.
         to: Pid,
         /// Why.
@@ -133,6 +140,8 @@ pub enum Frame {
     Link {
         /// The instance that linked.
         from: Pid,
+        /// Its app and routes ([`crate::acl`]).
+        sender: Option<Stamp>,
         /// The one it linked to.
         to: Pid,
     },
@@ -355,7 +364,8 @@ fn incoming_call(
             tokio::spawn(async move {
                 let rt = &slot.rt;
                 let timeout = Duration::from_millis(timeout_ms);
-                let result = delivery::call(rt, from, to, msg, timeout).await;
+                let origin = from.map_or(Origin::Host, Origin::Remote);
+                let result = delivery::call(rt, origin, to, msg, timeout).await;
                 send(rt, from_node, Frame::Reply { id, result });
             });
         }
@@ -451,6 +461,7 @@ pub(crate) async fn call(
     rt: &RuntimeInner,
     node: u32,
     from: Option<Pid>,
+    sender: Option<Stamp>,
     to: Pid,
     msg: Envelope,
     timeout: Duration,
@@ -463,6 +474,7 @@ pub(crate) async fn call(
         Frame::Call {
             id,
             from,
+            sender,
             to,
             msg,
             timeout_ms,
@@ -482,10 +494,55 @@ pub(crate) async fn call(
     }
 }
 
+/// Whether a call, cast, exit signal or link from another node's `from`,
+/// with the sending node's `stamp`, may reach the local `to`
+/// ([`crate::acl`]). The sending node's host (no `from`) may. An instance's
+/// frame without a stamp may not. A `to` that is not a live local instance
+/// is left to the usual `noproc` handling.
+fn admits(rt: &RuntimeInner, from: Option<Pid>, stamp: Option<&Stamp>, to: Pid) -> bool {
+    if from.is_none() {
+        return true;
+    }
+    let Route::Local(target) = delivery::route(rt, to) else {
+        return true;
+    };
+    let ok = stamp.is_some_and(|s| {
+        acl::allowed(&s.app, &s.may_call, target.app(), &target.acl().accept_from)
+    });
+    if !ok {
+        tracing::debug!(?from, %to, "refused by the messaging ACL");
+    }
+    ok
+}
+
+/// Whether every pid in `frame` that names its sender belongs to
+/// `from_node`: a node speaks only for its own instances.
+fn sender_on(frame: &Frame, from_node: u32) -> bool {
+    let sender = match frame {
+        Frame::Cast { from, .. } | Frame::Call { from, .. } => *from,
+        Frame::Exit { from, .. }
+        | Frame::LinkExit { from, .. }
+        | Frame::Link { from, .. }
+        | Frame::Unlink { from, .. }
+        | Frame::UnlinkAck { from, .. } => Some(*from),
+        Frame::Monitor { watcher, .. } | Frame::Demonitor { watcher, .. } => Some(*watcher),
+        Frame::Down { target, .. } => Some(*target),
+        _ => None,
+    };
+    sender.is_none_or(|p| p.node == from_node)
+}
+
 /// Handle a packet from node `from`.
 pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet: Packet) {
     if packet.to_creation != 0 && packet.to_creation != rt.creation() {
         // Meant for an earlier start of this node.
+        return;
+    }
+    if !sender_on(&packet.frame, from_node) {
+        tracing::warn!(
+            node = from_node,
+            "a frame naming another node's instance as its sender; dropped"
+        );
         return;
     }
     match rt
@@ -546,16 +603,37 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 rt.liveness.announce(NodeEvent::Left { node: from_node });
             }
         }
-        Frame::Cast { from, to, msg } => {
-            let _ = delivery::cast(rt, from, to, msg);
+        Frame::Cast {
+            from,
+            sender,
+            to,
+            msg,
+        } => {
+            if admits(rt, from, sender.as_ref(), to) {
+                let _ = delivery::cast(rt, from.map_or(Origin::Host, Origin::Remote), to, msg);
+            }
         }
         Frame::Call {
             id,
             from,
+            sender,
             to,
             msg,
             timeout_ms,
-        } => incoming_call(rt, from_node, id, from, to, msg, timeout_ms),
+        } => {
+            if admits(rt, from, sender.as_ref(), to) {
+                incoming_call(rt, from_node, id, from, to, msg, timeout_ms);
+            } else {
+                send(
+                    rt,
+                    from_node,
+                    Frame::Reply {
+                        id,
+                        result: Err(CallError::AccessDenied),
+                    },
+                );
+            }
+        }
         Frame::Reply { id, result } => {
             if let Some(tx) = rt.pending_calls.take(id) {
                 let _ = tx.send(result);
@@ -563,10 +641,15 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
         }
         Frame::Exit {
             from,
+            sender,
             to,
             reason,
             untrappable,
-        } => delivery::exit_signal(rt, from, to, reason, untrappable),
+        } => {
+            if admits(rt, Some(from), sender.as_ref(), to) {
+                delivery::exit_signal(rt, Origin::Remote(from), to, reason, untrappable);
+            }
+        }
         Frame::LinkExit { from, to, reason } => {
             // A link removed meanwhile (`unlink`) drops the signal, as in OTP.
             if rt.links.unlink(to, from)
@@ -575,9 +658,12 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 target.exit_signal(from, reason, false);
             }
         }
-        Frame::Link { from, to } => {
+        Frame::Link { from, sender, to } => {
             let table = &rt.table;
-            if rt.links.link_from(to, from, |p| table.lookup(p).is_some()) == LinkFrom::Dead {
+            // A link the ACL refuses is answered as one to a dead pid.
+            let admitted = admits(rt, Some(from), sender.as_ref(), to);
+            let alive = |p: Pid| admitted && table.lookup(p).is_some();
+            if rt.links.link_from(to, from, alive) == LinkFrom::Dead {
                 send_notice(
                     rt,
                     from_node,

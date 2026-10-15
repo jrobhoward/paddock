@@ -15,7 +15,7 @@ use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{PaddockApp, PaddockAppPre};
 use crate::compiled;
 use crate::config::{HostObjects, MemoryProfile, RuntimeConfig};
-use crate::delivery;
+use crate::delivery::{self, Origin};
 use crate::deny;
 use crate::error::{HostError, describe};
 use crate::instance::{self, InstanceHandle};
@@ -472,7 +472,7 @@ impl Runtime {
     /// [`CallError::Noproc`] for a dead pid or an earlier incarnation, and as
     /// for [`InstanceHandle::cast`].
     pub fn cast(&self, to: Pid, msg: Envelope) -> Result<(), CallError> {
-        delivery::cast(&self.inner, None, to, msg)
+        delivery::cast(&self.inner, Origin::Host, to, msg)
     }
 
     /// Call a pid.
@@ -487,7 +487,7 @@ impl Runtime {
         msg: Envelope,
         timeout: Duration,
     ) -> Result<Envelope, CallError> {
-        delivery::call(&self.inner, None, to, msg, timeout).await
+        delivery::call(&self.inner, Origin::Host, to, msg, timeout).await
     }
 
     pub(crate) fn inner(&self) -> &Arc<RuntimeInner> {

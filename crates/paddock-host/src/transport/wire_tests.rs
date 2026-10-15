@@ -41,6 +41,10 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
         }),
         Frame::Cast {
             from: Some(pid(1)),
+            sender: Some(crate::acl::Stamp {
+                app: "web".into(),
+                may_call: vec!["orders".into()],
+            }),
             to: pid(2),
             msg: Envelope::new("text/plain", "hi"),
         },
@@ -77,6 +81,7 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
 fn encode____body____a_byte_string_not_an_array() {
     let p = packet(Frame::Cast {
         from: None,
+        sender: None,
         to: pid(1),
         msg: Envelope::new("application/octet-stream", vec![0u8; 1000]),
     });

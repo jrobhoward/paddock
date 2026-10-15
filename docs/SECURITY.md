@@ -19,7 +19,7 @@ The threat model as built: what Paddock protects, whom it trusts, each boundary 
 | The operator (anyone who can open the admin socket: the node's user, mode 0600) | everything: deploy, kill, confirm failover, read state | — |
 | A signer in `trusted_keys` | publish code the node may run | do anything its grant does not allow; the sandbox and the grant are the boundary even for signed code |
 | An app | use what it was granted | reach other apps' data, the host, or other apps' messages beyond what routing allows |
-| A cluster member (a node whose key is in the peers file) | everything a local process could do: call, cast, link, kill any pid on the node, take part in failover | — (messaging ACLs, D5, are planned) |
+| A cluster member (a node whose key is in the peers file) | what its own instances could do on the node: call, cast, link and send exit signals within the messaging ACLs, as its stamp on each frame says; take part in failover | speak for another node's instances (a frame whose sender pid is on another node is dropped); its stamps are trusted, so a member that lies about its senders' apps passes ACLs it should not |
 | The witness | arbitrate its pair | — |
 | HTTP clients, listener clients, Modbus masters | nothing | anything beyond the routes, handlers and tables they reach |
 | Modbus devices polled | return register values | crash or stall the node |
@@ -35,8 +35,8 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### App and app
 
-- **Controls.** Buckets namespaced by app; shared buckets by grant, read-only or read-write; secrets by name and grant; groups by manifest scope; registered names limited to those the manifest lists.
-- **Gaps.** S1 is fixed. Any app may call or cast any pid or registered name on the node; messaging ACLs are D5.
+- **Controls.** Buckets namespaced by app; shared buckets by grant, read-only or read-write; secrets by name and grant; groups by manifest scope; registered names limited to those the manifest lists; messaging ACLs (`messaging_acl.accept_from`, `may_call`, by app name) on calls, casts, exit signals and links, checked on the target's node against the host-stamped sender.
+- **Gaps.** S1 is fixed. Without a `messaging_acl`, an app may call, cast, link or send exit signals to any pid it learns, as before; the lists are opt-in. Monitors are not checked (they only observe).
 
 ### The admin socket
 

@@ -63,6 +63,7 @@ fn class____messages_and_notices____told_apart() {
 
     let cast = Frame::Cast {
         from: None,
+        sender: None,
         to: p,
         msg: Envelope::new("text/plain", "x"),
     };

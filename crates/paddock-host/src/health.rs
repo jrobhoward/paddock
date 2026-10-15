@@ -13,7 +13,7 @@
 use std::sync::Weak;
 use std::time::Duration;
 
-use crate::delivery;
+use crate::delivery::{self, Origin};
 use crate::instance::InstanceHandle;
 use crate::message::{CallError, Envelope, ExitReason};
 use crate::runtime::RuntimeInner;
@@ -89,7 +89,7 @@ pub(crate) async fn watch(rt: Weak<RuntimeInner>, me: InstanceHandle, check: Hea
             schema: Some(HEALTH_SCHEMA.to_string()),
             ..Envelope::new("text/plain", "health")
         };
-        let result = delivery::call(&rt, None, me.pid(), msg, check.interval).await;
+        let result = delivery::call(&rt, Origin::Host, me.pid(), msg, check.interval).await;
         drop(rt);
         let answer = outcome(&result);
         if let Err(why) = &answer {

@@ -1,8 +1,9 @@
 //! Fields the data model accepts but Phase 1 does not enforce yet.
 //!
 //! The manifest model is complete so bundles written today stay valid later.
-//! A field Phase 1 ignores could mislead an operator (a `messaging_acl` that
-//! is not checked), so the node logs a warning for each one a manifest sets.
+//! A field the node ignores could mislead an operator (a `placement.spread`
+//! that does not spread), so the node logs a warning for each one a
+//! manifest sets.
 
 use std::fmt;
 
@@ -110,11 +111,9 @@ impl AppSpec {
         }
     }
 
-    /// `messaging_acl`, `config`, `upgrade`, `placement` and
-    /// `observability`. Of `placement`, a node with `[failover]` enforces
+    /// `config`, `upgrade`, `placement` and `observability`. Of `placement`, a node with `[failover]` enforces
     /// `singleton` and `hot-standby`; the rest needs a scheduler.
     fn unenforced_sections(&self, out: &mut Fields) {
-        out.add_if(self.messaging_acl.is_some(), "messaging_acl", Phase::Phase2);
         out.add_if(
             !self.config.secrets.is_empty(),
             "config.secrets",

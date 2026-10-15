@@ -23,6 +23,7 @@ use std::future::Future;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use paddock_host::acl::Acl;
 use paddock_host::transport::liveness::NodeEvent;
 use paddock_host::transport::memory::Mesh;
 use paddock_host::{InstanceHandle, LoadedApp, Role, Runtime, RuntimeConfig};
@@ -72,6 +73,14 @@ impl SimNode {
     /// Start a chaos instance with `init_args` (`trap-exits`, or empty).
     pub fn spawn(&self, init_args: &str) -> InstanceHandle {
         self.rt.spawn(&self.app, spec(init_args)).unwrap()
+    }
+
+    /// Start a chaos instance as app `app` with messaging routes `acl`.
+    pub fn spawn_as(&self, app: &str, init_args: &str, acl: Acl) -> InstanceHandle {
+        let mut s = spec(init_args);
+        s.app = app.into();
+        s.acl = acl;
+        self.rt.spawn(&self.app, s).unwrap()
     }
 
     /// Start a chaos instance bound to the node's failover lease, as a

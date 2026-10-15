@@ -12,7 +12,7 @@ use tokio::task::AbortHandle;
 use wasmtime::{Error, Result};
 
 use crate::bindings::paddock::runtime::{process, types};
-use crate::delivery;
+use crate::delivery::{self, Origin};
 use crate::instance::Message;
 use crate::message::{Envelope, ExitReason, Info};
 use crate::pid::Pid;
@@ -106,7 +106,8 @@ impl process::Host for InstanceState {
         let to = Pid::from(to);
         // At most once: a cast to a dead pid, or one the target refuses, is
         // dropped without telling the sender.
-        if let Err(err) = delivery::cast(&self.ctx.rt, Some(self.pid), to, msg.into()) {
+        if let Err(err) = delivery::cast(&self.ctx.rt, Origin::Local(&self.ctx.me), to, msg.into())
+        {
             tracing::debug!(%to, error = %err, "cast dropped");
         }
         Ok(())
@@ -127,7 +128,7 @@ impl process::Host for InstanceState {
         let started = Instant::now();
         let result = delivery::call(
             &self.ctx.rt,
-            Some(self.pid),
+            Origin::Local(&self.ctx.me),
             to,
             msg.into(),
             Duration::from_millis(timeout_ms.into()),
@@ -154,7 +155,7 @@ impl process::Host for InstanceState {
         if !self.ctx.rt.links.may_link(self.pid, other, max) {
             return Err(Error::msg(LINK_LIMIT));
         }
-        if let Err(reason) = delivery::link(&self.ctx.rt, self.pid, other) {
+        if let Err(reason) = delivery::link(&self.ctx.rt, &self.ctx.me, other) {
             // Linking to a dead or unreachable pid is an immediate exit
             // signal (`noproc` or `noconnection`).
             self.ctx.me.exit_signal(other, reason, false);
@@ -246,7 +247,13 @@ impl process::Host for InstanceState {
                 });
             }
         } else {
-            delivery::exit_signal(&self.ctx.rt, self.pid, other, reason, untrappable);
+            delivery::exit_signal(
+                &self.ctx.rt,
+                Origin::Local(&self.ctx.me),
+                other,
+                reason,
+                untrappable,
+            );
         }
         Ok(())
     }

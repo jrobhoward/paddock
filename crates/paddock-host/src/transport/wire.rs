@@ -13,13 +13,15 @@ use serde::{Deserialize, Serialize};
 use super::Packet;
 
 /// The protocol version this node writes. Version 2 acknowledges unlinks
-/// (`Unlink` carries an id, `UnlinkAck` answers it).
-pub const VERSION: u16 = 2;
+/// (`Unlink` carries an id, `UnlinkAck` answers it); version 3 stamps
+/// casts, calls, exit signals and links with the sender's app and routes
+/// for messaging ACLs.
+pub const VERSION: u16 = 3;
 
-/// The oldest protocol version this node reads. Version 1 had no unlink
-/// acknowledgement, without which the two sides of a link can disagree
-/// (spike S12), so it is not spoken.
-pub const MIN_VERSION: u16 = 2;
+/// The oldest protocol version this node reads. Earlier versions carry no
+/// sender stamp, without which messaging ACLs cannot be checked, so they
+/// are not spoken.
+pub const MIN_VERSION: u16 = 3;
 
 /// The first message each side of a connection sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

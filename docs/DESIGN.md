@@ -133,7 +133,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | `instances` | count or min/max, pool routing (round-robin, hash key) | Phase 1 count; scaling later |
 | `limits` | memory_max, table_max, callback_deadline_ms, fuel_per_message, mailbox_max, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, storage quota, open files, outbound connections | Phase 1 memory/deadline/mailbox; host objects in Phase 2a (H1); rest later |
 | `capabilities` | requested host interfaces with scopes (table below) | Phase 1 subset |
-| `messaging_acl` | which apps or names may call/cast this app, and which it may call | Phase 2 |
+| `messaging_acl` | which apps may call, cast, link or send exit signals to this app, and which it may | Phase 2 |
 | `config` | schema for config keys, defaults, secret references (never secret values) | Phase 1 |
 | `upgrade` | snapshot format version, supported from-versions, upgrade mode (snapshot or restart) | Phase 1 |
 | `placement` | node labels required or preferred, spread label, mode (`any`, `singleton`, `all-nodes`, `hot-standby`) | Phase 2: `singleton` and `hot-standby` on a node with `[failover]`; the rest Phase 3 |
@@ -505,7 +505,7 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mutua
 
 - Messages are stamped with the sender pid by the host; apps can't forge the source.
 - A node accepts frames whose source pid belongs to the sending node only.
-- `messaging_acl` is checked on the receiving node.
+- `messaging_acl` is checked on the receiving node, against the sender's app: the local instance's, or the stamp a sending node puts on each call, cast, exit signal and link. A node drops a frame whose sender pid is on another node.
 - Secrets are resolved by the host at the moment of use and never written to the manifest, logs or snapshots.
 - Every grant check, denial, deploy and upgrade is logged to an audit stream.
 
