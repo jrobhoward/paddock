@@ -4,6 +4,10 @@ use crate::ctx::Ctx;
 use crate::envelope::Envelope;
 use crate::types::{CallRef, ExitReason, Info};
 
+/// The schema of the host's health check calls and their replies; the SDK
+/// answers them from [`App::health`], so `handle_call` never sees them.
+const HEALTH_SCHEMA: &str = "paddock/health";
+
 /// What `handle_call` does with the call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reply {
@@ -43,6 +47,21 @@ pub trait App: Sized + 'static {
     /// Clean up before a graceful stop. Not called on kills or traps.
     fn terminate(&mut self, ctx: &mut Ctx, reason: ExitReason) {
         let _ = (ctx, reason);
+    }
+
+    /// Whether this instance is healthy, for the host's health checks: an
+    /// app whose manifest has a `health` section is asked every
+    /// `interval_ms`, and after `failure_threshold` failures in a row the
+    /// instance is killed as `crashed: unhealthy` and restarted. Healthy by
+    /// default; the check also fails if the instance does not answer in
+    /// time.
+    ///
+    /// # Errors
+    ///
+    /// Why it is not healthy; the host logs it.
+    fn health(&mut self, ctx: &mut Ctx) -> Result<(), String> {
+        let _ = ctx;
+        Ok(())
     }
 
     /// Serialize the state for an upgrade. Must not change it: if the
@@ -121,9 +140,10 @@ macro_rules! app {
 pub mod dispatch {
     use std::cell::RefCell;
 
-    use super::{App, Reply};
+    use super::{App, HEALTH_SCHEMA, Reply};
     use crate::bindings;
     use crate::ctx::Ctx;
+    use crate::envelope::Envelope;
 
     /// A callback arrived with no state: `init` did not succeed. The host
     /// never does this, so it is a bug; trap.
@@ -156,6 +176,19 @@ pub mod dispatch {
         caller: bindings::CallRef,
         msg: bindings::Envelope,
     ) -> bindings::CallResult {
+        // The host's health check goes to `App::health`.
+        if msg.schema.as_deref() == Some(HEALTH_SCHEMA) {
+            let answer = with(cell, |app, ctx| app.health(ctx));
+            let body = match answer {
+                Ok(()) => "ok".to_string(),
+                Err(why) => why,
+            };
+            return bindings::CallResult::Reply(
+                Envelope::new("text/plain", body)
+                    .with_schema(HEALTH_SCHEMA)
+                    .into(),
+            );
+        }
         match with(cell, |app, ctx| {
             app.handle_call(ctx, crate::CallRef(caller), msg.into())
         }) {

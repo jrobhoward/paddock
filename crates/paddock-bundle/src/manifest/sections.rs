@@ -281,8 +281,9 @@ impl ListenerDecl {
     }
 }
 
-/// The `health` section: an optional `health` export polled by the host. Not
-/// enforced until Phase 2.
+/// The `health` section: the host calls each instance with a
+/// `paddock/health` envelope every `interval_ms`, and kills it as
+/// `crashed: unhealthy` after `failure_threshold` failed checks in a row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Health {

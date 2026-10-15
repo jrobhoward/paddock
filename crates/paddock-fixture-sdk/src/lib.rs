@@ -57,6 +57,8 @@ struct Point {
 struct Fixture {
     received: Vec<String>,
     changes: Vec<String>,
+    /// What `health` answers: healthy unless `sick:<why>` set a reason.
+    sick: Option<String>,
 }
 
 fn metric(command: &str) -> Result<(), paddock_sdk::metrics::MetricsError> {
@@ -241,6 +243,10 @@ impl App for Fixture {
         Ok(Self::default())
     }
 
+    fn health(&mut self, _ctx: &mut Ctx) -> Result<(), String> {
+        self.sick.clone().map_or(Ok(()), Err)
+    }
+
     fn handle_call(&mut self, ctx: &mut Ctx, _call: CallRef, msg: Envelope) -> Reply {
         if let Some(req) = Request::from_envelope(&msg) {
             return http(ctx, &req);
@@ -269,6 +275,9 @@ impl App for Fixture {
             "ok".into()
         } else if verb == "changes" {
             self.changes.join(",")
+        } else if verb == "sick" {
+            self.sick = command.split_once(':').map(|(_, why)| why.to_string());
+            "ok".into()
         } else if WATCH_VERBS.contains(&verb) {
             watching(command).unwrap_or_else(|e| format!("err:{e}"))
         } else if ["join", "leave", "members", "publish"].contains(&verb) {

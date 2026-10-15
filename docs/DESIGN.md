@@ -137,7 +137,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | `config` | schema for config keys, defaults, secret references (never secret values) | Phase 1 |
 | `upgrade` | snapshot format version, supported from-versions, upgrade mode (snapshot or restart) | Phase 1 |
 | `placement` | node labels required or preferred, spread label, mode (`any`, `singleton`, `all-nodes`, `hot-standby`) | Phase 2: `singleton` and `hot-standby` on a node with `[failover]`; the rest Phase 3 |
-| `health` | optional `health` export, interval, failure threshold | Phase 2 |
+| `health` | interval and failure threshold of the host's health check calls | Phase 2 |
 | `observability` | log level default, metrics enabled, trace sampling | Phase 1 level only |
 | `provenance` | inherited from `.rbp`: build info, git commit, SBOM, signature, signer key | Phase 1 verify signature |
 
@@ -196,7 +196,7 @@ The host detects every failure, converts it to an exit reason, and propagates it
 | Memory cap exceeded | ResourceLimiter | `crashed("memory_limit")` |
 | Callback runs too long (loop, deadlock in guest) | Epoch deadline | `timeout` |
 | `init` fails or times out | Return value or init timeout | `crashed(...)`; supervisor counts it as a restart |
-| Health check fails N times (optional `health` export) | Host timer | `crashed("unhealthy")` |
+| Health check fails N times in a row (manifest `health`: a `paddock/health` call, answered by `App::health` in the SDK) | Host timer | `crashed("unhealthy")` |
 | Mailbox stays full past threshold | Host metric | Alarm only by default; kill is a policy option |
 | Native-process plugin exits or stops answering pings | Pipe EOF, ping timeout | `crashed(...)` or `timeout` |
 | Remote node lost | QUIC idle timeout or connection close | `noconnection` for every remote link and monitor through that node |

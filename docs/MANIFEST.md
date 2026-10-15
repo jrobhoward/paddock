@@ -137,6 +137,15 @@ The app's root supervisor, with OTP semantics.
 | `pending_calls_max` | node's `[limits]` (10000) | Most calls answered `noreply` and not yet replied to. One more crashes the instance with `pending_call_limit`, and its waiting callers get `exited`. |
 | `fuel_per_message`, `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
 
+### `health`
+
+With this section, the host checks each instance on a timer, from the moment `init` returns: it calls the instance with a `text/plain` envelope of schema `paddock/health`. A reply whose body is `ok` is healthy; any other reply, an error, or no reply within the interval is a failure, logged with the reply's text. After `failure_threshold` failures in a row the instance is killed with `crashed: unhealthy`, and its supervisor restarts it. The call goes through the mailbox, so an instance that has stopped taking messages fails it too. `paddock-sdk` answers the call from `App::health` (healthy unless overridden); an app without the SDK answers it in `handle-call`. Without the section, nothing is checked.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `interval_ms` | `10000` | Time between checks, and how long one may take. |
+| `failure_threshold` | `3` | Failures in a row before the instance is killed. |
+
 ### `capabilities`
 
 Each key requests one host interface, with the scope that narrows it. Importing an interface needs **both** a declaration here and a grant in the node's operator policy:
@@ -214,7 +223,6 @@ Names are unique within an app and follow the app-name rules. Upgrades keep the 
 | --- | --- |
 | `api.messages` | The app's message catalog (`name`, `pattern` = `call` or `cast`, `content_type`, `request_schema`, `response_schema`, `description`). Documentation; messages are not checked against it. |
 | `messaging_acl` | `accept_from`, `may_call`; *not enforced* (Phase 2). |
-| `health` | `interval_ms`, `failure_threshold`; *not enforced* (Phase 2). |
 | `placement` | `required_labels`, `preferred_labels`, `spread` (a node label to spread instances across), and `mode`: `any` (default; as many instances as `instances` asks for, on any eligible nodes), `singleton` (one instance across the cluster, moved when its node fails; `instances` may not ask for more than one), `all-nodes` (one on every eligible node), or `hot-standby` (one on every eligible node, one of which leads and each told its role through a `host-event`). On a node with `[failover]`, `singleton` runs on the pair's primary only, and its instances run guest code only while the node's lease is current: out of lease a message waits, and a callback running when the lease ends is ended with `crashed: lease_ended`; `hot-standby` runs on both nodes, each told `host-event("failover-role", "primary" \| "standby" \| "down")`. *Not enforced* (Phase 3): `all-nodes`, labels and `spread`. |
 
 ## Operator side

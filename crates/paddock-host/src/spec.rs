@@ -7,6 +7,7 @@ use std::time::Duration;
 use paddock_bundle::manifest::{AccessMode, AppManifest, AppSpec, Capability};
 
 use crate::config::HostObjectRequest;
+use crate::health::HealthCheck;
 use crate::services::ServiceSpecs;
 
 /// Limits, timeouts and `init` arguments for one instance.
@@ -60,6 +61,9 @@ pub struct InstanceSpec {
     /// `crashed: lease_ended` at the next tick. No effect on a node without
     /// failover.
     pub bound_to_lease: bool,
+    /// Check the instance's health on a timer (the manifest's `health`
+    /// section; [`crate::health`]).
+    pub health: Option<HealthCheck>,
 }
 
 /// A host directory visible to the guest.
@@ -136,6 +140,10 @@ impl InstanceSpec {
                 .placement
                 .as_ref()
                 .is_some_and(|p| p.mode == paddock_bundle::manifest::PlacementMode::Singleton),
+            health: spec.health.as_ref().map(|h| HealthCheck {
+                interval: Duration::from_millis(h.interval_ms),
+                failure_threshold: h.failure_threshold,
+            }),
             host_objects: HostObjectRequest {
                 timers: spec.limits.timers_max,
                 monitors: spec.limits.monitors_max,

@@ -73,6 +73,9 @@ struct State {
     deferred: Vec<CallRef>,
     fired: Vec<String>,
     infos: Vec<String>,
+    /// Health checks answered, and what to answer (`ok` unless told).
+    health_checks: u64,
+    health: Option<String>,
 }
 
 thread_local! {
@@ -278,6 +281,12 @@ fn run(caller: Option<CallRef>, msg: &Envelope) -> Outcome {
             reply("ok".into())
         }
         "infos" => reply(STATE.with_borrow(|s| s.infos.join(";"))),
+        "health" => {
+            let answer = (arg != "ok").then(|| arg.to_string());
+            STATE.with_borrow_mut(|s| s.health = answer);
+            reply("ok".into())
+        }
+        "health-checks" => reply(STATE.with_borrow(|s| s.health_checks.to_string())),
         _ => reply(format!("unknown command '{command}'")),
     }
 }
@@ -309,6 +318,15 @@ impl Guest for Chaos {
     }
 
     fn handle_call(caller: CallRef, msg: Envelope) -> CallResult {
+        // A host health check (ROADMAP D7): `ok`, or what `health:<text>`
+        // set.
+        if msg.schema.as_deref() == Some("paddock/health") {
+            let answer = STATE.with_borrow_mut(|s| {
+                s.health_checks += 1;
+                s.health.clone().unwrap_or_else(|| "ok".to_string())
+            });
+            return CallResult::Reply(text(answer));
+        }
         match run(Some(caller), &msg) {
             Outcome::Reply(env) => CallResult::Reply(env),
             Outcome::NoReply => CallResult::Noreply,

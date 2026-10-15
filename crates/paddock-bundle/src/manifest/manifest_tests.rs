@@ -373,7 +373,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             ("placement.mode".into(), Phase::Phase3),
             ("placement.required_labels".into(), Phase::Phase3),
             ("placement.spread".into(), Phase::Phase3),
-            ("health".into(), Phase::Phase2),
             ("observability.metrics".into(), Phase::Phase2),
             ("observability.trace_sampling".into(), Phase::Phase2),
         ]

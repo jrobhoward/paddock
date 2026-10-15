@@ -322,23 +322,23 @@ async fn shutdown____running_children____stopped_gracefully_in_reverse_order() {
         ))
         .unwrap();
     let (a, b) = (instance(&s, 0), instance(&s, 1));
-    let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    for (name, h) in [("a", a.clone()), ("b", b.clone())] {
-        let order = order.clone();
-        tokio::spawn(async move {
-            h.wait().await;
-            order.lock().unwrap().push(name);
-        });
-    }
+    // `a` is stopped only once `b` has exited, so `b` has exited by the time
+    // `a` has. (Two waiters recording their own order would race.)
+    let b_gone_when_a_exits = tokio::spawn({
+        let (a, b) = (a.clone(), b.clone());
+        async move {
+            a.wait().await;
+            b.exit_reason().is_some()
+        }
+    });
 
     s.shutdown();
     let reason = s.wait().await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
 
     assert_eq!(reason, ExitReason::Shutdown);
     assert_eq!(a.exit_reason(), Some(ExitReason::Shutdown));
     assert_eq!(b.exit_reason(), Some(ExitReason::Shutdown));
-    assert_eq!(*order.lock().unwrap(), vec!["b", "a"]);
+    assert!(b_gone_when_a_exits.await.unwrap());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

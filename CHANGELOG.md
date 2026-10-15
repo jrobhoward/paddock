@@ -302,8 +302,20 @@ All notable changes are recorded here. The format follows
   each heal, every link and monitor must be listed on both of its nodes and
   name a live instance (`--cluster-minutes`, `--only cluster`).
 
+- Health checks (manifest `health`): the host calls each instance with a
+  `paddock/health` envelope every `interval_ms` and kills it as
+  `crashed: unhealthy` after `failure_threshold` failures in a row (a reply
+  other than `ok`, an error, or no reply within the interval); its
+  supervisor restarts it. `paddock-sdk` answers from `App::health`,
+  healthy by default. The app world is unchanged.
+
 ### Fixed
 
+- The tests `start_apps____dependencies____providers_start_first_and_stop_last`
+  and `shutdown____running_children____stopped_gracefully_in_reverse_order`
+  failed now and then under load: two waiter tasks recorded the stop order
+  as they were scheduled, not as the instances exited. Each now checks,
+  when the last instance exits, that the other one already has.
 - `whereis` of an app's name could return a member that had just exited:
   the pool still listed it until its supervisor noticed the exit, which
   comes after the exit's notices. A watcher that looked the name up again

@@ -28,7 +28,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Next
 
-Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10 and C6 are done (2026-10-14).
+Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6 and D7 are done (2026-10-14).
 
 1. **C4** (spike S12): the model is written and found four ways for two nodes to disagree on a link or monitor ([spikes/s12](../spikes/s12/README.md)); C6 put the four fixes in the code. Left: the exhaustive runs of the fixed model (`~/tla-runs/c4-2026-10-14/run.sh`, `summary.txt` there); record them in the spike's README.
 2. **D3**, then the rest of stage 4 in the order listed. D11's first step (a redirect from the standby) needs no D3 and can come early.
@@ -68,12 +68,11 @@ Done on 2026-10-13: every item from stage 2 (CHANGELOG), and V2, the two-fault e
 
 DESIGN.md "Distribution", on the transport, membership and failover that exist. No item needs consensus; Raft (or HAppliance-style replication) comes with Phase 3's replicated buckets.
 
-Done on 2026-10-14: C6, the four rules from S12 that keep both sides of a link or monitor in step (CHANGELOG; DESIGN.md, "Agreement on links and monitors"). D10, an hour of `scripts/soak.sh --only failover` (six runs of 10 minutes, seeds 394302291 to 394302296, all passed; TLC ran on 3 of the 16 cores meanwhile, at low priority). The criterion with the serial line up (network cut: nobody promotes) needs a serial path between processes, so it moved to F5 with the serial heartbeat on real hardware.
+Done on 2026-10-14: D7, health checks as calls with a reserved schema (`paddock/health`, answered by the SDK's `App::health`; decided 2026-10-14 over a new export, so the app world stays frozen; MANIFEST.md `health`). C6, the four rules from S12 that keep both sides of a link or monitor in step (CHANGELOG; DESIGN.md, "Agreement on links and monitors"). D10, an hour of `scripts/soak.sh --only failover` (six runs of 10 minutes, seeds 394302291 to 394302296, all passed; TLC ran on 3 of the 16 cores meanwhile, at low priority). The criterion with the serial line up (network cut: nobody promotes) needs a serial path between processes, so it moved to F5 with the serial heartbeat on real hardware.
 
 - [ ] **D10b Planned switchover.** `paddock failover switchover`: the primary stands down and the standby takes over without waiting for a node timeout, for maintenance and to swap roles between hot-standby instances on purpose. A new transition, so V1 applies; the model gains the action first.
 - [ ] **C4 Spike S12.** A TLA+ model of remote links, monitors and `noconnection` with pid incarnations and C5's sessions (numbers on frames, `hears_you`, ending on either side), checked with a safe and an adversarial network. Time-box 3 days. If a rule does not hold, narrow Phase 2's guarantees to what the model shows. Before D3. Model and counterexamples done on 2026-10-14 ([spikes/s12](../spikes/s12/README.md)); the exhaustive runs of the fixed model, crashes and liveness are left.
 - [ ] **D3 Remote pids, calls, casts, links and monitors between processes**, on the QUIC transport and the versioned wire format (D1). Instance ids hold the node's creation (settled 2026-10-08). From D1: QUIC over loopback in the simulation harness, and a throughput figure between nodes (B7). Three-node partition runs for Phase 2b's exit join `scripts/soak.sh` (`paddock-soak`). Discovery across nodes stays with D4's groups (decided 2026-10-14); until then a guest learns a remote pid from a message. Done on 2026-10-14: the three-node runs (`paddock-soak cluster`, links and monitors per instance in `ps --json`); against a node built without remote `LinkExit` notices, its first check failed as it should. They run QUIC over loopback under faults, which stands in for QUIC in the simulation harness (whose paused clock would fire QUIC's own timers). Left: an hour of it passing on an idle machine (with D10's failover runs, Phase 2b's exit), and the throughput figure (B7).
-- [ ] **D7 Health exports** (manifest `health`).
 - [ ] **D8 Backpressure between nodes**: what a sender sees when the link to a remote node is congested (DESIGN.md defines only full mailboxes).
 - [ ] **D5 Messaging ACLs** (`messaging_acl`): declared routes by app name (`may_call`, `accept_from`) checked against the host-stamped sender, local and remote. Capability tokens are parked.
 - [ ] **D6 Admin API over TLS TCP**, for operating a node from another machine. Reuses D1's pinned keys or E1b's certificates, as R3 decides.
@@ -104,7 +103,6 @@ Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an 
   - Secrets: Vault or another store (an extension or a source kind), caching with a TTL.
   - Groups: probes for join and publish.
   - B6: a node watchdog (the epoch ticker pats it; a wedged node is restarted by its service manager).
-  - Flaky under heavy load (seen once on 2026-10-14, with TLC on 15 of 16 cores; passed alone): `apps.rs` `start_apps____dependencies____providers_start_first_and_stop_last` records stop order from two waiter tasks, which can run in either order once both instances exited.
 
 ## Stage 6: Platforms and benchmarks (M)
 
@@ -125,6 +123,7 @@ On an idle machine only.
 Docs known to be out of date, cleared by W1:
 
 - README, GETTING_STARTED and WRITING_APPS were not reviewed as Tracks D, E, F and H landed.
+- ARCHITECTURE.md's threads and tasks leave out the health check task each instance of an app with a `health` section runs (D7); WRITING_APPS does not mention `App::health`.
 - DESIGN.md places SQL datasources in Phase 3; E5 is now in stage 5.
 - DESIGN.md's roadmap section repeats parts of this plan.
 - DESIGN.md, `docs/REVIEW_HAPPLIANCE_OTP.md`, `docs/tla` and `spikes/s16` describe HAppliance, a private project, in detail (see W1).

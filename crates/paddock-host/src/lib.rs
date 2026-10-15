@@ -26,6 +26,7 @@ mod delivery;
 mod deny;
 mod error;
 pub mod failover;
+pub mod health;
 #[cfg(feature = "http")]
 pub mod http;
 mod instance;

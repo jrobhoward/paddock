@@ -147,3 +147,27 @@ async fn kv____typed_values_and_quota____cbor_and_errors() {
     assert!(over.starts_with("err:storage:"), "{over}");
     h.kill();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health____sdk_app_reports_sick____killed_unhealthy() {
+    let (rt, app) = shared();
+    let mut s = spec("sdk-health", &[]);
+    s.health = Some(paddock_host::health::HealthCheck {
+        interval: Duration::from_millis(30),
+        failure_threshold: 2,
+    });
+    let h = rt.spawn(app, s).unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let healthy_so_far = ask(&h, "received").await;
+
+    ask(&h, "sick:out of disk").await;
+    let reason = tokio::time::timeout(Duration::from_secs(5), h.wait())
+        .await
+        .unwrap();
+
+    assert_eq!(healthy_so_far, "");
+    assert_eq!(
+        reason,
+        paddock_host::ExitReason::Crashed("unhealthy".into())
+    );
+}

@@ -22,6 +22,7 @@ use crate::bindings::{CallResult, PaddockApp};
 use crate::delivery;
 use crate::error::describe;
 use crate::failover::RunUntil;
+use crate::health;
 use crate::lifecycle::LifecycleState;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::metrics::AppStats;
@@ -379,6 +380,12 @@ impl InstanceHandle {
         self.stop_now(ExitReason::Killed);
     }
 
+    /// Stop now with `reason`, without `terminate`; the first stop reason
+    /// wins.
+    pub(crate) fn kill_with(&self, reason: ExitReason) {
+        self.stop_now(reason);
+    }
+
     /// Stop now with `reason`, without `terminate`. The first stop reason
     /// wins.
     fn stop_now(&self, reason: ExitReason) {
@@ -430,6 +437,15 @@ impl InstanceHandle {
 }
 
 /// The receiving half of an instance, moved into its task.
+/// Aborts its task when dropped.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub(crate) struct InstanceTask {
     pid: Pid,
     me: InstanceHandle,
@@ -572,6 +588,7 @@ impl InstanceTask {
         spec: &InstanceSpec,
     ) -> ExitReason {
         let engine = rt.engine.clone();
+        let weak = Arc::downgrade(&rt);
         let ctx = ProcessContext {
             rt,
             me: self.me.clone(),
@@ -591,6 +608,10 @@ impl InstanceTask {
         };
         self.set_state(LifecycleState::Active);
         self.announce(&store);
+        // Ends with the instance, or when this incarnation's lifecycle does.
+        let _health = spec
+            .health
+            .map(|check| AbortOnDrop(tokio::spawn(health::watch(weak, self.me.clone(), check))));
 
         let stop = match self.serve(&mut store, &mut instance, &mut spec).await {
             Ok(stop) => stop,

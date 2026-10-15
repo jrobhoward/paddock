@@ -78,21 +78,21 @@ async fn start_apps____dependencies____providers_start_first_and_stop_last() {
         .unwrap();
     let web = apps.app("ord-web").unwrap().instances()[0].clone();
     let orders = apps.app("ord-orders").unwrap().instances()[0].clone();
-    let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    for (name, h) in [("web", web.clone()), ("orders", orders.clone())] {
-        let order = order.clone();
-        tokio::spawn(async move {
-            h.wait().await;
-            order.lock().unwrap().push(name);
-        });
-    }
+    // The provider is stopped only once its dependent has exited. (Two
+    // waiters recording their own order would race.)
+    let web_gone_when_orders_exits = tokio::spawn({
+        let (web, orders) = (web.clone(), orders.clone());
+        async move {
+            orders.wait().await;
+            web.exit_reason().is_some()
+        }
+    });
 
     apps.stop().await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
 
     assert_eq!(apps.names(), ["ord-orders", "ord-web"]);
     assert!(orders.pid().id < web.pid().id);
-    assert_eq!(*order.lock().unwrap(), vec!["web", "orders"]);
+    assert!(web_gone_when_orders_exits.await.unwrap());
     assert_eq!(apps.status("ord-web"), Some(AppStatus::Stopped));
     assert_eq!(apps.status("ord-orders"), Some(AppStatus::Stopped));
 }
@@ -531,4 +531,76 @@ async fn kill____running_app_then_again____killed_once_then_nothing_to_kill() {
     assert!(!again);
     assert!(apps.app("kill-app").is_none());
     assert_eq!(instance.wait().await, paddock_host::ExitReason::Killed);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health____answers_ok____checked_and_kept() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![deployment(
+            "hl-ok",
+            "1.0.0",
+            fast(json!({ "health": { "interval_ms": 30, "failure_threshold": 2 } })),
+        )])
+        .await
+        .unwrap();
+    let member = apps.app("hl-ok").unwrap().instances()[0].clone();
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let checks: u64 = ask(&member, "health-checks").await.parse().unwrap();
+
+    assert!(checks >= 3, "{checks} checks");
+    assert_eq!(
+        apps.app("hl-ok").unwrap().instances()[0].pid(),
+        member.pid()
+    );
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health____fails_threshold_times____killed_unhealthy_and_restarted() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![deployment(
+            "hl-sick",
+            "1.0.0",
+            fast(json!({ "health": { "interval_ms": 30, "failure_threshold": 2 } })),
+        )])
+        .await
+        .unwrap();
+    let member = apps.app("hl-sick").unwrap().instances()[0].clone();
+
+    ask(&member, "health:database unreachable").await;
+    let reason = tokio::time::timeout(LONG, member.wait()).await.unwrap();
+    let mut restarted = None;
+    for _ in 0..100 {
+        let now = apps.app("hl-sick").unwrap().instances();
+        if let Some(h) = now.first().filter(|h| h.pid() != member.pid()) {
+            restarted = Some(h.clone());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(reason, ExitReason::Crashed("unhealthy".into()));
+    let restarted = restarted.expect("restarted");
+    assert_eq!(restarted.pid().id, member.pid().id);
+    assert_eq!(restarted.pid().incarnation, member.pid().incarnation + 1);
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health____no_section____never_checked() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![deployment("hl-none", "1.0.0", fast(json!({})))])
+        .await
+        .unwrap();
+    let member = apps.app("hl-none").unwrap().instances()[0].clone();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let checks = ask(&member, "health-checks").await;
+
+    assert_eq!(checks, "0");
+    apps.stop().await;
 }

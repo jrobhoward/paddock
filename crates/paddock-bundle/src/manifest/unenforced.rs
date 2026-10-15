@@ -110,7 +110,7 @@ impl AppSpec {
         }
     }
 
-    /// `messaging_acl`, `config`, `upgrade`, `placement`, `health` and
+    /// `messaging_acl`, `config`, `upgrade`, `placement` and
     /// `observability`. Of `placement`, a node with `[failover]` enforces
     /// `singleton` and `hot-standby`; the rest needs a scheduler.
     fn unenforced_sections(&self, out: &mut Fields) {
@@ -143,7 +143,6 @@ impl AppSpec {
             );
             out.add_if(p.spread.is_some(), "placement.spread", Phase::Phase3);
         }
-        out.add_if(self.health.is_some(), "health", Phase::Phase2);
         out.add_if(
             self.observability.metrics,
             "observability.metrics",
