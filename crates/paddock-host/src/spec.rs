@@ -161,7 +161,7 @@ impl InstanceSpec {
                     may_call: a.may_call.clone(),
                 })
                 .unwrap_or_default(),
-            passivate_after: None,
+            passivate_after: spec.instances.passivate_after_ms.map(Duration::from_millis),
             health: spec.health.as_ref().map(|h| HealthCheck {
                 interval: Duration::from_millis(h.interval_ms),
                 failure_threshold: h.failure_threshold,

@@ -288,9 +288,33 @@ impl App for Fixture {
         Reply::Now(Envelope::text(reply))
     }
 
-    /// Starts empty after an upgrade, for the groups upgrade test.
-    fn load_snapshot(_ctx: &mut Ctx, _from: &str, _snapshot: &[u8]) -> Result<Self, String> {
-        Ok(Self::default())
+    /// The casts and change notices received, so they survive an upgrade
+    /// or a passivation: each list's entries joined by a record separator,
+    /// the two lists by a group separator.
+    fn save_snapshot(&self) -> Result<Vec<u8>, String> {
+        Ok(format!(
+            "{}\u{1d}{}",
+            self.received.join("\u{1e}"),
+            self.changes.join("\u{1e}")
+        )
+        .into_bytes())
+    }
+
+    /// What `save_snapshot` wrote; an empty snapshot starts empty.
+    fn load_snapshot(_ctx: &mut Ctx, _from: &str, snapshot: &[u8]) -> Result<Self, String> {
+        let text = String::from_utf8(snapshot.to_vec()).map_err(|e| e.to_string())?;
+        let list = |s: &str| -> Vec<String> {
+            s.split('\u{1e}')
+                .filter(|e| !e.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let (received, changes) = text.split_once('\u{1d}').unwrap_or(("", ""));
+        Ok(Self {
+            received: list(received),
+            changes: list(changes),
+            sick: None,
+        })
     }
 
     fn handle_info(&mut self, _ctx: &mut Ctx, info: Info) {

@@ -119,6 +119,7 @@ The app's root supervisor, with OTP semantics.
 | `count` | `1` | Instances to run. |
 | `min`, `max` | none | Autoscaling bounds; *not enforced*. |
 | `routing` | `"round-robin"` | How calls and casts to the app pick an instance: `"round-robin"`, or `"hash:<field>"`. With hash routing, messages whose JSON or CBOR body has the same top-level `<field>` value go to the same instance. Other bodies fall back to round robin. |
+| `passivate_after_ms` | none | Passivate an instance after this long with nothing to do: `save-snapshot`, then its Store is dropped and its pid, mailbox, links, monitors, names, timers, watches and group memberships kept. The next message, signal or operation wakes it with `load-snapshot` of its own version (about 50 to 100 µs). The app's `load-snapshot` must read its own snapshots: the SDK's default refuses them, and a wake that fails ends the instance. An instance stays live while a caller waits on a deferred reply or its guest holds a host resource (a bucket handle, a stream). Each health check wakes it. Lets a node hold more instances than Store slots (`max_processes` in node config). |
 
 ### `limits`
 
@@ -245,7 +246,8 @@ data_dir = "/var/lib/paddock"          # deploy store, keyvalue data, audit log;
 admin_socket = "/run/paddock.sock"     # default <data_dir>/admin.sock (Unix paths: about 107 bytes at most)
 trusted_keys = ["RWQ..."]              # minisign public keys whose bundles are accepted
 policy = "/etc/paddock/policy.toml"    # without one, only the always-available interfaces are granted
-max_instances = 1000
+max_instances = 1000                   # instances holding a Store at once (each reserves address space)
+max_processes = 20000                  # all instances, passivated ones too; default max_instances
 memory_profile = "standard"            # or "dense": 128 MiB cap per instance, many more instances
 epoch_tick_ms = 2                      # granularity of callback deadlines and preemption
 

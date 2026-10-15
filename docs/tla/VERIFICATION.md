@@ -28,6 +28,8 @@ Layer 2 has four design switches, so that each fix or change can be checked on i
 
 Run from 2026-10-08 to 2026-10-10: TLC 2026.02.28, OpenJDK 21, 16 cores, 62 GB. `Lease = 3`, `Margin = 1`, `Timeout = 2`, `Delay = 1` ticks, `MaxEpoch = 3`, one frame per link direction.
 
+Since 2026-10-15 layer 2 runs with `Lease = 4`. With `Lease = 3` and reply ages (from 2026-10-11), no lease in the model was ever positive, so the layer 2 runs from 2026-10-11 to 2026-10-13 below, V2 included, checked no state with two leased runners (bug 5). The vacuity checks (below) now show that each configuration class reaches what its properties are about.
+
 ### Layer 1
 
 | Config | Faults | Distinct states | Result |
@@ -95,6 +97,36 @@ Random simulation (TLC `-simulate`, traces up to 400 steps):
 | `L2_Crashes_Fixed` | 270,012 | pass |
 | `L2_Links_Fixed` | 19,947 | pass |
 
+### Planned switchover and leases (2026-10-15)
+
+Run for ROADMAP D10b under the V1 rule, after the model gained the switchover (`Switchover`, `MaxSwitchovers`) and `Lease = 4` (bug 5). The guarantee checked exhaustively is any single failure, plus one planned switchover (decided 2026-10-15); two faults at once are checked by random simulation. `L2_NoSerial1` and `L2_Switchover_NoSerial1` are the deployment as built, which has no serial line yet. TLC 2026.02.28, OpenJDK 21, on the 16-core machine, with up to four runs sharing it.
+
+Vacuity checks, which must fail:
+
+| Config | Invariant | Distinct states | Result |
+| --- | --- | --- | --- |
+| `L2_Vacuity` | `NoLeasedRunner` | 17,366 (stopped) | violated, as it must be: a node runs the singleton on a lease |
+| `L2_Switchover_Reach` | `NoHandover` | 1,159,636 (stopped) | violated, as it must be: a switchover hands the singleton to the other node |
+
+Exhaustive, every switch as in the code, `MaxEpoch = 3`:
+
+| Config | Faults | Switchover | Distinct states | Depth | Time | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| `L2_Crashes_Fixed1` | one crash, witness crash or lost link | no | 288,754,513 | 340 | 41 min (8 workers) | pass |
+| `L2_NoSerial1` | no serial line; one crash, witness crash or lost LAN or WAN link | no | 79,161,423 | 326 | 14 min (4 workers) | pass |
+| `L2_Switchover_NoSerial1` | as `L2_NoSerial1` | one | 278,886,234 | 351 | 60 min (4 workers) | pass |
+| `L2_Switchover_Crashes1` | as `L2_Crashes_Fixed1` | one | 1,815,857,781 | 422 | 5 h 18 min (8 workers) | pass |
+| `L2_Links_Fixed_holds1` | one LAN, serial or WAN fault, held or lost | no | 2,201,184,909 | 384 | 5 h 35 min (8 workers) | pass |
+
+`L2_Crashes_Fixed1` has nearly twice the states it had with `Lease = 3` (288.8 against 147.5 million): the difference is the states in which a node runs on a lease.
+
+Random simulation, 30 minutes each (traces up to 400 steps, `-deadlock`, 4 workers), no violation:
+
+| Config | Faults | Traces |
+| --- | --- | --- |
+| `L2_Switchover_Crashes` | up to two crashes, witness crashes or lost links, and one switchover | 583,583 |
+| `L2_Switchover_Links` | up to three LAN, serial or WAN faults, held or lost, and one switchover | 532,785 |
+
 ## Bugs found
 
 ### 1. A standby's confirmation time could precede its last confirming beat (L2)
@@ -121,6 +153,14 @@ The random failover simulation found that a heartbeat discarded as belonging to 
 
 **Fix.** The confirmation lapses when the standby hears its partner, steps down or rejoins (`failover/node.rs`). The simulation test `operator_confirm____given_while_healthy_then_network_and_serial_cut____no_second_runner` failed before the fix (both nodes ran) and passes after; 1,800 new random failover seeds pass. Whether to honour a confirmation while the witness is reachable at all is ROADMAP Q10.
 
+### 5. The model's leases were zero (vacuity, 2026-10-15)
+
+**Problem.** A lease in layer 2 is `Lease - Margin - age`, where `age` is how old the frame it comes from is when it lands. Renewal through the partner adds the age of the beat to the age of the echo it carries; a renewal or grant from the witness has carried its request's age since the reply-ages fix of 2026-10-11 (ROADMAP Q14), one tick out and one back. Either way `age` is at least 2, so with `Lease = 3` and `Margin = 1` every lease was 0, and a primary ran only by an operator's override. `AtMostOneRunning` held because nothing ran on a lease. The 2026-10-11 reruns and the V2 runs (2026-10-11 to 2026-10-13) are therefore results about overrides and standings, not about leases; the runs up to 2026-10-10, before reply ages, had leases of one tick from the witness. The drop in `L2_Crashes_Fixed1` from 155.0 to 147.5 million states on 2026-10-11 was read then as shorter leases; it was leases of none.
+
+**Found by** the reachability check for the planned switchover (ROADMAP D10b): `L2_Switchover_Reach` never reached a handover, and an invariant that no node runs on a lease (`NoLeasedRunner`) held over every reachable state of the committed model: 712,466 states with no faults, and all 147,491,679 states of `L2_Crashes_Fixed1`, the count the 2026-10-11 run reported.
+
+**Fix.** Layer 2 configurations use `Lease = 4`, the smallest lease that survives two ticks of age. Every change to the model now runs the vacuity checks, configurations that must fail: `L2_Vacuity` must find a node running on a lease, and `L2_Switchover_Reach` a switchover that hands the singleton over. The Rust simulation runs the code, not the model, and was not affected. V2's two-fault runs are to be repeated with `Lease = 4` (ROADMAP V3).
+
 ## Implementation requirements
 
 From layer 1 (S16), with where the code meets each:
@@ -143,6 +183,7 @@ From layer 2:
 | R9 | `ConfirmOnSend` | The confirmation time is when the payload stops confirming, recorded before a request leaves | `node::Ctx::ask`, `node::Node::publish` |
 | R10 | The witness's epoch and last promotion survive its crashes; its renewal record does not (`ForgetRenewals`) | Kept on disk and synced before a grant is answered | The epoch and promoted node: `data_dir/witness-state`, synced before a grant (`serve_witness_kept`). The renewal record is not kept: a restarted witness counts its promoted node as renewed at the restart (`witness::Witness::start`), which is never earlier than the true record |
 | R11 | Every frame a witness answers was sent at most `Delay` before (on an up link) | Over one lease, clock drift plus the time to stop a singleton once its lease ends stays below twice the margin. Message delay is not part of it: a lease runs from when its renewal, echoed stamp or granted request was sent (requests are numbered, and `Granted` names the one it answers), and the witness counts from when it received, so a delay only makes it wait longer | Deployment: margin 500 ms by default, a 1 s budget; stopping takes an epoch tick of guest code (2 ms by default) and a host call in flight (A8), and clock drift over a 3 s lease is microseconds |
+| R12 | `Switchover`: only a primary with a lease that hears a confirming standby yields; it stops its singleton and steps down at once, and asks to resume only `Lease + Hold` later; a standby that hears a yield and no primary asks at once and does not stand down; the witness is unchanged | A primary hands over only with a witness arbiter, not overridden, and a live path showing its partner a confirming standby; it stops its singletons gracefully before stepping down, which is within its lease; its `Down` carries `yielding` in the beat's flags and retries no sooner than two leases and a margin; a standby hearing `Down` and yielding with no primary on any path asks and does not stand down | `node::Node::switchover`, `node::Primary::switchover`, `node::Standby::step`, `gate::Gate::hand_over` |
 
 ## Assumptions not tested
 
@@ -177,6 +218,8 @@ Checked by reading (ROADMAP R4, 2026-10-10): each action of `FailoverL2.tla` aga
 | `Crash`, `Restart` with `PersistEpoch` | process exit; `Node::start` at the epoch the gate kept | yes, with one difference: see "Epoch kept after it is published" |
 | `WitnessCrash`, `WitnessRestart` with `ForgetRenewals` | `Witness::start` with `resume` | yes |
 | `Running(n)`: primary with a lease, or overridden | `Leadership::may_run`, then the gate | yes up to `may_run`; the gate's start and stop are not modelled |
+| `Switchover` (with `MaxSwitchovers`): step down yielding, retry after `Lease + Hold` | `Node::switchover`, `Primary::switchover`; the node's gate stops the singletons gracefully first | yes. The code waits two leases and a margin before a yielding node may resume (`Lease + Hold` in the model's ticks); stopping first only shortens the time anything runs |
+| `StandbyHears` with a yield: ask at once, no stand-down | `Standby::step`, `PartnerView::yielding` | yes |
 
 Differences, and what each needs:
 

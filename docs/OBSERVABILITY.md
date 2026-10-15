@@ -60,6 +60,10 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `paddock_callback_guest_seconds` | histogram | | Guest execution time per callback (10 µs to 1 s buckets). |
 | `paddock_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox. |
 | `paddock_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
+| `paddock_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no Store, state in a snapshot. |
+| `paddock_passivations_total` | counter | | Instances passivated. |
+| `paddock_wake_seconds` | histogram | | Time to wake a passivated instance: a Store slot, a Store and `load-snapshot` (10 µs to 1 s buckets). |
+| `paddock_slot_timeouts_total` | counter | | Starts, wakes and upgrades that found no Store slot within `init_timeout_ms`; a start or wake then ends the instance as `crashed: no_slot`, an upgrade reverts. |
 
 With an HTTP ingress, also (no labels): `paddock_http_requests_total`, `paddock_http_server_errors_total`, `paddock_http_not_found_total`, `paddock_http_redirected_total` and `paddock_http_forwarded_total` (requests a standby redirected or forwarded to its failover partner), `paddock_http_refused_connections_total`.
 

@@ -330,6 +330,19 @@ impl Client {
         self.json(Method::GET, &path, None).await
     }
 
+    /// A planned switchover: this primary stops its singletons gracefully
+    /// and hands over to its standby.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; not found for a node without `[failover]`,
+    /// conflict when it is refused (not the primary, no confirming standby,
+    /// no witness).
+    pub async fn switchover(&self) -> Result<Done, ClientError> {
+        self.json(Method::POST, "/v1/failover/switchover", None)
+            .await
+    }
+
     /// Confirm that the partner is gone, so this standby may promote
     /// itself.
     ///

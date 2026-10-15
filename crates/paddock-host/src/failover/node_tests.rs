@@ -87,7 +87,40 @@ fn down(epoch: u64) -> State {
     State::Down(Down {
         epoch,
         asking: Asking::default(),
+        yielding: false,
     })
+}
+
+/// The partner says `status` on the link, heard now.
+fn partner_says(env: &Fake, standing: Standing, promoting: bool, yields: bool, epoch: u64) {
+    let status = Status {
+        standing,
+        promoting,
+        yields,
+        epoch,
+        stamp: 2 << 32,
+        echo: 0,
+    };
+    *env.beats.lock().unwrap() = vec![Beat {
+        path: crate::transport::liveness::LINK.to_string(),
+        live: true,
+        heard: Instant::now(),
+        payload: status.encode(),
+    }];
+}
+
+/// Node 1 as primary at epoch 1 with a lease: resumed with the witness's
+/// grant.
+async fn primary(env: &Fake) -> Node {
+    let mut ctx = ctx();
+    wait_out().await;
+    let state = down(1).step(&mut ctx, env, Instant::now());
+    let state = state.on_message(
+        &mut ctx,
+        FailoverMsg::Granted { seq: 0, epoch: 1 },
+        Instant::now(),
+    );
+    Node { state, ctx }
 }
 
 /// Wait out a lease and its margin, so a node that is down may ask to
@@ -197,4 +230,92 @@ async fn primary____lease_ok_for_a_renewal____extends_from_its_send_time() {
 
     let expected = renewed_at + ctx.cfg.lease - ctx.cfg.margin;
     assert_eq!(state.lease_end(), Some(expected));
+}
+
+#[tokio::test(start_paused = true)]
+async fn switchover____primary_with_a_confirming_standby____steps_down_yielding_and_resumes_late() {
+    let env = Fake::default();
+    let mut node = primary(&env).await;
+    partner_says(&env, Standing::Standby, false, false, 1);
+    let switched = Instant::now();
+
+    let result = node.switchover(&env, switched, false);
+    let leadership = node.state.leadership(&node.ctx.cfg, switched);
+    let status = node.state.status(&node.ctx);
+    // Silent partner from now on: no rejoin, so only a resume can follow.
+    env.beats.lock().unwrap().clear();
+    let asked_before = env.requests().len();
+    tokio::time::advance(Duration::from_millis(3_600)).await;
+    node.apply(|state, ctx| state.step(ctx, &env, Instant::now()));
+    let after_a_down_nodes_wait = env.requests().len();
+    tokio::time::advance(Duration::from_millis(3_000)).await;
+    node.apply(|state, ctx| state.step(ctx, &env, Instant::now()));
+
+    assert_eq!(result, Ok(()));
+    assert!(!leadership.may_run);
+    assert_eq!(leadership.standing, Standing::Down);
+    assert!(status.yields && status.standing == Standing::Down && status.epoch == 1);
+    assert_eq!(
+        after_a_down_nodes_wait, asked_before,
+        "no resume within lease + margin"
+    );
+    assert_eq!(
+        env.requests().last(),
+        Some(&(1, true)),
+        "resumes a lease later"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn switchover____not_a_primary_or_no_confirming_standby____refused() {
+    let env = Fake::default();
+    let mut not_primary = Node {
+        state: down(1),
+        ctx: ctx(),
+    };
+    let mut alone = primary(&env).await;
+    let mut asking = primary(&env).await;
+
+    let refused_down = not_primary.switchover(&env, Instant::now(), false);
+    let refused_silent = alone.switchover(&env, Instant::now(), false);
+    partner_says(&env, Standing::Standby, true, false, 1);
+    let refused_promoting = asking.switchover(&env, Instant::now(), false);
+
+    assert_eq!(refused_down, Err(SwitchoverRefused::NotPrimary));
+    assert_eq!(refused_silent, Err(SwitchoverRefused::NoStandby));
+    assert_eq!(refused_promoting, Err(SwitchoverRefused::NoStandby));
+    assert!(matches!(alone.state, State::Primary(_)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn standby____partner_yields____asks_at_once_and_does_not_stand_down() {
+    let env = Fake::default();
+    let mut ctx = ctx();
+    partner_says(&env, Standing::Primary, false, false, 1);
+    let standby = down(1).step(&mut ctx, &env, Instant::now());
+    let rejoined = matches!(standby, State::Standby(_));
+
+    partner_says(&env, Standing::Down, false, true, 1);
+    let state = standby.step(&mut ctx, &env, Instant::now());
+    let asked = env.requests();
+    tokio::time::advance(Duration::from_millis(3_600)).await;
+    partner_says(&env, Standing::Down, false, true, 1);
+    // Past lease + margin hearing `Down`: a standby would stand down, but
+    // not for a yield; it asks again instead.
+    let state = state.step(&mut ctx, &env, Instant::now());
+    let still_standby = matches!(state, State::Standby(_));
+    let state = state.on_message(
+        &mut ctx,
+        FailoverMsg::Granted { seq: 1, epoch: 2 },
+        Instant::now(),
+    );
+
+    assert!(rejoined);
+    assert!(still_standby);
+    assert_eq!(
+        asked,
+        vec![(0, false)],
+        "asked on the first step that heard the yield"
+    );
+    assert!(matches!(state, State::Primary(ref p) if p.epoch == 2));
 }

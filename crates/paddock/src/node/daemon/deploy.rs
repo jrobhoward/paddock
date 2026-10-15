@@ -283,6 +283,7 @@ impl Node {
                         dep.app
                     )));
                 }
+                self.check_slots(name, &deployment)?;
                 self.ingress.set_routes(name, &deployment)?;
                 let added = match &self.gate {
                     Some(gate) if gate::is_singleton(&deployment) => {
@@ -309,6 +310,46 @@ impl Node {
                 Ok(None)
             }
         }
+    }
+
+    /// Refuse `deployment` (as `name`) if the instances that never
+    /// passivate, its own with the running apps' and the held singletons',
+    /// would need more Store slots than `max_instances`: they would hold
+    /// every slot, and an instance needing one would never get it.
+    fn check_slots(&self, name: &str, deployment: &AppDeployment) -> Result<(), NodeError> {
+        let live = |d: &AppDeployment| {
+            let i = &d.manifest.spec.instances;
+            if i.passivate_after_ms.is_some() {
+                0
+            } else {
+                u64::from(i.initial())
+            }
+        };
+        // Each app once: a running singleton is in the set and held too.
+        let mut by_name: std::collections::BTreeMap<String, u64> = self
+            .apps
+            .names()
+            .iter()
+            .filter_map(|n| self.apps.app(n))
+            .map(|a| (a.name().to_string(), live(&a.deployment())))
+            .collect();
+        for d in self.gate.iter().flat_map(|g| g.deployments()) {
+            by_name
+                .entry(d.manifest.app.name.clone())
+                .or_insert_with(|| live(&d));
+        }
+        by_name.remove(name);
+        let others: u64 = by_name.values().sum();
+        let wanted = others + live(deployment);
+        let slots = u64::from(self.config.max_instances);
+        if wanted > slots {
+            return Err(NodeError::Invalid(format!(
+                "{name}: the instances that never passivate would need {wanted} Store slots, and \
+                 this node has {slots} (max_instances); passivate some (instances.passivate_after_ms) \
+                 or raise max_instances"
+            )));
+        }
+        Ok(())
     }
 
     /// Whether `name` runs now, under a supervisor or on listeners.

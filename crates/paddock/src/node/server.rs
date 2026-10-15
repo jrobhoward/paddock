@@ -285,6 +285,7 @@ pub(crate) async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
         (&Method::POST, ["v1", "tls", "reload"]) => respond(node.reload_tls()),
         (&Method::GET, ["v1", "failover"]) => failover(node, &q).await,
         (&Method::POST, ["v1", "failover", "confirm"]) => respond(node.confirm_failover()),
+        (&Method::POST, ["v1", "failover", "switchover"]) => respond(node.switchover().await),
         (&Method::POST, ["v1", "instances", pid, "kill"]) => respond(node.kill(pid).await),
         _ => error(&NodeError::NotFound(format!(
             "no route for {method} {path}"

@@ -4,8 +4,8 @@
 //!
 //! The transitions are named after the actions of the TLA+ model
 //! (`docs/tla/FailoverL2.tla`): `fenced`, `stand_down`, `ask`, `cancel`,
-//! `rejoin`, `resume`, `granted`, and so on, so a change here can be
-//! checked against the model action by action.
+//! `rejoin`, `resume`, `granted`, `switchover`, and so on, so a change
+//! here can be checked against the model action by action.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
@@ -16,6 +16,7 @@ use tokio::time::Instant;
 
 use super::{
     Arbiter, FailoverConfig, FailoverMsg, Leadership, PartnerView, RunUntil, Standing, Status,
+    SwitchoverAsk, SwitchoverRefused,
 };
 use crate::runtime::RuntimeInner;
 use crate::transport::liveness::Beat;
@@ -93,6 +94,9 @@ pub(super) struct Down {
     epoch: u64,
     /// Its request to resume, if any.
     asking: Asking,
+    /// Stepped down to hand over (a planned switchover), until it rejoins
+    /// or resumes; its beats say so.
+    yielding: bool,
 }
 
 /// A request to the witness.
@@ -200,6 +204,7 @@ impl State {
         Status {
             standing: self.standing(),
             promoting: matches!(self, Self::Standby(s) if s.asking.is_some()),
+            yields: matches!(self, Self::Down(d) if d.yielding),
             epoch: self.epoch(),
             stamp: ctx.stamp,
             echo: if self.confirming() { ctx.seen } else { 0 },
@@ -274,6 +279,7 @@ impl Ctx {
         Down {
             epoch,
             asking: Asking::default(),
+            yielding: false,
         }
     }
 
@@ -405,6 +411,18 @@ impl Primary {
     }
 }
 
+impl Primary {
+    /// `Switchover`: hand over on purpose. Step down at once, yielding; ask
+    /// to resume only a lease later than a down node would, so the
+    /// standby's request reaches the witness first.
+    fn switchover(self, ctx: &mut Ctx, now: Instant) -> State {
+        let mut down = ctx.down(self.epoch, now);
+        down.yielding = true;
+        down.asking.retry_at = Some(now + ctx.cfg.lease + ctx.cfg.lease + ctx.cfg.margin);
+        State::Down(down)
+    }
+}
+
 impl Standby {
     /// `Granted`: promoted, with a lease from when the granted request
     /// left.
@@ -431,11 +449,22 @@ impl Standby {
         if let Some(theirs) = partner.primary(false) {
             self.epoch = self.epoch.max(theirs);
         }
+        if partner.any_live && partner.yielding() && matches!(ctx.cfg.arbiter, Arbiter::Witness(_))
+        {
+            // The partner yields (a planned switchover): `Ask` at once, as
+            // on silence, and do not stand down for its `Down`.
+            self.awaiting = false;
+            ctx.confirmed_by_operator = false;
+            self.partner_down_since = None;
+            let mut asking = self.asking.unwrap_or_default();
+            ctx.ask(env, &mut asking, false, self.epoch, now);
+            self.asking = Some(asking);
+            return State::Standby(self);
+        }
         if partner.any_live {
             self.awaiting = false;
             // An operator's confirmation is about this silence only; a
             // stale one would promote on a later, unrelated cut.
-            ctx.confirmed_by_operator = false;
             // `Cancel`: the witness keeps no pending request, so with none in
             // flight a standby that hears a primary again stops asking. A
             // request past its retry time counts as answered: its answer
@@ -582,6 +611,7 @@ impl Node {
             state: State::Down(Down {
                 epoch: cfg.epoch,
                 asking: Asking::default(),
+                yielding: false,
             }),
             ctx: Ctx {
                 rt: Arc::downgrade(rt),
@@ -609,6 +639,7 @@ impl Node {
         let placeholder = State::Down(Down {
             epoch: 0,
             asking: Asking::default(),
+            yielding: false,
         });
         let state = std::mem::replace(&mut self.state, placeholder);
         self.state = transition(state, &mut self.ctx);
@@ -679,6 +710,40 @@ impl Node {
         }
     }
 
+    /// A planned switchover, if this node is a primary with a lease whose
+    /// partner a live path shows as a confirming standby; with
+    /// `check_only`, only whether it would.
+    fn switchover(
+        &mut self,
+        env: &dyn Env,
+        now: Instant,
+        check_only: bool,
+    ) -> Result<(), SwitchoverRefused> {
+        if !matches!(self.ctx.cfg.arbiter, Arbiter::Witness(_)) {
+            return Err(SwitchoverRefused::NoWitness);
+        }
+        match &self.state {
+            State::Primary(p) if p.overridden => return Err(SwitchoverRefused::Overridden),
+            State::Primary(_) => {}
+            State::Standby(_) | State::Down(_) => return Err(SwitchoverRefused::NotPrimary),
+        }
+        if !PartnerView::read(env, self.ctx.cfg.partner).confirming_standby() {
+            return Err(SwitchoverRefused::NoStandby);
+        }
+        if check_only {
+            return Ok(());
+        }
+        tracing::warn!(
+            epoch = self.state.epoch(),
+            "failover: planned switchover; handing over"
+        );
+        self.apply(|state, ctx| match state {
+            State::Primary(p) => p.switchover(ctx, now),
+            other => other,
+        });
+        Ok(())
+    }
+
     fn publish(&mut self, rt: &RuntimeInner, now: Instant) {
         let status = self.state.status(&self.ctx);
         rt.liveness.set_payload(status.encode());
@@ -711,6 +776,7 @@ pub(super) async fn run(
     mut node: Node,
     mut inbox: mpsc::UnboundedReceiver<FailoverMsg>,
     confirm: Arc<Notify>,
+    mut switchovers: mpsc::UnboundedReceiver<SwitchoverAsk>,
     interval: Duration,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -727,6 +793,10 @@ pub(super) async fn run(
                 node.apply(|state, ctx| state.on_message(ctx, msg, now));
             }
             () = confirm.notified() => node.confirm(),
+            Some(ask) = switchovers.recv() => {
+                let Some(rt) = node.ctx.rt.upgrade() else { return };
+                let _ = ask.reply.send(node.switchover(&*rt, Instant::now(), ask.check_only));
+            }
             () = async { tokio::time::sleep_until(lease_end.unwrap_or(now)).await },
                 if lease_end.is_some() => {}
             _ = ticker.tick() => {

@@ -877,3 +877,65 @@ async fn restart____app_deployed____compiled_component_read_not_compiled_again()
     assert!(compiled(&n.data(), "kept", "1.0.0").is_none());
     n.shutdown().await;
 }
+
+/// ROADMAP E7: with `max_processes` above `max_instances` (32 here), apps
+/// that passivate fit beyond the Store slots; one whose instances never
+/// passivate is refused when they would not fit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deploy____instances_that_never_passivate_past_max_instances____refused_passivating_ones_fit()
+ {
+    let mut n = TestNode::start("max_processes = 64\n").await;
+    let app = |name: &str, instances: serde_json::Value| {
+        bundle(
+            &n.key,
+            name,
+            "1.0.0",
+            &counter(1),
+            fast(json!({ "instances": instances })),
+            &[],
+        )
+    };
+    n.client
+        .deploy(app("big", json!({ "count": 30 })))
+        .await
+        .unwrap();
+
+    let refused = n
+        .client
+        .deploy(app("more", json!({ "count": 5 })))
+        .await
+        .unwrap_err();
+    let passivating = n
+        .client
+        .deploy(app(
+            "sleepy",
+            json!({ "count": 5, "passivate_after_ms": 50 }),
+        ))
+        .await;
+    for _ in 0..5 {
+        call(&n, "sleepy", "inc").await;
+    }
+    let mut passive = 0;
+    for _ in 0..100 {
+        let ps = n.client.ps().await.unwrap();
+        passive = ps
+            .iter()
+            .filter(|i| i.app == "sleepy" && i.state == "passive")
+            .count();
+        if passive == 5 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let woken = call(&n, "sleepy", "get").await;
+
+    assert_eq!(kind(&refused), "invalid");
+    assert!(
+        refused.to_string().contains("would need 35 Store slots"),
+        "{refused}"
+    );
+    assert!(passivating.is_ok(), "{passivating:?}");
+    assert_eq!(passive, 5, "every sleepy instance passivated");
+    assert!(woken.starts_with("1.0.0 count="), "{woken}");
+    n.shutdown().await;
+}

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::api::{Done, FailoverInfo, MemberInfo};
 use paddock_host::Role;
-use paddock_host::failover::{Arbiter, FailoverConfig, WitnessConfig};
+use paddock_host::failover::{Arbiter, FailoverConfig, SwitchoverRefused, WitnessConfig};
 use paddock_host::transport::quic::{NodeIdentity, QuicConfig, QuicTransport};
 use serde_json::json;
 
@@ -211,6 +211,43 @@ impl Node {
         let mut generation = self.leadership.subscribe();
         let _ = tokio::time::timeout(wait, generation.wait_for(|g| *g > after)).await;
         self.failover()
+    }
+
+    /// A planned switchover (ROADMAP D10b): this primary stops its
+    /// singletons gracefully, while its lease holds, and hands over; its
+    /// standby takes over within about a lease, with no node timeout, and
+    /// this node rejoins as the new primary's standby. Refused, with nothing
+    /// stopped, unless this node is a primary with a lease, its arbiter is a
+    /// witness and its partner is heard as a confirming standby.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] without `[failover]`; [`NodeError::Conflict`]
+    /// when the switchover is refused.
+    pub async fn switchover(&self) -> Result<Done, NodeError> {
+        let (Some(handle), Some(gate)) = (self.failover.get(), &self.gate) else {
+            return Err(NodeError::NotFound(
+                "this node has no [failover] in its config".into(),
+            ));
+        };
+        let refused =
+            |e: SwitchoverRefused| NodeError::Conflict(format!("switchover refused: {e}"));
+        handle.check_switchover().await.map_err(refused)?;
+        let epoch = handle.leadership().epoch;
+        gate.hand_over().await;
+        if let Err(e) = handle.switchover().await {
+            // Changed between the check and now: run again what was stopped.
+            gate.restore(handle.leadership().may_run).await;
+            return Err(refused(e));
+        }
+        self.audit
+            .record("failover_switchover", json!({ "epoch": epoch }));
+        Ok(Done {
+            message: "handing over: the singletons stopped here, and the partner takes over \
+                      once the witness grants it (about a lease); this node then rejoins as its \
+                      standby"
+                .into(),
+        })
     }
 
     /// An operator confirms that the partner is gone, so the standby may

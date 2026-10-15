@@ -6,7 +6,8 @@
 //! # admin_socket = "/var/lib/paddock/admin.sock"   (the default)
 //! trusted_keys = ["RWQ..."]
 //! policy = "/etc/paddock/policy.toml"
-//! max_instances = 1000
+//! max_instances = 1000           # instances holding a Store at once
+//! max_processes = 20000          # all instances, passivated ones too
 //! memory_profile = "standard"   # or "dense"
 //!
 //! [volumes]
@@ -133,9 +134,15 @@ pub struct NodeConfig {
     /// implicit interfaces is granted.
     #[serde(default)]
     pub policy: Option<PathBuf>,
-    /// Most instances alive at once.
+    /// Most instances holding a Store at once: the pooling allocator's
+    /// slots, each reserving address space.
     #[serde(default = "default_max_instances")]
     pub max_instances: u32,
+    /// Most instances in all, passivated ones included (apps with
+    /// `instances.passivate_after_ms`); at least `max_instances`. Unset:
+    /// `max_instances`.
+    #[serde(default)]
+    pub max_processes: Option<u32>,
     /// Address-space profile.
     #[serde(default)]
     pub memory_profile: MemoryProfile,
@@ -716,6 +723,14 @@ impl NodeConfig {
             }
         }
         let limits = &config.limits;
+        if config
+            .max_processes
+            .is_some_and(|p| p < config.max_instances)
+        {
+            return Err(NodeError::Invalid(
+                "node config: max_processes must be at least max_instances".into(),
+            ));
+        }
         for (name, value) in [
             ("timers_max", limits.timers_max),
             ("monitors_max", limits.monitors_max),

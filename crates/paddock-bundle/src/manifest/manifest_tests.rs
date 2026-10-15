@@ -209,6 +209,7 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "instances": { "count": 2, "max": 4 } }), "instances.count")]
 #[case(json!({ "instances": { "min": 4, "max": 2 } }), "instances.max")]
 #[case(json!({ "instances": { "count": 0 } }), "instances.count")]
+#[case(json!({ "instances": { "passivate_after_ms": 0 } }), "instances.passivate_after_ms")]
 #[case(json!({ "registered_names": ["Orders"] }), "registered_names[0]")]
 #[case(json!({ "registered_names": ["a", "a"] }), "registered_names[1]")]
 #[case(json!({ "dependencies": [{ "app": "b", "version": "1" }, { "app": "b", "version": "2" }] }), "dependencies[1].app")]

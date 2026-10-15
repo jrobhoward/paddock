@@ -87,6 +87,24 @@ pub enum SnapshotError {
 /// passivate.
 const SLOT_ASK_AGAIN: Duration = Duration::from_millis(10);
 
+/// Why no Store slot was taken.
+enum NoSlot {
+    /// The instance was killed while it waited, with this reason.
+    Killed(ExitReason),
+    /// None freed within the wait (its `init_timeout`).
+    Timeout,
+}
+
+impl NoSlot {
+    /// As an exit reason: a timeout is `crashed: no_slot`.
+    fn reason(self) -> ExitReason {
+        match self {
+            Self::Killed(reason) => reason,
+            Self::Timeout => ExitReason::Crashed("no_slot".to_string()),
+        }
+    }
+}
+
 /// How [`InstanceTask::serve`] ended without a failure.
 enum Served {
     /// A stop was requested, with this reason.
@@ -132,7 +150,9 @@ struct Shared {
     /// Which apps it may send to and accept from; replaced at an upgrade.
     acl: std::sync::RwLock<Arc<Acl>>,
     dropped: Arc<AtomicU64>,
-    ops: mpsc::UnboundedSender<Op>,
+    /// Boxed: rare, and a channel allocates its first block of 32 slots
+    /// up front, which unboxed would cost 6 KiB per instance.
+    ops: mpsc::UnboundedSender<Box<Op>>,
     /// Exit and down notifications. Unbounded: OTP never drops signals, and
     /// their number is bounded by links and monitors.
     signals: mpsc::UnboundedSender<Info>,
@@ -382,12 +402,12 @@ impl InstanceHandle {
         let (reply, answer) = oneshot::channel();
         self.shared
             .ops
-            .send(Op::Upgrade {
+            .send(Box::new(Op::Upgrade {
                 app: app.clone(),
                 spec: Box::new(spec),
                 from_version: from_version.to_string(),
                 reply,
-            })
+            }))
             .map_err(|_| UpgradeError::NotRunning)?;
         answer.await.unwrap_or(Err(UpgradeError::NotRunning))
     }
@@ -405,7 +425,7 @@ impl InstanceHandle {
         let (reply, answer) = oneshot::channel();
         self.shared
             .ops
-            .send(Op::Snapshot { reply })
+            .send(Box::new(Op::Snapshot { reply }))
             .map_err(|_| SnapshotError::NotRunning)?;
         answer.await.unwrap_or(Err(SnapshotError::NotRunning))
     }
@@ -413,7 +433,7 @@ impl InstanceHandle {
     /// Have the instance send its services' host events again, after an
     /// operator change such as a new log level. Ignored once it has exited.
     pub(crate) fn announce(&self) {
-        let _ = self.shared.ops.send(Op::Announce);
+        let _ = self.shared.ops.send(Box::new(Op::Announce));
     }
 
     /// Stop now with reason `killed`, without `terminate`. A callback in
@@ -493,7 +513,7 @@ pub(crate) struct InstanceTask {
     me: InstanceHandle,
     mailbox: mpsc::Receiver<Message>,
     signals: mpsc::UnboundedReceiver<Info>,
-    ops: mpsc::UnboundedReceiver<Op>,
+    ops: mpsc::UnboundedReceiver<Box<Op>>,
     self_mailbox: mpsc::WeakSender<Message>,
     dropped: Arc<AtomicU64>,
     control: watch::Receiver<Control>,
@@ -503,7 +523,7 @@ pub(crate) struct InstanceTask {
     stats: Arc<AppStats>,
     /// What woke a passivated instance, handled first once it is awake.
     held: Option<Message>,
-    held_op: Option<Op>,
+    held_op: Option<Box<Op>>,
     /// The next call reference, unique for the instance's whole life: a
     /// guest woken from a snapshot may still hold the reference of a call
     /// whose caller gave up.
@@ -607,7 +627,7 @@ impl InstanceTask {
         // Fail any upgrade still queued.
         self.ops.close();
         while let Ok(op) = self.ops.try_recv() {
-            match op {
+            match *op {
                 Op::Upgrade { reply, .. } => {
                     let _ = reply.send(Err(UpgradeError::NotRunning));
                 }
@@ -653,9 +673,9 @@ impl InstanceTask {
             Ok(state) => state,
             Err(why) => return ExitReason::Crashed(why),
         };
-        let mut slot = match self.take_slot(&rt_slots).await {
+        let mut slot = match self.take_slot(&rt_slots, spec.init_timeout).await {
             Ok(slot) => slot,
-            Err(reason) => return reason,
+            Err(no) => return no.reason(),
         };
         let mut store = new_store(&engine, state);
         let mut spec = spec.clone();
@@ -689,20 +709,22 @@ impl InstanceTask {
             drop(slot);
             self.me.memory_counter().store(0, Ordering::Relaxed);
             self.set_state(LifecycleState::Passive);
+            self.stats.passivated();
             tracing::debug!(bytes = snapshot.len(), "passivated");
             if let Some(reason) = self.passive(&snapshot).await {
                 return reason;
             }
             let started = std::time::Instant::now();
-            slot = match self.take_slot(&rt_slots).await {
+            slot = match self.take_slot(&rt_slots, spec.init_timeout).await {
                 Ok(slot) => slot,
-                Err(reason) => return reason,
+                Err(no) => return no.reason(),
             };
             store = new_store(&engine, state);
             instance = match self.wake(&mut store, app, &spec, &snapshot).await {
                 Ok(instance) => instance,
                 Err(reason) => return reason,
             };
+            self.stats.woke(started.elapsed());
             tracing::debug!(wake_us = started.elapsed().as_micros(), "woken");
         };
 
@@ -723,11 +745,17 @@ impl InstanceTask {
             return Err(stop);
         }
         store.data_mut().clock.start(spec.init_timeout);
-        let init = tokio::time::timeout(spec.init_timeout, async {
-            let instance = app.pre.instantiate_async(&mut *store).await?;
-            let result = instance.call_init(&mut *store, &spec.init_args).await?;
-            wasmtime::Result::Ok((instance, result))
-        });
+        // Boxed, as are the other instantiations: their futures are large,
+        // and the instance's task would otherwise keep room for them for
+        // its whole life (passivated too).
+        let init = tokio::time::timeout(
+            spec.init_timeout,
+            Box::pin(async {
+                let instance = app.pre.instantiate_async(&mut *store).await?;
+                let result = instance.call_init(&mut *store, &spec.init_args).await?;
+                wasmtime::Result::Ok((instance, result))
+            }),
+        );
         let crashed = |why: &str| ExitReason::Crashed(why.to_string());
         match killable(&mut self.control, init).await {
             Err(reason) => Err(reason),
@@ -883,12 +911,12 @@ impl InstanceTask {
         store: &mut Store<InstanceState>,
         instance: &mut PaddockApp,
         spec: &mut InstanceSpec,
-        op: Op,
+        op: Box<Op>,
     ) -> Next {
         if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
             return Next::Done(Err(stop));
         }
-        match self.operate(store, instance, spec, op).await {
+        match self.operate(store, instance, spec, *op).await {
             Some(reason) => Next::Done(Err(reason)),
             None => Next::Again,
         }
@@ -954,6 +982,9 @@ impl InstanceTask {
     /// is untouched until the new one has loaded, so any failure after the
     /// snapshot keeps the old version running. A kill during the upgrade
     /// returns `SaveFailed` with the kill's reason, which ends the instance.
+    /// The new Store takes a Store slot of its own while both exist; with
+    /// none free within the new version's `init_timeout`, the upgrade
+    /// fails before the snapshot and the old version keeps running.
     async fn upgrade(
         &mut self,
         store: &mut Store<InstanceState>,
@@ -964,6 +995,16 @@ impl InstanceTask {
         from_version: &str,
     ) -> Result<Duration, UpgradeError> {
         let started = std::time::Instant::now();
+        let rt = store.data().ctx.rt.clone();
+        // Dropped at the end: by then the old Store is gone if the new one
+        // replaced it, and the instance's own slot holds the new one.
+        let _second = match self.take_slot(&rt, next.init_timeout).await {
+            Ok(slot) => slot,
+            Err(NoSlot::Killed(reason)) => return Err(UpgradeError::SaveFailed(reason)),
+            Err(NoSlot::Timeout) => {
+                return Err(UpgradeError::Instantiate("no instance slot".into()));
+            }
+        };
         self.set_state(LifecycleState::Upgrading);
         store.data_mut().clock.start(spec.callback_deadline);
         let saved = killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await;
@@ -983,20 +1024,23 @@ impl InstanceTask {
         store.data_mut().hand_over(&mut state);
         let mut fresh = new_store(store.engine(), state);
         fresh.data_mut().clock.start(next.init_timeout);
-        let load = tokio::time::timeout(next.init_timeout, async {
-            let new_instance = app.pre.instantiate_async(&mut fresh).await;
-            match new_instance {
-                Err(err) => Err(UpgradeError::Instantiate(describe(&err))),
-                Ok(new_instance) => match new_instance
-                    .call_load_snapshot(&mut fresh, from_version, &snapshot)
-                    .await
-                {
-                    Ok(Ok(())) => Ok(new_instance),
-                    Ok(Err(refused)) => Err(UpgradeError::LoadFailed(refused)),
-                    Err(err) => Err(UpgradeError::LoadFailed(describe(&err))),
-                },
-            }
-        });
+        let load = tokio::time::timeout(
+            next.init_timeout,
+            Box::pin(async {
+                let new_instance = app.pre.instantiate_async(&mut fresh).await;
+                match new_instance {
+                    Err(err) => Err(UpgradeError::Instantiate(describe(&err))),
+                    Ok(new_instance) => match new_instance
+                        .call_load_snapshot(&mut fresh, from_version, &snapshot)
+                        .await
+                    {
+                        Ok(Ok(())) => Ok(new_instance),
+                        Ok(Err(refused)) => Err(UpgradeError::LoadFailed(refused)),
+                        Err(err) => Err(UpgradeError::LoadFailed(describe(&err))),
+                    },
+                }
+            }),
+        );
         let outcome = match killable(&mut self.control, load).await {
             Err(killed) => Err(UpgradeError::SaveFailed(killed)),
             Ok(Err(_elapsed)) => Err(UpgradeError::LoadFailed("timed out".into())),
@@ -1043,27 +1087,42 @@ impl InstanceTask {
         }
     }
 
-    /// A Store slot, waiting for one if every slot is taken (only with
-    /// passivation, which lets more instances exist than slots); an idle
-    /// instance is asked to passivate early to free one. A kill meanwhile
-    /// returns its reason.
-    async fn take_slot(&mut self, rt: &RuntimeInner) -> Result<OwnedSemaphorePermit, ExitReason> {
+    /// A Store slot, waiting up to `within` for one if every slot is taken
+    /// (only with passivation, which lets more instances exist than slots);
+    /// an idle instance is asked to passivate early to free one.
+    async fn take_slot(
+        &mut self,
+        rt: &RuntimeInner,
+        within: Duration,
+    ) -> Result<OwnedSemaphorePermit, NoSlot> {
         let slots: &Arc<Semaphore> = &rt.slots;
         if let Ok(slot) = slots.clone().try_acquire_owned() {
             return Ok(slot);
         }
+        let deadline = tokio::time::Instant::now() + within;
         // Ask again until a slot frees: a request made while no idle
         // instance was listening is kept only once, however many there were.
         let acquire = slots.clone().acquire_owned();
         tokio::pin!(acquire);
         loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                self.stats.slot_timeout();
+                tracing::warn!(
+                    wait_ms = within.as_millis(),
+                    "no Store slot freed in time: every slot is held by instances that \
+                     cannot passivate"
+                );
+                return Err(NoSlot::Timeout);
+            }
             rt.slot_wanted.notify_one();
-            let waited = tokio::time::timeout(SLOT_ASK_AGAIN, &mut acquire);
-            match killable(&mut self.control, waited).await? {
-                Ok(Ok(slot)) => return Ok(slot),
+            let waited = tokio::time::timeout(SLOT_ASK_AGAIN.min(deadline - now), &mut acquire);
+            match killable(&mut self.control, waited).await {
+                Err(killed) => return Err(NoSlot::Killed(killed)),
+                Ok(Ok(Ok(slot))) => return Ok(slot),
                 // The semaphore is never closed.
-                Ok(Err(_closed)) => return Err(ExitReason::Killed),
-                Err(_elapsed) => {}
+                Ok(Ok(Err(_closed))) => return Err(NoSlot::Killed(ExitReason::Killed)),
+                Ok(Err(_elapsed)) => {}
             }
         }
     }
@@ -1105,12 +1164,12 @@ impl InstanceTask {
                 changed = self.control.changed() => if changed.is_err() {
                     return Some(ExitReason::Killed);
                 },
-                Some(op) = self.ops.recv() => match op {
+                Some(op) = self.ops.recv() => match *op {
                     Op::Snapshot { reply } => {
                         let _ = reply.send(Ok(snapshot.to_vec()));
                     }
                     op => {
-                        self.held_op = Some(op);
+                        self.held_op = Some(Box::new(op));
                         return None;
                     }
                 },
@@ -1141,13 +1200,16 @@ impl InstanceTask {
             return Err(stop);
         }
         store.data_mut().clock.start(spec.init_timeout);
-        let load = tokio::time::timeout(spec.init_timeout, async {
-            let instance = app.pre.instantiate_async(&mut *store).await?;
-            let result = instance
-                .call_load_snapshot(&mut *store, &spec.version, snapshot)
-                .await?;
-            wasmtime::Result::Ok((instance, result))
-        });
+        let load = tokio::time::timeout(
+            spec.init_timeout,
+            Box::pin(async {
+                let instance = app.pre.instantiate_async(&mut *store).await?;
+                let result = instance
+                    .call_load_snapshot(&mut *store, &spec.version, snapshot)
+                    .await?;
+                wasmtime::Result::Ok((instance, result))
+            }),
+        );
         let crashed = |why: &str| ExitReason::Crashed(why.to_string());
         let instance = match killable(&mut self.control, load).await? {
             Err(_elapsed) => return Err(crashed("wake_timeout")),

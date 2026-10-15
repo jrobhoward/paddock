@@ -309,6 +309,36 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- Passivation for apps (ROADMAP E7): manifest `instances.passivate_after_ms`
+  turns S11's passivation on for an app, and node config `max_processes`
+  lets a node hold more instances than `max_instances` Store slots. A deploy
+  is refused when the instances that never passivate would need more slots
+  than `max_instances`; a start, wake or upgrade that finds no slot within
+  `init_timeout_ms` fails (`crashed: no_slot`; an upgrade reverts), and an
+  upgrade's second Store now takes a slot. Metrics
+  `paddock_instances_passive`, `paddock_passivations_total`,
+  `paddock_wake_seconds`, `paddock_slot_timeouts_total`. Each instance
+  costs less memory: operations queue boxed, and instantiation futures are
+  boxed (a passivated instance 19 KiB instead of 25, an idle live one 62
+  instead of 69). The SDK fixture keeps its casts and notices across
+  snapshots.
+- Planned switchover (ROADMAP D10b): `paddock failover switchover` (and
+  `POST /v1/failover/switchover`) on the primary stops its singletons
+  gracefully, with `terminate`, and hands over: it steps down and beats
+  that it yields, and the standby asks the witness at once rather than
+  after a node timeout, so the singletons move within about a lease. The
+  old primary rejoins as standby. Refused, with nothing stopped, unless the
+  node is a primary with a lease, a witness arbitrates and the partner is
+  heard as a standby. `FailoverHandle::switchover` and `check_switchover`,
+  `SwitchoverRefused`, `Apps::take_out`; heartbeat statuses gain a `yields`
+  flag (the promoting byte becomes flags). The gate logs `singleton
+  stopped`, which `paddock-soak check` reads. The TLA+ model gains the
+  action (`Switchover`, `MaxSwitchovers`).
+- The TLA+ failover model's leases were zero (found 2026-10-15): with
+  `Lease = 3`, `Margin = 1` and `Delay = 1` every lease came from a frame two
+  ticks old, so since 2026-10-11 no run checked two leased runners. Layer 2
+  configurations now use `Lease = 4`, and `L2_Vacuity` must find a leased
+  runner (`docs/tla/VERIFICATION.md`, bug 5).
 - `paddock failover --watch` (ROADMAP D11, step 3): a line now and one
   per leadership change (role, epoch, whether singletons may run), JSON
   lines with `--json`, `role=unreachable` while the node cannot be reached;

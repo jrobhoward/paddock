@@ -16,6 +16,7 @@ fn Status____encode_then_decode____round_trips(
     #[case] epoch: u64,
 ) {
     let status = Status {
+        yields: false,
         standing,
         promoting,
         epoch,

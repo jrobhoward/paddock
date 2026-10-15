@@ -219,3 +219,142 @@ async fn passivation____every_slot_held_by_an_idle_instance____one_passivates_ea
         h.kill();
     }
 }
+
+/// A runtime of its own with one Store slot, so a test can hold it.
+fn one_slot(component: &[u8]) -> (Runtime, LoadedApp) {
+    let rt = Runtime::new(RuntimeConfig {
+        max_instances: 1,
+        max_processes: Some(8),
+        ..RuntimeConfig::default()
+    })
+    .unwrap();
+    let app = rt.load(component).unwrap();
+    (rt, app)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn passivation____every_slot_held_by_an_instance_that_never_passivates____start_fails_no_slot()
+ {
+    let (rt, app) = one_slot(&counter(1));
+    let mut never = passivating(&[]);
+    never.passivate_after = None;
+    let holder = rt.spawn(&app, never).unwrap();
+    until_state(&holder, LifecycleState::Active).await;
+    let mut waiting = passivating(&[]);
+    waiting.init_timeout = Duration::from_millis(300);
+
+    let starved = rt.spawn(&app, waiting).unwrap();
+    let reason = starved.wait().await;
+    let metrics = rt.render_metrics();
+
+    assert_eq!(reason, ExitReason::Crashed("no_slot".into()));
+    assert!(
+        metrics.contains("paddock_slot_timeouts_total{app=\"counter\"} 1"),
+        "{metrics}"
+    );
+    holder.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upgrade____no_slot_for_the_new_store____reverts_and_the_old_version_runs() {
+    let (rt, app) = one_slot(&counter(1));
+    let mut never = passivating(&[]);
+    never.passivate_after = None;
+    let h = rt.spawn(&app, never.clone()).unwrap();
+    incs(&h, 2).await;
+    let mut next = never;
+    next.init_timeout = Duration::from_millis(300);
+
+    let result = h.upgrade(&app, next, "1.0.0").await;
+
+    assert_eq!(
+        result,
+        Err(paddock_host::UpgradeError::Instantiate(
+            "no instance slot".into()
+        ))
+    );
+    assert_eq!(ask(&h, "get").await, "1.0.0 count=2");
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn passivation____passivated_and_woken____counted_in_metrics() {
+    let (rt, _) = runtime();
+    let h = spawn(&[]);
+    until_state(&h, LifecycleState::Passive).await;
+
+    let gauge_while_passive = rt.render_metrics();
+    ask(&h, "get").await;
+    let after_wake = rt.render_metrics();
+
+    let value = |text: &str, prefix: &str| -> u64 {
+        text.lines()
+            .find_map(|l| l.strip_prefix(prefix))
+            .map_or(0, |v| v.trim().parse().unwrap())
+    };
+    assert!(
+        value(
+            &gauge_while_passive,
+            "paddock_instances_passive{app=\"counter\"}"
+        ) >= 1
+    );
+    assert!(value(&after_wake, "paddock_passivations_total{app=\"counter\"}") >= 1);
+    assert!(value(&after_wake, "paddock_wake_seconds_count{app=\"counter\"}") >= 1);
+    h.kill();
+}
+
+/// An SDK app with a watch and a group membership, passivated: a change
+/// notice and a publish each wake it, and its state, kept by its own
+/// `save_snapshot`, carries the notices across.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn passivation____sdk_app_watching_and_in_a_group____woken_by_notice_and_publish() {
+    use paddock_bundle::manifest::{AccessMode, Capability, Durability, GroupsScope};
+    let rt = Runtime::new(RuntimeConfig {
+        max_instances: 4,
+        max_processes: Some(8),
+        buckets: std::collections::BTreeMap::from([(
+            "board".to_string(),
+            paddock_host::SharedBucket {
+                durability: Durability::Memory,
+                quota: None,
+            },
+        )]),
+        ..RuntimeConfig::default()
+    })
+    .unwrap();
+    let app = rt.load(&common::fixture("paddock_fixture_sdk")).unwrap();
+    let spec = |passivate: bool| {
+        let mut s = InstanceSpec {
+            callback_deadline: Duration::from_secs(5),
+            granted: [Capability::KeyValue, Capability::Groups].into(),
+            ..InstanceSpec::new("sdk", "1.0.0")
+        };
+        s.services.keyvalue.shared =
+            std::collections::BTreeMap::from([("board".to_string(), AccessMode::Rw)]);
+        s.services.groups.scope = GroupsScope {
+            join: vec!["g".into()],
+            publish: vec!["g".into()],
+        };
+        s.passivate_after = passivate.then_some(Duration::from_millis(30));
+        s
+    };
+    let sleeper = rt.spawn(&app, spec(true)).unwrap();
+    let writer = rt.spawn(&app, spec(false)).unwrap();
+    ask(&sleeper, "watch:board:k").await;
+    ask(&sleeper, "join:g").await;
+    until_state(&sleeper, LifecycleState::Passive).await;
+
+    let members = ask(&writer, "members:g").await;
+    ask(&writer, "set:board:k:1").await;
+    until_state(&sleeper, LifecycleState::Passive).await;
+    ask(&writer, "publish:g:hello").await;
+    until_state(&sleeper, LifecycleState::Passive).await;
+    let changes = ask(&sleeper, "changes").await;
+    let received = ask(&sleeper, "received").await;
+
+    assert!(members.contains(&sleeper.pid().text()), "{members}");
+    assert!(changes.starts_with("k@"), "{changes}");
+    assert_eq!(received, "hello");
+    sleeper.kill();
+    writer.kill();
+}

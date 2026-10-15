@@ -252,6 +252,12 @@ pub struct Instances {
     pub max: Option<u32>,
     /// How a pool picks an instance.
     pub routing: Routing,
+    /// Passivate an instance after this long with nothing to do: its state
+    /// is kept as a snapshot and its Store dropped, and the next message
+    /// wakes it with `load-snapshot` of its own version. Only for an app
+    /// whose `load-snapshot` reads its own snapshots. Unset: never.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passivate_after_ms: Option<u64>,
 }
 
 impl Instances {
@@ -275,6 +281,9 @@ impl Instances {
             && max < min
         {
             v.error_at("max", "must be at least min");
+        }
+        if self.passivate_after_ms == Some(0) {
+            v.error_at("passivate_after_ms", "must be at least 1");
         }
     }
 }

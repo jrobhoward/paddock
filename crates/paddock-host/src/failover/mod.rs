@@ -44,7 +44,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use tokio::sync::{Notify, mpsc, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::Instant;
 
 mod node;
@@ -228,6 +228,36 @@ pub enum FailoverMsg {
 pub struct FailoverHandle {
     leadership: watch::Receiver<Leadership>,
     confirm: Arc<Notify>,
+    switchover: mpsc::UnboundedSender<SwitchoverAsk>,
+}
+
+/// A switchover asked of the failover task: to check only, or to do.
+pub(super) struct SwitchoverAsk {
+    pub(super) check_only: bool,
+    pub(super) reply: oneshot::Sender<Result<(), SwitchoverRefused>>,
+}
+
+/// Why a node did not hand over in a planned switchover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SwitchoverRefused {
+    /// Only a primary hands over.
+    #[error("this node is not the primary")]
+    NotPrimary,
+    /// A switchover hands over through the witness's grant; `paths` and
+    /// `operator` pairs have no lease to hand over.
+    #[error("a planned switchover needs arbiter \"witness\"")]
+    NoWitness,
+    /// It runs by an operator's override, without a lease.
+    #[error("this primary runs by an operator's override; it has no lease to hand over")]
+    Overridden,
+    /// No live path says the partner is a standby confirming this node's
+    /// lease, so nobody would take over.
+    #[error("the partner is not heard as a confirming standby")]
+    NoStandby,
+    /// The failover task has ended (the runtime is gone).
+    #[error("failover is not running")]
+    Stopped,
 }
 
 impl FailoverHandle {
@@ -254,6 +284,43 @@ impl FailoverHandle {
     /// never promotes on a later silence.
     pub fn confirm(&self) {
         self.confirm.notify_one();
+    }
+
+    /// A planned switchover (ROADMAP D10b): this node, a primary with a
+    /// lease whose partner is heard as a confirming standby, steps down at
+    /// once and yields; its singletons may no longer run. The standby, on
+    /// hearing the yield, asks the witness at once instead of after hearing
+    /// nothing for the node timeout, and the witness grants by its usual
+    /// rule: once the lease plus margin has passed since the standby's last
+    /// confirmation. This node rejoins as the new primary's standby; if
+    /// nobody takes over, it may ask to resume a lease after a down node
+    /// would. Stop the singletons gracefully first, while the lease holds:
+    /// the step down only stops them running guest code.
+    ///
+    /// # Errors
+    ///
+    /// [`SwitchoverRefused`] when this node is not a primary with a lease
+    /// and a confirming standby, or failover has stopped.
+    pub async fn switchover(&self) -> Result<(), SwitchoverRefused> {
+        self.ask_switchover(false).await
+    }
+
+    /// Whether [`FailoverHandle::switchover`] would hand over now, without
+    /// doing it: to check before stopping the singletons.
+    ///
+    /// # Errors
+    ///
+    /// As for [`FailoverHandle::switchover`].
+    pub async fn check_switchover(&self) -> Result<(), SwitchoverRefused> {
+        self.ask_switchover(true).await
+    }
+
+    async fn ask_switchover(&self, check_only: bool) -> Result<(), SwitchoverRefused> {
+        let (reply, answer) = oneshot::channel();
+        self.switchover
+            .send(SwitchoverAsk { check_only, reply })
+            .map_err(|_| SwitchoverRefused::Stopped)?;
+        answer.await.unwrap_or(Err(SwitchoverRefused::Stopped))
     }
 }
 
@@ -407,6 +474,8 @@ impl Shared {
 struct Status {
     standing: Standing,
     promoting: bool,
+    /// Stepped down to hand over, in a planned switchover.
+    yields: bool,
     epoch: u64,
     stamp: u64,
     echo: u64,
@@ -420,7 +489,9 @@ impl Status {
                 Standing::Standby => 2,
                 Standing::Down => 3,
             },
-            u8::from(self.promoting),
+            // Flags: promoting, then yields. A node that knows only the
+            // first reads a yielding node as not promoting, which it is not.
+            u8::from(self.promoting) | (u8::from(self.yields) << 1),
         ];
         out.extend_from_slice(&self.epoch.to_le_bytes());
         out.extend_from_slice(&self.stamp.to_le_bytes());
@@ -429,7 +500,7 @@ impl Status {
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
-        let (&[standing, promoting], rest) = bytes.split_first_chunk::<2>()?;
+        let (&[standing, flags], rest) = bytes.split_first_chunk::<2>()?;
         let (epoch, rest) = rest.split_first_chunk::<8>()?;
         let (stamp, rest) = rest.split_first_chunk::<8>()?;
         let echo: &[u8; 8] = rest.try_into().ok()?;
@@ -440,7 +511,8 @@ impl Status {
                 3 => Standing::Down,
                 _ => return None,
             },
-            promoting: promoting == 1,
+            promoting: flags & 1 != 0,
+            yields: flags & 2 != 0,
             epoch: u64::from_le_bytes(*epoch),
             stamp: u64::from_le_bytes(*stamp),
             echo: u64::from_le_bytes(*echo),
@@ -499,6 +571,24 @@ impl PartnerView {
             .max()
     }
 
+    /// The partner yields (a planned switchover): a live path says it
+    /// stepped down to hand over, and none says it is primary.
+    fn yielding(&self) -> bool {
+        self.primary(false).is_none()
+            && self
+                .live
+                .iter()
+                .any(|(_, _, s)| s.standing == Standing::Down && s.yields)
+    }
+
+    /// Whether a live path says the partner is a standby confirming this
+    /// node's lease.
+    fn confirming_standby(&self) -> bool {
+        self.live
+            .iter()
+            .any(|(_, _, s)| s.standing == Standing::Standby && !s.promoting)
+    }
+
     /// The partner's highest stamp on a live path.
     fn stamp(&self) -> Option<u64> {
         self.live.iter().map(|(_, _, s)| s.stamp).max()
@@ -553,15 +643,18 @@ impl Runtime {
         let (tx, leadership) = watch::channel(initial);
         let node = Node::start(rt, cfg, tx);
         let confirm = Arc::new(Notify::new());
+        let (switchover, switchovers) = mpsc::unbounded_channel();
         tokio::spawn(node::run(
             node,
             inbox,
             confirm.clone(),
+            switchovers,
             rt.liveness.interval(),
         ));
         Ok(FailoverHandle {
             leadership,
             confirm,
+            switchover,
         })
     }
 

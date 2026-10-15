@@ -2,9 +2,9 @@
 //! singleton, and exactly one running it after each heal.
 //!
 //! A node runs the singleton from its gate's `singleton starting` record
-//! (written before the app's `init`) until `singleton killed` or `cannot
-//! start singleton`, or until its process is killed, exits or is started
-//! again. Time while the process is stopped (`SIGSTOP`) does not count: it
+//! (written before the app's `init`) until `singleton killed`, `singleton
+//! stopped` (a planned switchover) or `cannot start singleton`, or until
+//! its process is killed, exits or is started again. Time while the process is stopped (`SIGSTOP`) does not count: it
 //! runs nothing then.
 //!
 //! A singleton instance stops running guest code when its node's lease
@@ -109,7 +109,10 @@ pub(crate) fn log_records(node: u32, app: &str, text: &str) -> Vec<Record> {
                 Mark::CutOff
             } else if line.contains("singleton starting") {
                 Mark::Start
-            } else if line.contains("singleton killed") || line.contains("cannot start singleton") {
+            } else if line.contains("singleton killed")
+                || line.contains("singleton stopped")
+                || line.contains("cannot start singleton")
+            {
                 Mark::Stop
             } else {
                 return None;

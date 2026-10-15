@@ -28,16 +28,17 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Next
 
-Stages 1 to 3 are done (2026-10-13); stage 4 is under way. D10, C6, D7, D8, D5, D6 and D4 are done (2026-10-14), and C4, D3, D11, D9 (spike S11) and B7 (2026-10-15).
+Stages 1 to 4 are done (stage 4 on 2026-10-15); stage 5 is under way, with E7 done.
 
-1. **D10b**, a planned switchover, the last item of stage 4; then stage 5 in the order listed.
+1. Stage 5 in the order listed.
+2. On an idle machine: V3's two-fault simulations, B8, and G2 on the Pi.
 
 ## Order
 
 ```
 1 Tooling ─► 2 Review ─► 3 Rework ─► V2 ─► 4 Cluster ─► 5 Platform features ─► 6 Platforms and benchmarks ─► 7 Docs
    (S)         (M)        (M–L)     (20 h)     (L)              (L)                       (M)                  (M)
-  done        done        done       done      next
+  done        done        done       done      done             next
 ```
 
 - **Tools first.** The checks, the soak runner and the benchmark runner are each one command, so every later stage runs them instead of re-deriving them.
@@ -60,28 +61,28 @@ Done on 2026-10-13: every item from stage 2 (CHANGELOG), and V2, the two-fault e
 
 ### Verification of failover
 
-- **V1 The rule for failover changes.** A change to a transition in `failover/` updates the matching action in `FailoverL2.tla` (CLAUDE.md). Before it lands, rerun the configurations it can affect: `L2_Crashes_Fixed1` (about 20 minutes) for anything touching restarts, epochs or the witness, and `L2_Links_Fixed_holds1` (about 2.5 hours) for heartbeats, leases or links. Random simulation of the two-fault configurations runs for at least 20 minutes. Record the results in VERIFICATION.md.
+- **V1 The rule for failover changes.** A change to a transition in `failover/` updates the matching action in `FailoverL2.tla` (CLAUDE.md). Before it lands, rerun the configurations it can affect: `L2_Crashes_Fixed1` (about 20 minutes) for anything touching restarts, epochs or the witness, and `L2_Links_Fixed_holds1` (about 2.5 hours) for heartbeats, leases or links. Random simulation of the two-fault configurations runs for at least 20 minutes. The vacuity checks, `L2_Vacuity` and `L2_Switchover_Reach`, must still fail (seconds each): a model in which nothing runs on a lease passes every safety property (VERIFICATION.md, bug 5). Record the results in VERIFICATION.md.
+- [ ] **V3 Two faults, by simulation.** V2's exhaustive two-fault runs had `Lease = 3`, at which no lease in the model was positive (VERIFICATION.md, bug 5). Paddock's guarantee is any single failure, plus a planned switchover (decided 2026-10-15), which the one-fault configurations check exhaustively; two faults at once are checked by random simulation only: 30 minutes each of `L2_NoSerial`, `L2_Crashes_Fixed`, `L2_Links_Fixed`, `L2_Switchover_Crashes` and `L2_Switchover_Links` at `Lease = 4`, on an idle machine. Exhaustive two-fault runs (days at `Lease = 4`) only if a site needs that guarantee.
 - **V2 The two-fault runs.** `L2_NoSerial` (about 1 hour), `L2_Links_Fixed_loss2` (about 12 hours) and `L2_Crashes_Fixed` (about 18 hours, 250 GB of disk), exhaustive, on an idle machine, each with a fingerprint polynomial (`-fp`) not used before. Rerun before Phase 2b is declared done if `failover/` changed after 2026-10-13, and before a release.
 
 ## Stage 4: Cluster (L)
 
 DESIGN.md "Distribution", on the transport, membership and failover that exist. No item needs consensus; Raft (or HAppliance-style replication) comes with Phase 3's replicated buckets.
 
-Done on 2026-10-15: D11, reaching the primary without root: the standby redirects (`partner_url`) or forwards (`standby = "forward"`, an app call over the cluster; both decided 2026-10-15) a singleton's requests, and `paddock failover --watch` (a long poll, decided 2026-10-15) lets an agent move a virtual IP (OPERATIONS.md; keepalived documented as the alternative). D3, remote pids, calls, casts, links and monitors: an hour of `scripts/soak.sh --only cluster` on an idle machine (six runs of 10 minutes, seeds 531272780 to 531272785, all passed), and the throughput between nodes (B7: about 9,200 sequential calls per second over QUIC on loopback, 62,000 with 16 callers; BASELINE.md). C4, spike S12's runs of the fixed model ([spikes/s12](../spikes/s12/README.md)): full send queues and the liveness properties pass exhaustively; the configs with closes and timeouts, and with crashes, show no violation up to about 840 and 890 million distinct states, stopped after 15 hours each at the time box. D9, spike S11, passivation ([spikes/s11](../spikes/s11/README.md); the prototype is in `paddock-host`, off by default, decided 2026-10-15; E7 exposes it).
+Done on 2026-10-15: D10b, a planned switchover (`paddock failover switchover`): the primary stops its singletons gracefully and yields, and the standby asks the witness at once; the witness is unchanged (decided 2026-10-15). Checking it found that the TLA+ model's leases had been zero since 2026-10-11 (VERIFICATION.md, bug 5); with `Lease = 4`, any single failure plus a switchover passes exhaustively, with and without a serial line, and two faults pass random simulation (the guarantee decided 2026-10-15). D11, reaching the primary without root: the standby redirects (`partner_url`) or forwards (`standby = "forward"`, an app call over the cluster; both decided 2026-10-15) a singleton's requests, and `paddock failover --watch` (a long poll, decided 2026-10-15) lets an agent move a virtual IP (OPERATIONS.md; keepalived documented as the alternative). D3, remote pids, calls, casts, links and monitors: an hour of `scripts/soak.sh --only cluster` on an idle machine (six runs of 10 minutes, seeds 531272780 to 531272785, all passed), and the throughput between nodes (B7: about 9,200 sequential calls per second over QUIC on loopback, 62,000 with 16 callers; BASELINE.md). C4, spike S12's runs of the fixed model ([spikes/s12](../spikes/s12/README.md)): full send queues and the liveness properties pass exhaustively; the configs with closes and timeouts, and with crashes, show no violation up to about 840 and 890 million distinct states, stopped after 15 hours each at the time box. D9, spike S11, passivation ([spikes/s11](../spikes/s11/README.md); the prototype is in `paddock-host`, off by default, decided 2026-10-15; E7 exposes it).
 
 Done on 2026-10-14: D4, process groups across nodes as OTP's `pg` (every group spans the cluster; `publish` checks the messaging ACLs per member; decided 2026-10-14), with tutorial chapter 3 as its demo. D6, the remote admin API over TLS with pinned keys, as the cluster (decided 2026-10-14; SECURITY.md lists its gaps: no read-only operators, no connection limit). D5, messaging ACLs (receiving node checks both lists from a stamp on each frame; calls, casts, exits and links; app names only; decided 2026-10-14; MANIFEST.md `messaging_acl`, SECURITY.md). D8, backpressure between nodes: a congested link follows the full-mailbox rule, notices exempt (decided 2026-10-14; DESIGN.md, "Backpressure between nodes"). D7, health checks as calls with a reserved schema (`paddock/health`, answered by the SDK's `App::health`; decided 2026-10-14 over a new export, so the app world stays frozen; MANIFEST.md `health`). C6, the four rules from S12 that keep both sides of a link or monitor in step (CHANGELOG; DESIGN.md, "Agreement on links and monitors"). D10, an hour of `scripts/soak.sh --only failover` (six runs of 10 minutes, seeds 394302291 to 394302296, all passed; TLC ran on 3 of the 16 cores meanwhile, at low priority). The criterion with the serial line up (network cut: nobody promotes) needs a serial path between processes, so it moved to F5 with the serial heartbeat on real hardware.
-
-- [ ] **D10b Planned switchover.** `paddock failover switchover`: the primary stands down and the standby takes over without waiting for a node timeout, for maintenance and to swap roles between hot-standby instances on purpose. A new transition, so V1 applies; the model gains the action first.
 
 Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an hour, and D10's exit criteria hold under it. Met on 2026-10-15 (D3's soak hour; D10's failover hour on 2026-10-14), except D10's criterion with the serial line up, which needs a serial path between nodes and moved to F5.
 
 ## Stage 5: Platform features (L)
 
+Done on 2026-10-15: E7, passivation for apps (`instances.passivate_after_ms`, node `max_processes`; a deploy-time budget for instances that never passivate and a bounded wait for a Store slot, and an upgrade's second Store takes one, decided 2026-10-15; MANIFEST.md).
+
 - [ ] **E5 SQL datasources (Postgres)** (`paddock:sql`), brought forward from Phase 3. The host owns a connection pool per named datasource (`tokio-postgres`, permissive license), configured per node; the manifest requests a datasource and a connection cap; credentials come from E3's secrets. Built in by default (Q1) but idle without a datasource in node config, so a Pi without Postgres is unaffected. Tests and a tutorial chapter run against a scratch Postgres started as an ordinary user (`initdb` and `pg_ctl` in a temporary directory, or a rootless container), and are skipped when none is available. An app can also ship its own driver over `wasi:sockets` later (Phase 3 sockets).
 - [ ] **P1 Cluster shell**, after D6: a `paddock` session to any node that lists members, follows logs and events, and runs admin commands; logs and events stream over D6 as chunked HTTP responses.
 - [ ] **F5 Serial extension.** Named serial ports declared by apps and bound to device paths in node config; the host owns the tty and offers a byte stream or framed messages; its own crate (A5). Then D10's serial heartbeat path on real hardware, the soak's failover runs with the serial line up and cut (network cut: nobody promotes), and Modbus RTU.
 - [ ] **E2 HTTP egress** (`wasi:http/outgoing-handler`) through a filtering proxy with an allow-list and pooled connections (S15: wasmtime's default sender opens a connection per request).
-- [ ] **E7 Passivation for apps** (after S11, whose prototype is in `paddock-host`, off by default). A manifest field opts an app in (`instances.passivate_after_ms`; its `load-snapshot` must read its own snapshots), node config sets `max_processes` above `max_instances`, and metrics count passivations, wakes and wake time. Settle what an instance that needs a Store slot does when every slot is held by instances that cannot passivate (today it waits), and whether an upgrade's second Store takes a slot. Test an SDK app, a watch and a group membership across a passivation. Find what the 25 KiB per passivated instance holds.
 - [ ] **F4 Batching.** Guidance and an SDK helper for sending many updates in one message (a cast costs about 1.3 µs whatever it carries); points per second end to end with `pool_load`.
 - [ ] **H5 Ordered range scans** (ETS `ordered_set`), if shared-bucket users need them.
 - [ ] **E4b OTLP push** beside the Prometheus endpoint, when a site needs push. Review the opentelemetry crates with cargo-deny first.
@@ -101,7 +102,7 @@ On an idle machine only.
 
 Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run is BASELINE.md's 2026-10-15 section, which replaces the numbers flagged provisional on 2026-10-09 and records Modbus throughput.
 
-- [ ] **B8 What B7 left unexplained** (BASELINE.md, 2026-10-15). A call between nodes takes about 106 µs over QUIC on loopback against 3.5 µs on one node: attribute it (a stream per frame, encryption, wake-ups across tasks). The HTTP ingress served 82,000 requests per second at 32 connections where S15's host-hyper shape served 110,500 in the same run. `modbus_load` stored fewer points with 8 workers than with 4. And the cost of the per-callback metric counters, which needs a build without them.
+- [ ] **B8 What B7 left unexplained** (BASELINE.md, 2026-10-15). A call between nodes takes about 106 µs over QUIC on loopback against 3.5 µs on one node: attribute it (a stream per frame, encryption, wake-ups across tasks). The HTTP ingress served 82,000 requests per second at 32 connections where S15's host-hyper shape served 110,500 in the same run. `modbus_load` stored fewer points with 8 workers than with 4. And the cost of the per-callback metric counters, which needs a build without them. And whether to box the guest callback futures in the instance loop: the largest left in an instance's task (7.8 KiB of a passivated instance's 19 KiB, 2026-10-15), at the cost of an allocation per callback, which needs `baseline` to weigh.
 - [ ] **G2 Raspberry Pi 5 baseline**: `scripts/bench.sh` on the Pi, and instances per GB with the dense profile.
 - [ ] **G3 Linux arm64 in CI.**
 - [ ] **G5 Dedicated workers and CPU budgets** for latency-critical instances: priority classes mapped to separate worker sets, a CPU budget per period per app (`CallbackClock`), and a rule for priority inversion. Measure first (S15 saw 10–47 µs over native at one connection that client-side timing could not explain).
@@ -219,7 +220,7 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | S8 | Guest versus native speed | 1.0x to 2.4x for compute, about 2 µs per call ([spikes/s8](../spikes/s8/README.md)) |
 | S9 | Debugging guests | Parked (Investigations) |
 | S10 | New `info` cases and old guests | Done; `host-event` reserved ([spikes/s10](../spikes/s10/README.md)) |
-| S11 | Passivation | Works, off by default; 100,000 instances on 1,000 Store slots, wakes in about 64 to 101 µs; E7 exposes it ([spikes/s11](../spikes/s11/README.md)) |
+| S11 | Passivation | Works, off by default; 100,000 instances on 1,000 Store slots, wakes in about 64 to 101 µs; apps opt in since E7 ([spikes/s11](../spikes/s11/README.md)) |
 | S12 | TLA+ model of remote links and monitors | Four ways for the nodes to disagree, each fixed by a rule (done in C6); with them no violation found: full queues and liveness exhaustive, closes and crashes up to about 840 and 890 million states ([spikes/s12](../spikes/s12/README.md)) |
 | S13 | Host-owned TCP listeners and guest streams | Guest streams at native throughput with an instance per connection ([spikes/s13](../spikes/s13/README.md)) |
 | S14 | Storage in the guest versus host services | About 140 ns per host import; keyvalue reads 1.2 µs over native ([spikes/s14](../spikes/s14/README.md)) |

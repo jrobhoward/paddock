@@ -14,8 +14,9 @@
 //!
 //! Each start logs `singleton starting` before the app's `init` runs and
 //! `singleton started` or `cannot start singleton` after; each kill logs
-//! `singleton killed` once it is done. `scripts/soak.sh` reads these
-//! records to check that no two nodes run a singleton at once.
+//! `singleton killed` once it is done, and each graceful stop for a planned
+//! switchover `singleton stopped`. `scripts/soak.sh` reads these records to
+//! check that no two nodes run a singleton at once.
 
 use std::sync::Mutex;
 use std::sync::PoisonError;
@@ -99,6 +100,11 @@ impl Gate {
     /// Whether `name` is a singleton this node holds.
     pub(super) fn holds(&self, name: &str) -> bool {
         self.held().iter().any(|h| h.name == name)
+    }
+
+    /// The held singletons' current deployments, in deploy order.
+    pub(super) fn deployments(&self) -> Vec<AppDeployment> {
+        self.held().iter().map(|h| h.current.clone()).collect()
     }
 
     /// The held singletons, in deploy order.
@@ -277,6 +283,27 @@ impl Gate {
         if self.may_run.load(Ordering::Relaxed) && !self.closed.load(Ordering::Relaxed) {
             self.start_held().await;
         }
+    }
+
+    /// Stop the running singletons gracefully, in reverse deploy order, for
+    /// a planned switchover: each runs `terminate` while the lease still
+    /// holds. None starts again until the leadership allows it anew
+    /// ([`Gate::restore`] if the switchover is refused after all).
+    pub(super) async fn hand_over(&self) {
+        let _op = self.op.lock().await;
+        self.may_run.store(false, Ordering::Relaxed);
+        let names: Vec<String> = self.held().iter().map(|h| h.name.clone()).collect();
+        for name in names.iter().rev() {
+            if self.apps.take_out(name).await {
+                tracing::info!(app = %name, "singleton stopped: planned switchover");
+            }
+        }
+    }
+
+    /// After a switchover refused once the singletons were stopped: start
+    /// them again if the leadership still allows.
+    pub(super) async fn restore(&self, may_run: bool) {
+        self.set(may_run).await;
     }
 
     /// Start no more singletons: the node is shutting down.

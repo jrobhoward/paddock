@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use paddock_host::failover::FailoverMsg;
 use paddock_host::failover::{
-    Arbiter, FailoverConfig, FailoverHandle, Leadership, Standing, WitnessConfig, WitnessPersist,
+    Arbiter, FailoverConfig, FailoverHandle, Leadership, Standing, SwitchoverRefused,
+    WitnessConfig, WitnessPersist,
 };
 use paddock_host::transport::Frame;
 use paddock_host::transport::memory::Faults;
@@ -627,6 +628,22 @@ fn operator____partner_silent____awaits_confirmation_then_promotes() {
 /// `PADDOCK_SIM_FAILOVER_FIRST_SEED` (default 0).
 #[test]
 fn failover____random_faults____never_two_runners_one_after_healing() {
+    random_faults(false);
+}
+
+/// As [`failover____random_faults____never_two_runners_one_after_healing`],
+/// with planned switchovers among the faults (ROADMAP D10b).
+#[test]
+fn failover____random_faults_and_switchovers____never_two_runners_one_after_healing() {
+    random_faults(true);
+}
+
+/// Random faults on links, the serial line and the witness for a while,
+/// and with `switchovers` a planned switchover now and then, then
+/// everything healed: never two runners, and one runner at the end.
+/// `PADDOCK_SIM_FAILOVER_SEEDS` seeds (default 16) from
+/// `PADDOCK_SIM_FAILOVER_FIRST_SEED` (default 0).
+fn random_faults(switchovers: bool) {
     let number = |name: &str, default: u64| {
         std::env::var(name)
             .ok()
@@ -650,7 +667,7 @@ fn failover____random_faults____never_two_runners_one_after_healing() {
             let start = Instant::now();
             for _ in 0..30 {
                 let (x, y) = [(1, 2), (1, 3), (2, 3)][usize::try_from(next(3)).unwrap()];
-                let what = match next(6) {
+                let what = match next(if switchovers { 8 } else { 6 }) {
                     0 => {
                         sim.mesh.stall(x, y);
                         format!("stall {x}-{y}")
@@ -666,6 +683,16 @@ fn failover____random_faults____never_two_runners_one_after_healing() {
                     3 => {
                         sim.mesh.heal_path(1, 2, SERIAL);
                         "heal serial".to_string()
+                    }
+                    6 | 7 => {
+                        let mut said = Vec::new();
+                        for n in 1..=2 {
+                            let r = pair.handles[usize::try_from(n - 1).unwrap()]
+                                .switchover()
+                                .await;
+                            said.push(format!("{n}:{r:?}"));
+                        }
+                        format!("switchover {said:?}")
                     }
                     _ => {
                         sim.mesh.heal(x, y);
@@ -707,6 +734,49 @@ fn failover____random_faults____never_two_runners_one_after_healing() {
     }
 
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A planned switchover (ROADMAP D10b): the standby runs the singleton
+/// within a lease and its margin, without a node timeout, the old primary
+/// rejoins as its standby, and the two never run at once. A standby asked
+/// to hand over refuses.
+#[test]
+fn switchover____healthy_pair____standby_takes_over_within_a_lease_old_primary_rejoins() {
+    let (refused, accepted, took, one, two, overlap) = simulate(51, 3, |sim| async move {
+        let pair = start(&sim, witness());
+        pass(3000).await;
+
+        let refused = pair.handles[1].switchover().await;
+        let asked = Instant::now();
+        let accepted = pair.handles[0].switchover().await;
+        pass(4000).await;
+
+        let took = pair.running_since(2).map(|t| t.duration_since(asked));
+        (
+            refused,
+            accepted,
+            took,
+            pair.of(1),
+            pair.of(2),
+            pair.overlap(),
+        )
+    });
+
+    assert_eq!(refused, Err(SwitchoverRefused::NotPrimary));
+    assert_eq!(accepted, Ok(()));
+    let took = took.unwrap();
+    let bound = LEASE + MARGIN * 2 + HEARTBEAT * 4;
+    assert!(took <= bound, "took {took:?}, bound {bound:?}");
+    assert!(took < takeover_bound(), "no node timeout: {took:?}");
+    assert_eq!(
+        (two.standing, two.epoch, two.may_run),
+        (Standing::Primary, 2, true)
+    );
+    assert_eq!(
+        (one.standing, one.epoch, one.may_run),
+        (Standing::Standby, 2, false)
+    );
+    assert_eq!(overlap, None);
 }
 
 /// Beats the standby sent while still confirming are held by a stall and

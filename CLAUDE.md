@@ -222,7 +222,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   between every node's `ps` links and monitors, `chaos` the chaos example on
   one node, and `check` reads a failover run's events and node logs for
   any moment when both nodes ran the singleton. It reads the gate's
-  `singleton starting` and `singleton killed` log records, the failover
+  `singleton starting`, `singleton killed` and `singleton stopped` log
+  records, the failover
   task's `failover lease ended` (`ended_ms_ago`) and `failover lease
   extended` (debug, target `paddock::lease`: `until_ms`, `slack_ms`), and an
   instance's `crashed: lease_ended` exit; changing their wording breaks the

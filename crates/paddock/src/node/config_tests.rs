@@ -446,3 +446,21 @@ fn NodeConfig____incoming_calls_max____10000_by_default_and_settable() {
     assert_eq!(default.cluster.incoming_calls_max, 10_000);
     assert_eq!(set.cluster.incoming_calls_max, 50);
 }
+
+#[test]
+fn NodeConfig____max_processes____read_or_refused_below_max_instances() {
+    let read =
+        NodeConfig::from_toml_str("data_dir = \"/d\"\nmax_instances = 100\nmax_processes = 5000\n")
+            .unwrap();
+    let below =
+        NodeConfig::from_toml_str("data_dir = \"/d\"\nmax_instances = 100\nmax_processes = 50\n")
+            .unwrap_err();
+
+    assert_eq!(read.max_processes, Some(5000));
+    assert!(
+        below
+            .to_string()
+            .contains("max_processes must be at least max_instances"),
+        "{below}"
+    );
+}

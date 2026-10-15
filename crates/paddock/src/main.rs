@@ -101,6 +101,12 @@ enum FailoverCommand {
     /// standby promotes itself once the partner's lease has run out. With
     /// arbiter "operator", or a witness that cannot be reached.
     Confirm,
+    /// Hand over on purpose (maintenance): this primary stops its
+    /// singletons gracefully, and its standby takes over within about a
+    /// lease, without waiting for a node timeout. This node then rejoins as
+    /// the standby. Refused unless this node is the primary, its arbiter is
+    /// a witness and its partner is heard as a standby.
+    Switchover,
 }
 
 #[derive(Debug, Subcommand)]
@@ -552,6 +558,10 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
             action: Some(FailoverCommand::Confirm),
             ..
         } => done(json, client.confirm_failover().await),
+        Command::Failover {
+            action: Some(FailoverCommand::Switchover),
+            ..
+        } => done(json, client.switchover().await),
         Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
         Command::Cast { message } => {
             let (target, content_type, body) = message.into_parts()?;

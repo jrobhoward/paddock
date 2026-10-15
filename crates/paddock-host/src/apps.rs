@@ -389,6 +389,22 @@ impl Apps {
         true
     }
 
+    /// Stop every instance of `name` gracefully (each runs `terminate`
+    /// within its shutdown timeout; no restart) and take it out of the set,
+    /// whatever depends on it: for a singleton handed over in a planned
+    /// switchover, while its lease still holds. Returns whether `name` was
+    /// in the set.
+    pub async fn take_out(&self, name: &str) -> bool {
+        let Some(app) = self.set().apps.get(name).cloned() else {
+            return false;
+        };
+        end_app(&self.rt, &app, false).await;
+        let mut set = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        set.order.retain(|n| n != name);
+        set.apps.remove(name);
+        true
+    }
+
     /// Stop an app and take it out of the set.
     ///
     /// # Errors

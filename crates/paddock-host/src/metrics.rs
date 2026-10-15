@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::instance::InstanceHandle;
+use crate::lifecycle::LifecycleState;
 use crate::message::ExitReason;
 
 /// Histogram buckets when an app gives none, and for callback time (the
@@ -347,6 +348,11 @@ pub(crate) struct AppStats {
     pub(crate) dropped: AtomicU64,
     /// Instance exits by reason class.
     exits: Mutex<BTreeMap<&'static str, u64>>,
+    /// Passivations, wakes and their time (spike S11, ROADMAP E7).
+    passivations: AtomicU64,
+    wake_time: Histogram,
+    /// Starts, wakes and upgrades that found no Store slot in time.
+    slot_timeouts: AtomicU64,
 }
 
 impl Default for AppStats {
@@ -356,6 +362,9 @@ impl Default for AppStats {
             guest_time: Histogram::new(&CALLBACK_BUCKETS),
             dropped: AtomicU64::new(0),
             exits: Mutex::default(),
+            passivations: AtomicU64::new(0),
+            wake_time: Histogram::new(&CALLBACK_BUCKETS),
+            slot_timeouts: AtomicU64::new(0),
         }
     }
 }
@@ -370,6 +379,22 @@ impl AppStats {
         };
         self.callbacks[i].fetch_add(1, Ordering::Relaxed);
         self.guest_time.record(guest.as_secs_f64());
+    }
+
+    /// An instance was passivated.
+    pub(crate) fn passivated(&self) {
+        self.passivations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// A passivated instance woke, in `took` (a slot, a Store, and
+    /// `load-snapshot`).
+    pub(crate) fn woke(&self, took: Duration) {
+        self.wake_time.record(took.as_secs_f64());
+    }
+
+    /// A start, wake or upgrade found no Store slot in time.
+    pub(crate) fn slot_timeout(&self) {
+        self.slot_timeouts.fetch_add(1, Ordering::Relaxed);
     }
 
     /// An instance exited with `reason`.
@@ -435,12 +460,17 @@ impl Metrics {
             .collect();
         let mut live: BTreeMap<&str, (u64, u64, u64)> = BTreeMap::new();
         let mut live_dropped: BTreeMap<&str, u64> = BTreeMap::new();
+        let mut passive: BTreeMap<&str, u64> = BTreeMap::new();
         for h in instances {
             let e = live.entry(h.app()).or_default();
             e.0 += 1;
             e.1 += h.memory_bytes();
             e.2 += u64::try_from(h.queued()).unwrap_or(u64::MAX);
             *live_dropped.entry(h.app()).or_default() += h.dropped_messages();
+            let p = passive.entry(h.app()).or_default();
+            if h.state() == LifecycleState::Passive {
+                *p += 1;
+            }
         }
         let mut out = String::new();
         let header = |out: &mut String, name: &str, kind: &str, help: &str| {
@@ -532,6 +562,60 @@ impl Metrics {
                     escape(app)
                 );
             }
+        }
+        header(
+            &mut out,
+            "paddock_instances_passive",
+            "gauge",
+            "Live instances passivated: no Store, state in a snapshot.",
+        );
+        for (app, n) in &passive {
+            let _ = writeln!(
+                out,
+                "paddock_instances_passive{{app=\"{}\"}} {n}",
+                escape(app)
+            );
+        }
+        header(
+            &mut out,
+            "paddock_passivations_total",
+            "counter",
+            "Instances passivated.",
+        );
+        for (app, (_, s)) in &apps {
+            let _ = writeln!(
+                out,
+                "paddock_passivations_total{{app=\"{}\"}} {}",
+                escape(app),
+                s.passivations.load(Ordering::Relaxed)
+            );
+        }
+        header(
+            &mut out,
+            "paddock_wake_seconds",
+            "histogram",
+            "Time to wake a passivated instance: a Store slot, a Store and load-snapshot.",
+        );
+        for (app, (_, s)) in &apps {
+            s.wake_time.write(
+                &mut out,
+                "paddock_wake_seconds",
+                &format!("app=\"{}\"", escape(app)),
+            );
+        }
+        header(
+            &mut out,
+            "paddock_slot_timeouts_total",
+            "counter",
+            "Starts, wakes and upgrades that found no Store slot within init_timeout.",
+        );
+        for (app, (_, s)) in &apps {
+            let _ = writeln!(
+                out,
+                "paddock_slot_timeouts_total{{app=\"{}\"}} {}",
+                escape(app),
+                s.slot_timeouts.load(Ordering::Relaxed)
+            );
         }
         for (app, (m, _)) in &apps {
             m.write(&mut out, app);

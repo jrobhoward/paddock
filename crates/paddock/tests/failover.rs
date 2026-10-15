@@ -361,6 +361,85 @@ async fn failover_watch____promotion_node_loss_and_return____a_line_each() {
     }
 }
 
+/// ROADMAP D10b: `paddock failover switchover` on the primary stops its
+/// singleton gracefully and the standby runs it within about a lease,
+/// without a node timeout; the old primary rejoins as standby. On a
+/// standby it is refused, and nothing stops.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn switchover____on_the_primary____standby_runs_the_singleton_old_primary_rejoins() {
+    let dir = tempfile::Builder::new()
+        .prefix("pfs")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let app = bundle(
+        &signer,
+        "leader",
+        "1.0.0",
+        &fixture("paddock_fixture_chaos"),
+        fast(serde_json::json!({ "placement": { "mode": "singleton" } })),
+        &[],
+    );
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &member(1, dir.path(), &peers, &a1, &a3)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &member(2, dir.path(), &peers, &a2, &a3)).await;
+    n1.client.deploy(app.clone()).await.unwrap();
+    n2.client.deploy(app).await.unwrap();
+    let runs = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move {
+            c.status("leader")
+                .await
+                .is_ok_and(|d| d.summary.status == "running")
+        }
+    };
+    let role = |c: &paddock::api::Client, r: &'static str| {
+        let c = c.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == r) }
+    };
+    until("node 1 runs the singleton", || runs(&n1.client)).await;
+    until("node 2 standby", || role(&n2.client, "standby")).await;
+
+    let on_standby = n2.client.switchover().await;
+    let still_runs = runs(&n1.client).await;
+    // Node 1 hands over once it has heard node 2's beats as a standby,
+    // a heartbeat or so after node 2 says it is one.
+    let mut handed = n1.client.switchover().await;
+    for _ in 0..20 {
+        if handed.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        handed = n1.client.switchover().await;
+    }
+    let asked = std::time::Instant::now();
+    until("node 2 runs the singleton", || runs(&n2.client)).await;
+    let took = asked.elapsed();
+    until("node 1 back as standby", || role(&n1.client, "standby")).await;
+    let n1_now = n1.client.failover().await.unwrap();
+    let log = std::fs::read_to_string(dir.path().join("node-1.log")).unwrap();
+
+    assert_eq!(common::kind(&on_standby.unwrap_err()), "conflict");
+    assert!(still_runs, "a refused switchover stops nothing");
+    assert!(handed.is_ok(), "{handed:?}");
+    // lease + 2 margins + beats = 1 s + 0.4 s + a few 100 ms beats; a
+    // takeover after a crash also waits the 1 s node timeout.
+    assert!(took < Duration::from_millis(2_500), "{took:?}");
+    assert_eq!((n1_now.epoch, n1_now.may_run), (2, false));
+    assert!(
+        log.contains("singleton stopped: planned switchover"),
+        "{log}"
+    );
+    assert!(!runs(&n1.client).await);
+    for p in [&mut n1, &mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
+}
+
 // ------------------------------------------------------------ the gate alone
 
 /// One node of a pair whose partner never runs: with `arbiter`
