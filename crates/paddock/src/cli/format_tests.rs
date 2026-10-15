@@ -149,6 +149,43 @@ fn detail____connection_handler____lists_listeners() {
     );
 }
 
+fn primary() -> paddock::api::FailoverInfo {
+    paddock::api::FailoverInfo {
+        partner: 2,
+        arbiter: "witness 3".into(),
+        role: "primary".into(),
+        epoch: 3,
+        may_run: true,
+        awaiting_confirmation: false,
+        partner_reachable: true,
+        singletons: vec![],
+        generation: 7,
+    }
+}
+
+#[test]
+fn failover_watch____primary____leadership_fields_only() {
+    let info = primary();
+
+    let text = failover_watch(Some(&info), false);
+    let json = failover_watch(Some(&info), true);
+
+    assert_eq!(text, "role=primary epoch=3 may_run=yes");
+    assert_eq!(
+        json,
+        r#"{"awaiting_confirmation":false,"epoch":3,"may_run":true,"role":"primary"}"#
+    );
+}
+
+#[test]
+fn failover_watch____node_unreachable____role_unreachable_may_not_run() {
+    let text = failover_watch(None, false);
+    let json = failover_watch(None, true);
+
+    assert_eq!(text, "role=unreachable may_run=no");
+    assert_eq!(json, r#"{"may_run":false,"role":"unreachable"}"#);
+}
+
 #[test]
 fn failover____standby_waiting____says_how_to_confirm() {
     let info = paddock::api::FailoverInfo {
@@ -160,6 +197,7 @@ fn failover____standby_waiting____says_how_to_confirm() {
         awaiting_confirmation: true,
         partner_reachable: false,
         singletons: vec!["leader".into()],
+        generation: 2,
     };
 
     let out = failover(&info);

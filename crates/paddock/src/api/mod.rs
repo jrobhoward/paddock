@@ -198,6 +198,11 @@ pub struct FailoverInfo {
     pub partner_reachable: bool,
     /// The singleton apps this node holds, in deploy order.
     pub singletons: Vec<String>,
+    /// Raised by every change of the node's leadership (role, epoch,
+    /// whether singletons may run, awaiting a confirmation); pass it back
+    /// as `after` to wait for the next ([`crate::api::Client::failover_after`]).
+    #[serde(default)]
+    pub generation: u64,
 }
 
 /// What a deploy did.

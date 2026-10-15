@@ -150,6 +150,17 @@ impl Node {
             handle.subscribe(),
             self.stop.subscribe(),
         ));
+        let mut changes = handle.subscribe();
+        let (generation, mut stop) = (self.leadership.clone(), self.stop.subscribe());
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    changed = changes.changed() => if changed.is_err() { return },
+                    _ = stop.wait_for(|s| *s) => return,
+                }
+                generation.send_modify(|g| *g += 1);
+            }
+        });
         let _ = self.failover.set(handle);
         Ok(())
     }
@@ -180,7 +191,26 @@ impl Node {
             awaiting_confirmation: now.awaiting_confirmation,
             partner_reachable: self.rt.peer_status(f.partner).is_some_and(|s| s.reachable),
             singletons,
+            generation: *self.leadership.borrow(),
         })
+    }
+
+    /// This node's failover standing once its leadership has changed since
+    /// `after` (a [`FailoverInfo::generation`]), or after `wait` without a
+    /// change: a long poll, for `paddock failover --watch`.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] without `[failover]`.
+    pub async fn failover_after(
+        &self,
+        after: u64,
+        wait: Duration,
+    ) -> Result<FailoverInfo, NodeError> {
+        self.failover()?;
+        let mut generation = self.leadership.subscribe();
+        let _ = tokio::time::timeout(wait, generation.wait_for(|g| *g > after)).await;
+        self.failover()
     }
 
     /// An operator confirms that the partner is gone, so the standby may

@@ -283,12 +283,30 @@ pub(crate) async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
         (&Method::GET, ["v1", "metrics"]) => metrics_text(node.metrics()),
         (&Method::GET, ["v1", "cluster"]) => json(StatusCode::OK, &node.members()),
         (&Method::POST, ["v1", "tls", "reload"]) => respond(node.reload_tls()),
-        (&Method::GET, ["v1", "failover"]) => respond(node.failover()),
+        (&Method::GET, ["v1", "failover"]) => failover(node, &q).await,
         (&Method::POST, ["v1", "failover", "confirm"]) => respond(node.confirm_failover()),
         (&Method::POST, ["v1", "instances", pid, "kill"]) => respond(node.kill(pid).await),
         _ => error(&NodeError::NotFound(format!(
             "no route for {method} {path}"
         ))),
+    }
+}
+
+/// Longest `wait_ms` a failover long poll may ask for.
+const FAILOVER_WAIT_MAX: Duration = Duration::from_secs(60);
+
+/// `GET /v1/failover`, or with `after` (and `wait_ms`, 30 s by default) a
+/// long poll for the next leadership change.
+async fn failover(node: &Node, q: &[(String, String)]) -> Reply {
+    let params =
+        param::<u64>(q, "after").and_then(|after| Ok((after, param::<u64>(q, "wait_ms")?)));
+    match params {
+        Err(e) => error(&e),
+        Ok((None, _)) => respond(node.failover()),
+        Ok((Some(after), wait_ms)) => {
+            let wait = Duration::from_millis(wait_ms.unwrap_or(30_000)).min(FAILOVER_WAIT_MAX);
+            respond(node.failover_after(after, wait).await)
+        }
     }
 }
 

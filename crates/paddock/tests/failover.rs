@@ -270,6 +270,97 @@ async fn failover____primary_process_killed____standby_takes_over_and_old_primar
     }
 }
 
+/// `paddock failover --watch --json` on node 2, read a line at a time.
+struct Watch {
+    _child: tokio::process::Child,
+    lines: tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+}
+
+impl Watch {
+    fn start(socket: &Path) -> Self {
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+            .arg("--socket")
+            .arg(socket)
+            .args(["--json", "failover", "--watch"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        Self {
+            _child: child,
+            lines: tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout)),
+        }
+    }
+
+    /// The next line, as JSON, within 30 s.
+    async fn next(&mut self) -> serde_json::Value {
+        let line = tokio::time::timeout(Duration::from_secs(30), self.lines.next_line())
+            .await
+            .expect("a line within 30 s")
+            .unwrap()
+            .expect("the watch is still running");
+        serde_json::from_str(&line).unwrap()
+    }
+
+    /// Lines until one has `role`; that one.
+    async fn until_role(&mut self, role: &str) -> serde_json::Value {
+        loop {
+            let line = self.next().await;
+            if line["role"] == role {
+                return line;
+            }
+        }
+    }
+}
+
+/// ROADMAP D11, step 3: `paddock failover --watch` prints the standby's
+/// standing, a line when it is promoted, `unreachable` when its node goes,
+/// and the node's standing again once it is back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failover_watch____promotion_node_loss_and_return____a_line_each() {
+    let dir = tempfile::Builder::new()
+        .prefix("pfw")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &member(1, dir.path(), &peers, &a1, &a3)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &member(2, dir.path(), &peers, &a2, &a3)).await;
+    until("node 2 standby", || {
+        let c = n2.client.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == "standby") }
+    })
+    .await;
+    let mut watch = Watch::start(&dir.path().join("n2.sock"));
+
+    let first = watch.next().await;
+    n1.child.kill().await.unwrap();
+    let promoted = watch.until_role("primary").await;
+    n2.child.kill().await.unwrap();
+    let lost = watch.next().await;
+    n2 = Process::start(dir.path(), 2, &pk, &member(2, dir.path(), &peers, &a2, &a3)).await;
+    let back = watch.next().await;
+
+    assert_eq!(first["role"], "standby");
+    assert_eq!(first["may_run"], false);
+    assert_eq!(promoted["may_run"], true);
+    assert!(promoted["epoch"].as_u64().unwrap() >= 2, "{promoted}");
+    assert_eq!(
+        lost,
+        serde_json::json!({ "role": "unreachable", "may_run": false })
+    );
+    assert_ne!(back["role"], "unreachable", "{back}");
+    for p in [&mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
+}
+
 // ------------------------------------------------------------ the gate alone
 
 /// One node of a pair whose partner never runs: with `arbiter`

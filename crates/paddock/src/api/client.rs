@@ -314,6 +314,22 @@ impl Client {
         self.json(Method::GET, "/v1/failover", None).await
     }
 
+    /// The node's failover standing once its leadership has changed since
+    /// generation `after`, or after `wait` (at most 60 s) without one: a
+    /// long poll.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; not found for a node without `[failover]`.
+    pub async fn failover_after(
+        &self,
+        after: u64,
+        wait: std::time::Duration,
+    ) -> Result<FailoverInfo, ClientError> {
+        let path = format!("/v1/failover?after={after}&wait_ms={}", wait.as_millis());
+        self.json(Method::GET, &path, None).await
+    }
+
     /// Confirm that the partner is gone, so this standby may promote
     /// itself.
     ///

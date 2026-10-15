@@ -309,6 +309,14 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- `paddock failover --watch` (ROADMAP D11, step 3): a line now and one
+  per leadership change (role, epoch, whether singletons may run), JSON
+  lines with `--json`, `role=unreachable` while the node cannot be reached;
+  through a long poll, `GET /v1/failover?after=<generation>&wait_ms=<ms>`
+  (`FailoverInfo::generation`, `Client::failover_after`). An example agent
+  that moves a virtual IP with it, `examples/systemd/paddock-vip.sh` and
+  `paddock-vip.service`; keepalived following Paddock's role is documented
+  as the alternative (OPERATIONS.md).
 - A standby can forward instead of redirecting (ROADMAP D11, step 2):
   `[http.<name>] standby = "forward"` sends a request for a singleton that
   runs on the partner over the cluster to the app there, whose pool routes

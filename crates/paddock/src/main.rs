@@ -4,6 +4,7 @@
 mod cli;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Args as ClapArgs, Parser, Subcommand};
@@ -203,7 +204,16 @@ enum Command {
     /// List the cluster's members as the node knows them.
     Members,
     /// Show this node's failover standing in its HA pair.
+    #[command(args_conflicts_with_subcommands = true)]
     Failover {
+        /// Print a line now and one more each time the leadership changes
+        /// (role, epoch, whether singletons may run), until stopped; with
+        /// --json, one JSON object per line. A node that cannot be reached
+        /// prints `role=unreachable may_run=no` once, and the watch carries
+        /// on when it is back. For an agent that moves an address to the
+        /// node whose singletons may run.
+        #[arg(long)]
+        watch: bool,
         #[command(subcommand)]
         action: Option<FailoverCommand>,
     },
@@ -359,6 +369,53 @@ fn make_bundle(json: bool, request: &bundle::BundleRequest<'_>) -> anyhow::Resul
 }
 
 /// Print an admin action's outcome.
+/// `paddock failover --watch`: a line now and one per leadership change,
+/// through long polls; a line for a node that cannot be reached, and on
+/// when it is back. Ends only on an error from the node itself (no
+/// `[failover]`).
+async fn watch_failover(client: &Client, json: bool) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    use paddock::api::ClientError;
+
+    let mut after = None;
+    let mut last = String::new();
+    loop {
+        let got = match after {
+            None => client.failover().await,
+            Some(generation) => {
+                client
+                    .failover_after(generation, Duration::from_secs(30))
+                    .await
+            }
+        };
+        let line = match got {
+            Ok(info) => {
+                after = Some(info.generation);
+                format::failover_watch(Some(&info), json)
+            }
+            Err(
+                e @ (ClientError::Connect { .. }
+                | ClientError::RemoteConnect { .. }
+                | ClientError::Http(_)),
+            ) => {
+                if after.is_some() || last.is_empty() {
+                    eprintln!("paddock: {e}; trying again every second");
+                }
+                after = None;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                format::failover_watch(None, json)
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if line != last {
+            println!("{line}");
+            std::io::stdout().flush()?;
+            last = line;
+        }
+    }
+}
+
 fn done(
     json: bool,
     result: Result<paddock::api::Done, paddock::api::ClientError>,
@@ -484,11 +541,16 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
         Command::Metrics => print_metrics(client).await,
         Command::ReloadTls => done(json, client.reload_tls().await),
         Command::Members => print(json, &client.members().await?, |m| format::members(m)),
-        Command::Failover { action: None } => {
+        Command::Failover {
+            watch: true,
+            action: _,
+        } => watch_failover(client, json).await,
+        Command::Failover { action: None, .. } => {
             print(json, &client.failover().await?, format::failover)
         }
         Command::Failover {
             action: Some(FailoverCommand::Confirm),
+            ..
         } => done(json, client.confirm_failover().await),
         Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
         Command::Cast { message } => {
@@ -509,3 +571,7 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
         _ => anyhow::bail!("not a runtime command"),
     }
 }
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod main_tests;

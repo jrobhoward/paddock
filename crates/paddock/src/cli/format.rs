@@ -277,6 +277,42 @@ pub(crate) fn failover(f: &paddock::api::FailoverInfo) -> String {
     out
 }
 
+/// One line of `paddock failover --watch`: the leadership's fields, or
+/// `unreachable` for a node that cannot be reached (`None`); with `json`,
+/// one JSON object.
+pub(crate) fn failover_watch(f: Option<&paddock::api::FailoverInfo>, json: bool) -> String {
+    let (role, epoch, may_run, awaiting) = match f {
+        Some(f) => (
+            f.role.as_str(),
+            Some(f.epoch),
+            f.may_run,
+            f.awaiting_confirmation,
+        ),
+        None => ("unreachable", None, false, false),
+    };
+    if json {
+        let mut v = serde_json::json!({ "role": role, "may_run": may_run });
+        if let Some(epoch) = epoch {
+            v["epoch"] = epoch.into();
+            v["awaiting_confirmation"] = awaiting.into();
+        }
+        return v.to_string();
+    }
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    match epoch {
+        Some(epoch) => format!(
+            "role={role} epoch={epoch} may_run={}{}",
+            yes(may_run),
+            if awaiting {
+                " awaiting_confirmation=yes"
+            } else {
+                ""
+            }
+        ),
+        None => format!("role={role} may_run=no"),
+    }
+}
+
 /// `paddock members`: one line per member.
 pub(crate) fn members(members: &[paddock::api::MemberInfo]) -> String {
     let mut out = String::from("NODE  CREATION  ROLE     REACHABLE  ADDRESS");

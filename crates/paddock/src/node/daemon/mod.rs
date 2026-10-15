@@ -71,6 +71,9 @@ pub struct Node {
     gate: Option<Arc<Gate>>,
     /// This node's failover, once started.
     failover: std::sync::OnceLock<FailoverHandle>,
+    /// Raised by every change of the failover's leadership, for
+    /// `GET /v1/failover?after=`.
+    leadership: tokio::sync::watch::Sender<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -244,6 +247,7 @@ impl Node {
             operators: Arc::default(),
             gate,
             failover: std::sync::OnceLock::new(),
+            leadership: tokio::sync::watch::channel(0).0,
             config,
         };
         if let Some(binding) = &node.config.metrics {
