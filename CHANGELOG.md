@@ -304,6 +304,12 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- `whereis` of an app's name could return a member that had just exited:
+  the pool still listed it until its supervisor noticed the exit, which
+  comes after the exit's notices. A watcher that looked the name up again
+  on its `down` got the dead pid, an immediate `noproc` down, and looked it
+  up again, in a loop until the restart (the ping-pong example counted up
+  to 50 downs for one kill under load). Only live members are returned.
 - wasmtime 49.0.3 and rustls 0.23.46, for the advisories published against
   49.0.2 and 0.23.45 (RUSTSEC-2026-0346 to 0349 and 0352 to 0364), among
   them a filesystem sandbox escape in `wasmtime-wasi` when renaming

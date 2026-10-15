@@ -39,6 +39,16 @@ impl Pool {
             .collect()
     }
 
+    /// Pick one of the members `live` accepts, round-robin.
+    pub(crate) fn pick_live(
+        &self,
+        live: impl Fn(&InstanceHandle) -> bool,
+    ) -> Option<InstanceHandle> {
+        let members: Vec<InstanceHandle> = self.members().into_iter().filter(|h| live(h)).collect();
+        let index = pick_index(members.len(), None, &self.next)?;
+        members.into_iter().nth(index)
+    }
+
     /// Pick an instance for `msg` (round-robin when there is no message, or
     /// no routing key in it).
     pub(crate) fn pick(&self, msg: Option<&Envelope>) -> Option<InstanceHandle> {

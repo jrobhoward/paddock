@@ -205,6 +205,45 @@ async fn whereis____app_name_from_guest____resolves_to_a_pool_member() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn whereis____app_name_while_its_member_restarts____never_a_pid_that_has_exited() {
+    let (rt, _) = shared();
+    let apps = rt
+        .start_apps(vec![deployment(
+            "wh-restart",
+            "1.0.0",
+            json!({
+                "supervision": { "intensity": 5, "backoff": { "initial_ms": 200, "max_ms": 200 } },
+                "lifecycle": { "init_timeout_ms": 500, "shutdown_timeout_ms": 300 }
+            }),
+        )])
+        .await
+        .unwrap();
+    let member = apps.app("wh-restart").unwrap().instances()[0].clone();
+    let old = member.pid();
+    let mut stale = 0;
+
+    member.kill();
+    // From the kill until the supervisor has a new member: whatever
+    // `whereis` returns must still be in the process table. Between the
+    // exit notices and the supervisor noticing the exit, the pool still
+    // lists the dead member.
+    for _ in 0..20_000 {
+        if let Some(h) = rt.whereis("wh-restart") {
+            if h.pid() != old {
+                break;
+            }
+            if !rt.instances().iter().any(|i| i.pid() == old) {
+                stale += 1;
+            }
+        }
+        tokio::task::yield_now().await;
+    }
+
+    assert_eq!(stale, 0);
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_1____instance_killed____restarted_links_and_monitors_told_stale_pid_noproc()
 {
     let (rt, app) = shared();

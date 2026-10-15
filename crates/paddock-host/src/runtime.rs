@@ -103,7 +103,10 @@ impl RuntimeInner {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// An instance of the running app called `name`, round-robin.
+    /// A live instance of the running app called `name`, round-robin. A
+    /// member that has exited is skipped, though its supervisor may not have
+    /// noticed yet: its exit notices go out first, and a watcher asking for
+    /// the name again on its `down` must not get the dead pid back.
     pub(crate) fn pool_member(&self, name: &str) -> Option<InstanceHandle> {
         let pool = self
             .pools
@@ -111,7 +114,7 @@ impl RuntimeInner {
             .unwrap_or_else(PoisonError::into_inner)
             .get(name)
             .cloned()?;
-        pool.pick(None)
+        pool.pick_live(|h| self.table.lookup(h.pid()).is_some())
     }
 }
 
