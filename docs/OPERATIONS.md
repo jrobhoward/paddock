@@ -76,6 +76,10 @@ Reaching the primary of a pair from outside needs no root. Either put a load bal
 
 `paddock failover switchover` on the primary hands its singletons to the standby, for maintenance of the primary or to swap roles on purpose. The primary stops its singletons gracefully (each runs `terminate`), then steps down; the standby runs them within about a lease and its margins (3.5 to 4 s with the defaults; no node timeout), and the old primary rejoins as its standby. It is refused, and nothing stops, when the node is not the primary, its arbiter is not a witness, or it does not hear its partner as a standby (a moment after the partner becomes one, try again). Recorded in the audit log as `failover_switchover`.
 
+### Confirming a promotion
+
+A standby asks the operator to confirm only while it cannot hear its partner on any path and cannot reach the witness either (with arbiter `"operator"`, whenever the partner looks gone); `paddock failover` then shows `waiting:`. `paddock failover confirm` promotes it once the partner's lease has run out, and the confirmation is final. Confirm only when the old primary is down and stays down, powered off or fenced, until the two nodes hear each other again: the witness never learns of the confirmation, so an old primary that restarts and reaches the witness resumes, and both run the singleton until they hear each other (docs/tla/VERIFICATION.md, finding 6).
+
 ### A virtual IP that follows the primary
 
 `paddock failover --watch` prints the node's standing once, then a line each time its leadership changes: role, epoch, and whether singletons may run here. With `--json`, each line is one object, such as `{"awaiting_confirmation":false,"epoch":3,"may_run":true,"role":"primary"}`. When the node cannot be reached, it prints `{"may_run":false,"role":"unreachable"}` once and tries again every second. It reads `GET /v1/failover?after=<generation>&wait_ms=<ms>`, a long poll that answers when the leadership has changed since that generation (`generation` in `paddock failover --json`), or after the wait (at most 60 s).

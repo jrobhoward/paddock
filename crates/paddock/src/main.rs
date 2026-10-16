@@ -97,9 +97,12 @@ enum ClusterCommand {
 
 #[derive(Debug, Subcommand)]
 enum FailoverCommand {
-    /// Confirm that the partner is gone (powered off or cut off), so this
-    /// standby promotes itself once the partner's lease has run out. With
-    /// arbiter "operator", or a witness that cannot be reached.
+    /// Confirm that the partner is gone, so this standby promotes itself
+    /// once the partner's lease has run out. With arbiter "operator", or a
+    /// witness that cannot be reached. Confirm only when the partner is
+    /// down and stays down (powered off or fenced) until the two nodes hear
+    /// each other again: a partner that restarts and reaches the witness
+    /// first resumes too, and both run the singleton until then.
     Confirm,
     /// Hand over on purpose (maintenance): this primary stops its
     /// singletons gracefully, and its standby takes over within about a

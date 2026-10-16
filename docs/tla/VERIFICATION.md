@@ -127,6 +127,20 @@ Random simulation, 30 minutes each (traces up to 400 steps, `-deadlock`, 4 worke
 | `L2_Switchover_Crashes` | up to two crashes, witness crashes or lost links, and one switchover | 583,583 |
 | `L2_Switchover_Links` | up to three LAN, serial or WAN faults, held or lost, and one switchover | 532,785 |
 
+### Two faults by simulation (V3, 2026-10-16)
+
+V2's exhaustive two-fault runs had `Lease = 3`, at which no lease was positive (bug 5), so the two-fault configurations were run again at `Lease = 4`, by random simulation only (ROADMAP V3; the guarantee is any single failure plus a planned switchover, checked exhaustively above). 30 minutes each, traces up to 400 steps, `-deadlock`, 4 workers, three at once on an idle machine (Threadripper 1950X); logs in `~/tla-runs/v3-2026-10-16`.
+
+| Config | `OperatorConfirms` | States checked | Traces | Result |
+| --- | --- | --- | --- | --- |
+| `L2_NoSerial` | yes | 55,168,157 | 101,723 | `AtMostOneRunning` violated after 4 min (finding 6) |
+| `L2_Crashes_Fixed` | yes | 125,841,300 | 224,669 | `AtMostOneRunning` violated after 11 min (finding 6) |
+| `L2_Links_Fixed` | yes | 326,984,820 | 536,362 | pass |
+| `L2_NoSerial` | no | 398,701,065 | 735,149 | pass |
+| `L2_Crashes_Fixed` | no | 332,238,377 | 593,154 | pass |
+
+The two configurations that failed were run again without operator confirmations, so that the known path could not hide another. Both passed, and the switchover configurations' simulations (2026-10-15, above) already ran at `Lease = 4`. Exhaustive two-fault runs at `Lease = 4` (days each) have not been run.
+
 ## Bugs found
 
 ### 1. A standby's confirmation time could precede its last confirming beat (L2)
@@ -160,6 +174,14 @@ The random failover simulation found that a heartbeat discarded as belonging to 
 **Found by** the reachability check for the planned switchover (ROADMAP D10b): `L2_Switchover_Reach` never reached a handover, and an invariant that no node runs on a lease (`NoLeasedRunner`) held over every reachable state of the committed model: 712,466 states with no faults, and all 147,491,679 states of `L2_Crashes_Fixed1`, the count the 2026-10-11 run reported.
 
 **Fix.** Layer 2 configurations use `Lease = 4`, the smallest lease that survives two ticks of age. Every change to the model now runs the vacuity checks, configurations that must fail: `L2_Vacuity` must find a node running on a lease, and `L2_Switchover_Reach` a switchover that hands the singleton over. The Rust simulation runs the code, not the model, and was not affected. V2's two-fault runs are to be repeated with `Lease = 4` (ROADMAP V3).
+
+### 6. A restarted primary resumes beside an operator-promoted standby (V3, 2026-10-16; accepted)
+
+**Problem.** The primary A crashes while the standby B cannot reach the witness (the second fault). B asks the operator, who confirms, and B promotes itself at epoch 2; the witness never hears of it. A restarts, cannot reach B, and reaches the witness, which still has A as its last promotion at epoch 1 and grants A's request to resume. Both run the singleton until A hears B's higher epoch and steps down. The code does the same: a restarted node asks to resume, and the witness grants it to the node it last promoted (`node.rs`, `witness.rs`).
+
+**Found by** random simulation of `L2_NoSerial` and `L2_Crashes_Fixed` at `Lease = 4` (V3). A9 said the model checked that a confirmed partner which restarts does no harm; that held only while every lease was zero (bug 5).
+
+**Decision (2026-10-16): accepted, not fixed.** An operator's confirmation already takes two faults, outside the guarantee, and the operator's word is final (decided 2026-10-11). A fix could only shorten the window: the witness learning of the override once B reaches it leaves it open while B cannot, and holding a restarted node back until it hears its partner both leaves it open (an operator-promoted node holds no lease to wait out) and delays recovery when both nodes restart. The rule for operators is stated where they confirm (`paddock failover confirm`, OPERATIONS.md): confirm only when the old primary is down and stays down (powered off or fenced) until the pair hears each other again.
 
 ## Implementation requirements
 
@@ -195,7 +217,7 @@ From layer 2:
 | A4 | Within a round, deliveries follow a fixed link order and arrive one round after sending | Medium | The Rust simulation runs real interleavings and delays; 200 random fault schedules pass |
 | A5 | Bounded faults per run (two, exhaustively; one where frames are held), epochs up to 3, one frame per link direction | Medium | Typical of model checking; random simulation allows three faults with holds |
 | A6 | Only the witness arbiter is modelled in layer 2, with an operator's confirmation (`OperatorConfirms`) | Medium | `Paths` and `Operator` run without leases and rest on layer 1's `L1_NoLeaseSafe` or the operator's judgement |
-| A9 | An operator confirms a partner gone only when it is down | Medium | The operator's word is final (decided 2026-10-11). A confirmation needs two faults (the partner, and the witness or its link), so with two faults the model checks only that a confirmed partner which restarts does no harm. Beyond that it can: a partner confirmed gone that was alive, or restarts, and reaches the witness but not the promoted node renews or resumes there and runs too, since the witness does not know of the override |
+| A9 | An operator confirms a partner gone only when it is down | Medium | The operator's word is final (decided 2026-10-11). A confirmation needs two faults (the partner, and the witness or its link). A partner confirmed gone that was alive, or that restarts, and reaches the witness but not the promoted node renews or resumes there and runs too, since the witness does not know of the override: the model finds the restart case at `Lease = 4` (finding 6, accepted). Operators confirm only a partner that is down and stays down until the pair hears each other |
 | A7 | A node steps and beats at most once per tick | Low | The code steps and beats once per heartbeat interval |
 | A8 | A node's process is never paused | Low | Narrowed 2026-10-10 (ROADMAP Q8). It did not hold: a primary paused past its lease ran its singleton for about 2 ms after it continued, until its loop saw the lease had ended, while the standby already ran it (found by `scripts/soak.sh`, `SIGSTOP`). Singleton instances now check the lease against the monotonic clock themselves, before each callback and at each epoch tick, so after such a pause no callback starts. Left: a callback running when the process was stopped runs on until the next epoch tick after it continues (2 ms by default), and a host call in flight then (a keyvalue write, a cast) completes |
 

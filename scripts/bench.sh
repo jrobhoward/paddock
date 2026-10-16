@@ -86,6 +86,12 @@ out=target/bench/$stamp.md
 log=target/bench/$stamp.log
 : >"$log"
 cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //')
+# arm64 has no `model name`: the board's name and lscpu's core model.
+if [ -z "$cpu" ]; then
+  board=$(tr -d '\0' 2>/dev/null </proc/device-tree/model || true)
+  core=$(lscpu 2>/dev/null | awk -F: '/^Model name/ { sub(/^ +/, "", $2); print $2; exit }')
+  cpu="${board:-unknown board}${core:+, $core}"
+fi
 mem=$(awk '/MemTotal/ { printf "%.0f GiB", $2 / 1048576 }' /proc/meminfo)
 {
   echo "## $(date -u +%Y-%m-%d): benchmark suite (scripts/bench.sh)"

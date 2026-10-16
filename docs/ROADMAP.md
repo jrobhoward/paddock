@@ -31,7 +31,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's planned items are done: E5, E7, P1, E2, F4, E6 and F5 (2026-10-15 and 16). Of what is left:
 
 1. H5 and E4b wait for a user who needs them; skip them unless one appears.
-2. Stage 6. On an idle machine at any point: V3's two-fault simulations, B8, and G2 on the Pi (the last of Phase 2a's exit).
+2. Stage 6: G2 on the Pi (the last of Phase 2a's exit), then B8 on an idle machine.
 
 ## Order
 
@@ -62,7 +62,7 @@ Done on 2026-10-13: every item from stage 2 (CHANGELOG), and V2, the two-fault e
 ### Verification of failover
 
 - **V1 The rule for failover changes.** A change to a transition in `failover/` updates the matching action in `FailoverL2.tla` (CLAUDE.md). Before it lands, rerun the configurations it can affect: `L2_Crashes_Fixed1` (about 20 minutes) for anything touching restarts, epochs or the witness, and `L2_Links_Fixed_holds1` (about 2.5 hours) for heartbeats, leases or links. Random simulation of the two-fault configurations runs for at least 20 minutes. The vacuity checks, `L2_Vacuity` and `L2_Switchover_Reach`, must still fail (seconds each): a model in which nothing runs on a lease passes every safety property (VERIFICATION.md, bug 5). Record the results in VERIFICATION.md.
-- [ ] **V3 Two faults, by simulation.** V2's exhaustive two-fault runs had `Lease = 3`, at which no lease in the model was positive (VERIFICATION.md, bug 5). Paddock's guarantee is any single failure, plus a planned switchover (decided 2026-10-15), which the one-fault configurations check exhaustively; two faults at once are checked by random simulation only: 30 minutes each of `L2_NoSerial`, `L2_Crashes_Fixed`, `L2_Links_Fixed`, `L2_Switchover_Crashes` and `L2_Switchover_Links` at `Lease = 4`, on an idle machine. Exhaustive two-fault runs (days at `Lease = 4`) only if a site needs that guarantee.
+- **V3 Two faults, by simulation** (done 2026-10-16, VERIFICATION.md): at `Lease = 4`, `L2_Links_Fixed` passed; `L2_NoSerial` and `L2_Crashes_Fixed` found finding 6 (an old primary that restarts after an operator confirmed it gone resumes at the witness; accepted, the confirm rule documented) and passed without operator confirmations.
 - **V2 The two-fault runs.** `L2_NoSerial` (about 1 hour), `L2_Links_Fixed_loss2` (about 12 hours) and `L2_Crashes_Fixed` (about 18 hours, 250 GB of disk), exhaustive, on an idle machine, each with a fingerprint polynomial (`-fp`) not used before. Rerun before Phase 2b is declared done if `failover/` changed after 2026-10-13, and before a release.
 
 ## Stage 4: Cluster (L)

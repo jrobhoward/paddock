@@ -373,6 +373,12 @@ All notable changes are recorded here. The format follows
   to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
+- `paddock failover confirm`'s help and OPERATIONS.md ("Confirming a
+  promotion") state when to confirm: only with the old primary down and
+  kept down until the pair hears each other, since an old primary that
+  restarts and reaches the witness resumes beside the confirmed node
+  (found by V3's two-fault simulations, VERIFICATION.md finding 6;
+  accepted).
 - Failover serial heartbeat path (ROADMAP F5): `[failover] serial = { device,
   baud }` in node config gives an HA pair a second heartbeat path over a
   null-modem cable, so a network cut with the serial line up is a partition
