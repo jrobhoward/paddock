@@ -82,6 +82,7 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"]
 http-body-util = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
+rustyline = { version = "18", default-features = false, features = ["with-file-history"] }
 anyhow = "1"
 syn = { version = "2", features = ["full"] }
 quote = "1"

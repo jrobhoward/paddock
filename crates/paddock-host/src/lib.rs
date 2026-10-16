@@ -57,7 +57,7 @@ pub use config::{
     SqlDatasource, SqlTls,
 };
 pub use error::HostError;
-pub use instance::{InstanceHandle, SnapshotError};
+pub use instance::{InstanceEvent, InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;
 pub use links::LinkInfo;
 pub use listener::{CONNECTION_WORLD, Listener, ListenerSpec, ListenerStats, LoadedConnection};

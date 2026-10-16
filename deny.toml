@@ -57,6 +57,10 @@ allow = [
     # `ring`, `rustls-webpki` and `untrusted` (TLS for the HTTP ingress, ROADMAP
     # E1b). ISC is a permissive licence equivalent to MIT.
     "ISC",
+    # `clipboard-win` and `error-code`, Windows-only dependencies of
+    # `rustyline` (the `paddock shell` line editor, ROADMAP P1). The Boost
+    # licence is permissive: notices only, nothing for binaries.
+    "BSL-1.0",
 ]
 # Not allowed, and not needed: `bzip2-1.0.6` (libbz2-rs-sys) and
 # `CC0-1.0`/`MIT-0` (ppmd-rust) come with the `zip` crate's default codecs.

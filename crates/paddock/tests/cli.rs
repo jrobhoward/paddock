@@ -236,3 +236,94 @@ async fn cli____no_node_listening____clear_error() {
         out.stderr
     );
 }
+
+/// Run `paddock --socket SOCKET shell` with `input` on stdin, its config
+/// directory under `home`.
+async fn shell(socket: &Path, home: &Path, input: &str) -> Output {
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+        .arg("--socket")
+        .arg(socket)
+        .arg("shell")
+        .env("XDG_CONFIG_HOME", home)
+        .env_remove("PADDOCK_CONTACTS")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(input.as_bytes()).await.unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().await.unwrap();
+    Output {
+        ok: out.status.success(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shell____lines_on_stdin____each_runs_and_errors_do_not_end_the_session() {
+    let dir = TempDir::new().unwrap();
+    let key = KeyPair::generate_unencrypted_keypair().unwrap();
+    let toml = format!(
+        "data_dir = {:?}\nmax_instances = 8\ntrusted_keys = [{:?}]\n",
+        dir.path().join("data"),
+        key.pk.to_base64()
+    );
+    let node = Arc::new(
+        Node::open(NodeConfig::from_toml_str(&toml).unwrap(), LogRing::new(100))
+            .await
+            .unwrap(),
+    );
+    let socket = node.socket();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn({
+        let node = node.clone();
+        async move {
+            paddock::node::serve(node, async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+        }
+    });
+    while !socket.exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let bundle = write_bundle(dir.path(), &key, "demo");
+    let home = dir.path().join("home");
+
+    let out = shell(
+        &socket,
+        &home,
+        &format!(
+            "deploy {}\ncall demo 'echo:hi there'\nconnect nobody\nnode -c x\nbogus\nls --json\nconnect local\nexit\nps\n",
+            bundle.display()
+        ),
+    )
+    .await;
+
+    assert!(out.ok, "{}", out.stderr);
+    assert!(
+        out.stdout.contains("deployed demo 1.0.0 (running)"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("hi there"), "{}", out.stdout);
+    assert!(out.stdout.contains("\"name\": \"demo\""), "{}", out.stdout);
+    assert!(out.stdout.contains("connected to local"), "{}", out.stdout);
+    assert!(
+        !out.stdout.contains("PID"),
+        "nothing runs after exit: {}",
+        out.stdout
+    );
+    assert!(out.stderr.contains("no contact nobody"), "{}", out.stderr);
+    assert!(out.stderr.contains("outside the shell"), "{}", out.stderr);
+    assert!(out.stderr.contains("bogus"), "{}", out.stderr);
+    node.shutdown().await;
+    let _ = stop.send(());
+    server.await.unwrap();
+}

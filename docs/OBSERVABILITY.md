@@ -22,6 +22,21 @@ What an operator can see on a running node: instance stats, direct calls to one 
 
 Connection handlers do not appear in `ps` (an instance per connection, with no mailbox). `paddock status <app>` lists their listeners instead: address, connections open now, and totals accepted, refused (over `max_connections`), crashed and closed by the idle timeout.
 
+## Events and logs as they happen
+
+`paddock events` prints the node's events from the moment it connects, until stopped; `--json` prints each as a JSON object on a line of its own (`GET /v1/events`). Every event has `time_ms`, `kind` and `event`; the kinds and their fields are an interface:
+
+| `kind` | `event` | Fields |
+| --- | --- | --- |
+| `audit` | as `audit.log` (`deploy`, `upgrade`, `kill`, `remote_admin`, ...) | as `audit.log` |
+| `instance` | `exit` | `pid`, `app`, `reason` |
+| `instance` | `restart` | `pid` (the new incarnation), `previous`, `child` (the supervisor's child id) |
+| `member` | `joined`, `left`, `reachable`, `unreachable`, `down`, `path_silent`, `path_heard` | `node`, and `creation`, `session` or `path` |
+| `failover` | `leadership` | `role`, `epoch`, `may_run`, `awaiting_confirmation`, `generation` |
+| `node` | `lagged` | `missed`: events this follower lost by falling more than 1024 behind |
+
+`paddock logs <app> --follow` prints the app's last records (`-n`, 100 by default) and then each new one (`GET /v1/apps/{app}/logs?lines=N&follow=true`). Both streams are chunked responses of JSON lines with an empty line every 15 seconds; they end when the node shuts down.
+
 ## Calling one instance
 
 `paddock call` and `paddock cast` address an app (through its pool's routing), one instance by pid, or the instance holding a registered name:

@@ -5,16 +5,20 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use crate::api::{ApiError, RolloutParams, Target};
+use crate::api::{ApiError, LogLine, RolloutParams, Target};
 use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, Limited};
-use hyper::body::Incoming;
+use hyper::body::{Frame, Incoming};
 use hyper::{Method, Request, Response, StatusCode};
 use paddock_host::Envelope;
 use serde::Serialize;
+use tokio::sync::{broadcast, mpsc, watch};
 
 use super::daemon::Node;
 use super::error::NodeError;
@@ -22,7 +26,89 @@ use super::error::NodeError;
 /// Largest request body accepted (a bundle).
 pub const MAX_BODY: usize = 512 << 20;
 
-type Reply = Response<Full<Bytes>>;
+/// How often a stream sends an empty line, so a follower notices a node
+/// gone silent and the node notices a follower gone.
+pub const KEEPALIVE: Duration = Duration::from_secs(15);
+
+type Body = BoxBody<Bytes, Infallible>;
+type Reply = Response<Body>;
+
+/// A whole body.
+fn full(bytes: impl Into<Bytes>) -> Body {
+    Full::new(bytes.into()).boxed()
+}
+
+/// A body of whatever arrives on a channel, until its sender is dropped.
+struct ChannelBody(mpsc::Receiver<Bytes>);
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        self.get_mut()
+            .0
+            .poll_recv(cx)
+            .map(|chunk| chunk.map(|b| Ok(Frame::data(b))))
+    }
+}
+
+/// A chunked response of JSON lines (`application/x-ndjson`): `first`,
+/// then a line for each value `rx` gives that `to_line` keeps, and an
+/// empty line every [`KEEPALIVE`], until the follower goes, the feed
+/// closes or `stop` turns true. A follower that falls behind gets
+/// `lagged`'s line in place of what it missed.
+fn stream<T: Clone + Send + 'static>(
+    first: Vec<String>,
+    mut rx: broadcast::Receiver<T>,
+    mut stop: watch::Receiver<bool>,
+    to_line: impl Fn(&T) -> Option<String> + Send + 'static,
+    lagged: impl Fn(u64) -> String + Send + 'static,
+) -> Reply {
+    use broadcast::error::RecvError;
+
+    let (tx, chunks) = mpsc::channel::<Bytes>(64);
+    tokio::spawn(async move {
+        let line = |mut l: String| {
+            l.push('\n');
+            Bytes::from(l)
+        };
+        for l in first {
+            if tx.send(line(l)).await.is_err() {
+                return;
+            }
+        }
+        let mut keepalive = tokio::time::interval(KEEPALIVE);
+        keepalive.tick().await;
+        loop {
+            let next = tokio::select! {
+                _ = stop.wait_for(|s| *s) => return,
+                () = tx.closed() => return,
+                _ = keepalive.tick() => String::new(),
+                got = rx.recv() => match got {
+                    Ok(v) => match to_line(&v) {
+                        Some(l) => l,
+                        None => continue,
+                    },
+                    Err(RecvError::Lagged(n)) => lagged(n),
+                    Err(RecvError::Closed) => return,
+                },
+            };
+            if tx.send(line(next)).await.is_err() {
+                return;
+            }
+        }
+    });
+    let mut response = Response::new(ChannelBody(chunks).boxed());
+    response.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/x-ndjson"),
+    );
+    response
+}
 
 /// Serve the admin API on the node's socket until `shutdown` completes.
 /// Removes a stale socket file first.
@@ -113,7 +199,7 @@ pub async fn serve(_node: Arc<Node>, _shutdown: impl Future<Output = ()>) -> std
 
 fn json<T: Serialize>(status: StatusCode, value: &T) -> Reply {
     let body = serde_json::to_vec(value).unwrap_or_default();
-    let mut response = Response::new(Full::new(Bytes::from(body)));
+    let mut response = Response::new(full(body));
     *response.status_mut() = status;
     response.headers_mut().insert(
         hyper::header::CONTENT_TYPE,
@@ -147,8 +233,7 @@ pub(crate) async fn serve_metrics(
                     let reply = match (req.method(), req.uri().path()) {
                         (&Method::GET, "/metrics" | "/") => metrics_text(render()),
                         _ => {
-                            let mut r =
-                                Response::new(Full::new(Bytes::from_static(b"GET /metrics\n")));
+                            let mut r = Response::new(full(Bytes::from_static(b"GET /metrics\n")));
                             *r.status_mut() = StatusCode::NOT_FOUND;
                             r
                         }
@@ -167,7 +252,7 @@ pub(crate) async fn serve_metrics(
 
 /// A Prometheus text body.
 pub(crate) fn metrics_text(text: String) -> Reply {
-    let mut response = Response::new(Full::new(Bytes::from(text)));
+    let mut response = Response::new(full(text));
     response.headers_mut().insert(
         hyper::header::CONTENT_TYPE,
         hyper::header::HeaderValue::from_static("text/plain; version=0.0.4"),
@@ -275,10 +360,8 @@ pub(crate) async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
             }
         }
         (&Method::GET, ["v1", "instances", pid, "state"]) => respond(node.state(pid).await),
-        (&Method::GET, ["v1", "apps", app, "logs"]) => match param::<usize>(&q, "lines") {
-            Ok(lines) => respond(node.logs(app, lines.unwrap_or(100))),
-            Err(e) => error(&e),
-        },
+        (&Method::GET, ["v1", "apps", app, "logs"]) => logs(node, app, &q),
+        (&Method::GET, ["v1", "events"]) => events(node),
         (&Method::GET, ["v1", "instances"]) => json(StatusCode::OK, &node.ps()),
         (&Method::GET, ["v1", "metrics"]) => metrics_text(node.metrics()),
         (&Method::GET, ["v1", "cluster"]) => json(StatusCode::OK, &node.members()),
@@ -291,6 +374,55 @@ pub(crate) async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
             "no route for {method} {path}"
         ))),
     }
+}
+
+/// `GET /v1/apps/{app}/logs?lines=N`, or with `follow=true` the same
+/// records and then each new one as it is logged.
+fn logs(node: &Node, app: &str, q: &[(String, String)]) -> Reply {
+    let params = param::<usize>(q, "lines").and_then(|n| Ok((n, param::<bool>(q, "follow")?)));
+    let (lines, follow) = match params {
+        Ok((n, f)) => (n.unwrap_or(100), f.unwrap_or(false)),
+        Err(e) => return error(&e),
+    };
+    if !follow {
+        return respond(node.logs(app, lines));
+    }
+    let (backlog, feed) = match node.follow_logs(app, lines) {
+        Ok(f) => f,
+        Err(e) => return error(&e),
+    };
+    fn to_json(l: &LogLine) -> Option<String> {
+        serde_json::to_string(l).ok()
+    }
+    let app = app.to_string();
+    stream(
+        backlog.iter().filter_map(to_json).collect(),
+        feed,
+        node.stopping(),
+        move |record| (record.0 == app).then(|| to_json(&record.1)).flatten(),
+        |missed| {
+            to_json(&LogLine {
+                time_ms: super::audit::now_ms(),
+                level: "WARN".into(),
+                pid: String::new(),
+                source: "paddock".into(),
+                message: format!("{missed} records missed: this follower fell behind"),
+            })
+            .unwrap_or_default()
+        },
+    )
+}
+
+/// `GET /v1/events`: the node's events from now on (see
+/// [`crate::api::Event`]).
+fn events(node: &Node) -> Reply {
+    stream(
+        Vec::new(),
+        node.follow_events(),
+        node.stopping(),
+        |line| Some(line.to_string()),
+        |missed| super::events::line("node", "lagged", serde_json::json!({ "missed": missed })),
+    )
 }
 
 /// Longest `wait_ms` a failover long poll may ask for.
@@ -369,7 +501,7 @@ async fn call(
         .await
     {
         Ok(reply) => {
-            let mut response = Response::new(Full::new(Bytes::from(reply.body)));
+            let mut response = Response::new(full(reply.body));
             if let Ok(v) = hyper::header::HeaderValue::from_str(&reply.content_type) {
                 response
                     .headers_mut()

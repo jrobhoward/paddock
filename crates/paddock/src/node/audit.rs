@@ -7,10 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-/// Appends audit records.
+use super::events::Events;
+
+/// Appends audit records, and sends each to the node's event followers.
 #[derive(Debug)]
 pub(crate) struct Audit {
     path: PathBuf,
+    events: Events,
 }
 
 /// Milliseconds since the Unix epoch.
@@ -22,8 +25,8 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 impl Audit {
-    pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path }
+    pub(crate) fn new(path: PathBuf, events: Events) -> Self {
+        Self { path, events }
     }
 
     /// Append `{"time_ms", "event", ...fields}`. Each record is one
@@ -31,6 +34,7 @@ impl Audit {
     /// failure to write is logged, not returned: the operation it records
     /// has already happened.
     pub(crate) fn record(&self, event: &str, fields: Value) {
+        self.events.emit("audit", event, fields.clone());
         let mut record = Map::new();
         record.insert("time_ms".into(), json!(now_ms()));
         record.insert("event".into(), json!(event));

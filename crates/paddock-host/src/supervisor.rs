@@ -29,7 +29,7 @@ use paddock_bundle::manifest::{RestartType, Strategy};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::error::HostError;
-use crate::instance::InstanceHandle;
+use crate::instance::{InstanceEvent, InstanceHandle};
 use crate::message::ExitReason;
 use crate::pid::Pid;
 use crate::probe;
@@ -629,10 +629,13 @@ impl Task {
                 ChildHandle::Supervisor(self.rt.start_supervisor((**spec).clone())?)
             }
         };
-        if slot.last_pid.is_some()
-            && let Some(pid) = handle.pid()
-        {
-            probe::supervisor_restart(pid, &slot.spec.id);
+        if let (Some(previous), ChildHandle::Instance(instance)) = (slot.last_pid, &handle) {
+            probe::supervisor_restart(instance.pid(), &slot.spec.id);
+            self.rt.instance_event(InstanceEvent::Restarted {
+                pid: instance.pid(),
+                previous,
+                child: slot.spec.id.clone(),
+            });
         }
         if let (ChildHandle::Instance(instance), Some(reason)) = (&handle, &slot.last_reason) {
             instance.set_last_exit(reason.clone());

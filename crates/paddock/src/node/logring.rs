@@ -4,17 +4,26 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::api::LogLine;
+use tokio::sync::broadcast;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer};
 
 use super::audit::now_ms;
 
-/// The most recent guest records across all apps.
+/// The most recent guest records across all apps, and a feed of new ones
+/// for `paddock logs --follow`.
 #[derive(Debug)]
 pub struct LogRing {
     lines: Mutex<VecDeque<(String, LogLine)>>,
     capacity: usize,
+    feed: broadcast::Sender<Arc<(String, LogLine)>>,
 }
+
+/// New log records of every app, each with its app's name.
+pub(crate) type LogFeed = broadcast::Receiver<Arc<(String, LogLine)>>;
+
+/// Records a follower may fall behind by before it loses the oldest.
+const FEED_BACKLOG: usize = 4096;
 
 impl LogRing {
     /// A ring keeping the last `capacity` records.
@@ -23,6 +32,7 @@ impl LogRing {
         Arc::new(Self {
             lines: Mutex::new(VecDeque::with_capacity(capacity.min(1 << 16))),
             capacity: capacity.max(1),
+            feed: broadcast::channel(FEED_BACKLOG).0,
         })
     }
 
@@ -31,6 +41,12 @@ impl LogRing {
         if lines.len() == self.capacity {
             lines.pop_front();
         }
+        // Sent under the lock, so a follower's backlog from `follow` and
+        // its feed neither overlap nor leave a gap. A broadcast send never
+        // blocks.
+        if self.feed.receiver_count() > 0 {
+            let _ = self.feed.send(Arc::new((app.clone(), line.clone())));
+        }
         lines.push_back((app, line));
     }
 
@@ -38,6 +54,17 @@ impl LogRing {
     #[must_use]
     pub fn recent(&self, app: &str, n: usize) -> Vec<LogLine> {
         let lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
+        Self::last(&lines, app, n)
+    }
+
+    /// `app`'s last `n` records, and every record of any app from then on
+    /// (filter by the app name in each).
+    pub(crate) fn follow(&self, app: &str, n: usize) -> (Vec<LogLine>, LogFeed) {
+        let lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
+        (Self::last(&lines, app, n), self.feed.subscribe())
+    }
+
+    fn last(lines: &VecDeque<(String, LogLine)>, app: &str, n: usize) -> Vec<LogLine> {
         let mut found: Vec<LogLine> = lines
             .iter()
             .rev()

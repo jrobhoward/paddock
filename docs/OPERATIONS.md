@@ -32,10 +32,29 @@ Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back t
 | `PADDOCK_CONFIG` | `paddock node` | The node config file, instead of `--config` |
 | `PADDOCK_SOCKET` | every admin command | The admin socket, instead of `--socket` (default `/var/lib/paddock/admin.sock`) |
 | `PADDOCK_REMOTE`, `PADDOCK_NODE_KEY`, `PADDOCK_KEY` | every admin command | A node's remote admin API (`host:port`), its public key, and the operator's private key, instead of `--remote`, `--node-key` and `--key` |
+| `PADDOCK_CONTACTS` | `paddock shell` | The contacts file, instead of `--contacts` (default `contacts.toml` under `$XDG_CONFIG_HOME/paddock` or `~/.config/paddock`) |
+| `XDG_CONFIG_HOME` | `paddock shell` | Where the contacts file and the shell's history (`paddock/history`) are |
 | `PADDOCK_KEY_PASSWORD` | `paddock bundle`, `paddock keygen` | The signing key's password, instead of a prompt |
 | `RUST_LOG` | `paddock node` | Log filter (default `info`), for example `info,paddock::lease=debug` |
 
 Secrets may also come from variables the node config names (`[secrets.<name>] env = ...`).
+
+## The shell
+
+`paddock shell` runs `paddock` commands at a prompt against one node: the admin socket, or the node `--remote` names. `connect <name>` (or a node id, or `local` for the socket) moves the session to a node in the operator's contacts file, reached over its remote admin API (`[admin]`) with the key pinned there:
+
+```toml
+# ~/.config/paddock/contacts.toml
+key = "operator.key"        # the operator's private key, relative to this file; --key overrides it
+
+[[node]]
+name = "alpha"
+id = 1                      # optional: `connect 1`, and the CONTACT column of `members`
+address = "10.0.0.1:7443"   # the node's [admin] address
+node_key = "ed25519:..."    # the node's public key
+```
+
+Ctrl-C stops the command running (a follow, a slow call); Ctrl-D or `exit` leaves. History is kept in `~/.config/paddock/history`.
 
 ## Signals
 

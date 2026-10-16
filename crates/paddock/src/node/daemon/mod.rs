@@ -28,6 +28,7 @@ use serde_json::json;
 use super::audit::Audit;
 use super::config::{ClusterRole, MemoryProfile, NodeConfig};
 use super::error::{NodeError, internal};
+use super::events::{self, Events};
 use super::gate::Gate;
 use super::logring::LogRing;
 use super::store::{State, Store};
@@ -43,6 +44,8 @@ pub struct Node {
     apps: Apps,
     store: Store,
     audit: Audit,
+    /// The event stream (`GET /v1/events`), which the audit log feeds too.
+    events: Events,
     logs: Arc<LogRing>,
     policy: OperatorPolicy,
     /// Held for the whole of a change (deploy, upgrade, rollback, start,
@@ -231,7 +234,8 @@ impl Node {
         let apps = rt.start_apps(Vec::new()).await.map_err(internal)?;
         let stop = tokio::sync::watch::channel(false).0;
         let ingress = Ingress::open(&config, &apps, &stop).await?;
-        let audit = Audit::new(store.audit_path());
+        let events = Events::new();
+        let audit = Audit::new(store.audit_path(), events.clone());
         let gate = config
             .failover
             .is_some()
@@ -241,6 +245,7 @@ impl Node {
             apps,
             store,
             audit,
+            events,
             logs,
             policy,
             change: tokio::sync::Mutex::new(()),
@@ -260,6 +265,12 @@ impl Node {
             leadership: tokio::sync::watch::channel(0).0,
             config,
         };
+        tokio::spawn(events::forward(
+            node.events.clone(),
+            node.rt.instance_events(),
+            node.rt.node_events(),
+            node.stop.subscribe(),
+        ));
         if let Some(binding) = &node.config.metrics {
             let listener = tokio::net::TcpListener::bind(binding.address)
                 .await

@@ -12,6 +12,7 @@ use serde_json::json;
 use super::Node;
 use super::connections::listener_info;
 use crate::node::error::NodeError;
+use crate::node::logring::LogFeed;
 use crate::node::store::AppState;
 
 /// What a call or cast target resolved to.
@@ -206,6 +207,33 @@ impl Node {
             return Err(NodeError::NotFound(format!("{name} is not deployed")));
         }
         Ok(self.logs.recent(name, lines))
+    }
+
+    /// `name`'s last `lines` log records, and a feed of every app's new
+    /// records (filter by app name).
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] for an app that is not deployed.
+    pub(crate) fn follow_logs(
+        &self,
+        name: &str,
+        lines: usize,
+    ) -> Result<(Vec<LogLine>, LogFeed), NodeError> {
+        if !self.st().desired.apps.contains_key(name) {
+            return Err(NodeError::NotFound(format!("{name} is not deployed")));
+        }
+        Ok(self.logs.follow(name, lines))
+    }
+
+    /// The node's events from now on, each a line of JSON.
+    pub(crate) fn follow_events(&self) -> tokio::sync::broadcast::Receiver<std::sync::Arc<str>> {
+        self.events.subscribe()
+    }
+
+    /// Turns true when the node shuts down.
+    pub(crate) fn stopping(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.stop.subscribe()
     }
 
     /// Call an app, routed to one of its instances.

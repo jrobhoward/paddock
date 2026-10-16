@@ -12,6 +12,7 @@ mod audit;
 mod config;
 mod daemon;
 mod error;
+mod events;
 mod gate;
 mod logring;
 mod run;

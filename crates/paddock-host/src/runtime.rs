@@ -18,7 +18,7 @@ use crate::config::{HostObjects, MemoryProfile, RuntimeConfig};
 use crate::delivery::{self, Origin};
 use crate::deny;
 use crate::error::{HostError, describe};
-use crate::instance::{self, InstanceHandle};
+use crate::instance::{self, InstanceEvent, InstanceHandle};
 use crate::links::{LinkInfo, LinkTable};
 use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
 use crate::message::{CallError, Envelope};
@@ -71,6 +71,9 @@ pub(crate) struct RuntimeInner {
     /// instance that may be passivated is, at once. Waiters are woken in
     /// the order they began waiting, so the one idle longest goes first.
     pub(crate) slot_wanted: tokio::sync::Notify,
+    /// Instance exits and supervisor restarts, for whoever listens
+    /// ([`Runtime::instance_events`]).
+    pub(crate) instance_events: tokio::sync::broadcast::Sender<InstanceEvent>,
     next_id: AtomicU64,
     config: RuntimeConfig,
     _ticker: Ticker,
@@ -245,6 +248,7 @@ impl Runtime {
                 usize::try_from(config.max_instances).unwrap_or(usize::MAX),
             )),
             slot_wanted: tokio::sync::Notify::new(),
+            instance_events: tokio::sync::broadcast::channel(1024).0,
             next_id: AtomicU64::new(crate::pid::instance_id(config.creation, 1)),
             config,
             _ticker: ticker,
@@ -595,6 +599,19 @@ impl Runtime {
     #[must_use]
     pub fn node_events(&self) -> tokio::sync::broadcast::Receiver<NodeEvent> {
         self.inner.liveness.subscribe()
+    }
+
+    /// Instance exits and supervisor restarts on this node, from now on. A
+    /// listener that falls more than 1024 events behind loses the oldest
+    /// (`RecvError::Lagged`).
+    #[must_use]
+    pub fn instance_events(&self) -> tokio::sync::broadcast::Receiver<InstanceEvent> {
+        self.inner.instance_events.subscribe()
+    }
+
+    /// Tell listeners about `event`.
+    pub(crate) fn instance_event(&self, event: InstanceEvent) {
+        let _ = self.inner.instance_events.send(event);
     }
 
     /// Join the cluster through `seeds` (node ids the transport reaches):

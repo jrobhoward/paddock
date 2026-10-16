@@ -210,3 +210,45 @@ fn failover____standby_waiting____says_how_to_confirm() {
     assert!(out.contains("singletons: leader"), "{out}");
     assert!(out.contains("paddock failover confirm"), "{out}");
 }
+
+#[test]
+fn event____fields____key_value_with_spaced_strings_quoted() {
+    let e: paddock::api::Event = serde_json::from_value(serde_json::json!({
+        "time_ms": 5, "kind": "instance", "event": "exit",
+        "app": "counter", "pid": "0.1.1@1", "reason": "crashed: oops", "code": 3, "empty": ""
+    }))
+    .unwrap();
+
+    let out = event(&e);
+
+    assert_eq!(
+        out,
+        "5 instance exit app=counter code=3 empty=\"\" pid=0.1.1@1 reason=\"crashed: oops\""
+    );
+}
+
+#[test]
+fn members_named____a_contact____contact_column_with_dash_for_others() {
+    let member = |node| paddock::api::MemberInfo {
+        node,
+        creation: 1,
+        address: format!("10.0.0.{node}:9000"),
+        role: "member".into(),
+        reachable: true,
+    };
+    let names = std::collections::BTreeMap::from([(1, "alpha".to_string())]);
+
+    let named = members_named(&[member(1), member(2)], &names);
+    let plain = members(&[member(1)]);
+
+    assert_eq!(
+        named,
+        "NODE  CREATION  ROLE     REACHABLE  CONTACT     ADDRESS\n\
+         1     1         member   yes        alpha       10.0.0.1:9000\n\
+         2     1         member   yes        -           10.0.0.2:9000"
+    );
+    assert_eq!(
+        plain,
+        "NODE  CREATION  ROLE     REACHABLE  ADDRESS\n1     1         member   yes        10.0.0.1:9000"
+    );
+}

@@ -77,9 +77,8 @@ Exit (Phase 2b): the soak's three-node partition and node-loss runs pass for an 
 
 ## Stage 5: Platform features (L)
 
-Done on 2026-10-15: E5, SQL datasources (`paddock:sql`, Postgres): `query`, `execute` and a `transaction` resource (decided 2026-10-15), a `deadpool-postgres` pool per `[datasources.<name>]` with TLS on rustls (decided 2026-10-15), credentials from node secrets, a connection cap per app, `examples/tally` and tutorial chapter 4; the tests pass against Postgres 16 and skip without it. An app can also ship its own driver over `wasi:sockets` later (Phase 3 sockets). E7, passivation for apps (`instances.passivate_after_ms`, node `max_processes`; a deploy-time budget for instances that never passivate and a bounded wait for a Store slot, and an upgrade's second Store takes one, decided 2026-10-15; MANIFEST.md).
+Done on 2026-10-15: E5, SQL datasources (`paddock:sql`, Postgres): `query`, `execute` and a `transaction` resource (decided 2026-10-15), a `deadpool-postgres` pool per `[datasources.<name>]` with TLS on rustls (decided 2026-10-15), credentials from node secrets, a connection cap per app, `examples/tally` and tutorial chapter 4; the tests pass against Postgres 16 and skip without it. An app can also ship its own driver over `wasi:sockets` later (Phase 3 sockets). E7, passivation for apps (`instances.passivate_after_ms`, node `max_processes`; a deploy-time budget for instances that never passivate and a bounded wait for a Store slot, and an upgrade's second Store takes one, decided 2026-10-15; MANIFEST.md). P1, the cluster shell (`paddock shell`, decided 2026-10-15: a prompt with history and completion through rustyline; `connect` to nodes in an operator's contacts file, each reached directly over D6 rather than relayed by another node; `paddock events` streams audit records, instance exits and restarts, member changes and failover changes; `paddock logs --follow`).
 
-- [ ] **P1 Cluster shell**, after D6: a `paddock` session to any node that lists members, follows logs and events, and runs admin commands; logs and events stream over D6 as chunked HTTP responses.
 - [ ] **F5 Serial extension.** Named serial ports declared by apps and bound to device paths in node config; the host owns the tty and offers a byte stream or framed messages; its own crate (A5). Then D10's serial heartbeat path on real hardware, the soak's failover runs with the serial line up and cut (network cut: nobody promotes), and Modbus RTU.
 - [ ] **E2 HTTP egress** (`wasi:http/outgoing-handler`) through a filtering proxy with an allow-list and pooled connections (S15: wasmtime's default sender opens a connection per request).
 - [ ] **F4 Batching.** Guidance and an SDK helper for sending many updates in one message (a cast costs about 1.3 µs whatever it carries); points per second end to end with `pool_load`.
@@ -93,6 +92,7 @@ Done on 2026-10-15: E5, SQL datasources (`paddock:sql`, Postgres): `query`, `exe
   - Modbus: deadbands, scaling and data types beyond raw registers.
   - Secrets: Vault or another store (an extension or a source kind), caching with a TTL.
   - Groups: probes for join and publish.
+  - Shell: completing app names and pids (a request per Tab, or a cache refreshed by `ls` and `ps`); a follow across every app's logs, or across nodes.
   - B6: a node watchdog (the epoch ticker pats it; a wedged node is restarted by its service manager).
 
 ## Stage 6: Platforms and benchmarks (M)

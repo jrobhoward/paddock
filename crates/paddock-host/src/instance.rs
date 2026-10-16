@@ -164,6 +164,32 @@ struct Shared {
     last_exit: std::sync::Mutex<Option<ExitReason>>,
 }
 
+/// Something that happened to an instance, from
+/// [`crate::Runtime::instance_events`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InstanceEvent {
+    /// The instance exited, for whatever reason (a stop is `normal` or
+    /// `shutdown`).
+    Exited {
+        /// Its pid.
+        pid: Pid,
+        /// The app it ran.
+        app: String,
+        /// Why.
+        reason: ExitReason,
+    },
+    /// A supervisor started `pid` in place of `previous`, which exited.
+    Restarted {
+        /// The new incarnation.
+        pid: Pid,
+        /// The one it replaces.
+        previous: Pid,
+        /// The supervisor's child id.
+        child: String,
+    },
+}
+
 impl InstanceHandle {
     /// The instance's pid.
     #[must_use]
@@ -643,6 +669,11 @@ impl InstanceTask {
             .dropped
             .fetch_add(self.dropped.load(Ordering::Relaxed), Ordering::Relaxed);
         delivery::notify_exit(&rt, self.pid, &reason);
+        let _ = rt.instance_events.send(InstanceEvent::Exited {
+            pid: self.pid,
+            app: spec.app.clone(),
+            reason: reason.clone(),
+        });
         let _enter = span.enter();
         if reason.is_normal() {
             tracing::info!(%reason, "instance stopped");

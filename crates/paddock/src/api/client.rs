@@ -1,15 +1,78 @@
 //! A client for the admin API: over the node's Unix socket, or (with the
 //! `node` feature) over TLS to its remote admin API (`[admin]`, ROADMAP D6).
 
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use hyper::{Method, StatusCode};
+use http_body_util::BodyExt;
+use hyper::body::Incoming;
+use hyper::{Method, Response, StatusCode};
 use serde::de::DeserializeOwned;
 
 use super::{
-    ApiError, AppDetail, AppSummary, DeployResponse, Done, FailoverInfo, InstanceInfo, LogLine,
-    MemberInfo, RolloutParams, StateResponse, Target, UpgradeResponse,
+    ApiError, AppDetail, AppSummary, DeployResponse, Done, Event, FailoverInfo, InstanceInfo,
+    LogLine, MemberInfo, RolloutParams, StateResponse, Target, UpgradeResponse,
 };
+
+/// How long a stream may go without a line, keepalives included, before
+/// [`Follow::next`] gives up on the node: three of its keepalives.
+const SILENCE: Duration = Duration::from_secs(45);
+
+/// A stream from the admin API ([`Client::follow_logs`],
+/// [`Client::events`]): one `T` per line.
+pub struct Follow<T> {
+    body: Incoming,
+    buf: Vec<u8>,
+    _records: PhantomData<fn() -> T>,
+}
+
+impl<T> std::fmt::Debug for Follow<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Follow")
+            .field("buffered", &self.buf.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: DeserializeOwned> Follow<T> {
+    /// The next record, or `None` once the node ends the stream (it shuts
+    /// down).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Http`] if the connection fails, or nothing (not even a
+    /// keepalive) arrives for 45 seconds; [`ClientError::Decode`] for a line
+    /// that is not a `T`.
+    pub async fn next(&mut self) -> Result<Option<T>, ClientError> {
+        loop {
+            if let Some(end) = self.buf.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = self.buf.drain(..=end).collect();
+                let line = line[..end].trim_ascii();
+                if line.is_empty() {
+                    continue;
+                }
+                return serde_json::from_slice(line)
+                    .map(Some)
+                    .map_err(|e| ClientError::Decode(e.to_string()));
+            }
+            let frame = tokio::time::timeout(SILENCE, self.body.frame())
+                .await
+                .map_err(|_| {
+                    ClientError::Http(format!("nothing from the node for {} s", SILENCE.as_secs()))
+                })?;
+            match frame {
+                None => return Ok(None),
+                Some(Err(e)) => return Err(ClientError::Http(e.to_string())),
+                Some(Ok(frame)) => {
+                    if let Ok(data) = frame.into_data() {
+                        self.buf.extend_from_slice(&data);
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Why a request failed.
 #[derive(Debug, thiserror::Error)]
@@ -380,6 +443,42 @@ impl Client {
         .await
     }
 
+    /// An app's last `lines` log records, then each new one as it is
+    /// logged.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; not found for an app that is not deployed.
+    pub async fn follow_logs(
+        &self,
+        app: &str,
+        lines: usize,
+    ) -> Result<Follow<LogLine>, ClientError> {
+        self.follow(&format!("/v1/apps/{app}/logs?lines={lines}&follow=true"))
+            .await
+    }
+
+    /// The node's events from now on ([`Event`]).
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn events(&self) -> Result<Follow<Event>, ClientError> {
+        self.follow("/v1/events").await
+    }
+
+    async fn follow<T>(&self, path: &str) -> Result<Follow<T>, ClientError> {
+        let response = self.open(Method::GET, path, None).await?;
+        if !response.status().is_success() {
+            return Err(error_from(&collect(response).await?.2));
+        }
+        Ok(Follow {
+            body: response.into_body(),
+            buf: Vec::new(),
+            _records: PhantomData,
+        })
+    }
+
     /// Call an app (routed to one of its instances) and return the reply's
     /// content type and body.
     ///
@@ -444,6 +543,16 @@ impl Client {
         path: &str,
         body: Option<(&str, Vec<u8>)>,
     ) -> Result<(StatusCode, String, Vec<u8>), ClientError> {
+        collect(self.open(method, path, body).await?).await
+    }
+
+    /// Send a request and return the response with its body unread.
+    async fn open(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<(&str, Vec<u8>)>,
+    ) -> Result<Response<Incoming>, ClientError> {
         #[cfg(feature = "tls")]
         if let Some(remote) = &self.remote {
             let failed = |source: std::io::Error| ClientError::RemoteConnect {
@@ -468,7 +577,7 @@ impl Client {
         method: Method,
         path: &str,
         body: Option<(&str, Vec<u8>)>,
-    ) -> Result<(StatusCode, String, Vec<u8>), ClientError> {
+    ) -> Result<Response<Incoming>, ClientError> {
         let stream = tokio::net::UnixStream::connect(&self.socket)
             .await
             .map_err(|source| ClientError::Connect {
@@ -484,23 +593,24 @@ impl Client {
         _method: Method,
         _path: &str,
         _body: Option<(&str, Vec<u8>)>,
-    ) -> Result<(StatusCode, String, Vec<u8>), ClientError> {
+    ) -> Result<Response<Incoming>, ClientError> {
         Err(ClientError::Unsupported)
     }
 }
 
-/// One HTTP/1.1 request and its response over `stream`.
+/// One HTTP/1.1 request over `stream`, and its response with the body
+/// unread.
 async fn exchange<S>(
     stream: S,
     method: Method,
     path: &str,
     body: Option<(&str, Vec<u8>)>,
-) -> Result<(StatusCode, String, Vec<u8>), ClientError>
+) -> Result<Response<Incoming>, ClientError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     use bytes::Bytes;
-    use http_body_util::{BodyExt, Full};
+    use http_body_util::Full;
     use hyper::Request;
 
     let http = |e: &dyn std::fmt::Display| ClientError::Http(e.to_string());
@@ -523,7 +633,14 @@ where
         None => Bytes::new(),
     };
     let request = request.body(Full::new(payload)).map_err(|e| http(&e))?;
-    let response = sender.send_request(request).await.map_err(|e| http(&e))?;
+    sender.send_request(request).await.map_err(|e| http(&e))
+}
+
+/// A response's status, content type and whole body.
+async fn collect(
+    response: Response<Incoming>,
+) -> Result<(StatusCode, String, Vec<u8>), ClientError> {
+    let http = |e: &dyn std::fmt::Display| ClientError::Http(e.to_string());
     let status = response.status();
     let content_type = response
         .headers()

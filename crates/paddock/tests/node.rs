@@ -175,6 +175,92 @@ async fn config_and_logs____node_and_app_both_set____node_values_win_and_records
     n.shutdown().await;
 }
 
+/// The next event of `kind` and `event` on `events`, within 10 seconds.
+async fn next_event(
+    events: &mut paddock::api::Follow<paddock::api::Event>,
+    kind: &str,
+    event: &str,
+) -> paddock::api::Event {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let e = events.next().await.unwrap().unwrap();
+            if e.kind == kind && e.event == event {
+                return e;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no {kind} {event} event"))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn events_and_follow____deploy_kill_and_logs____streamed_as_they_happen() {
+    let scratch = tempfile::tempdir().unwrap();
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy = policy_dir.path().join("policy.toml");
+    std::fs::write(&policy, "[apps.svcfollow]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:keyvalue\", \"wasi:filesystem\"]\n").unwrap();
+    let mut n = TestNode::start(&format!(
+        "policy = {:?}\n[volumes]\nscratch = {:?}\n",
+        policy,
+        scratch.path()
+    ))
+    .await;
+    let mut events = n.client.events().await.unwrap();
+
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "svcfollow",
+            "1.0.0",
+            &fixture("paddock_fixture_services"),
+            services_manifest(),
+            &[],
+        ))
+        .await
+        .unwrap();
+    let deployed = next_event(&mut events, "audit", "deploy").await;
+    call(&n, "svcfollow", "log:warn:before the follow").await;
+    let mut logs = n.client.follow_logs("svcfollow", 1).await.unwrap();
+    let backlog = logs.next().await.unwrap().unwrap();
+    call(&n, "svcfollow", "log:warn:while following").await;
+    let live = tokio::time::timeout(Duration::from_secs(10), logs.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let before = n.client.ps().await.unwrap()[0].pid.clone();
+    n.client.kill(&before).await.unwrap();
+    let killed = next_event(&mut events, "audit", "kill").await;
+    let exited = next_event(&mut events, "instance", "exit").await;
+    let restarted = next_event(&mut events, "instance", "restart").await;
+    let unknown = n.client.follow_logs("nobody", 1).await.unwrap_err();
+    n.shutdown().await;
+    // Records logged while the app stopped may come first.
+    let ended = tokio::time::timeout(Duration::from_secs(10), async {
+        while logs.next().await?.is_some() {}
+        Ok::<_, paddock::api::ClientError>(())
+    })
+    .await;
+
+    assert_eq!(deployed.fields["app"], "svcfollow");
+    assert_eq!(backlog.message, "before the follow");
+    assert_eq!(live.message, "while following");
+    assert_eq!(killed.fields["pid"], format!("<{before}>"));
+    assert_eq!(exited.fields["pid"], before.as_str());
+    assert_eq!(exited.fields["app"], "svcfollow");
+    assert!(
+        exited.fields["reason"].as_str().unwrap().contains("killed"),
+        "{exited:?}"
+    );
+    assert_eq!(restarted.fields["previous"], before.as_str());
+    assert_ne!(restarted.fields["pid"], before.as_str());
+    assert_eq!(kind(&unknown), "not_found");
+    assert!(
+        matches!(ended, Ok(Ok(()))),
+        "the stream ends with the node: {ended:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade_and_rollback____through_the_api____state_kept_and_audited() {
     let mut n = TestNode::start("").await;

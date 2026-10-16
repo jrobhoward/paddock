@@ -17,11 +17,18 @@
 //! | `POST /v1/instances/{pid}/call?timeout_ms=N`, `/v1/names/{name}/call?timeout_ms=N` | as above, to one instance by pid or registered name | reply body |
 //! | `POST /v1/instances/{pid}/cast`, `/v1/names/{name}/cast` | message body, with its `Content-Type` | [`Done`] |
 //! | `GET /v1/apps/{app}/logs?lines=N` | | `Vec<LogLine>` |
+//! | `GET /v1/apps/{app}/logs?lines=N&follow=true` | | a stream of [`LogLine`]s: the last N, then each new one |
+//! | `GET /v1/events` | | a stream of [`Event`]s from now on |
 //! | `POST /v1/apps/{app}/cast` | message body, with its `Content-Type` | [`Done`] |
 //! | `POST /v1/apps/{app}/log-level?level=debug` (or `reset`) | | [`Done`] |
 //! | `GET /v1/instances` | | `Vec<InstanceInfo>` |
 //! | `GET /v1/instances/{pid}/state` | | [`StateResponse`] |
 //! | `POST /v1/instances/{pid}/kill` | | [`Done`] |
+//!
+//! A stream is a chunked response of JSON lines (`application/x-ndjson`),
+//! one value per line, with an empty line every 15 seconds when there is
+//! nothing else; it ends when the node shuts down.
+//! [`Client::follow_logs`] and [`Client::events`] read them.
 //!
 //! ```sh
 //! curl --unix-socket /var/lib/paddock/admin.sock http://paddock/v1/apps
@@ -29,7 +36,7 @@
 
 mod client;
 
-pub use client::{Client, ClientError};
+pub use client::{Client, ClientError, Follow};
 
 use serde::{Deserialize, Serialize};
 
@@ -328,6 +335,31 @@ pub struct LogLine {
     pub source: String,
     /// The text.
     pub message: String,
+}
+
+/// One record of the node's event stream (`GET /v1/events`).
+///
+/// `kind` and `event` say what happened:
+///
+/// | `kind` | `event` | Fields |
+/// | --- | --- | --- |
+/// | `audit` | as the audit log (`deploy`, `upgrade`, `stop`, `remote_admin`, ...) | as the audit log |
+/// | `instance` | `exit` | `pid`, `app`, `reason` |
+/// | `instance` | `restart` | `pid`, `previous`, `child` |
+/// | `member` | `joined`, `left`, `reachable`, `unreachable`, `down`, `path_silent`, `path_heard` | `node`, and `creation`, `session` or `path` |
+/// | `failover` | `leadership` | `role`, `epoch`, `may_run`, `awaiting_confirmation`, `generation` |
+/// | `node` | `lagged` | `missed`: events this follower lost by falling behind |
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Event {
+    /// Milliseconds since the Unix epoch.
+    pub time_ms: u64,
+    /// What it is about.
+    pub kind: String,
+    /// What happened.
+    pub event: String,
+    /// The rest of its fields.
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, serde_json::Value>,
 }
 
 /// An operation that succeeded with nothing else to say.

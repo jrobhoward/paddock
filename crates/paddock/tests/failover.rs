@@ -477,6 +477,31 @@ fn singleton_bundle(node: &TestNode, version: &str, extra: serde_json::Value) ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn events____lone_node_promotes_itself____leadership_change_streamed() {
+    // Three seconds before it promotes itself: time to start following.
+    let (_dir, mut n) = alone_for("paths", 3000).await;
+    let mut events = n.client.events().await.unwrap();
+
+    let promoted = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let e = events.next().await.unwrap().unwrap();
+            if e.kind == "failover" && e.fields["may_run"] == true {
+                return e;
+            }
+        }
+    })
+    .await
+    .expect("a failover event with may_run");
+    let now = standing(&n).await;
+
+    assert_eq!(promoted.event, "leadership");
+    assert_eq!(promoted.fields["role"], "primary");
+    assert_eq!(promoted.fields["epoch"], now.epoch);
+    assert!(promoted.fields["generation"].as_u64().unwrap() >= 1);
+    n.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gate____singleton_deployed_to_a_primary____runs_at_once() {
     let (_dir, mut n) = alone("paths").await;
     until("node 1 primary alone", || async {

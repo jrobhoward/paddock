@@ -152,6 +152,7 @@ impl Node {
         ));
         let mut changes = handle.subscribe();
         let (generation, mut stop) = (self.leadership.clone(), self.stop.subscribe());
+        let events = self.events.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -159,6 +160,18 @@ impl Node {
                     _ = stop.wait_for(|s| *s) => return,
                 }
                 generation.send_modify(|g| *g += 1);
+                let now = changes.borrow_and_update().clone();
+                events.emit(
+                    "failover",
+                    "leadership",
+                    json!({
+                        "role": gate::role_name(now.standing),
+                        "epoch": now.epoch,
+                        "may_run": now.may_run,
+                        "awaiting_confirmation": now.awaiting_confirmation,
+                        "generation": *generation.borrow(),
+                    }),
+                );
             }
         });
         let _ = self.failover.set(handle);

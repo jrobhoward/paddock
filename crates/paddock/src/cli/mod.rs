@@ -3,4 +3,6 @@
 pub(crate) mod bundle;
 #[cfg(feature = "node")]
 pub(crate) mod cluster;
+pub(crate) mod contacts;
 pub(crate) mod format;
+pub(crate) mod shell;

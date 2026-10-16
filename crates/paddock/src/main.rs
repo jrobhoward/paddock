@@ -249,6 +249,24 @@ enum Command {
         /// How many records.
         #[arg(short = 'n', long, default_value_t = 100)]
         lines: usize,
+        /// Then print each new record as it is logged, until stopped (or
+        /// the node shuts down).
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Print the node's events as they happen, until stopped: audit records
+    /// (deploys, upgrades, kills, ...), instance exits and restarts, cluster
+    /// members heard and lost, and failover changes. With --json, one JSON
+    /// object per line.
+    Events,
+    /// A session with a node: run these commands at a prompt, with history
+    /// and completion, and `connect` to other nodes listed in a contacts
+    /// file.
+    Shell {
+        /// The contacts file (default: contacts.toml under
+        /// $XDG_CONFIG_HOME/paddock or ~/.config/paddock).
+        #[arg(long, env = "PADDOCK_CONTACTS")]
+        contacts: Option<PathBuf>,
     },
     /// Call an app, or one instance by pid or registered name, and print
     /// the reply.
@@ -306,6 +324,9 @@ fn main() -> anyhow::Result<()> {
     if let Command::Node { config } = &args.command {
         return paddock::node::run(config, paddock::node::builtin_extensions());
     }
+    if let Command::Shell { contacts } = &args.command {
+        return cli::shell::run(&args, contacts.as_deref());
+    }
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -321,14 +342,31 @@ fn main() -> anyhow::Result<()> {
 fn client(args: &Cli) -> anyhow::Result<Client> {
     #[cfg(feature = "tls")]
     if let (Some(remote), Some(node_key), Some(key)) = (&args.remote, &args.node_key, &args.key) {
-        let node_key = node_key
-            .parse()
-            .map_err(|e| anyhow::anyhow!("--node-key: {e}"))?;
-        let tls = paddock_host::transport::quic::admin_client_tls(key, node_key)
-            .with_context(|| format!("--key {}", key.display()))?;
-        return Ok(Client::remote(remote.clone(), std::sync::Arc::new(tls)));
+        return remote_client(remote, node_key, key);
     }
     Ok(Client::new(&args.socket))
+}
+
+/// A client for the remote admin API at `address`, which must present
+/// `node_key`, as the operator whose private key is at `key`.
+#[cfg(feature = "tls")]
+fn remote_client(address: &str, node_key: &str, key: &std::path::Path) -> anyhow::Result<Client> {
+    let node_key = node_key
+        .parse()
+        .map_err(|e| anyhow::anyhow!("node key {node_key}: {e}"))?;
+    let tls = paddock_host::transport::quic::admin_client_tls(key, node_key)
+        .with_context(|| format!("key {}", key.display()))?;
+    Ok(Client::remote(address, std::sync::Arc::new(tls)))
+}
+
+/// Without TLS there is no remote admin client.
+#[cfg(not(feature = "tls"))]
+fn remote_client(
+    _address: &str,
+    _node_key: &str,
+    _key: &std::path::Path,
+) -> anyhow::Result<Client> {
+    anyhow::bail!("this build of paddock has no remote admin client (cargo feature `tls`)")
 }
 
 fn print<T: Serialize>(
@@ -374,7 +412,27 @@ fn make_bundle(json: bool, request: &bundle::BundleRequest<'_>) -> anyhow::Resul
     Ok(())
 }
 
-/// Print an admin action's outcome.
+/// Print each record of a stream as it comes, as JSON or as `text` gives
+/// it, until the node ends it.
+async fn follow<T: Serialize + serde::de::DeserializeOwned>(
+    json: bool,
+    mut records: paddock::api::Follow<T>,
+    text: impl Fn(&T) -> String,
+) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    while let Some(record) = records.next().await? {
+        if json {
+            println!("{}", serde_json::to_string(&record)?);
+        } else {
+            println!("{}", text(&record));
+        }
+        std::io::stdout().flush()?;
+    }
+    eprintln!("paddock: the node ended the stream");
+    Ok(())
+}
+
 /// `paddock failover --watch`: a line now and one per leadership change,
 /// through long polls; a line for a node that cannot be reached, and on
 /// when it is back. Ends only on an error from the node itself (no
@@ -532,7 +590,19 @@ async fn run_apps(client: &Client, json: bool, command: Command) -> anyhow::Resu
             let level = (level != "reset").then_some(level.as_str());
             done(json, client.set_log_level(&app, level).await)
         }
-        Command::Logs { app, lines } => {
+        Command::Logs {
+            app,
+            lines,
+            follow: true,
+        } => {
+            follow(
+                json,
+                client.follow_logs(&app, lines).await?,
+                format::log_line,
+            )
+            .await
+        }
+        Command::Logs { app, lines, .. } => {
             print(json, &client.logs(&app, lines).await?, |l| format::logs(l))
         }
         _ => anyhow::bail!("not an app command"),
@@ -547,6 +617,7 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
         Command::Metrics => print_metrics(client).await,
         Command::ReloadTls => done(json, client.reload_tls().await),
         Command::Members => print(json, &client.members().await?, |m| format::members(m)),
+        Command::Events => follow(json, client.events().await?, format::event).await,
         Command::Failover {
             watch: true,
             action: _,

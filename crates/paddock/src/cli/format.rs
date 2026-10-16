@@ -236,16 +236,32 @@ pub fn state(s: &StateResponse) -> String {
 
 /// `paddock logs <app>`.
 pub fn logs(lines: &[LogLine]) -> String {
-    lines
-        .iter()
-        .map(|l| {
-            format!(
-                "{} {:<5} {} [{}] {}",
-                l.time_ms, l.level, l.pid, l.source, l.message
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    lines.iter().map(log_line).collect::<Vec<_>>().join("\n")
+}
+
+/// One log record, as `paddock logs` prints it.
+pub(crate) fn log_line(l: &LogLine) -> String {
+    format!(
+        "{} {:<5} {} [{}] {}",
+        l.time_ms, l.level, l.pid, l.source, l.message
+    )
+}
+
+/// One event, as `paddock events` prints it: time, kind and event, then
+/// each field as `key=value` (strings with spaces or quotes quoted).
+pub(crate) fn event(e: &paddock::api::Event) -> String {
+    let mut out = format!("{} {} {}", e.time_ms, e.kind, e.event);
+    for (key, value) in &e.fields {
+        let text = match value {
+            serde_json::Value::String(s) if !s.is_empty() && !s.contains([' ', '"', '\'', '=']) => {
+                s.clone()
+            }
+            serde_json::Value::String(s) => format!("{s:?}"),
+            other => other.to_string(),
+        };
+        out.push_str(&format!(" {key}={text}"));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -315,16 +331,33 @@ pub(crate) fn failover_watch(f: Option<&paddock::api::FailoverInfo>, json: bool)
 
 /// `paddock members`: one line per member.
 pub(crate) fn members(members: &[paddock::api::MemberInfo]) -> String {
-    let mut out = String::from("NODE  CREATION  ROLE     REACHABLE  ADDRESS");
+    members_named(members, &std::collections::BTreeMap::new())
+}
+
+/// `members`, with a CONTACT column (the shell's contact for each node)
+/// when `contacts` names any.
+pub(crate) fn members_named(
+    members: &[paddock::api::MemberInfo],
+    contacts: &std::collections::BTreeMap<u32, String>,
+) -> String {
+    let mut out = String::from("NODE  CREATION  ROLE     REACHABLE  ");
+    if !contacts.is_empty() {
+        out.push_str("CONTACT     ");
+    }
+    out.push_str("ADDRESS");
     for m in members {
         out.push_str(&format!(
-            "\n{:<5} {:<9} {:<8} {:<10} {}",
+            "\n{:<5} {:<9} {:<8} {:<10} ",
             m.node,
             m.creation,
             m.role,
             if m.reachable { "yes" } else { "no" },
-            m.address
         ));
+        if !contacts.is_empty() {
+            let name = contacts.get(&m.node).map_or("-", String::as_str);
+            out.push_str(&format!("{name:<11} "));
+        }
+        out.push_str(&m.address);
     }
     out
 }

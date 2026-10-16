@@ -41,7 +41,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### The admin socket and the remote admin API
 
 - **Controls.** A Unix socket created owner-only; bundles verified against `trusted_keys` whoever uploads them; uploads capped at 512 MiB; changes recorded in `audit.log`. The remote admin API (`[admin]`) is TLS 1.3 with raw public keys both ways: the node presents its key, which the operator pins (`--node-key`), and accepts only a key its operators file lists; a handshake has 10 s to finish; every request but a `GET` is recorded in `audit.log` with the operator's name.
-- **Gaps.** Every listed operator has every right the socket gives: there are no read-only operators. Anyone who can reach the address can open connections and start handshakes; there is no limit on either, so put the address on a management network. Removing an operator stops new connections, not one already open.
+- **Gaps.** Every listed operator has every right the socket gives: there are no read-only operators. Anyone who can reach the address can open connections and start handshakes; there is no limit on either, so put the address on a management network. Removing an operator stops new connections, not one already open, including a stream (`paddock events`, `logs --follow`) that has run since. The shell keeps its history, call bodies included, in the operator's `~/.config/paddock/history`.
 
 ### Node and node
 

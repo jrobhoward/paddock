@@ -326,6 +326,27 @@ All notable changes are recorded here. The format follows
   singleton on an HA pair: the count survives `kill -9` of the primary.
   The tests start a scratch Postgres as the current user and skip without
   one.
+- Cluster shell (ROADMAP P1): `paddock shell` runs `paddock` commands at a
+  prompt (rustyline: history in `~/.config/paddock/history`, completion of
+  commands and contacts), against the admin socket or `--remote`;
+  `connect <name|id|local>` moves the session to another node listed in a
+  contacts file (`--contacts`, `PADDOCK_CONTACTS`, default
+  `~/.config/paddock/contacts.toml`: each node's admin address and pinned
+  key, and the operator's key), and `members` then names each node's
+  contact. Ctrl-C stops the command running, not the session.
+  `deny.toml` allows BSL-1.0 for rustyline's Windows-only clipboard crates.
+- `paddock events` (`GET /v1/events`): the node's events as they happen,
+  one JSON object per line over a chunked response (on the socket and the
+  remote admin API): audit records as they are written, instance exits
+  and supervisor restarts, cluster members joined, left, reachable or not,
+  and failover leadership changes. `paddock::api::Event` and
+  `Client::events`; `paddock_host::Runtime::instance_events` gives the
+  host's exits and restarts (`InstanceEvent`).
+- `paddock logs --follow` (`GET /v1/apps/{app}/logs?follow=true`): the last
+  records, then each new one as it is logged (`Client::follow_logs`). A
+  stream sends an empty line every 15 seconds, and a client gives up after
+  45 seconds without one; a follower that falls behind is told how many
+  records or events it missed.
 - Passivation for apps (ROADMAP E7): manifest `instances.passivate_after_ms`
   turns S11's passivation on for an app, and node config `max_processes`
   lets a node hold more instances than `max_instances` Store slots. A deploy

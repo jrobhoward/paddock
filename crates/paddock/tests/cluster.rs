@@ -63,11 +63,12 @@ where
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cluster____two_nodes_by_seed____members_remote_call_and_leave() {
+async fn cluster____two_nodes_by_seed____members_remote_call_leave_and_events() {
     let dir = tempfile::tempdir().unwrap();
     let peers = keys(dir.path());
     let (a1, a2) = (free_udp(), free_udp());
     let mut n1 = TestNode::start(&config(1, dir.path(), &peers, &a1, &[])).await;
+    let mut events = n1.client.events().await.unwrap();
     let mut n2 = TestNode::start(&config(2, dir.path(), &peers, &a2, &[&a1])).await;
 
     until("both members reachable", || async {
@@ -102,8 +103,20 @@ async fn cluster____two_nodes_by_seed____members_remote_call_and_leave() {
         n1.client.members().await.unwrap().len() == 1
     })
     .await;
+    let mut seen = Vec::new();
+    while !seen.contains(&"left".to_string()) {
+        let e = tokio::time::timeout(Duration::from_secs(10), events.next())
+            .await
+            .expect("member events")
+            .unwrap()
+            .unwrap();
+        if e.kind == "member" && e.fields["node"] == 2 {
+            seen.push(e.event);
+        }
+    }
 
     assert!(pid.starts_with("2."), "{pid}");
     assert_eq!(reply, b"across");
+    assert_eq!(seen.first().map(String::as_str), Some("joined"), "{seen:?}");
     n1.shutdown().await;
 }

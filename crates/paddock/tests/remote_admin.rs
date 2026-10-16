@@ -104,6 +104,27 @@ async fn remote_admin____listed_operator____same_routes_and_changes_audited() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_admin____events____streamed_over_tls() {
+    let mut r = Remote::start().await;
+    let alice = r.client(&r.alice, r.node_key.clone());
+    let mut events = alice.events().await.unwrap();
+
+    let _ = alice.stop("nothing-here").await;
+    let first = tokio::time::timeout(std::time::Duration::from_secs(10), events.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        (first.kind.as_str(), first.event.as_str()),
+        ("audit", "remote_admin")
+    );
+    assert_eq!(first.fields["operator"], "alice");
+    r.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_admin____unlisted_operator_or_wrong_node_key____refused() {
     let mut r = Remote::start().await;
     let (mallory, _) = key(r.keys.path(), "mallory");
@@ -128,5 +149,60 @@ async fn remote_admin____operator_removed_and_reloaded____refused_from_then_on()
 
     assert!(before.is_ok());
     assert!(after.is_err(), "{after:?}");
+    r.node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shell____connect_to_a_contact____commands_go_to_that_node() {
+    use tokio::io::AsyncWriteExt;
+
+    let mut r = Remote::start().await;
+    let id = r.node.client.members().await.unwrap()[0].node;
+    let contacts = r.keys.path().join("contacts.toml");
+    std::fs::write(
+        &contacts,
+        format!(
+            "key = {:?}\n[[node]]\nname = \"alpha\"\nid = {id}\naddress = \"{}\"\nnode_key = \"{}\"\n",
+            r.alice, r.address, r.node_key
+        ),
+    )
+    .unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+        .args(["--socket", "/nonexistent/admin.sock", "shell", "--contacts"])
+        .arg(&contacts)
+        .env("XDG_CONFIG_HOME", r.keys.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+
+    stdin
+        .write_all(b"ls\ncontacts\nconnect alpha\nmembers\nstop nothing-here\n")
+        .await
+        .unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().await.unwrap();
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("cannot reach the node"),
+        "local first: {stderr}"
+    );
+    assert!(stdout.contains(&format!("alpha  {id}")), "{stdout}");
+    assert!(stdout.contains("connected to alpha"), "{stdout}");
+    assert!(stdout.contains("CONTACT"), "{stdout}");
+    let audited = r.node.audit();
+    assert!(
+        audited
+            .iter()
+            .any(|a| a["event"] == "remote_admin" && a["operator"] == "alice"),
+        "{audited:?}"
+    );
     r.node.shutdown().await;
 }
