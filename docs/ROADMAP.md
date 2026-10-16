@@ -1,6 +1,6 @@
 # Paddock: Roadmap
 
-2026-10-13 · Companion to [DESIGN.md](DESIGN.md)
+2026-10-16 · Companion to [DESIGN.md](DESIGN.md)
 
 The single plan for remaining work: what is left, in what order, and which part of the code each piece touches. Finished work is not tracked here: [CHANGELOG.md](../CHANGELOG.md) records what landed and DESIGN.md why. The plan as it stood before 2026-10-10, with the detail of every finished item, is in git history (`git log -- docs/ROADMAP.md`).
 
@@ -28,10 +28,12 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Next
 
-Stages 1 to 4 are done (stage 4 on 2026-10-15); stage 5 is under way, with E7 done.
+Stages 1 to 4 are done (stage 4 on 2026-10-15). Stage 5 is under way: E5, E7, P1, E2 and F4 are done (2026-10-15 and 16). Of what is left:
 
-1. Stage 5 in the order listed.
-2. On an idle machine: V3's two-fault simulations, B8, and G2 on the Pi.
+1. E6, the `wasi:http` handler world: the one stage 5 item that needs nothing outside this machine.
+2. F5, the serial extension: needs the Raspberry Pi and a serial link between two machines (CLAUDE.local.md), and closes Phase 2b's last criterion.
+3. H5 and E4b wait for a user who needs them; skip them unless one appears.
+4. Then stage 6. On an idle machine at any point: V3's two-fault simulations, B8, and G2 on the Pi.
 
 ## Order
 
@@ -119,6 +121,7 @@ Docs known to be out of date, cleared by W1:
 - ARCHITECTURE.md's threads and tasks leave out the health check task each instance of an app with a `health` section runs (D7); WRITING_APPS does not mention `App::health`.
 - DESIGN.md places SQL datasources in Phase 3; E5 is now in stage 5.
 - ARCHITECTURE.md does not describe HTTP egress (`services::egress`: the send hook, the pool, the resolver guard) or the call hook that now measures host time; WRITING_APPS does not mention `paddock_sdk::http_client`.
+- ARCHITECTURE.md does not describe P1's additions: the node's event hub (`node/events.rs`, fed by the audit log, `Runtime::instance_events`, member events and failover changes), the streaming admin responses (`server.rs` `stream`), and the shell (`cli/shell.rs`, `cli/contacts.rs`). GETTING_STARTED does not mention `paddock shell`, `paddock events` or `logs --follow`.
 - DESIGN.md's roadmap section repeats parts of this plan.
 - DESIGN.md, `docs/REVIEW_HAPPLIANCE_OTP.md`, `docs/tla` and `spikes/s16` describe HAppliance, a private project, in detail (see W1).
 - DESIGN.md, WRITING_APPS.md and BASELINE.md cite finished roadmap items by id (A5, A6, E1, E1b, F2, F3, F6, H1 to H4, 0.5), and DESIGN.md, SECURITY.md and `docs/tla/VERIFICATION.md` cite stage 3's (Q1 to Q15, V2). Those ids are no longer in this file and the CHANGELOG does not use them; W1 replaces each with the feature's name.
