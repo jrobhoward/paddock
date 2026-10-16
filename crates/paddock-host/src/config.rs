@@ -143,6 +143,77 @@ pub enum SecretSource {
     Env(String),
 }
 
+/// A SQL datasource the node binds (`[datasources.<name>]`, ROADMAP E5):
+/// a Postgres database, pooled. Apps name it; they never see its address
+/// or credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlDatasource {
+    /// Host name or address; a path (starting `/`) is a Unix socket
+    /// directory.
+    pub host: String,
+    /// TCP port, or the Unix socket's number.
+    pub port: u16,
+    /// Database name.
+    pub dbname: String,
+    /// Database user.
+    pub user: String,
+    /// Where the password comes from (a node secret's source); `None` for
+    /// none (trust or peer authentication).
+    pub password: Option<SecretSource>,
+    /// TLS to the server.
+    pub tls: SqlTls,
+    /// Most connections the node opens to it, for every app together.
+    pub pool_size: usize,
+    /// Time allowed to open a connection.
+    pub connect_timeout: Duration,
+    /// Time a call waits for a connection (the app's cap or the pool) before
+    /// `limit-reached`.
+    pub acquire_timeout: Duration,
+    /// The server cancels a statement that runs longer (`timeout`).
+    pub statement_timeout: Duration,
+    /// Largest result a call returns, in bytes (`too-large` above it).
+    pub max_result_bytes: u64,
+}
+
+impl SqlDatasource {
+    /// A datasource at `host` with the defaults: port 5432, no password,
+    /// no TLS, 10 connections, 5 s to connect and to acquire, statements
+    /// cancelled after 30 s, results up to 16 MiB.
+    #[must_use]
+    pub fn new(
+        host: impl Into<String>,
+        dbname: impl Into<String>,
+        user: impl Into<String>,
+    ) -> Self {
+        Self {
+            host: host.into(),
+            port: 5432,
+            dbname: dbname.into(),
+            user: user.into(),
+            password: None,
+            tls: SqlTls::Disable,
+            pool_size: 10,
+            connect_timeout: Duration::from_secs(5),
+            acquire_timeout: Duration::from_secs(5),
+            statement_timeout: Duration::from_secs(30),
+            max_result_bytes: 16 << 20,
+        }
+    }
+}
+
+/// TLS to a SQL datasource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SqlTls {
+    /// Plain connections: a Unix socket or a trusted network.
+    Disable,
+    /// TLS, verifying the server against the CA certificates in this PEM
+    /// file (no system roots: the operator names whom to trust).
+    Require {
+        /// PEM file of CA certificates.
+        ca_file: PathBuf,
+    },
+}
+
 /// Configuration for a [`Runtime`](crate::Runtime).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -190,6 +261,8 @@ pub struct RuntimeConfig {
     pub buckets: BTreeMap<String, SharedBucket>,
     /// Secrets, by name.
     pub secrets: BTreeMap<String, SecretSource>,
+    /// SQL datasources, by name (ROADMAP E5).
+    pub datasources: BTreeMap<String, SqlDatasource>,
     /// Most log records per second per app, `wasi:logging` records and
     /// captured stdout and stderr lines together; an app's own
     /// `rate_limit_per_sec` can only lower it. 0 for no ceiling.
@@ -218,6 +291,7 @@ impl Default for RuntimeConfig {
             host_objects: HostObjects::default(),
             buckets: BTreeMap::new(),
             secrets: BTreeMap::new(),
+            datasources: BTreeMap::new(),
             log_records_per_sec: 1_000,
             incoming_calls_per_peer: 10_000,
         }

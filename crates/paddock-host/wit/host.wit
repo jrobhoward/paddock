@@ -38,3 +38,8 @@ world secrets {
 world groups {
   import paddock:groups/groups@0.1.0;
 }
+
+/// The SQL service's interfaces (`src/services/sql`).
+world sql {
+  import paddock:sql/sql@0.1.0;
+}

@@ -97,7 +97,7 @@ fn Capability____every_key____is_a_field_of_capabilities_section() {
 
 fn minimal_scope(capability: Capability) -> serde_json::Value {
     match capability {
-        Capability::Sql => serde_json::json!({ "datasource": "db", "max_connections": 1 }),
+        Capability::Sql => serde_json::json!({ "datasources": { "db": { "max_connections": 1 } } }),
         Capability::Metrics => serde_json::json!({ "prefix": "app" }),
         _ => serde_json::json!({}),
     }

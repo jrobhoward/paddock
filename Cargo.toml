@@ -25,6 +25,7 @@ members = [
     "examples/line-server",
     "examples/scada/hmi",
     "examples/scada/points",
+    "examples/tally",
 ]
 # Throwaway spike code is its own workspace with its own lock file; the
 # conventions and Definition of Done below do not apply to it.
@@ -72,6 +73,11 @@ quinn = { version = "0.11", default-features = false, features = ["runtime-tokio
 # Parses peers' raw public keys (rustls' own verifier crate).
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 base64 = "0.23"
+# SQL datasources (ROADMAP E5): Postgres, pooled, TLS on rustls with ring.
+tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"] }
+deadpool-postgres = { version = "0.14", default-features = false, features = ["rt_tokio_1"] }
+futures-util = { version = "0.3", default-features = false }
+tokio-postgres-rustls = { version = "0.14", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 http-body-util = "0.1"
 bytes = "1"

@@ -24,6 +24,8 @@ http = []
 secrets = []
 # `paddock_sdk::metrics`: counters, gauges and histograms (`paddock:metrics`).
 metrics = []
+# `paddock_sdk::sql`: SQL datasources the node binds (`paddock:sql`).
+sql = []
 # `paddock_sdk::watch`: revisions, compare-and-swap and watches on keyvalue
 # buckets (`paddock:watch`, under the `wasi:keyvalue` capability).
 watch = []

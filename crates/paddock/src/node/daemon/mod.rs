@@ -156,6 +156,12 @@ impl Node {
             )));
         }
         let creation = store.next_creation()?;
+        #[cfg(not(feature = "sql"))]
+        if let Some(name) = config.datasources.keys().next() {
+            return Err(NodeError::Invalid(format!(
+                "datasources.{name}: this build of paddock has no SQL (cargo feature `sql`)"
+            )));
+        }
         let rt = Runtime::with_extensions(
             RuntimeConfig {
                 node: config.node,
@@ -201,6 +207,11 @@ impl Node {
                         };
                         Some((name.clone(), source))
                     })
+                    .collect(),
+                datasources: config
+                    .datasources
+                    .iter()
+                    .map(|(name, d)| (name.clone(), runtime_datasource(&config, d)))
                     .collect(),
                 buckets: config
                     .buckets
@@ -434,3 +445,34 @@ impl Node {
 #[cfg(test)]
 #[path = "daemon_tests.rs"]
 mod daemon_tests;
+
+/// The host's form of a `[datasources.<name>]` table: its password secret
+/// resolved to the secret's source.
+fn runtime_datasource(
+    config: &NodeConfig,
+    d: &crate::node::config::DatasourceBinding,
+) -> paddock_host::SqlDatasource {
+    let mut ds = paddock_host::SqlDatasource::new(d.host.clone(), d.dbname.clone(), d.user.clone());
+    ds.port = d.port;
+    ds.password = d
+        .password_secret
+        .as_ref()
+        .and_then(|name| config.secrets.get(name))
+        .and_then(|s| match (&s.file, &s.env) {
+            (Some(f), _) => Some(SecretSource::File(f.clone())),
+            (None, Some(v)) => Some(SecretSource::Env(v.clone())),
+            (None, None) => None,
+        });
+    ds.tls = match (d.tls, &d.ca_file) {
+        (crate::node::config::DatasourceTls::Require, Some(ca)) => paddock_host::SqlTls::Require {
+            ca_file: ca.clone(),
+        },
+        _ => paddock_host::SqlTls::Disable,
+    };
+    ds.pool_size = d.pool_size;
+    ds.connect_timeout = Duration::from_millis(d.connect_timeout_ms);
+    ds.acquire_timeout = Duration::from_millis(d.acquire_timeout_ms);
+    ds.statement_timeout = Duration::from_millis(d.statement_timeout_ms);
+    ds.max_result_bytes = d.max_result_bytes.bytes();
+    ds
+}

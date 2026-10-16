@@ -132,3 +132,20 @@ fn OperatorPolicy____secrets____union_of_matching_entries() {
     );
     assert!(other.secrets.is_empty());
 }
+
+#[test]
+fn OperatorPolicy____datasources____union_of_matching_entries() {
+    let policy = OperatorPolicy::from_toml_str(
+        "[defaults]\ndatasources = [\"reports\"]\n[apps.billing]\ndatasources = [\"main\"]\n",
+    )
+    .unwrap();
+
+    let billing = policy.granted("billing", "RWQother");
+    let other = policy.granted("other", "RWQother");
+
+    assert_eq!(
+        billing.datasources,
+        ["main", "reports"].map(String::from).into()
+    );
+    assert_eq!(other.datasources, ["reports"].map(String::from).into());
+}

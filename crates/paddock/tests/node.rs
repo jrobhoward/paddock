@@ -670,7 +670,9 @@ async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
             "wasi:keyvalue": {},
             "paddock:groups": {},
             "paddock:metrics": { "prefix": "vault" },
-            "paddock:secrets": { "secrets": names }
+            "paddock:secrets": { "secrets": names },
+            // The SDK fixture imports `paddock:sql`; declared, nothing used.
+            "paddock:sql": {}
         } }))
     };
     let sdk = fixture("paddock_fixture_sdk");
@@ -736,6 +738,7 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
         "wasi:keyvalue": {},
         "paddock:groups": {},
         "paddock:secrets": { "secrets": [] },
+        "paddock:sql": {},
         "paddock:metrics": { "prefix": "shop" }
     } }));
     n.client

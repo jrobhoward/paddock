@@ -27,6 +27,7 @@ use crate::services::keyvalue::KeyValue;
 use crate::services::logging::{LogRate, Logging};
 use crate::services::metrics::MetricsService;
 use crate::services::secrets::Secrets;
+use crate::services::sql::Sql;
 use crate::services::{HostState, Service, ServiceCtx, States};
 use crate::spec::InstanceSpec;
 
@@ -241,6 +242,7 @@ host_state!(KeyValue, keyvalue);
 host_state!(Logging, logging);
 host_state!(Secrets, secrets);
 host_state!(MetricsService, metrics);
+host_state!(Sql, sql);
 
 impl WasiView for InstanceState {
     fn ctx(&mut self) -> WasiCtxView<'_> {

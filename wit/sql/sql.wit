@@ -1,0 +1,101 @@
+package paddock:sql@0.1.0;
+
+/// SQL datasources the node binds (ROADMAP E5): Postgres today. Separate
+/// from `paddock:runtime` so the frozen app world does not change; an app
+/// imports it only if it calls it.
+///
+/// An app names the datasources it uses in its manifest
+/// (`capabilities."paddock:sql"`, with a connection cap each), the operator
+/// grants each name (policy `datasources`), and the node binds each name to
+/// a database (`[datasources.<name>]`: address, credentials from a secret,
+/// TLS, pool size). The app never sees the address or the credentials.
+///
+/// Statements take their parameters bound (`$1`, `$2`, ...), never
+/// interpolated. A parameter is sent as text and the server converts it to
+/// the type the statement needs, so an `int` binds to any integer column, a
+/// `text` to a timestamp or a JSON column. Result columns of the boolean,
+/// integer, floating-point, text and `bytea` types come back as those
+/// values; `numeric`, `json`, `jsonb`, `uuid`, dates and times come back as
+/// their text form; any other type is refused with `unsupported`: cast it
+/// in the statement (`col::text`).
+///
+/// Each call is one host call: the instance waits for the answer, and the
+/// wait does not count against its callback deadline. A statement runs
+/// under the datasource's statement timeout.
+interface sql {
+  /// A parameter or a column's value.
+  variant value {
+    null,
+    boolean(bool),
+    int(s64),
+    float(f64),
+    text(string),
+    bytes(list<u8>),
+  }
+
+  /// A statement's result: the column names, then each row's values in
+  /// column order.
+  record rows {
+    columns: list<string>,
+    rows: list<list<value>>,
+  }
+
+  /// An error the database reported: its SQLSTATE code (`23505` for a
+  /// unique violation) and its message.
+  record db-error {
+    code: string,
+    message: string,
+  }
+
+  /// Why a call failed.
+  variant error {
+    /// `paddock:sql` is not granted, the manifest does not list the
+    /// datasource, or the policy does not grant it.
+    access-denied,
+    /// The node binds no datasource of that name.
+    not-found,
+    /// No connection within the datasource's acquire timeout: the app's
+    /// connection cap is reached (its own transactions and calls hold
+    /// every connection it may have), or the node's pool is.
+    limit-reached,
+    /// The database could not be reached, or the connection failed.
+    unavailable(string),
+    /// The statement ran past the datasource's statement timeout and was
+    /// cancelled.
+    timeout,
+    /// The result is larger than the datasource's `max_result_bytes`.
+    too-large,
+    /// A column of a type this interface does not carry; cast it in the
+    /// statement.
+    unsupported(string),
+    /// The database refused the statement.
+    query(db-error),
+  }
+
+  /// Run a statement that returns rows, on a connection of its own, in a
+  /// transaction of its own.
+  query: func(datasource: string, statement: string, params: list<value>) -> result<rows, error>;
+
+  /// Run a statement for its effect; returns how many rows it changed.
+  execute: func(datasource: string, statement: string, params: list<value>) -> result<u64, error>;
+
+  /// A transaction on one connection, held until it ends. It counts
+  /// against the app's connection cap while it lasts. Dropping it without
+  /// `commit` rolls it back, as does the instance exiting.
+  resource transaction {
+    /// As `query`, inside the transaction.
+    query: func(statement: string, params: list<value>) -> result<rows, error>;
+
+    /// As `execute`, inside the transaction.
+    execute: func(statement: string, params: list<value>) -> result<u64, error>;
+
+    /// Commit, and give the connection back.
+    commit: static func(this: transaction) -> result<_, error>;
+
+    /// Roll back, and give the connection back.
+    rollback: static func(this: transaction) -> result<_, error>;
+  }
+
+  /// Begin a transaction on `datasource`.
+  begin: func(datasource: string) -> result<transaction, error>;
+}

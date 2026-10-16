@@ -161,6 +161,9 @@ pub struct NodeConfig {
     /// Secrets, by name: where each value comes from.
     #[serde(default)]
     pub secrets: BTreeMap<String, SecretBinding>,
+    /// SQL datasources apps may use, by name (`paddock:sql`, ROADMAP E5).
+    #[serde(default)]
+    pub datasources: BTreeMap<String, DatasourceBinding>,
     /// Each extension's node configuration, by package
     /// (`[extensions."paddock-modbus:modbus"]`), handed to the extension as
     /// it starts. A table for an extension the node does not have refuses
@@ -292,6 +295,79 @@ pub struct SecretBinding {
     /// An environment variable of the node process.
     #[serde(default)]
     pub env: Option<String>,
+}
+
+/// A SQL datasource: `[datasources.<name>]`, a Postgres database the node
+/// pools connections to.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasourceBinding {
+    /// Host name or address; a path (starting `/`) is a Unix socket
+    /// directory.
+    pub host: String,
+    /// TCP port, or the Unix socket's number.
+    #[serde(default = "default_pg_port")]
+    pub port: u16,
+    /// Database name.
+    pub dbname: String,
+    /// Database user.
+    pub user: String,
+    /// The node secret (`[secrets.<name>]`) holding the password; unset
+    /// for none.
+    #[serde(default)]
+    pub password_secret: Option<String>,
+    /// `"require"` (with `ca_file`) or `"disable"`.
+    #[serde(default)]
+    pub tls: DatasourceTls,
+    /// PEM file of the CA certificates the server must chain to.
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+    /// Most connections the node opens, for every app together.
+    #[serde(default = "default_pool_size")]
+    pub pool_size: usize,
+    /// Time allowed to open a connection.
+    #[serde(default = "default_sql_wait_ms")]
+    pub connect_timeout_ms: u64,
+    /// Time a call waits for a connection before `limit-reached`.
+    #[serde(default = "default_sql_wait_ms")]
+    pub acquire_timeout_ms: u64,
+    /// The server cancels a statement that runs longer.
+    #[serde(default = "default_statement_timeout_ms")]
+    pub statement_timeout_ms: u64,
+    /// Largest result a call returns.
+    #[serde(default = "default_max_result")]
+    pub max_result_bytes: ByteSize,
+}
+
+/// TLS to a datasource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasourceTls {
+    /// Plain: a Unix socket or a trusted network.
+    #[default]
+    Disable,
+    /// TLS, verified against `ca_file`.
+    Require,
+}
+
+fn default_pg_port() -> u16 {
+    5432
+}
+
+fn default_pool_size() -> usize {
+    10
+}
+
+fn default_sql_wait_ms() -> u64 {
+    5_000
+}
+
+fn default_statement_timeout_ms() -> u64 {
+    30_000
+}
+
+fn default_max_result() -> ByteSize {
+    ByteSize::mib(16)
 }
 
 /// Where a shared bucket's data lives.
@@ -723,6 +799,7 @@ impl NodeConfig {
             }
         }
         let limits = &config.limits;
+        config.check_datasources()?;
         if config
             .max_processes
             .is_some_and(|p| p < config.max_instances)
@@ -746,6 +823,40 @@ impl NodeConfig {
             }
         }
         Ok(config)
+    }
+
+    /// Each `[datasources.<name>]` against `[secrets]` and itself.
+    fn check_datasources(&self) -> Result<(), NodeError> {
+        for (name, ds) in &self.datasources {
+            let invalid = |m: &str| {
+                Err(NodeError::Invalid(format!(
+                    "node config: datasources.{name}: {m}"
+                )))
+            };
+            if let Some(secret) = &ds.password_secret
+                && !self.secrets.contains_key(secret)
+            {
+                return invalid(&format!("password_secret '{secret}' is not in [secrets]"));
+            }
+            match (ds.tls, &ds.ca_file) {
+                (DatasourceTls::Require, None) => {
+                    return invalid("tls \"require\" needs ca_file");
+                }
+                (DatasourceTls::Disable, Some(_)) => {
+                    return invalid("ca_file is only for tls \"require\"");
+                }
+                _ => {}
+            }
+            if ds.pool_size == 0
+                || ds.connect_timeout_ms == 0
+                || ds.acquire_timeout_ms == 0
+                || ds.statement_timeout_ms == 0
+                || ds.max_result_bytes.bytes() == 0
+            {
+                return invalid("pool_size, the timeouts and max_result_bytes must be more than 0");
+            }
+        }
+        Ok(())
     }
 
     /// `[failover]` and `[witness]` against each other and `[cluster]`.

@@ -26,6 +26,7 @@ fn grants(capabilities: &[Capability]) -> Granted {
         extensions: BTreeSet::new(),
         buckets: BTreeSet::new(),
         secrets: BTreeSet::new(),
+        datasources: BTreeSet::new(),
     }
 }
 
@@ -163,6 +164,7 @@ fn effective_grant____extension_declared_and_granted____linked_to_service() {
         extensions: BTreeSet::from(["example:greeting".to_string()]),
         buckets: BTreeSet::new(),
         secrets: BTreeSet::new(),
+        datasources: BTreeSet::new(),
     };
 
     let grant = effective_grant(&imports(&[PROCESS, GREET]), &spec, &operator).unwrap();

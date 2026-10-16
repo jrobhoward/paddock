@@ -74,6 +74,8 @@ pub mod metrics;
 #[cfg(feature = "secrets")]
 pub mod secrets;
 pub mod snapshot;
+#[cfg(feature = "sql")]
+pub mod sql;
 mod types;
 #[cfg(feature = "watch")]
 pub mod watch;
@@ -93,6 +95,7 @@ pub mod bindings {
             "../../wit/watch",
             "../../wit/secrets",
             "../../wit/metrics",
+            "../../wit/sql",
             "wit",
         ],
         world: "paddock:sdk/app",

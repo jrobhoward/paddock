@@ -44,6 +44,7 @@ pub mod keyvalue;
 pub mod logging;
 pub mod metrics;
 pub mod secrets;
+pub mod sql;
 
 pub use extension::{
     Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ExtensionSpec, StartedExtensions,
@@ -229,6 +230,8 @@ pub struct ServiceSpecs {
     pub secrets: secrets::SecretsSpec,
     /// `paddock:metrics`.
     pub metrics: metrics::MetricsSpec,
+    /// `paddock:sql`.
+    pub sql: sql::SqlSpec,
     /// Extensions the manifest declares, by package.
     pub extensions: BTreeMap<String, ExtensionSpec>,
 }
@@ -242,6 +245,7 @@ impl ServiceSpecs {
             logging: logging::Logging::spec(manifest),
             secrets: secrets::Secrets::spec(manifest),
             metrics: metrics::MetricsService::spec(manifest),
+            sql: sql::Sql::spec(manifest),
             extensions: manifest
                 .capabilities
                 .extensions
@@ -260,6 +264,7 @@ pub(crate) struct Shared {
     pub(crate) logging: Arc<logging::Shared>,
     secrets: Arc<<secrets::Secrets as Service>::Shared>,
     metrics: Arc<()>,
+    sql: Arc<sql::Shared>,
 }
 
 impl Shared {
@@ -271,6 +276,7 @@ impl Shared {
             logging: Arc::new(logging::Logging::shared(config)?),
             secrets: Arc::new(secrets::Secrets::shared(config)?),
             metrics: Arc::new(metrics::MetricsService::shared(config)?),
+            sql: Arc::new(sql::Sql::shared(config)?),
         })
     }
 
@@ -287,6 +293,7 @@ impl Shared {
         logging::Logging::exited(&self.logging, pid);
         secrets::Secrets::exited(&self.secrets, pid);
         metrics::MetricsService::exited(&self.metrics, pid);
+        sql::Sql::exited(&self.sql, pid);
     }
 }
 
@@ -298,6 +305,7 @@ pub(crate) struct States {
     pub(crate) logging: logging::Instance,
     pub(crate) secrets: secrets::Instance,
     pub(crate) metrics: metrics::Instance,
+    pub(crate) sql: sql::Instance,
     pub(crate) extensions: extension::ExtensionStates,
 }
 
@@ -310,6 +318,7 @@ impl States {
         events.extend(logging::Logging::announce(&self.logging, tags));
         events.extend(secrets::Secrets::announce(&self.secrets, tags));
         events.extend(metrics::MetricsService::announce(&self.metrics, tags));
+        events.extend(sql::Sql::announce(&self.sql, tags));
         events
     }
 
@@ -377,6 +386,7 @@ impl States {
                 &services.metrics,
                 &info(metrics::MetricsService::CAPABILITY),
             ),
+            sql: sql::Sql::instance(&shared.sql, &services.sql, &info(sql::Sql::CAPABILITY)),
             extensions: states,
         })
     }
@@ -390,7 +400,8 @@ where
         + HostState<keyvalue::KeyValue>
         + HostState<logging::Logging>
         + HostState<secrets::Secrets>
-        + HostState<metrics::MetricsService>,
+        + HostState<metrics::MetricsService>
+        + HostState<sql::Sql>,
 {
     config::Config::link(linker)?;
     groups::Groups::link(linker)?;
@@ -398,6 +409,7 @@ where
     logging::Logging::link(linker)?;
     secrets::Secrets::link(linker)?;
     metrics::MetricsService::link(linker)?;
+    sql::Sql::link(linker)?;
     Ok(())
 }
 
@@ -409,4 +421,5 @@ pub(crate) const INTERFACES: &[&[&str]] = &[
     logging::Logging::INTERFACES,
     secrets::Secrets::INTERFACES,
     metrics::MetricsService::INTERFACES,
+    sql::Sql::INTERFACES,
 ];

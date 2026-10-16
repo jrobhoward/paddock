@@ -35,7 +35,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### App and app
 
-- **Controls.** Buckets namespaced by app; shared buckets by grant, read-only or read-write; secrets by name and grant; groups by manifest scope; registered names limited to those the manifest lists; messaging ACLs (`messaging_acl.accept_from`, `may_call`, by app name) on calls, casts, exit signals and links, checked on the target's node against the host-stamped sender.
+- **Controls.** Buckets namespaced by app; shared buckets by grant, read-only or read-write; secrets by name and grant; groups by manifest scope; SQL datasources by name and grant, with a connection cap per app; registered names limited to those the manifest lists; messaging ACLs (`messaging_acl.accept_from`, `may_call`, by app name) on calls, casts, exit signals and links, checked on the target's node against the host-stamped sender.
 - **Gaps.** S1 is fixed. Without a `messaging_acl`, an app may call, cast, link or send exit signals to any pid it learns, as before; the lists are opt-in. Monitors are not checked (they only observe).
 
 ### The admin socket and the remote admin API
@@ -53,6 +53,14 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 - **HTTP.** Routes by host and path prefix; body limit per route (1 MiB default); header timeout 10 s, body timeout 30 s; at most 1,024 connections per address; reply size limit; TLS with rustls on ring, certificates reloaded on change. No client certificates yet.
 - **Listeners.** `max_connections` and an idle timeout per listener; each connection is its own instance with its own limits.
 - **Gaps.** None found.
+
+### SQL datasources
+
+- **Credentials** come from a node secret (`password_secret`) and never reach a guest; apps name datasources, not addresses.
+- **Statements** are the guest's own SQL, run with the datasource's user: what that user may do in the database is the operator's grant there. Parameters are bound, never interpolated by the host. A statement timeout (server-side) and a result size cap bound each call; a connection cap per app and an acquire timeout bound what one app holds.
+- **Pooled connections are reset** with `ROLLBACK; DISCARD ALL` before reuse, so a transaction or session setting one call leaves does not reach the next caller, which may be another app.
+- **TLS** verifies the server against the CA file the operator names; there are no system roots.
+- **Gaps.** Apps that share a datasource share its database user, so the database cannot tell them apart; give each app its own datasource and user where that matters. Results from the server are parsed by `tokio-postgres` and decoded by the host.
 
 ### Modbus
 

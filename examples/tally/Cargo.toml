@@ -1,0 +1,20 @@
+[package]
+name = "example-tally"
+version = "0.0.0"
+description = "Paddock example: a tally kept in Postgres through paddock:sql, served over HTTP"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["http", "sql"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

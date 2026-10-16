@@ -210,6 +210,7 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "instances": { "min": 4, "max": 2 } }), "instances.max")]
 #[case(json!({ "instances": { "count": 0 } }), "instances.count")]
 #[case(json!({ "instances": { "passivate_after_ms": 0 } }), "instances.passivate_after_ms")]
+#[case(json!({ "capabilities": { "paddock:sql": { "datasources": { "main": { "max_connections": 0 } } } } }), "capabilities.paddock:sql.datasources.main.max_connections")]
 #[case(json!({ "registered_names": ["Orders"] }), "registered_names[0]")]
 #[case(json!({ "registered_names": ["a", "a"] }), "registered_names[1]")]
 #[case(json!({ "dependencies": [{ "app": "b", "version": "1" }, { "app": "b", "version": "2" }] }), "dependencies[1].app")]
@@ -336,7 +337,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
         "limits": { "fuel_per_message": 10, "storage_quota": "1GiB", "open_files": 4, "outbound_connections": 2 },
         "capabilities": {
             "wasi:sockets": {},
-            "paddock:sql": { "datasource": "main", "max_connections": 4 },
             "paddock:admin": {},
             "wasi:keyvalue": { "buckets": { "r": { "durability": "replicated" } } }
         },
@@ -365,7 +365,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             ("limits.open_files".into(), Phase::Later),
             ("limits.outbound_connections".into(), Phase::Later),
             ("capabilities.wasi:sockets".into(), Phase::Phase3),
-            ("capabilities.paddock:sql".into(), Phase::Phase3),
             ("capabilities.paddock:admin".into(), Phase::Later),
             (
                 "capabilities.wasi:keyvalue.buckets.r.durability".into(),

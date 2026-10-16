@@ -176,7 +176,8 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `paddock:secrets` | `secrets = ["db-password"]`: names the app reads. Each name needs a `[secrets.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`secrets = [...]`); reading an ungranted one returns `access-denied`. | enforced |
 | `paddock:metrics` | `prefix` (required; letters, digits, `_`): every metric is exported as `<prefix>_<name>` with an `app` label. `max_series` (default 1000): most name and label combinations the app may hold; past it, registering returns `limit-reached`. | enforced |
 | `wasi:http/outgoing-handler` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
-| `wasi:sockets`, `paddock:sql` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
+| `paddock:sql` | `datasources.<name>.max_connections` (default 4): the SQL datasources the app uses, and how many connections its instances hold on each at once, transactions included. Each name needs a `[datasources.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`datasources = [...]`); using an ungranted one returns `access-denied`. A call that cannot get a connection within the datasource's `acquire_timeout_ms` returns `limit-reached`. Postgres only; see `wit/sql/sql.wit` for what values carry. | enforced |
+| `wasi:sockets` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
 | `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
 | `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
 
@@ -260,6 +261,20 @@ acceptors = 4                          # default 4: tasks accepting connections 
 
 [secrets.db-password]
 file = "/run/secrets/db-password"      # or env = "DB_PASSWORD"; read on every access
+
+[datasources.main]                     # a Postgres database for paddock:sql; pooled, opened on first use
+host = "db.internal"                   # or a Unix socket directory, such as "/run/postgresql"
+port = 5432
+dbname = "orders"
+user = "orders"
+password_secret = "db-password"        # a name in [secrets]; omit for trust or peer authentication  (secret-scan: allow)
+tls = "require"                        # or "disable" (the default); require needs ca_file
+ca_file = "/etc/paddock/db-ca.pem"     # the CAs the server must chain to (no system roots)
+pool_size = 10                         # most connections, every app together
+connect_timeout_ms = 5000
+acquire_timeout_ms = 5000              # a call waiting longer for a connection gets limit-reached
+statement_timeout_ms = 30000           # the server cancels longer statements (timeout)
+max_result_bytes = "16MiB"             # larger results are refused (too-large)
 
 [metrics]
 address = "127.0.0.1:9100"             # GET /metrics for Prometheus; unauthenticated, keep it off public networks
@@ -357,6 +372,7 @@ grant = ["wasi:logging", "wasi:config"]
 grant = ["wasi:keyvalue", "wasi:filesystem"]
 buckets = ["points"]                   # shared buckets; needs wasi:keyvalue granted too
 secrets = ["db-password"]              # secrets; needs paddock:secrets granted too
+datasources = ["main"]                 # SQL datasources; needs paddock:sql granted too
 
 [signers.payments-team]
 key = "RWQ..."

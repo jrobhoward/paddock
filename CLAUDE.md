@@ -142,7 +142,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `examples/board` is the tutorial's app (a counter on a shared disk
   bucket over HTTP; `paddock.toml`, `watch.toml` and `hot-standby.toml`, one
   component), run by `crates/paddock/tests/board.rs`; `examples/tutorial/` is its chapter
-  scripts (`common.sh` shared), not a crate.
+  scripts (`common.sh` shared), not a crate. `examples/tally` keeps a
+  counter in Postgres (`paddock:sql`, tutorial chapter 4), run by
+  `crates/paddock/tests/tally.rs` against a scratch Postgres
+  (`crates/paddock-host/tests/common/pg.rs`, shared by path).
   `examples/failover/` is a demo script (a witness and a pair as three
   `paddock node` processes, the primary killed), not a crate.
   `examples/tracing/` is a demo script and bpftrace scripts for the
@@ -169,9 +172,13 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `paddock:connection` package (connection handlers), separate because it
   uses `wasi:io` streams, which `paddock:runtime` excludes. `wit/groups/`:
   the `paddock:groups` package (process groups), and `wit/watch/`:
-  `paddock:watch` (keyvalue revisions, compare-and-swap, watches), separate
-  so the app world stays frozen; every host bindgen lists both, since
-  `crates/paddock-host/wit` imports them. `wit/vendor/`
+  `paddock:watch` (keyvalue revisions, compare-and-swap, watches), and
+  `wit/secrets/`, `wit/metrics/` and `wit/sql/` (SQL datasources), separate
+  so the app world stays frozen; every host bindgen lists all of them,
+  since `crates/paddock-host/wit` imports them. The SQL service
+  (`src/services/sql`, cargo feature `sql`) runs Postgres through
+  `tokio-postgres` and `deadpool-postgres`; its tests start a scratch
+  Postgres as the current user and skip when none is installed. `wit/vendor/`
   holds unmodified copies of the WASI interfaces Paddock binds against
   (keyvalue, config, logging, and `wasi:io` for connections); bindings name
   each package path explicitly.

@@ -168,7 +168,18 @@ impl Node {
             .with_granted(&grant.granted)
             .with_granted_extensions(&grant.granted_extensions)
             .with_granted_buckets(&grant.granted_buckets)
-            .with_granted_secrets(&grant.granted_secrets);
+            .with_granted_secrets(&grant.granted_secrets)
+            .with_granted_datasources(&grant.granted_datasources);
+        if let Some(missing) = grant
+            .granted_datasources
+            .iter()
+            .chain(&grant.denied_datasources)
+            .find(|d| !self.config.datasources.contains_key(*d))
+        {
+            return Err(NodeError::Invalid(format!(
+                "datasource '{missing}' is not configured on this node ([datasources.{missing}])"
+            )));
+        }
         if let Some(missing) = grant
             .granted_secrets
             .iter()
@@ -231,11 +242,23 @@ impl Node {
                 .into_iter()
                 .chain(grant.granted_buckets.iter().map(|b| format!("bucket:{b}")))
                 .chain(grant.granted_secrets.iter().map(|s| format!("secret:{s}")))
+                .chain(
+                    grant
+                        .granted_datasources
+                        .iter()
+                        .map(|d| format!("datasource:{d}")),
+                )
                 .collect(),
             denied: keys(&grant.denied, &grant.denied_extensions)
                 .into_iter()
                 .chain(grant.denied_buckets.iter().map(|b| format!("bucket:{b}")))
                 .chain(grant.denied_secrets.iter().map(|s| format!("secret:{s}")))
+                .chain(
+                    grant
+                        .denied_datasources
+                        .iter()
+                        .map(|d| format!("datasource:{d}")),
+                )
                 .collect(),
             stubbed: match &loaded {
                 Loaded::App(app) => app.stubbed_imports().to_vec(),

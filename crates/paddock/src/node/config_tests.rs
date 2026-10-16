@@ -464,3 +464,51 @@ fn NodeConfig____max_processes____read_or_refused_below_max_instances() {
         "{below}"
     );
 }
+
+#[test]
+fn NodeConfig____datasource____read_with_defaults() {
+    let config = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[secrets.pg]\nfile = \"/run/pg\"\n\
+         [datasources.main]\nhost = \"/run/postgresql\"\ndbname = \"app\"\nuser = \"app\"\npassword_secret = \"pg\"\n",
+    )
+    .unwrap();
+
+    let ds = &config.datasources["main"];
+    assert_eq!(ds.port, 5432);
+    assert_eq!(ds.tls, DatasourceTls::Disable);
+    assert_eq!(ds.pool_size, 10);
+    assert_eq!(ds.statement_timeout_ms, 30_000);
+    assert_eq!(ds.max_result_bytes, ByteSize::mib(16));
+}
+
+#[test]
+fn NodeConfig____bad_datasource____refused() {
+    let cases = [
+        (
+            "password_secret = \"nope\"\n",
+            "password_secret 'nope' is not in [secrets]",
+        ),
+        ("tls = \"require\"\n", "tls \"require\" needs ca_file"),
+        (
+            "ca_file = \"/ca.pem\"\n",
+            "ca_file is only for tls \"require\"",
+        ),
+        ("pool_size = 0\n", "must be more than 0"),
+    ];
+
+    let errors: Vec<(String, &str)> = cases
+        .iter()
+        .map(|(extra, want)| {
+            let err = NodeConfig::from_toml_str(&format!(
+                "data_dir = \"/d\"\n[datasources.main]\nhost = \"db\"\ndbname = \"app\"\nuser = \"app\"\n{extra}"
+            ))
+            .unwrap_err();
+            (err.to_string(), *want)
+        })
+        .collect();
+
+    for (err, want) in errors {
+        assert!(err.contains("datasources.main"), "{err}");
+        assert!(err.contains(want), "{err}");
+    }
+}

@@ -10,11 +10,14 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["http", "tls"]
+default = ["http", "tls", "sql"]
 # The HTTP ingress (`paddock_host::http`): node-level routes to apps.
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 # HTTPS on the HTTP ingress (`http::IngressTls`).
 tls = ["http", "dep:tokio-rustls"]
+# SQL datasources (`paddock:sql`, ROADMAP E5): a Postgres pool per datasource
+# in node config. Idle without one.
+sql = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio-postgres-rustls", "dep:futures-util"]
 # USDT probes on the message path (`src/probe.rs`): SystemTap SDT on Linux,
 # DTrace on macOS and FreeBSD, ETW on Windows. Without it the probe calls
 # compile to nothing.
@@ -36,6 +39,10 @@ serde = { workspace = true }
 toml = { workspace = true }
 rustls-pki-types = { workspace = true }
 tokio-rustls = { workspace = true, optional = true }
+tokio-postgres = { workspace = true, optional = true }
+deadpool-postgres = { workspace = true, optional = true }
+tokio-postgres-rustls = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 paddock-bundle = { workspace = true }
 redb = { workspace = true }
 semver = { workspace = true }

@@ -12,6 +12,7 @@ minutes.
 examples/tutorial/01-one-node.sh
 examples/tutorial/02-failover.sh
 examples/tutorial/03-hot-standby.sh
+examples/tutorial/04-database.sh             # needs Postgres's server programs
 AUTO=1 examples/tutorial/02-failover.sh    # no pauses: kills node 1 itself
 ```
 
@@ -158,7 +159,42 @@ answers, with `"replicas":0`, and the standby's board falls behind until
 the next write after it is back. An app that cannot accept that waits for
 the standby, or refuses the write.
 
-## Chapter 4 (later): replicated buckets
+## Chapter 4: state outside the pair
+
+`04-database.sh` starts chapter 2's pair and witness, and a Postgres server
+of its own in the demo directory (as you, on a Unix socket only; it needs
+Postgres's server programs, on Ubuntu `apt install postgresql`). The app is
+[`examples/tally`](../tally), a counter that keeps its count in Postgres
+through `paddock:sql`, deployed to both nodes as a singleton, as the board
+was in chapter 2. Each node's config names the database once,
+`[datasources.main]`; the app's manifest names `main` with how many
+connections it may hold, and policy grants it (`datasources = ["main"]`).
+The app never sees where the database is or how to log in.
+
+Each `POST /tally` runs in one transaction: it adds to the count with
+`UPDATE ... RETURNING` and logs the change, with the instance that made it,
+in `tally_log`; if any step fails, nothing is kept. Kill the primary with
+`kill -9`, and node 2 serves the tally a few seconds later, at the same
+count:
+
+```text
+$ curl -s http://127.0.0.1:8082/tally
+{"count":3,"pid":"<2.1.1@1>","recent":[{"by":"<1.1.1@1>","n":3,...},...]}
+$ curl -s -X POST http://127.0.0.1:8082/tally
+{"count":4,"pid":"<2.1.1@1>","recent":[{"by":"<2.1.1@1>","n":4},...]}
+```
+
+As in chapter 2, node 2 started the app from `init`; unlike chapter 2, its
+state was never on node 1. Every change was committed in the database
+before the node answered, so nothing that a client saw is lost.
+
+What this shows: state an app keeps in a database outside the pair moves
+with it for free. The database is then the part to keep available, with
+its own replication or a managed service, which Paddock does not do. Its
+calls cost a round trip to the database each, and a transaction holds one
+of the app's connections until it commits.
+
+## Chapter 5 (later): replicated buckets
 
 The board becomes a bucket replicated between the pair (`scope =
 "cluster"`, Phase 3), and the app goes back to plain reads and writes, as in

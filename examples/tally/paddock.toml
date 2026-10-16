@@ -1,0 +1,33 @@
+# A tally kept in Postgres (`paddock:sql`), over HTTP. Needs, in node
+# config, an HTTP ingress and the datasource:
+#
+#   [http.main]
+#   address = "127.0.0.1:8080"
+#
+#   [datasources.main]
+#   host = "/run/postgresql"     # or an address; see docs/MANIFEST.md
+#   dbname = "tally"
+#   user = "tally"
+#
+# and in policy:
+#
+#   [apps.tally]
+#   grant = ["wasi:http/incoming-handler", "paddock:sql", "wasi:logging"]
+#   datasources = ["main"]
+#
+# examples/tutorial (chapter 4) runs it on an HA pair.
+[app]
+name = "tally"
+version = "1.0.0"
+description = "A tally kept in Postgres, over HTTP (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.capabilities."wasi:http/incoming-handler"]
+routes = [{ path_prefix = "/tally" }]
+max_body = "1KiB"
+timeout_ms = 10000
+
+[appserver.capabilities."paddock:sql".datasources.main]
+max_connections = 2
+
+[appserver.capabilities."wasi:logging"]

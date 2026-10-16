@@ -39,6 +39,14 @@
 //!   `<method> <path>?<query> key=<key> body=<body> scheme=<scheme> pid=<pid>`.
 //! - `changes`: every change notice received, `<key>@<revision>`, joined
 //!   by `,`.
+//! - SQL (`paddock:sql`), fields separated by `\x1f` (statements contain
+//!   colons): `sql\x1fquery\x1f<ds>\x1f<statement>\x1f<param>...` replies
+//!   `columns|rows` in debug form, `sql\x1fexec\x1f<ds>\x1f...` the rows
+//!   changed; `sql\x1fbegin\x1f<ds>`, then `sql\x1ftx-query\x1f<statement>...`,
+//!   `sql\x1ftx-exec\x1f...`, `sql\x1fcommit`, `sql\x1frollback`, or
+//!   `sql\x1fdrop` (drop the transaction unended). Parameters are typed by
+//!   a prefix: `i:` integer, `f:` float, `t:` text, `b:` boolean, `x:` hex
+//!   bytes, `null`. Errors reply `err:<debug>`.
 
 use paddock_sdk::groups::{self, GroupError};
 use paddock_sdk::http::{Request, Response};
@@ -57,6 +65,8 @@ struct Point {
 struct Fixture {
     received: Vec<String>,
     changes: Vec<String>,
+    /// An open SQL transaction, from `sql begin`.
+    tx: Option<paddock_sdk::sql::Transaction>,
     /// What `health` answers: healthy unless `sick:<why>` set a reason.
     sick: Option<String>,
 }
@@ -238,6 +248,76 @@ fn config(command: &str) -> Result<String, paddock_sdk::config::ConfigError> {
     })
 }
 
+fn sql_param(p: &str) -> paddock_sdk::sql::Value {
+    use paddock_sdk::sql::Value;
+    if p == "null" {
+        return Value::Null;
+    }
+    let (kind, v) = p.split_once(':').unwrap_or(("t", p));
+    match kind {
+        "i" => Value::Int(v.parse().unwrap_or(0)),
+        "f" => Value::Float(v.parse().unwrap_or(0.0)),
+        "b" => Value::Boolean(v == "true"),
+        "x" => Value::Bytes(
+            (0..v.len() / 2)
+                .filter_map(|i| u8::from_str_radix(&v[i * 2..i * 2 + 2], 16).ok())
+                .collect(),
+        ),
+        _ => Value::Text(v.to_string()),
+    }
+}
+
+impl Fixture {
+    /// A SQL command; see the module documentation.
+    fn sql(&mut self, command: &str) -> String {
+        use paddock_sdk::sql;
+        let mut fields = command.split('\x1f');
+        let verb = fields.next().unwrap_or("");
+        let out = match verb {
+            "query" | "exec" | "begin" => {
+                let ds = fields.next().unwrap_or("");
+                if verb == "begin" {
+                    sql::begin(ds).map(|tx| {
+                        self.tx = Some(tx);
+                        "ok".to_string()
+                    })
+                } else {
+                    let statement = fields.next().unwrap_or("");
+                    let params: Vec<sql::Value> = fields.map(sql_param).collect();
+                    if verb == "query" {
+                        sql::query(ds, statement, &params)
+                            .map(|r| format!("{:?}|{:?}", r.columns, r.rows))
+                    } else {
+                        sql::execute(ds, statement, &params).map(|n| n.to_string())
+                    }
+                }
+            }
+            "tx-query" | "tx-exec" => {
+                let statement = fields.next().unwrap_or("");
+                let params: Vec<sql::Value> = fields.map(sql_param).collect();
+                match &self.tx {
+                    None => return "err:no transaction".into(),
+                    Some(tx) if verb == "tx-query" => tx
+                        .query(statement, &params)
+                        .map(|r| format!("{:?}|{:?}", r.columns, r.rows)),
+                    Some(tx) => tx.execute(statement, &params).map(|n| n.to_string()),
+                }
+            }
+            "commit" | "rollback" => match self.tx.take() {
+                None => return "err:no transaction".into(),
+                Some(tx) if verb == "commit" => tx.commit().map(|()| "ok".into()),
+                Some(tx) => tx.rollback().map(|()| "ok".into()),
+            },
+            "drop" => {
+                self.tx = None;
+                Ok("ok".into())
+            }
+            other => return format!("err:unknown sql command {other}"),
+        };
+        out.unwrap_or_else(|e| format!("err:{e:?}"))
+    }
+}
+
 impl App for Fixture {
     fn init(_ctx: &mut Ctx, _args: &[u8]) -> Result<Self, String> {
         Ok(Self::default())
@@ -252,6 +332,9 @@ impl App for Fixture {
             return http(ctx, &req);
         }
         let command = msg.as_text().unwrap_or("");
+        if let Some(rest) = command.strip_prefix("sql\x1f") {
+            return Reply::Now(Envelope::text(self.sql(rest)));
+        }
         let verb = command.split(':').next().unwrap_or("");
         let reply = if command.starts_with("config") {
             config(command).unwrap_or_else(|e| format!("err:{e}"))
@@ -313,7 +396,7 @@ impl App for Fixture {
         Ok(Self {
             received: list(received),
             changes: list(changes),
-            sick: None,
+            ..Self::default()
         })
     }
 

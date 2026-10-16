@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true, features = ["config", "groups", "http", "keyvalue", "metrics", "secrets", "watch"] }
+paddock-sdk = { workspace = true, features = ["config", "groups", "http", "keyvalue", "metrics", "secrets", "sql", "watch"] }
 serde = { workspace = true }
 
 [lints]

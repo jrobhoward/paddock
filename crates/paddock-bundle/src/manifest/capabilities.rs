@@ -121,9 +121,10 @@ impl Capability {
             | Self::Groups
             | Self::HttpIncoming
             | Self::Secrets
+            | Self::Sql
             | Self::Metrics => None,
             Self::HttpOutgoing => Some(Phase::Phase2),
-            Self::Sockets | Self::Sql => Some(Phase::Phase3),
+            Self::Sockets => Some(Phase::Phase3),
             Self::Supervisor | Self::Admin => Some(Phase::Later),
         }
     }
@@ -464,12 +465,7 @@ impl Capabilities {
             v.at(Capability::Sockets.key(), |v| s.validate(v));
         }
         if let Some(s) = &self.sql {
-            v.at(Capability::Sql.key(), |v| {
-                v.name("datasource", &s.datasource);
-                if s.max_connections == 0 {
-                    v.error_at("max_connections", "must be greater than zero");
-                }
-            });
+            v.at(Capability::Sql.key(), |v| s.validate(v));
         }
         if let Some(s) = &self.metrics {
             let valid = s
@@ -938,14 +934,43 @@ impl From<PortRange> for String {
     }
 }
 
-/// Scope of `paddock:sql`.
+/// Scope of `paddock:sql`. Declared with no datasources, it grants
+/// nothing: for a component that imports the interface without using it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SqlScope {
+    /// Datasources the app uses, by name; the node binds each name
+    /// (`[datasources.<name>]`) and the operator grants it (policy
+    /// `datasources`).
+    pub datasources: BTreeMap<String, Datasource>,
+}
+
+/// One datasource an app uses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SqlScope {
-    /// Named datasource from node configuration.
-    pub datasource: String,
-    /// Most connections the app may hold.
+pub struct Datasource {
+    /// Most connections the app's instances hold at once, transactions
+    /// included; unset, 4.
+    #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+}
+
+const fn default_max_connections() -> u32 {
+    4
+}
+
+impl SqlScope {
+    pub(crate) fn validate(&self, v: &mut Validator) {
+        for (name, ds) in &self.datasources {
+            v.name(format!("datasources.{name}"), name);
+            if ds.max_connections == 0 {
+                v.error_at(
+                    format!("datasources.{name}.max_connections"),
+                    "must be at least 1",
+                );
+            }
+        }
+    }
 }
 
 /// Scope of `paddock:metrics`.

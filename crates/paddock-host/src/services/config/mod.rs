@@ -31,6 +31,7 @@ mod bindings {
             "../../wit/watch",
             "../../wit/secrets",
             "../../wit/metrics",
+            "../../wit/sql",
             "wit",
         ],
         world: "paddock:host/config",

@@ -309,6 +309,23 @@ All notable changes are recorded here. The format follows
   supervisor restarts it. `paddock-sdk` answers from `App::health`,
   healthy by default. The app world is unchanged.
 
+- SQL datasources (ROADMAP E5): `paddock:sql` (`wit/sql/sql.wit`) lets an
+  app run Postgres statements on datasources the node binds
+  (`[datasources.<name>]`: address, password from a node secret, TLS with
+  a CA file, pool size, timeouts, a result size cap). `query`, `execute`
+  and a `transaction` resource (dropping it rolls back, as does the
+  instance exiting); parameters bound and sent as text for the server to
+  convert; result columns as booleans, integers, floats, text and bytes,
+  with dates, times, `numeric`, `json` and `uuid` as text. The manifest
+  names each datasource with a connection cap per app
+  (`capabilities."paddock:sql".datasources`), and policy grants each
+  (`datasources`). Pooled connections are reset before reuse. Cargo
+  feature `sql`, on by default; `paddock_sdk::sql` behind the SDK's `sql`
+  feature. `examples/tally` keeps a counter in Postgres, each change in one
+  transaction, and tutorial chapter 4 (`04-database.sh`) runs it as a
+  singleton on an HA pair: the count survives `kill -9` of the primary.
+  The tests start a scratch Postgres as the current user and skip without
+  one.
 - Passivation for apps (ROADMAP E7): manifest `instances.passivate_after_ms`
   turns S11's passivation on for an app, and node config `max_processes`
   lets a node hold more instances than `max_instances` Store slots. A deploy

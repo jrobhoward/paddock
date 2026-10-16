@@ -206,6 +206,17 @@ impl InstanceSpec {
         self
     }
 
+    /// Keep only the SQL datasources in `granted` usable (the effective
+    /// grant's `granted_datasources`); the others return `access-denied`.
+    #[must_use]
+    pub fn with_granted_datasources(mut self, granted: &BTreeSet<String>) -> Self {
+        self.services
+            .sql
+            .datasources
+            .retain(|name, _| granted.contains(name));
+        self
+    }
+
     /// Keep only the shared buckets in `granted` openable (the effective
     /// grant's `granted_buckets`); the others return `access-denied`.
     #[must_use]

@@ -14,6 +14,7 @@ world app {
   import paddock:watch/watch@0.1.0;
   import paddock:secrets/store@0.1.0;
   import paddock:metrics/metrics@0.1.0;
+  import paddock:sql/sql@0.1.0;
 }
 
 /// The world the SDK binds for connection handlers (feature `connection`):

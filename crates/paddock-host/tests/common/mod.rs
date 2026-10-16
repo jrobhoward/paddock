@@ -4,6 +4,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+pub mod pg;
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
