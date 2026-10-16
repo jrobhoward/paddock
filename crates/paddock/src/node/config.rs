@@ -77,6 +77,10 @@
 //! witness = 3                   # the witness's node id, with "witness"
 //! lease_ms = 3000
 //! margin_ms = 500               # less than half of lease_ms
+//! # A second heartbeat path to the partner over a null-modem cable (Unix
+//! # only; the node's user needs the device's group, `dialout` on most
+//! # Linux systems). Both nodes set the same baud.
+//! serial = { device = "/dev/ttyUSB0", baud = 115200 }
 //!
 //! # On the witness (cluster role "witness") instead:
 //! # [witness]
@@ -501,7 +505,7 @@ pub enum ArbiterKind {
 }
 
 /// The `[failover]` section: this node and `partner` are an HA pair.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FailoverBinding {
     /// The other node of the pair.
@@ -518,6 +522,24 @@ pub struct FailoverBinding {
     /// milliseconds. Less than half of `lease_ms`.
     #[serde(default = "default_margin_ms")]
     pub margin_ms: u64,
+    /// A serial line to the partner, a second heartbeat path.
+    #[serde(default)]
+    pub serial: Option<SerialBinding>,
+}
+
+/// `[failover] serial`: the device of a serial line to the partner.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SerialBinding {
+    /// The device (`/dev/ttyUSB0`).
+    pub device: PathBuf,
+    /// Bits per second; the partner's must match.
+    #[serde(default = "default_baud")]
+    pub baud: u32,
+}
+
+fn default_baud() -> u32 {
+    115_200
 }
 
 /// The `[witness]` section: this node arbitrates an HA pair.
@@ -1018,6 +1040,14 @@ impl NodeConfig {
                     return invalid("failover.witness is only for arbiter \"witness\"");
                 }
                 _ => {}
+            }
+            if let Some(serial) = &f.serial {
+                if cfg!(not(unix)) {
+                    return invalid("failover.serial needs a Unix node");
+                }
+                if serial.baud == 0 {
+                    return invalid("failover.serial.baud must be more than 0");
+                }
             }
             if !timing_ok(f.lease_ms, f.margin_ms) {
                 return invalid(

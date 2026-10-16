@@ -76,7 +76,8 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### Liveness, membership and failover
 
-- **Controls.** As for node and node; the failover rules R1 to R11 and their model (`docs/tla/VERIFICATION.md`).
+- **Controls.** As for node and node; the failover rules R1 to R11 and their model (`docs/tla/VERIFICATION.md`). Serial heartbeat frames carry a CRC-16 and the sender's and receiver's node ids; frames that fail either check are dropped.
+- **Serial line.** Frames on the pair's serial cable are not authenticated: whoever can reach the cable or a device on it can forge beats, which can keep a standby from promoting (a forged "primary alive") or renew a lease a primary would otherwise lose. The cable is treated as part of the pair's physical enclosure.
 - **Gaps.** S5 is fixed. With a witness, an operator is asked to confirm a promotion only while the witness cannot be reached either, and a confirmation then is final: if the partner confirmed gone was alive, or restarts, and reaches the witness but not this node, both run (VERIFICATION.md, A9). A primary paused past its lease no longer runs its singleton's callbacks when it continues (A8 in `docs/tla/VERIFICATION.md`).
 
 ### Bundles, manifests and policy

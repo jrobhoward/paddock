@@ -230,8 +230,41 @@ fn NodeConfig____failover____read_with_defaults() {
             witness: Some(3),
             lease_ms: 3_000,
             margin_ms: 500,
+            serial: None,
         })
     );
+}
+
+#[test]
+fn NodeConfig____failover_serial____read_with_default_baud() {
+    let config = NodeConfig::from_toml_str(&format!(
+        "{CLUSTERED}[failover]\npartner = 2\narbiter = \"paths\"\n\
+         serial = {{ device = \"/dev/ttyUSB0\" }}\n"
+    ))
+    .unwrap();
+
+    assert_eq!(
+        config.failover.unwrap().serial,
+        Some(SerialBinding {
+            device: "/dev/ttyUSB0".into(),
+            baud: 115_200,
+        })
+    );
+}
+
+#[rstest::rstest]
+#[case::zero_baud(
+    "serial = { device = \"/dev/ttyUSB0\", baud = 0 }",
+    "baud must be more than 0"
+)]
+#[case::unknown_field("serial = { device = \"/dev/ttyUSB0\", parity = \"even\" }", "parity")]
+fn NodeConfig____failover_serial_invalid____refused(#[case] line: &str, #[case] says: &str) {
+    let result = NodeConfig::from_toml_str(&format!(
+        "{CLUSTERED}[failover]\npartner = 2\narbiter = \"paths\"\n{line}\n"
+    ));
+
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains(says), "{err}");
 }
 
 const PAIRED: &str = "[failover]\npartner = 2\narbiter = \"paths\"\n";

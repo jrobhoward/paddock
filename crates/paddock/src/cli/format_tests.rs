@@ -158,6 +158,7 @@ fn primary() -> paddock::api::FailoverInfo {
         may_run: true,
         awaiting_confirmation: false,
         partner_reachable: true,
+        paths: [("link".to_string(), true)].into(),
         singletons: vec![],
         generation: 7,
     }
@@ -196,6 +197,7 @@ fn failover____standby_waiting____says_how_to_confirm() {
         may_run: false,
         awaiting_confirmation: true,
         partner_reachable: false,
+        paths: [("link".to_string(), false), ("serial".to_string(), true)].into(),
         singletons: vec!["leader".into()],
         generation: 2,
     };
@@ -208,6 +210,10 @@ fn failover____standby_waiting____says_how_to_confirm() {
     );
     assert!(out.contains("partner:    1 (reachable: no)"), "{out}");
     assert!(out.contains("singletons: leader"), "{out}");
+    assert!(
+        out.contains("paths:      link silent, serial heard"),
+        "{out}"
+    );
     assert!(out.contains("paddock failover confirm"), "{out}");
 }
 

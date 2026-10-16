@@ -710,3 +710,86 @@ async fn gate____start_fails_at_promotion____tried_again_until_it_starts() {
     assert_eq!(while_base_stopped, "standby");
     n.shutdown().await;
 }
+
+/// The pair's serial line (ROADMAP F5): two ptys joined by a relay the test
+/// can cut, or with `PADDOCK_SERIAL_PAIR=/dev/ttyUSB0,/dev/ttyUSB1` a pty
+/// relayed to the first device while node 2 opens the second, so beats
+/// cross a real cable. The devices each node of the pair opens, the cut
+/// switch, and the relay's task.
+async fn serial_line() -> (
+    [String; 2],
+    tokio::sync::watch::Sender<bool>,
+    tokio::task::JoinHandle<()>,
+) {
+    use paddock::serial::{Tty, pty, relay};
+    let (cut, cut_rx) = tokio::sync::watch::channel(false);
+    let (end1, device1) = pty().unwrap();
+    let (end2, device2) = match std::env::var("PADDOCK_SERIAL_PAIR") {
+        Ok(pair) => {
+            let (a, b) = pair.split_once(',').expect("two devices, comma-separated");
+            let a = Tty::open(Path::new(a), 115_200).unwrap();
+            (a, std::path::PathBuf::from(b))
+        }
+        Err(_) => pty().unwrap(),
+    };
+    let task = tokio::spawn(relay(end1, end2, cut_rx));
+    let devices = [device1, device2].map(|d| d.display().to_string());
+    (devices, cut, task)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failover_serial____line_cut_and_restored_then_primary_killed____paths_follow_and_standby_takes_over()
+ {
+    let dir = tempfile::Builder::new()
+        .prefix("pfs")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let (devices, cut, relay) = serial_line().await;
+    let with_serial = |n: u32, address: &str| {
+        format!(
+            "{}serial = {{ device = {:?} }}\n",
+            member(n, dir.path(), &peers, address, &a3),
+            devices[usize::try_from(n - 1).unwrap()]
+        )
+    };
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &with_serial(1, &a1)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &with_serial(2, &a2)).await;
+    let serial = |c: &paddock::api::Client, heard: bool| {
+        let c = c.clone();
+        async move {
+            c.failover()
+                .await
+                .is_ok_and(|f| f.paths.get("serial") == Some(&heard))
+        }
+    };
+    let role = |c: &paddock::api::Client, r: &'static str| {
+        let c = c.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == r) }
+    };
+
+    until("node 2 standby", || role(&n2.client, "standby")).await;
+    until("node 1 hears serial", || serial(&n1.client, true)).await;
+    until("node 2 hears serial", || serial(&n2.client, true)).await;
+    cut.send_replace(true);
+    until("node 2: serial silent", || serial(&n2.client, false)).await;
+    let during_cut = n2.client.failover().await.unwrap();
+    cut.send_replace(false);
+    until("node 2 hears serial again", || serial(&n2.client, true)).await;
+    n1.child.kill().await.unwrap();
+    until("node 2 primary", || role(&n2.client, "primary")).await;
+    let promoted = n2.client.failover().await.unwrap();
+
+    assert_eq!(during_cut.role, "standby", "{during_cut:?}");
+    assert_eq!(during_cut.paths.get("link"), Some(&true), "{during_cut:?}");
+    assert_eq!(promoted.paths.get("serial"), Some(&false), "{promoted:?}");
+    relay.abort();
+    for p in [&mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
+}

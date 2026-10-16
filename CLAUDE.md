@@ -228,6 +228,12 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `crates/paddock/src/node/daemon/handlers.rs`. `crates/paddock-fixture-http`
   is its test guest (built with `wasip2`'s `proxy::export!`, plus a
   `paddock:runtime/process` import).
+- `crates/paddock/src/serial/`: the tty layer (raw termios on `rustix`,
+  Unix only; `serialport`/`tokio-serial` are MPL-2.0), the serial heartbeat
+  frame format and a cuttable relay between two ttys (tests, the soak);
+  `crates/paddock/src/node/serial_path.rs` is the failover pair's serial
+  heartbeat path. Tests use pty pairs; `PADDOCK_SERIAL_PAIR=DEV_A,DEV_B`
+  (two devices on a null-modem cable) also runs them on hardware.
 - `crates/paddock-soak`: the `paddock-soak` binary behind `scripts/soak.sh`
   (Unix only): `failover` runs a witness and a pair as `paddock node`
   processes behind UDP proxies (each node binds `cluster.address` and

@@ -24,6 +24,9 @@
 #   --seed N              the first seed (default: random); each run takes
 #                         the next
 #   --failover-minutes M  length of each failover run (default 10)
+#   --serial SPEC         give the failover pair a serial line the runs also
+#                         cut: `pty`, or DEV_A,DEV_B for two devices joined by
+#                         a null-modem cable (default: none)
 #   --cluster-minutes M   length of each cluster run (default 10)
 #   --chaos-minutes M     length of each chaos run (default 5)
 #   --sim-seeds N         random scenarios per sim run (default 200)
@@ -52,6 +55,7 @@ hours=""
 dir=""
 seed=$(( (RANDOM << 15 | RANDOM) ))
 failover_minutes=10
+serial=""
 cluster_minutes=10
 chaos_minutes=5
 sim_seeds=200
@@ -63,6 +67,7 @@ while [ "$#" -gt 0 ]; do
         --dir) dir=${2:-}; shift ;;
         --seed) seed=${2:-}; shift ;;
         --failover-minutes) failover_minutes=${2:-}; shift ;;
+        --serial) serial=${2:-}; shift ;;
         --cluster-minutes) cluster_minutes=${2:-}; shift ;;
         --chaos-minutes) chaos_minutes=${2:-}; shift ;;
         --sim-seeds) sim_seeds=${2:-}; shift ;;
@@ -115,7 +120,8 @@ while [ "$(now)" -lt "$deadline" ]; do
                 ;;
             failover)
                 target/release/paddock-soak failover --dir "$run" --seed "$seed" \
-                    --minutes "$(fit "$failover_minutes")" > "$run/output.txt" 2>&1
+                    --minutes "$(fit "$failover_minutes")" ${serial:+--serial "$serial"} \
+                    > "$run/output.txt" 2>&1
                 ;;
             cluster)
                 target/release/paddock-soak cluster --dir "$run" --seed "$seed" \

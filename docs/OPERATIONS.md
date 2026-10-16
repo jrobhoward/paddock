@@ -67,7 +67,7 @@ Ctrl-C stops the command running (a follow, a slow call); Ctrl-D or `exit` leave
 [`examples/systemd/paddock.service`](../examples/systemd/paddock.service) runs a node as its own unprivileged user. Privileges:
 
 - No root. `CAP_NET_BIND_SERVICE` is the only capability, and only for ingress or listener ports below 1024; leave it out otherwise.
-- `dialout` for serial lines (Modbus RTU and the failover serial heartbeat, both planned), with `PrivateDevices` off.
+- `dialout` (or the device's group) for the failover serial line (`[failover] serial`), with `PrivateDevices` off. A device that cannot be opened is logged and retried every second; the path stays silent meanwhile, and `paddock failover` shows it (`paths: link heard, serial silent`).
 - `StateDirectory` creates `data_dir` owned by the service user, mode 0750; the node creates what is under it.
 
 Reaching the primary of a pair from outside needs no root. Either put a load balancer in front of both nodes, with a health check on the app's own route expecting 200, or set `partner_url` on each node's `[http.<name>]` listener to the other node's address for it, as clients reach it: the standby then answers a singleton's requests with `307 Temporary Redirect` to the primary, and clients that follow redirects can use either address (tutorial chapter 2). Or set `standby = "forward"` on the listener: the standby passes a singleton's requests over the cluster to the primary's app and answers with its reply, so either address works for any client. For one address and no load balancer, a separate agent can move a virtual IP (below).

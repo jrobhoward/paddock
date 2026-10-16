@@ -373,6 +373,18 @@ All notable changes are recorded here. The format follows
   to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
+- Failover serial heartbeat path (ROADMAP F5): `[failover] serial = { device,
+  baud }` in node config gives an HA pair a second heartbeat path over a
+  null-modem cable, so a network cut with the serial line up is a partition
+  (nobody promotes). Beats are COBS-framed with a CRC-16 and both node ids;
+  the node reopens a device that fails, every second. `paddock::serial`: a
+  raw tty layer of Paddock's own on `rustix` termios (Unix only; the common
+  serial crates are MPL-2.0), pty pairs, and a relay that can cut a line.
+  `paddock failover` and `FailoverInfo.paths` show each heartbeat path to
+  the partner, heard or silent. `paddock-soak failover --serial pty|DEV_A,DEV_B`
+  (`scripts/soak.sh --serial`) adds the line to the failover soak and cuts it
+  among the other faults. Tests run on ptys; with
+  `PADDOCK_SERIAL_PAIR=DEV_A,DEV_B` they also run on a real cable.
 - HTTP handlers (ROADMAP E6): an unmodified `wasi:http/proxy` component
   (exporting `wasi:http/incoming-handler` at any 0.2 version) deploys as an
   app whose routes start a new instance per request, with streaming request

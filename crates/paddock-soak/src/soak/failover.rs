@@ -6,7 +6,10 @@
 //! from the seed, at most two at once, each undone after a random time:
 //! a direction or both between two nodes cut, held or lossy; a node killed
 //! with `SIGKILL` and restarted; a node stopped with `SIGSTOP` and
-//! continued, sometimes for longer than its lease. After each episode
+//! continued, sometimes for longer than its lease; with `--serial`, the
+//! pair's serial line cut (alone, it changes nothing; with the network
+//! between the pair cut too, the lease keeps at most one runner). After
+//! each episode
 //! everything is healed, and once the pair has had time to settle exactly
 //! one node must run the singleton. At the end [`super::check`]
 //! reads the logs for any moment when both ran it.
@@ -22,6 +25,8 @@ use super::events::{EventLog, What};
 use super::node::{ADMIN_TIMEOUT, Node, bundle, free_udp, socket_path};
 use super::proxy::{self, Faults, Mode};
 use super::rng::Rng;
+use paddock::serial::{Tty, pty, relay};
+use tokio::sync::watch;
 
 /// The singleton's app name, from `examples/counter/paddock.toml`.
 pub(crate) const APP: &str = "counter";
@@ -55,7 +60,62 @@ pub(crate) struct Args {
     pub minutes: f64,
     pub episode: Duration,
     pub timings: Timings,
+    pub serial: Option<SerialSpec>,
 }
+
+/// The pair's serial line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SerialSpec {
+    /// Two ptys joined by the runner.
+    Pty,
+    /// Two devices joined by a cable: node 1 through a pty relayed to the
+    /// first, node 2 on the second.
+    Devices(PathBuf, PathBuf),
+}
+
+impl SerialSpec {
+    pub(crate) fn parse(text: &str) -> anyhow::Result<Self> {
+        match text.split_once(',') {
+            None if text == "pty" => Ok(Self::Pty),
+            Some((a, b)) if !a.is_empty() && !b.is_empty() => Ok(Self::Devices(a.into(), b.into())),
+            _ => anyhow::bail!("--serial takes `pty` or `DEV_A,DEV_B`, not {text:?}"),
+        }
+    }
+}
+
+/// The pair's serial line as the runner holds it: the devices nodes 1 and
+/// 2 open, the switch that cuts it, and the relay.
+#[derive(Debug)]
+struct SerialLine {
+    devices: [PathBuf; 2],
+    cut: watch::Sender<bool>,
+    relay: tokio::task::JoinHandle<()>,
+}
+
+impl SerialLine {
+    fn start(spec: &SerialSpec) -> anyhow::Result<Self> {
+        let (one, device1) = pty()?;
+        let (two, device2) = match spec {
+            SerialSpec::Pty => pty()?,
+            SerialSpec::Devices(a, b) => (Tty::open(a, BAUD)?, b.clone()),
+        };
+        let (cut, cut_rx) = watch::channel(false);
+        Ok(Self {
+            devices: [device1, device2],
+            cut,
+            relay: tokio::spawn(relay(one, two, cut_rx)),
+        })
+    }
+}
+
+impl Drop for SerialLine {
+    fn drop(&mut self) {
+        self.relay.abort();
+    }
+}
+
+/// The serial line's speed.
+const BAUD: u32 = 115_200;
 
 /// Run, check, and return whether the run passed.
 pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
@@ -90,6 +150,7 @@ enum Undo {
     Link(u32, u32),
     Thaw(u32),
     Restart(u32),
+    Serial,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -97,6 +158,7 @@ enum Kind {
     Link,
     Kill,
     Freeze,
+    Serial,
 }
 
 /// The three nodes, their proxies and the faults between them.
@@ -106,6 +168,7 @@ struct Cluster {
     faults: Arc<Faults>,
     events: Arc<EventLog>,
     timings: Timings,
+    serial: Option<SerialLine>,
 }
 
 impl Cluster {
@@ -140,6 +203,7 @@ impl Cluster {
             advertised.push(proxy::start(n, address, names.clone(), faults.clone()).await?);
         }
 
+        let serial = args.serial.as_ref().map(SerialLine::start).transpose()?;
         let mut nodes = Vec::new();
         for n in 1..=3_u32 {
             let i = usize::try_from(n - 1)?;
@@ -166,6 +230,13 @@ impl Cluster {
                     advertised[2],
                     3 - n
                 );
+                if let Some(line) = &serial {
+                    let _ = writeln!(
+                        config,
+                        "serial = {{ device = {:?}, baud = {BAUD} }}",
+                        line.devices[i]
+                    );
+                }
             }
             let _ = writeln!(
                 config,
@@ -194,7 +265,15 @@ impl Cluster {
             faults,
             events,
             timings: t,
+            serial,
         })
+    }
+
+    fn set_serial(&self, cut: bool) {
+        if let Some(line) = &self.serial {
+            line.cut.send_replace(cut);
+            self.events.record(0, What::Serial { cut });
+        }
     }
 
     fn node(&mut self, n: u32) -> &mut Node {
@@ -228,10 +307,11 @@ impl Cluster {
                     .iter()
                     .filter_map(|(_, u)| match u {
                         Undo::Thaw(n) | Undo::Restart(n) => Some(*n),
-                        Undo::Link(..) => None,
+                        Undo::Link(..) | Undo::Serial => None,
                     })
                     .collect();
-                active.extend(self.fault(rng, &busy).await?);
+                let serial_cut = active.iter().any(|(_, u)| matches!(u, Undo::Serial));
+                active.extend(self.fault(rng, &busy, serial_cut).await?);
             }
             tokio::time::sleep(Duration::from_millis(rng.range(100, 1000))).await;
         }
@@ -239,11 +319,26 @@ impl Cluster {
     }
 
     /// Start one fault; returns what ends it, and when.
-    async fn fault(&mut self, rng: &mut Rng, busy: &[u32]) -> anyhow::Result<Vec<(Instant, Undo)>> {
+    async fn fault(
+        &mut self,
+        rng: &mut Rng,
+        busy: &[u32],
+        serial_cut: bool,
+    ) -> anyhow::Result<Vec<(Instant, Undo)>> {
         let t = self.timings;
         let window = t.node_timeout_ms + t.lease_ms + t.margin_ms;
         let now = Instant::now();
-        let kind = *rng.pick(&[(5, Kind::Link), (2, Kind::Kill), (3, Kind::Freeze)]);
+        let serial_weight = if self.serial.is_some() && !serial_cut {
+            3
+        } else {
+            0
+        };
+        let kind = *rng.pick(&[
+            (5, Kind::Link),
+            (2, Kind::Kill),
+            (3, Kind::Freeze),
+            (serial_weight, Kind::Serial),
+        ]);
         let free: Vec<u32> = (1..=3).filter(|n| !busy.contains(n)).collect();
         match kind {
             Kind::Link => {
@@ -279,6 +374,11 @@ impl Cluster {
                 let length = rng.range(100, 2 * t.lease_ms + t.margin_ms);
                 Ok(vec![(now + Duration::from_millis(length), Undo::Thaw(n))])
             }
+            Kind::Serial => {
+                self.set_serial(true);
+                let until = now + Duration::from_millis(rng.range(200, 3 * window));
+                Ok(vec![(until, Undo::Serial)])
+            }
             Kind::Kill | Kind::Freeze => Ok(Vec::new()),
         }
     }
@@ -286,6 +386,7 @@ impl Cluster {
     async fn undo(&mut self, undo: Undo) -> anyhow::Result<()> {
         match undo {
             Undo::Link(from, to) => self.set_link(from, to, Mode::Pass).await,
+            Undo::Serial => self.set_serial(false),
             Undo::Thaw(n) => self.node(n).thaw()?,
             Undo::Restart(n) => {
                 if !self.node(n).alive() {
@@ -299,6 +400,9 @@ impl Cluster {
     /// Every link passing, every node running and continued.
     async fn heal(&mut self) -> anyhow::Result<()> {
         self.faults.heal_all().await;
+        if self.serial.as_ref().is_some_and(|l| *l.cut.borrow()) {
+            self.set_serial(false);
+        }
         self.events.record(
             0,
             What::Note {

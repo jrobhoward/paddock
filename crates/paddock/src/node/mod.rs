@@ -16,6 +16,8 @@ mod events;
 mod gate;
 mod logring;
 mod run;
+#[cfg(unix)]
+pub mod serial_path;
 mod server;
 mod state_view;
 mod store;
@@ -23,7 +25,7 @@ mod store;
 pub use config::{
     ArbiterKind, BucketConfig, BucketScope, ClusterConfig, ClusterRole, EgressBinding,
     FailoverBinding, HttpBinding, ListenerBinding, LogFormat, MemoryProfile, MetricsBinding,
-    NodeConfig, SecretBinding, TlsBinding, WitnessBinding,
+    NodeConfig, SecretBinding, SerialBinding, TlsBinding, WitnessBinding,
 };
 pub use daemon::Node;
 pub use error::NodeError;

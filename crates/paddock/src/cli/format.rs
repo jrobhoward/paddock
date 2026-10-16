@@ -285,6 +285,14 @@ pub(crate) fn failover(f: &paddock::api::FailoverInfo) -> String {
             f.singletons.join(", ")
         }
     );
+    if !f.paths.is_empty() {
+        let paths: Vec<String> = f
+            .paths
+            .iter()
+            .map(|(name, heard)| format!("{name} {}", if *heard { "heard" } else { "silent" }))
+            .collect();
+        out.push_str(&format!("\npaths:      {}", paths.join(", ")));
+    }
     if f.awaiting_confirmation {
         out.push_str(
             "\nwaiting:    the partner looks gone and no witness can decide; `paddock failover confirm` promotes this node",

@@ -65,15 +65,21 @@ semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros", "net", "fs", "time", "signal"] }
+tokio = { workspace = true, features = ["rt", "macros", "net", "fs", "time", "signal", "sync"] }
 toml = { workspace = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 tokio-rustls = { workspace = true, optional = true }
 
+# The serial tty layer (raw termios, ptys for tests and the soak's relay);
+# Unix only.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs", "pty", "termios"] }
+
 [dev-dependencies]
 rcgen = { workspace = true }
 rstest = { workspace = true }
+proptest = { workspace = true }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
 tempfile = { workspace = true }

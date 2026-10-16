@@ -44,6 +44,12 @@ enum Command {
         lease_ms: u64,
         #[arg(long, default_value_t = 300)]
         margin_ms: u64,
+        /// A serial line between the pair, a second heartbeat path that the
+        /// run cuts too: `pty` (two ptys joined by the runner), or
+        /// `DEV_A,DEV_B`, two devices joined by a null-modem cable (node 1
+        /// is relayed to `DEV_A` through a pty, node 2 opens `DEV_B`).
+        #[arg(long)]
+        serial: Option<String>,
     },
     /// Three member nodes behind UDP proxies, their instances linking and
     /// monitoring each other at random, under link and node faults; fails
@@ -117,6 +123,7 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
             node_timeout_ms,
             lease_ms,
             margin_ms,
+            serial,
         } => {
             let (dir, root, paddock, seed, minutes) = prepare(run)?;
             failover::run(&failover::Args {
@@ -132,6 +139,10 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
                     lease_ms,
                     margin_ms,
                 },
+                serial: serial
+                    .as_deref()
+                    .map(failover::SerialSpec::parse)
+                    .transpose()?,
             })
             .await
         }

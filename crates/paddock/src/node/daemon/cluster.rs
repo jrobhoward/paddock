@@ -119,6 +119,22 @@ impl Node {
             (ArbiterKind::Operator, _) => Arbiter::Operator,
             _ => Arbiter::Paths,
         };
+        #[cfg(unix)]
+        if let Some(serial) = &f.serial {
+            use crate::node::serial_path::{self, Line, PATH};
+            let line = Line {
+                device: serial.device.clone(),
+                baud: serial.baud,
+            };
+            let path = serial_path::start(
+                self.rt.clone(),
+                self.config.node,
+                f.partner,
+                line,
+                self.stop.subscribe(),
+            );
+            self.rt.add_heartbeat_path(PATH, path);
+        }
         let epoch = self.store.load_epoch()?;
         let mut cfg = FailoverConfig::new(f.partner, arbiter);
         cfg.lease = Duration::from_millis(f.lease_ms);
@@ -191,6 +207,7 @@ impl Node {
         };
         let now = handle.leadership();
         let singletons = self.gate.as_ref().map(|g| g.names()).unwrap_or_default();
+        let status = self.rt.peer_status(f.partner);
         Ok(FailoverInfo {
             partner: f.partner,
             arbiter: match f.arbiter {
@@ -202,7 +219,10 @@ impl Node {
             epoch: now.epoch,
             may_run: now.may_run,
             awaiting_confirmation: now.awaiting_confirmation,
-            partner_reachable: self.rt.peer_status(f.partner).is_some_and(|s| s.reachable),
+            partner_reachable: status.as_ref().is_some_and(|s| s.reachable),
+            paths: status
+                .map(|s| s.paths.into_iter().collect())
+                .unwrap_or_default(),
             singletons,
             generation: *self.leadership.borrow(),
         })

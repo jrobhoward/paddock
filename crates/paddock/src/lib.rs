@@ -15,3 +15,5 @@
 pub mod api;
 #[cfg(feature = "node")]
 pub mod node;
+#[cfg(unix)]
+pub mod serial;

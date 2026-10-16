@@ -38,6 +38,8 @@ mod client;
 
 pub use client::{Client, ClientError, Follow};
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// One app, as `GET /v1/apps` lists it.
@@ -203,6 +205,10 @@ pub struct FailoverInfo {
     pub awaiting_confirmation: bool,
     /// Whether the partner is heard over the cluster transport.
     pub partner_reachable: bool,
+    /// Each heartbeat path to the partner (`link`, and `serial` with a
+    /// serial line) and whether it is heard now.
+    #[serde(default)]
+    pub paths: BTreeMap<String, bool>,
     /// The singleton apps this node holds, in deploy order.
     pub singletons: Vec<String>,
     /// Raised by every change of the node's leadership (role, epoch,

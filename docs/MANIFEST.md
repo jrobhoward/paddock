@@ -335,6 +335,15 @@ identity_reload_s = 60                 # reload key and peers on change; also SI
 incoming_calls_max = 10000             # calls from one peer handled at once; beyond: overloaded; 0: no limit
 send_buffer_bytes = 67108864           # messages queued for one peer; beyond: cast dropped, call overloaded (notices still queued)
 
+[failover]                             # one node of an HA pair (needs cluster.address)
+partner = 2                            # the other node of the pair
+arbiter = "witness"                    # or "paths" (promote when every path is silent), "operator"
+witness = 3                            # the witness's node id, with arbiter "witness"
+lease_ms = 3000                        # how long a renewal keeps the primary's lease
+margin_ms = 500                        # singletons stop this long before the lease ends; under half of lease_ms
+serial = { device = "/dev/ttyUSB0", baud = 115200 }  # optional: a second heartbeat path over a null-modem
+                                       # cable to the partner (Unix; baud default 115200, the same on both nodes)
+
 [limits]                               # host objects per instance; the value for apps that
 timers_max = 10000                     # set none, and the most a manifest may ask for (a
 monitors_max = 10000                   # larger value refuses the deploy)

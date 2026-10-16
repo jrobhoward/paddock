@@ -40,6 +40,8 @@ pub(crate) enum What {
     Thaw,
     /// Frames from `node` to `to` are now treated as `mode`.
     Link { to: u32, mode: String },
+    /// The pair's serial line is now cut, or passing again.
+    Serial { cut: bool },
     /// Everything healed, then the nodes running the singleton counted.
     Settled { runners: Vec<u32> },
     /// Anything else worth reading in a failed run.
