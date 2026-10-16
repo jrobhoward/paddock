@@ -363,6 +363,14 @@ All notable changes are recorded here. The format follows
   `post` and `send` over `wasi:http`, with `HttpError` naming refusals
   (`Denied`, `Limited`, `Prohibited`), timeouts and TLS failures.
   `paddock-fixture-sdk` uses it (`fetch <method> <url>`).
+- `paddock_sdk::batch` (ROADMAP F4): a `Batcher` collects items per
+  destination and returns one envelope when a batch is full (`max_items`,
+  `max_bytes`) or its `max_delay` timer fires (`on_timer`); `items` reads a
+  batch back, `envelope` encodes one from a slice. Wire format: a CBOR
+  array, schema `paddock/batch`. WRITING_APPS.md says when to batch.
+  `paddock-fixture-sdk` gains `produce`, `produce-timed` and `points`;
+  `batch_cost` example and `scripts/bench.sh batch` (batches of 100 move 3
+  to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
 - Passivation for apps (ROADMAP E7): manifest `instances.passivate_after_ms`

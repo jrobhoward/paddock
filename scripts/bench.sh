@@ -26,6 +26,7 @@ BENCHES=(
   "watch|keyvalue writes with watchers, memory and disk buckets|R/examples/watch_cost 4; R/examples/watch_cost 4 disk"
   "publish|a publish to 1 to 1,000 group members|R/examples/publish_cost 4"
   "ingress|HTTP ingress throughput|R/examples/ingress_throughput 4 4"
+  "batch|points per second between apps, one cast each or batched (F4)|R/examples/batch_cost 1; R/examples/batch_cost 4"
   "egress|outgoing HTTP from a guest through the pool|R/examples/egress_cost 1; R/examples/egress_cost 4; R/examples/egress_cost 4 nopool"
   "cluster|calls, casts and payloads between two nodes over QUIC|R/examples/cluster_throughput 4"
   "passivation|wake cost, instances per Store slot, random calls|R/examples/passivation_cost 4 1000 100000; R/examples/passivation_cost 4 100 2000; R/examples/passivation_cost 4 1000 1000 off"

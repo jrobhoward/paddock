@@ -41,5 +41,8 @@ serde_json = { workspace = true }
 wit-bindgen = { workspace = true }
 wasip2 = { workspace = true, optional = true }
 
+[dev-dependencies]
+rstest = { workspace = true }
+
 [lints]
 workspace = true

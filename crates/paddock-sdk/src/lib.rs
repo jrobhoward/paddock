@@ -32,6 +32,7 @@
 //! Host services, each needing its capability in the manifest:
 //! - [`log`] and its macros (`info!` and friends): `wasi:logging`, always
 //!   available.
+//! - [`batch`]: many small updates in one message, and reading them back.
 //! - `config` (cargo feature `config`): `wasi:config`.
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
 //! - `groups` (cargo feature `groups`): `paddock:groups`, process groups
@@ -58,6 +59,7 @@
 extern crate self as paddock_sdk;
 
 mod app;
+pub mod batch;
 #[cfg(feature = "config")]
 pub mod config;
 #[cfg(feature = "connection")]

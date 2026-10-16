@@ -580,6 +580,21 @@ On 1 worker the hook is within run-to-run variation; on 4 workers both sets vary
 - What is left is not the connection: on 1 worker a request takes 86 µs, on 4 it takes 140 to 164 µs. wasmtime-wasi-http spawns a task per request and hyper's pooled connection runs on a task of its own, so a request crosses tasks several times, and on several workers each crossing is a wake-up on another thread. Not attributed further.
 - Spike S15 measured 172 µs mean through wasmtime's own sender (a new connection per request) on the same machine.
 
+## 2026-10-16: batches between apps (roadmap F4)
+
+Same machine (Threadripper 1950X, 16 threads); load average 0.97 at the start (`scripts/bench.sh batch`). `batch_cost`: `source` instances of the SDK fixture each send 200,000 sample points (about 25 bytes each in CBOR) to a `sink` instance, one cast per point or in batches through `paddock_sdk::batch`; the clock runs from the first send until the sinks have counted every point. Nothing was dropped (the sinks' mailboxes held every message).
+
+| Workers | Pairs | One cast per point | Batch of 1 | 10 | 100 | 1,000 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 310,000 points/s | 273,000 | 724,000 | 940,000 | 967,000 |
+| 1 | 4 | 309,000 | 272,000 | 724,000 | 946,000 | 972,000 |
+| 4 | 1 | 343,000 | 355,000 | 1,133,000 | 1,548,000 | 1,708,000 |
+| 4 | 4 | 926,000 | 824,000 | 2,587,000 | 3,728,000 | 3,906,000 |
+
+- Batches of 100 move 3 to 4.5 times the points of one cast each. From 100 to 1,000 items the gain is under 10%. At 1,000 a point costs about 1 µs on 1 worker, nearly all of it in the guests (encoding, decoding, counting): the messages' share, about 1.3 µs per batch, is under 1% of it. The split between encoding and decoding was not measured.
+- A batch of one costs about 10% more than a plain cast (an array around the item, and a schema id).
+- Four pairs on one worker move what one pair does: the worker is the limit. On 4 workers four pairs move about 2.3 times one pair.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.

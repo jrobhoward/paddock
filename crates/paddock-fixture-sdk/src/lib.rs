@@ -35,6 +35,13 @@
 //! - `fetch <method> <url> [<body>]` (space separated): an outgoing HTTP
 //!   request (`paddock_sdk::http_client`); replies `<status> <body>`, or
 //!   `err:<error>`.
+//! - `produce:<app>:<n>:<batch>`: send `n` sample points to the app
+//!   (`whereis`), one cast each with `batch` 0, else in batches of `batch`
+//!   through `paddock_sdk::batch`; replies `ok`. Casts of points (single
+//!   or batched) are counted, not kept: `points` replies the count.
+//! - `produce-timed:<app>:<n>:<batch>:<delay_ms>`: push `n` points into a
+//!   batcher with that delay and send only full batches; the rest goes out
+//!   when the batcher's timer fires. Replies `ok`.
 //! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
 //! - HTTP requests (`paddock_sdk::http`), by the end of the path: `/plain`
 //!   replies a plain text envelope; `/status/<n>` replies status n;
@@ -64,8 +71,71 @@ struct Point {
     y: i64,
 }
 
+/// A sample point, as a protocol extension might report it.
+#[derive(Debug, Serialize, Deserialize)]
+struct Sample {
+    device: u32,
+    address: u16,
+    value: f64,
+    time_ms: u64,
+}
+
+/// The schema of a single [`Sample`] cast.
+const SAMPLE: &str = "fixture/sample";
+
+/// `produce:<app>:<n>:<batch>`.
+fn produce(ctx: &mut Ctx, args: &str) -> String {
+    use paddock_sdk::batch::{Batcher, Limits};
+
+    let mut parts = args.split(':');
+    let app = parts.next().unwrap_or("");
+    let n: u32 = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let batch: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let Some(to) = ctx.whereis(app) else {
+        return format!("err:no {app}");
+    };
+    let sample = |i: u32| Sample {
+        device: i % 64,
+        address: u16::try_from(i % 1000).unwrap_or(0),
+        value: f64::from(i) * 0.5,
+        time_ms: u64::from(i),
+    };
+    if batch == 0 {
+        for i in 0..n {
+            match Envelope::cbor(&sample(i)) {
+                Ok(msg) => ctx.cast(to, msg.with_schema(SAMPLE)),
+                Err(e) => return format!("err:{e}"),
+            }
+        }
+        return "ok".into();
+    }
+    let mut out = Batcher::new(Limits {
+        max_items: batch,
+        max_bytes: 1 << 20,
+        max_delay: None,
+    });
+    for i in 0..n {
+        match out.push(ctx, to, &sample(i)) {
+            Ok(ready) => {
+                for (to, msg) in ready {
+                    ctx.cast(to, msg);
+                }
+            }
+            Err(e) => return format!("err:{e}"),
+        }
+    }
+    for (to, msg) in out.flush_all(ctx) {
+        ctx.cast(to, msg);
+    }
+    "ok".into()
+}
+
 #[derive(Default)]
 struct Fixture {
+    /// Sample points received, single or batched.
+    points: u64,
+    /// Batches waiting for their timer, from `produce-timed`.
+    timed: Option<paddock_sdk::batch::Batcher<paddock_sdk::Pid, Sample>>,
     received: Vec<String>,
     changes: Vec<String>,
     /// An open SQL transaction, from `sql begin`.
@@ -335,6 +405,48 @@ impl Fixture {
     }
 }
 
+impl Fixture {
+    /// `produce-timed:<app>:<n>:<batch>:<delay_ms>`.
+    fn produce_timed(&mut self, ctx: &mut Ctx, args: &str) -> String {
+        use paddock_sdk::batch::{Batcher, Limits};
+
+        let parts: Vec<&str> = args.split(':').collect();
+        let [app, n, batch, delay] = parts.as_slice() else {
+            return "err:usage".into();
+        };
+        let (Ok(n), Ok(batch), Ok(delay)) = (n.parse::<u32>(), batch.parse(), delay.parse()) else {
+            return "err:usage".into();
+        };
+        let Some(to) = ctx.whereis(app) else {
+            return format!("err:no {app}");
+        };
+        let out = self.timed.get_or_insert_with(|| {
+            Batcher::new(Limits {
+                max_items: batch,
+                max_bytes: 1 << 20,
+                max_delay: Some(std::time::Duration::from_millis(delay)),
+            })
+        });
+        for i in 0..n {
+            let point = Sample {
+                device: i,
+                address: 0,
+                value: 0.0,
+                time_ms: 0,
+            };
+            match out.push(ctx, to, &point) {
+                Ok(ready) => {
+                    for (to, msg) in ready {
+                        ctx.cast(to, msg);
+                    }
+                }
+                Err(e) => return format!("err:{e}"),
+            }
+        }
+        "ok".into()
+    }
+}
+
 impl App for Fixture {
     fn init(_ctx: &mut Ctx, _args: &[u8]) -> Result<Self, String> {
         Ok(Self::default())
@@ -351,6 +463,15 @@ impl App for Fixture {
         let command = msg.as_text().unwrap_or("");
         if let Some(rest) = command.strip_prefix("fetch ") {
             return Reply::Now(Envelope::text(fetch(rest)));
+        }
+        if let Some(rest) = command.strip_prefix("produce:") {
+            return Reply::Now(Envelope::text(produce(ctx, rest)));
+        }
+        if let Some(rest) = command.strip_prefix("produce-timed:") {
+            return Reply::Now(Envelope::text(self.produce_timed(ctx, rest)));
+        }
+        if command == "points" {
+            return Reply::Now(Envelope::text(self.points.to_string()));
         }
         if let Some(rest) = command.strip_prefix("sql\x1f") {
             return Reply::Now(Envelope::text(self.sql(rest)));
@@ -420,7 +541,13 @@ impl App for Fixture {
         })
     }
 
-    fn handle_info(&mut self, _ctx: &mut Ctx, info: Info) {
+    fn handle_info(&mut self, ctx: &mut Ctx, info: Info) {
+        if let (Info::Timer { timer, .. }, Some(out)) = (&info, self.timed.as_mut())
+            && let Some((to, msg)) = out.on_timer(*timer)
+        {
+            ctx.cast(to, msg);
+            return;
+        }
         if let Some(change) = Change::from_info(&info) {
             self.changes
                 .push(format!("{}@{}", change.key, change.revision));
@@ -428,6 +555,14 @@ impl App for Fixture {
     }
 
     fn handle_cast(&mut self, _ctx: &mut Ctx, msg: Envelope) {
+        if let Some(batch) = paddock_sdk::batch::items::<Sample>(&msg) {
+            self.points += batch.map_or(0, |points| points.len() as u64);
+            return;
+        }
+        if msg.schema.as_deref() == Some(SAMPLE) {
+            self.points += u64::from(msg.decode::<Sample>().is_ok());
+            return;
+        }
         self.received
             .push(msg.as_text().unwrap_or("<binary>").to_string());
     }

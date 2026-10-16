@@ -2019,6 +2019,7 @@ version = "0.0.0"
 dependencies = [
  "ciborium",
  "paddock-sdk-macros",
+ "rstest",
  "serde",
  "serde_json",
  "wasip2",

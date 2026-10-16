@@ -137,6 +137,42 @@ ctx.cancel_timer(t);
 // later: handle_info(Info::Timer { timer, msg })
 ```
 
+## Many small updates
+
+A cast costs about the same whatever it carries, so an app that sends many small updates (points, events, rows) to the same instance should batch them. Between two instances on one node, one cast per point moved about 310,000 to 350,000 points per second; batches of 100 moved 0.94 to 1.5 million (1 and 4 workers), and four producer and consumer pairs on 4 workers moved 3.7 million (`batch_cost`, [BASELINE.md](BASELINE.md)). Past about 100 items the work on the items themselves dominates, so larger batches gain little.
+
+`paddock_sdk::batch` does the buffering. A `Batcher` keeps one batch per destination and returns it when it is full by count or bytes, or, with `max_delay`, from the timer its first item armed:
+
+```rust
+use paddock_sdk::batch::{self, Batcher, Limits};
+
+// In the sender's state:
+out: Batcher<Pid, Point>,   // Batcher::new(Limits { max_items: 100, max_bytes: 64 * 1024, max_delay: Some(Duration::from_millis(20)) })
+
+// For each update:
+for (to, msg) in self.out.push(ctx, collector, &point)? {
+    ctx.cast(to, msg);
+}
+
+// In handle_info:
+if let Info::Timer { timer, .. } = &info {
+    if let Some((to, msg)) = self.out.on_timer(*timer) {
+        ctx.cast(to, msg);
+    }
+}
+
+// In the receiver's handle_cast:
+if let Some(points) = batch::items::<Point>(&msg) {
+    for point in points? { /* ... */ }
+}
+```
+
+- `max_delay` bounds how stale an update can get: a lone point waits at most that long. Without it, call `flush` or `flush_all` (at the end of a burst, in `terminate`).
+- A batch is one message: it counts once against the receiver's mailbox, and a full mailbox drops it whole. Keep `max_bytes` well under the receiver's `limits.message_max_bytes`.
+- Batch per destination, not per app: with `instances.routing = "hash:..."`, keep items that must stay in order on one key in one batch to one instance.
+- Items buffered when the sender exits are lost, as unsent casts would be.
+- Protocol extensions already batch: the Modbus extension sends one update per device and scan with every point that changed.
+
 ## State across upgrades
 
 In `snapshot` mode (`upgrade.mode = "snapshot"`), the host pauses the mailbox, calls `save_snapshot` on the old version and `load_snapshot` on the new one, then resumes. Pid, registered names, links, monitors and queued messages are kept. If `load_snapshot` returns `Err`, or the new version traps, the old version keeps running.
