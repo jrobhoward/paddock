@@ -80,6 +80,10 @@ required-features = ["tls"]
 name = "egress"
 required-features = ["egress"]
 
+[[test]]
+name = "http_handler"
+required-features = ["http", "egress"]
+
 [[example]]
 name = "ingress_throughput"
 required-features = ["http"]

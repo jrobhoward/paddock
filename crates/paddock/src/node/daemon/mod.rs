@@ -4,6 +4,7 @@
 mod cluster;
 mod connections;
 mod deploy;
+mod handlers;
 mod ingress;
 mod queries;
 #[cfg(feature = "tls")]
@@ -34,6 +35,7 @@ use super::logring::LogRing;
 use super::store::{State, Store};
 
 use connections::ConnectionApp;
+use handlers::HandlerApp;
 use ingress::Ingress;
 
 /// A running Paddock node.
@@ -58,6 +60,8 @@ pub struct Node {
     /// Running connection-handler apps, by name. Locked only briefly,
     /// never across an await.
     connections: std::sync::Mutex<HashMap<String, ConnectionApp>>,
+    /// HTTP-handler apps (`wasi:http/proxy`), served by the ingress.
+    handlers: std::sync::Mutex<HashMap<String, HandlerApp>>,
     /// Extensions' node-level work, stopped on shutdown.
     extensions: std::sync::Mutex<Option<StartedExtensions>>,
     /// HTTP ingress, if node config has `[http]` addresses.
@@ -255,6 +259,7 @@ impl Node {
                 ..NodeState::default()
             }),
             connections: std::sync::Mutex::default(),
+            handlers: std::sync::Mutex::default(),
             extensions: std::sync::Mutex::default(),
             ingress,
             stop,
@@ -333,6 +338,10 @@ impl Node {
         let names: Vec<String> = self.connection_apps().keys().cloned().collect();
         for name in names {
             self.stop_connections(&name);
+        }
+        let names: Vec<String> = self.handler_apps().keys().cloned().collect();
+        for name in names {
+            self.stop_handler(&name);
         }
         self.apps.stop().await;
     }

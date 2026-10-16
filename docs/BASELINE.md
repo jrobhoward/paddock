@@ -595,6 +595,18 @@ Same machine (Threadripper 1950X, 16 threads); load average 0.97 at the start (`
 - A batch of one costs about 10% more than a plain cast (an array around the item, and a schema id).
 - Four pairs on one worker move what one pair does: the worker is the limit. On 4 workers four pairs move about 2.3 times one pair.
 
+## 2026-10-16: HTTP handlers (roadmap E6)
+
+Same machine (Threadripper 1950X, 16 threads); load average 0.89 at the start (`scripts/bench.sh ingress`). `ingress_throughput` on 4 server workers and 4 client workers, keep-alive HTTP/1.1 on loopback: requests as calls to a pool of 4 SDK-fixture instances (`/plain`), against the `paddock-fixture-http` handler with a new instance per request (`/hello`, a streamed `hello`).
+
+| Shape | 1 connection | p50 | p99 | 8 connections | 32 | 128 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Request as a call to a pool of 4 | 13,300 requests/s | 66 µs | 111 µs | 68,500 | 78,500 | 86,300 |
+| HTTP handler, an instance per request | 3,100 | 182 µs | 233 µs | 21,400 | 24,700 | 25,000 |
+
+- A handler serves about 30% of the pool's requests per second with 32 to 128 connections, and adds about 115 µs to one request: S15 measured the same shape (21,000 to 23,000 at 32 connections, 164 to 193 µs p50) with `wasmtime serve`'s model. The split between instantiation and the `wasi:http` resources was not measured.
+- Peak resident memory was lower for the handler run (28.9 MiB against 38.2 MiB): the pool keeps 4 instances alive, a handler only those serving a request.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.

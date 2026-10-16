@@ -263,6 +263,14 @@ paddock_sdk::connection!(Lines);
 - The handler has a `Ctx` for calling and casting to apps (`ctx.whereis("counter")`), but no mailbox. Keep state that must outlive a connection in an app or a keyvalue bucket, and keep the protocol in the handler: [`examples/line-server`](../examples/line-server) forwards `inc` to the counter example.
 - Declare the listeners in the manifest (`[[appserver.listeners]]`, see [MANIFEST.md](MANIFEST.md)); the operator binds each to an address in node config.
 
+## HTTP handlers
+
+An unmodified `wasi:http` component, built with any toolchain that targets the `wasi:http/proxy` world, deploys as an HTTP handler: each request on its routes gets a new instance, and request and response bodies stream. In Rust, the `wasip2` crate's `wasip2::http::proxy::export!` exports one. Requests as calls to an app (above) are faster, so prefer them unless the component already exists or a body must stream (S15: about 15% of native throughput for a new instance per request).
+
+- Declare routes under `wasi:http/incoming-handler` as for an app; see [MANIFEST.md](MANIFEST.md#http-handlers) for what else the manifest may hold.
+- Nothing survives a request: keep state in an app (call it through `paddock:runtime/process`) or a keyvalue bucket.
+- A trap before the response's headers is a 500; after them, the client sees the stream cut.
+
 ## Testing
 
 - **Unit-test the logic natively.** Keep message handling in plain functions, and leave the `App` impl as a thin shell around them.

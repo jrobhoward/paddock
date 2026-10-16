@@ -86,3 +86,23 @@ fn component_imports____garbage____returns_invalid_component() {
 
     assert!(matches!(result, Err(BundleError::InvalidComponent(_))));
 }
+
+#[rstest::rstest]
+#[case::app("paddock:runtime/app@0.1.0", crate::APP_WORLD)]
+#[case::connection("paddock:connection/handler@0.1.0", crate::CONNECTION_WORLD)]
+#[case::http_0_2_0("wasi:http/incoming-handler@0.2.0", crate::HTTP_HANDLER_WORLD)]
+#[case::http_0_2_12("wasi:http/incoming-handler@0.2.12", crate::HTTP_HANDLER_WORLD)]
+#[case::http_0_3("wasi:http/incoming-handler@0.3.0", crate::APP_WORLD)]
+fn component_world____export____names_world(#[case] export: &str, #[case] world: &str) {
+    let wasm = wat::parse_str(format!(
+        r#"(component
+            (instance $i)
+            (export "{export}" (instance $i))
+        )"#
+    ))
+    .unwrap();
+
+    let found = component_world(&wasm).unwrap();
+
+    assert_eq!(found, world);
+}

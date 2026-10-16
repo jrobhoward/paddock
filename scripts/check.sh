@@ -201,6 +201,11 @@ check_guests() {
             echo "$name: connection handler"
             continue
         fi
+        # HTTP handlers export `wasi:http/incoming-handler` (ROADMAP E6).
+        if echo "$wit" | has "export wasi:http/incoming-handler@0.2."; then
+            echo "$name: HTTP handler"
+            continue
+        fi
         for f in init handle-call handle-cast handle-info terminate save-snapshot load-snapshot; do
             echo "$wit" | has "export $f: func" || { echo "$name: missing export $f"; failed=1; }
         done

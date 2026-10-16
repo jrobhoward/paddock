@@ -124,6 +124,10 @@ name = "board"
 required-features = ["http"]
 
 [[test]]
+name = "http_handler"
+required-features = ["http", "egress"]
+
+[[test]]
 name = "tally"
 required-features = ["http", "sql"]
 

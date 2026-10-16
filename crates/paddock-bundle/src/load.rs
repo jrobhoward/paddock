@@ -3,8 +3,8 @@
 use std::path::{Component, Path};
 
 use crate::manifest::{
-    AppInfo, AppManifest, AppSpec, ComponentRef, Kind, ManifestError, Provenance, SECTION,
-    ValidationError,
+    AppInfo, AppManifest, AppSpec, ComponentRef, Kind, ManifestError, PlacementMode, Provenance,
+    SECTION, ValidationError,
 };
 use rustbridge_bundle::{BundleLoader, Platform};
 
@@ -20,8 +20,67 @@ pub const APP_WORLD: &str = "paddock:runtime/app@0.1.0";
 /// on the app's listeners.
 pub const CONNECTION_WORLD: &str = "paddock:connection/connection-handler@0.1.0";
 
+/// The world of an HTTP handler: an unmodified `wasi:http` component, one
+/// instance per request on the app's routes. Any 0.2 version of
+/// `wasi:http/incoming-handler` is this world.
+pub const HTTP_HANDLER_WORLD: &str = "wasi:http/proxy@0.2.0";
+
 /// The WIT worlds this node can run.
-pub const SUPPORTED_WORLDS: &[&str] = &[APP_WORLD, CONNECTION_WORLD];
+pub const SUPPORTED_WORLDS: &[&str] = &[APP_WORLD, CONNECTION_WORLD, HTTP_HANDLER_WORLD];
+
+/// Refuse sections that make no sense for `world`: listeners outside a
+/// connection handler, and for an HTTP handler (an instance per request)
+/// no routes, group membership, or placement other than `any`. The error
+/// is the field's path under the section, and why.
+fn check_world(world: &str, spec: &AppSpec) -> Result<(), (&'static str, String)> {
+    let connection = world == CONNECTION_WORLD;
+    if connection == spec.listeners.is_empty() {
+        return Err((
+            "listeners",
+            if connection {
+                "a connection handler must declare at least one listener".into()
+            } else {
+                "only a connection handler (paddock:connection) declares listeners".into()
+            },
+        ));
+    }
+    if world != HTTP_HANDLER_WORLD {
+        return Ok(());
+    }
+    let caps = &spec.capabilities;
+    if caps
+        .http_incoming
+        .as_ref()
+        .is_none_or(|s| s.routes.is_empty())
+    {
+        return Err((
+            "capabilities",
+            "an HTTP handler (wasi:http/incoming-handler) must declare at least one route \
+             under wasi:http/incoming-handler"
+                .into(),
+        ));
+    }
+    if caps.groups.is_some() {
+        return Err((
+            "capabilities",
+            "an HTTP handler lives for one request and cannot join or publish to groups \
+             (paddock:groups)"
+                .into(),
+        ));
+    }
+    if spec
+        .placement
+        .as_ref()
+        .is_some_and(|p| p.mode != PlacementMode::Any)
+    {
+        return Err((
+            "placement",
+            "an HTTP handler runs on every node it is deployed to; placement.mode must be `any`"
+                .into(),
+        ));
+    }
+    Ok(())
+}
 
 /// The variant Phase 1 deploys.
 const VARIANT: &str = "release";
@@ -94,18 +153,12 @@ impl VerifiedBundle {
 
         let section = rb.extension(SECTION).ok_or(BundleError::NoAppSection)?;
         let spec = AppSpec::from_json_value(section).map_err(prefix_section)?;
-        let connection = world == CONNECTION_WORLD;
-        if connection == spec.listeners.is_empty() {
-            return Err(ManifestError::Invalid(vec![ValidationError {
-                path: format!("{SECTION}.listeners"),
-                message: if connection {
-                    "a connection handler must declare at least one listener".into()
-                } else {
-                    "only a connection handler (paddock:connection) declares listeners".into()
-                },
+        check_world(&world, &spec).map_err(|(path, message)| {
+            ManifestError::Invalid(vec![ValidationError {
+                path: format!("{SECTION}.{path}"),
+                message,
             }])
-            .into());
-        }
+        })?;
         if spec.kind != Kind::WasmComponent {
             return Err(BundleError::UnsupportedKind(
                 serde_json::to_value(spec.kind)

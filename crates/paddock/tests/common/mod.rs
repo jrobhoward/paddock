@@ -111,6 +111,37 @@ pub fn conn_bundle(
     )
 }
 
+/// The HTTP-handler fixture (`paddock-fixture-http`): version 2 answers
+/// `/hello` with `hello v2`.
+pub fn http_handler(version: u8) -> Vec<u8> {
+    static BUILT: [OnceLock<()>; 2] = [OnceLock::new(), OnceLock::new()];
+    let target = workspace_root().join(format!("target/fixtures/http-handler-v{version}"));
+    BUILT[usize::from(version - 1)].get_or_init(|| {
+        let feature = (version > 1).then_some("v2");
+        build("paddock-fixture-http", feature, &target);
+    });
+    std::fs::read(target.join("wasm32-wasip2/release/paddock_fixture_http.wasm")).unwrap()
+}
+
+/// A signed HTTP-handler bundle (`wasi:http/proxy` world).
+pub fn http_handler_bundle(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    component: &[u8],
+    appserver: serde_json::Value,
+) -> Vec<u8> {
+    bundle_world(
+        key,
+        name,
+        version,
+        component,
+        appserver,
+        &[],
+        paddock_bundle::HTTP_HANDLER_WORLD,
+    )
+}
+
 fn paddock_bundle_world() -> &'static str {
     "paddock:connection/connection-handler@0.1.0"
 }

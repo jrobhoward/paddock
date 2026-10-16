@@ -1,0 +1,24 @@
+[package]
+name = "paddock-fixture-http"
+version = "0.0.0"
+description = "Test fixture: an HTTP handler (wasi:http/proxy), one instance per request"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# `/hello` answers `v2`, for upgrade tests.
+v2 = []
+
+[dependencies]
+wasip2 = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

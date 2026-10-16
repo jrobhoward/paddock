@@ -137,6 +137,9 @@ impl Node {
             Runnable::Connection(build) => self
                 .upgrade_connections(name, build, params)
                 .map_err(|e| (e, false)),
+            Runnable::Handler(build) => self
+                .upgrade_handler(name, build, params)
+                .map_err(|e| (e, false)),
             Runnable::App(deployment) if self.held(name) && self.apps.app(name).is_none() => {
                 self.upgrade_held(name, deployment, params)
             }
@@ -258,7 +261,10 @@ impl Node {
                 check_names(&st, name, &previous.names)?;
             }
         }
-        let result = match self.rollback_connections(name) {
+        let result = match self
+            .rollback_connections(name)
+            .or_else(|| self.rollback_handler(name))
+        {
             Some(result) => result,
             None if self.held(name) && self.apps.app(name).is_none() => self.rollback_held(name),
             None => {

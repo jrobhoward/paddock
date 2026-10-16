@@ -76,10 +76,17 @@ impl Node {
         restore_error: Option<&String>,
     ) -> AppSummary {
         let handle = self.apps.app(name);
+        // A connection handler's open connections, or an HTTP handler's
+        // requests in flight: its instances now.
         let connections = self
             .connection_apps()
             .get(name)
-            .map(|c| c.listeners.iter().map(|l| l.stats().active).sum::<usize>());
+            .map(|c| c.listeners.iter().map(|l| l.stats().active).sum::<usize>())
+            .or_else(|| {
+                self.handler_apps()
+                    .contains_key(name)
+                    .then(|| self.ingress.handler_requests(name).unwrap_or(0))
+            });
         let (status, reason) = match (&handle, connections, restore_error) {
             (Some(h), _, _) => status_text(&h.status()),
             (None, Some(_), _) => ("running".into(), None),

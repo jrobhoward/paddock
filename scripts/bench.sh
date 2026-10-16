@@ -25,7 +25,7 @@ BENCHES=(
   "admin|admin API latency (1 and 4 workers)|R/examples/admin_latency 1; R/examples/admin_latency 4"
   "watch|keyvalue writes with watchers, memory and disk buckets|R/examples/watch_cost 4; R/examples/watch_cost 4 disk"
   "publish|a publish to 1 to 1,000 group members|R/examples/publish_cost 4"
-  "ingress|HTTP ingress throughput|R/examples/ingress_throughput 4 4"
+  "ingress|HTTP ingress throughput: requests as calls to a pool, and an HTTP handler's instance per request (E6)|R/examples/ingress_throughput 4 4; R/examples/ingress_throughput 4 4 handler"
   "batch|points per second between apps, one cast each or batched (F4)|R/examples/batch_cost 1; R/examples/batch_cost 4"
   "egress|outgoing HTTP from a guest through the pool|R/examples/egress_cost 1; R/examples/egress_cost 4; R/examples/egress_cost 4 nopool"
   "cluster|calls, casts and payloads between two nodes over QUIC|R/examples/cluster_throughput 4"
@@ -71,7 +71,7 @@ fi
 echo "bench: building (release)"
 cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures
 cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-sdk -p paddock-fixture-counter \
-  -p example-chaos -p example-scada-points
+  -p paddock-fixture-http -p example-chaos -p example-scada-points
 cargo build -q --release -p paddock-host --examples
 cargo build -q --release -p paddock --example admin_latency
 cargo build -q --release -p paddock-modbus --example modbus_load

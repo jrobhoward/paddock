@@ -10,6 +10,7 @@ use paddock_host::{AppDeployment, AppHandle, InstanceSpec, LoadedConnection};
 use serde_json::json;
 
 use super::connections::{ConnectionApp, ConnectionBuild};
+use super::handlers::{Compiled, HandlerBuild};
 use super::{DeployInfo, Node, NodeState};
 use crate::node::config::ClusterRole;
 use crate::node::error::{NodeError, internal};
@@ -22,6 +23,8 @@ pub(super) enum Runnable {
     App(AppDeployment),
     /// An instance per connection on the app's listeners.
     Connection(ConnectionBuild),
+    /// An instance per request on the app's HTTP routes.
+    Handler(HandlerBuild),
 }
 
 /// Refuse `app` listing a registered name another deployed app lists,
@@ -50,6 +53,7 @@ impl Built {
         match &self.run {
             Runnable::App(d) => &d.manifest,
             Runnable::Connection(c) => &c.manifest,
+            Runnable::Handler(h) => &h.manifest,
         }
     }
 
@@ -67,9 +71,12 @@ pub(super) fn refused(e: BundleError) -> NodeError {
 }
 
 /// What a bundle's component compiled to.
+// Without the `http` feature no HTTP handler compiles.
+#[cfg_attr(not(feature = "http"), allow(dead_code))]
 pub(super) enum Loaded {
     App(paddock_host::LoadedApp),
     Connection(LoadedConnection),
+    Handler(Compiled),
 }
 
 impl Node {
@@ -126,6 +133,11 @@ impl Node {
                         app.previous = Some(c);
                     }
                 }
+                (None, Runnable::Handler(h)) => {
+                    if let Some(app) = self.handler_apps().get_mut(name) {
+                        app.previous = Some(h);
+                    }
+                }
                 // A previous version of the other kind cannot be rolled back
                 // to (the world changed); keep none.
                 _ => {}
@@ -149,21 +161,24 @@ impl Node {
         let (name, version) = (manifest.app.name.clone(), manifest.app.version.to_string());
         let rt = self.rt.clone();
         let component = bundle.component.clone();
-        let connection = manifest.component.world == paddock_bundle::CONNECTION_WORLD;
+        let world = manifest.component.world.clone();
         let cache = self
             .store
             .compiled_path(&name, &version, &manifest.component.checksum);
-        let loaded = tokio::task::spawn_blocking(move || {
-            if connection {
-                rt.load_connection_cached(&component, &cache)
-                    .map(Loaded::Connection)
-            } else {
-                rt.load_cached(&component, &cache).map(Loaded::App)
-            }
+        let loaded = tokio::task::spawn_blocking(move || match world.as_str() {
+            paddock_bundle::CONNECTION_WORLD => rt
+                .load_connection_cached(&component, &cache)
+                .map(Loaded::Connection)
+                .map_err(|e| e.to_string()),
+            paddock_bundle::HTTP_HANDLER_WORLD => load_handler(&rt, &component, &cache),
+            _ => rt
+                .load_cached(&component, &cache)
+                .map(Loaded::App)
+                .map_err(|e| e.to_string()),
         })
         .await
         .map_err(internal)?
-        .map_err(|e| NodeError::Refused(e.to_string()))?;
+        .map_err(NodeError::Refused)?;
         let mut spec = InstanceSpec::from_manifest(&manifest)
             .with_granted(&grant.granted)
             .with_granted_extensions(&grant.granted_extensions)
@@ -268,6 +283,7 @@ impl Node {
             stubbed: match &loaded {
                 Loaded::App(app) => app.stubbed_imports().to_vec(),
                 Loaded::Connection(c) => c.stubbed_imports().to_vec(),
+                Loaded::Handler(h) => h.stubbed_imports().to_vec(),
             },
             warnings: manifest
                 .spec
@@ -285,6 +301,11 @@ impl Node {
             Loaded::Connection(connection) => Runnable::Connection(ConnectionBuild {
                 manifest,
                 connection,
+                spec,
+            }),
+            Loaded::Handler(handler) => Runnable::Handler(HandlerBuild {
+                manifest,
+                handler,
                 spec,
             }),
         };
@@ -337,6 +358,10 @@ impl Node {
                 );
                 Ok(None)
             }
+            Runnable::Handler(build) => {
+                self.serve_handler(name, build)?;
+                Ok(None)
+            }
         }
     }
 
@@ -384,6 +409,7 @@ impl Node {
     fn running(&self, name: &str) -> bool {
         self.apps.app(name).is_some()
             || self.connection_apps().contains_key(name)
+            || self.handler_apps().contains_key(name)
             || self.held(name)
     }
 
@@ -403,7 +429,8 @@ impl Node {
         {
             return Ok(());
         }
-        if !self.stop_connections(name) && self.apps.app(name).is_some() {
+        if !self.stop_connections(name) && !self.stop_handler(name) && self.apps.app(name).is_some()
+        {
             self.apps
                 .remove(name)
                 .await
@@ -578,4 +605,26 @@ impl Node {
             message: format!("{name} removed"),
         })
     }
+}
+
+/// Compile an HTTP handler; refused in a build without the HTTP ingress.
+#[cfg(feature = "http")]
+fn load_handler(
+    rt: &paddock_host::Runtime,
+    component: &[u8],
+    cache: &Path,
+) -> Result<Loaded, String> {
+    rt.load_handler(component, Some(cache))
+        .map(Loaded::Handler)
+        .map_err(|e| e.to_string())
+}
+
+/// Compile an HTTP handler; refused in a build without the HTTP ingress.
+#[cfg(not(feature = "http"))]
+fn load_handler(
+    _rt: &paddock_host::Runtime,
+    _component: &[u8],
+    _cache: &Path,
+) -> Result<Loaded, String> {
+    Err("an HTTP handler needs the HTTP ingress, and this build of paddock has none (cargo feature `http`)".into())
 }

@@ -41,8 +41,11 @@
 //! Bodies are buffered whole; there is no streaming (S15: about 75% of
 //! native hyper's throughput through an instance call).
 
+mod handler;
 #[cfg(feature = "tls")]
 mod tls;
+
+pub use handler::LoadedHandler;
 
 #[cfg(feature = "tls")]
 pub use tls::{IngressTls, TlsCertificate};
@@ -56,6 +59,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use ciborium::Value;
+use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
 use hyper::header::{
@@ -70,6 +74,7 @@ use tokio::sync::{Semaphore, watch};
 use crate::apps::Apps;
 use crate::error::HostError;
 use crate::message::{CallError, Envelope};
+use crate::spec::InstanceSpec;
 
 /// The `schema` of a request envelope.
 pub const REQUEST_SCHEMA: &str = "paddock/http-request";
@@ -215,6 +220,9 @@ pub struct IngressStats {
     pub redirected: u64,
     /// Of the requests, forwarded to the partner node.
     pub forwarded: u64,
+    /// HTTP handler instances that trapped, ran out of time or set no
+    /// response.
+    pub handler_failures: u64,
 }
 
 #[derive(Debug, Default)]
@@ -225,6 +233,7 @@ struct Counters {
     refused: AtomicU64,
     redirected: AtomicU64,
     forwarded: AtomicU64,
+    handler_failures: AtomicU64,
 }
 
 /// The node an app that does not run here runs on now, if it is the
@@ -263,6 +272,9 @@ struct Inner {
     apps: Apps,
     /// Routes by app.
     routes: RwLock<BTreeMap<String, Vec<HttpRoute>>>,
+    /// HTTP handlers by app: apps whose routes start an instance per
+    /// request instead of calling the app.
+    handlers: RwLock<BTreeMap<String, Arc<handler::Handler>>>,
     stop: watch::Sender<bool>,
     counters: Counters,
     elsewhere: ElsewhereSlot,
@@ -276,6 +288,7 @@ impl HttpIngress {
             inner: Arc::new(Inner {
                 apps,
                 routes: RwLock::default(),
+                handlers: RwLock::default(),
                 stop: watch::channel(false).0,
                 counters: Counters::default(),
                 elsewhere: ElsewhereSlot::default(),
@@ -368,6 +381,51 @@ impl HttpIngress {
             .unwrap_or_default()
     }
 
+    /// Serve `app`'s routes with a new instance of `handler` per request,
+    /// run with `spec` (an HTTP handler, `wasi:http/proxy`), instead of
+    /// calls to a running app. Replacing a handler (an upgrade) applies to
+    /// new requests; those in flight finish on the one they started with.
+    /// Routes are set separately ([`HttpIngress::set_routes`]).
+    pub fn set_handler(&self, app: &str, handler: LoadedHandler, spec: InstanceSpec) {
+        let mut handlers = self
+            .inner
+            .handlers
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        let active = handlers
+            .get(app)
+            .map_or_else(Arc::default, |h| h.active.clone());
+        handlers.insert(
+            app.to_string(),
+            Arc::new(handler::Handler {
+                loaded: handler,
+                spec,
+                active,
+            }),
+        );
+    }
+
+    /// Stop starting `app`'s handler; requests in flight finish. Its routes
+    /// stay until [`HttpIngress::remove_routes`].
+    pub fn remove_handler(&self, app: &str) {
+        self.inner
+            .handlers
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(app);
+    }
+
+    /// Requests `app`'s HTTP handler is serving now; `None` if it has none.
+    #[must_use]
+    pub fn handler_requests(&self, app: &str) -> Option<usize> {
+        self.inner
+            .handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(app)
+            .map(|h| h.active())
+    }
+
     /// Tell the ingress which apps run on the partner node now, for
     /// listeners that redirect or forward them ([`Standby`]). Called for a
     /// request whose app does not run here, so it must be cheap.
@@ -391,6 +449,7 @@ impl HttpIngress {
             refused: c.refused.load(Ordering::Relaxed),
             redirected: c.redirected.load(Ordering::Relaxed),
             forwarded: c.forwarded.load(Ordering::Relaxed),
+            handler_failures: c.handler_failures.load(Ordering::Relaxed),
         }
     }
 
@@ -473,10 +532,21 @@ async fn serve_connection<IO>(
     }
 }
 
-type Reply = Response<Full<Bytes>>;
+/// An error in a response body: an HTTP handler's stream failing.
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// A response: whole for requests as calls, streamed from an HTTP handler.
+type Reply = Response<UnsyncBoxBody<Bytes, BoxError>>;
+
+/// A whole body as a [`Reply`] body.
+fn full(bytes: impl Into<Bytes>) -> UnsyncBoxBody<Bytes, BoxError> {
+    Full::new(bytes.into())
+        .map_err(|never| match never {})
+        .boxed_unsync()
+}
 
 fn status(code: StatusCode, text: &str) -> Reply {
-    let mut r = Response::new(Full::new(Bytes::from(format!("{text}\n"))));
+    let mut r = Response::new(full(format!("{text}\n")));
     *r.status_mut() = code;
     r.headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
@@ -515,7 +585,7 @@ fn pick(
 }
 
 async fn serve(
-    inner: &Inner,
+    inner: &Arc<Inner>,
     spec: &IngressListen,
     scheme: &'static str,
     req: Request<Incoming>,
@@ -536,7 +606,7 @@ async fn serve(
 }
 
 async fn handle(
-    inner: &Inner,
+    inner: &Arc<Inner>,
     spec: &IngressListen,
     scheme: &'static str,
     req: Request<Incoming>,
@@ -558,6 +628,15 @@ async fn handle(
     let partner = match &spec.standby {
         Standby::Refuse => None,
         _ if inner.apps.app(&app).is_some() => None,
+        // HTTP handlers are never singletons: they run wherever deployed.
+        _ if inner
+            .handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&app) =>
+        {
+            None
+        }
         standby => inner.elsewhere.runs(&app).map(|node| (standby, node)),
     };
     let forward_to = match partner {
@@ -572,6 +651,15 @@ async fn handle(
         .and_then(|v| v.parse::<u64>().ok());
     if declared.is_some_and(|n| n > route.max_body) {
         return status(StatusCode::PAYLOAD_TOO_LARGE, "body too large");
+    }
+    let handler = inner
+        .handlers
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&app)
+        .cloned();
+    if let Some(handler) = handler {
+        return serve_handler(inner, &handler, &route, scheme, req).await;
     }
     let method = req.method().as_str().to_string();
     let query = req.uri().query().map(str::to_string);
@@ -645,6 +733,39 @@ async fn handle(
     }
 }
 
+/// Serve a request with an instance of an HTTP handler.
+#[cfg(feature = "egress")]
+async fn serve_handler(
+    inner: &Arc<Inner>,
+    handler: &Arc<handler::Handler>,
+    route: &HttpRoute,
+    scheme: &'static str,
+    req: Request<Incoming>,
+) -> Reply {
+    let counted = inner.clone();
+    let failed: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        counted
+            .counters
+            .handler_failures
+            .fetch_add(1, Ordering::Relaxed);
+    });
+    let rt = inner.apps.runtime().inner().clone();
+    handler::serve(&rt, handler, route, scheme, req, failed).await
+}
+
+/// No `wasi:http` in this build: a handler cannot have been loaded.
+#[cfg(not(feature = "egress"))]
+#[allow(clippy::unused_async)] // The same signature as with `egress`.
+async fn serve_handler(
+    _inner: &Arc<Inner>,
+    _handler: &Arc<handler::Handler>,
+    _route: &HttpRoute,
+    _scheme: &'static str,
+    _req: Request<Incoming>,
+) -> Reply {
+    status(StatusCode::SERVICE_UNAVAILABLE, "app not running")
+}
+
 fn text(s: &str) -> Value {
     Value::Text(s.to_string())
 }
@@ -687,7 +808,7 @@ fn request_envelope(
 /// The HTTP response an app's reply becomes.
 fn response(reply: Envelope) -> Reply {
     if reply.schema.as_deref() != Some(RESPONSE_SCHEMA) {
-        let mut r = Response::new(Full::new(Bytes::from(reply.body)));
+        let mut r = Response::new(full(reply.body));
         if let Ok(v) = HeaderValue::from_str(&reply.content_type) {
             r.headers_mut().insert(CONTENT_TYPE, v);
         }
@@ -720,12 +841,12 @@ fn parse_response(body: &[u8]) -> Option<Reply> {
         .and_then(Value::as_integer)
         .and_then(|i| u16::try_from(i).ok())
         .unwrap_or(200);
-    let mut r = Response::new(Full::new(Bytes::from(
+    let mut r = Response::new(full(
         field("body")
             .and_then(Value::as_bytes)
             .cloned()
             .unwrap_or_default(),
-    )));
+    ));
     *r.status_mut() = StatusCode::from_u16(code).ok()?;
     if let Some(headers) = field("headers").and_then(Value::as_array) {
         for pair in headers {

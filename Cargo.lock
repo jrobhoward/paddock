@@ -1942,6 +1942,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "paddock-fixture-http"
+version = "0.0.0"
+dependencies = [
+ "wasip2",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
 name = "paddock-fixture-sdk"
 version = "0.0.0"
 dependencies = [

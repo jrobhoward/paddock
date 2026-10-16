@@ -143,6 +143,16 @@ fn view<T: HostState<Egress>>(t: &mut T) -> wasmtime_wasi_http::WasiHttpCtxView<
     }
 }
 
+/// wasi:http's view of an instance, for the HTTP ingress to hand an HTTP
+/// handler its request (`crate::http`): the same state the guest's
+/// `wasi:http/types` calls reach.
+#[cfg(feature = "egress")]
+pub(crate) fn incoming_view(
+    state: &mut crate::state::InstanceState,
+) -> wasmtime_wasi_http::WasiHttpCtxView<'_> {
+    view(state)
+}
+
 #[cfg(feature = "egress")]
 mod hooks {
     use std::future::Future;

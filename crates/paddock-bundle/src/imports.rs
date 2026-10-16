@@ -53,9 +53,11 @@ pub fn component_imports(bytes: &[u8]) -> Result<Vec<String>, BundleError> {
 
 /// The world a component implements, judged by its exports: a component
 /// exporting `paddock:connection/handler` is a connection handler
-/// ([`CONNECTION_WORLD`](crate::CONNECTION_WORLD)); anything else is an app
-/// ([`APP_WORLD`](crate::APP_WORLD)), whose exports the node checks when it
-/// links the component.
+/// ([`CONNECTION_WORLD`](crate::CONNECTION_WORLD)), one exporting
+/// `wasi:http/incoming-handler` at any 0.2 version an HTTP handler
+/// ([`HTTP_HANDLER_WORLD`](crate::HTTP_HANDLER_WORLD)); anything else is an
+/// app ([`APP_WORLD`](crate::APP_WORLD)), whose exports the node checks when
+/// it links the component.
 ///
 /// # Errors
 ///
@@ -73,13 +75,13 @@ pub fn component_world(bytes: &[u8]) -> Result<&'static str, BundleError> {
             },
             Payload::ComponentExportSection(reader) if depth == 0 => {
                 for export in reader {
-                    if export
-                        .map_err(invalid)?
-                        .name
-                        .name
-                        .starts_with("paddock:connection/handler@")
-                    {
+                    let export = export.map_err(invalid)?;
+                    let name = export.name.name;
+                    if name.starts_with("paddock:connection/handler@") {
                         return Ok(crate::CONNECTION_WORLD);
+                    }
+                    if name.starts_with("wasi:http/incoming-handler@0.2.") {
+                        return Ok(crate::HTTP_HANDLER_WORLD);
                     }
                 }
             }

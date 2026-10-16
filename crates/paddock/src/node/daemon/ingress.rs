@@ -7,12 +7,15 @@
 use std::time::Duration;
 
 #[cfg(feature = "http")]
+use paddock_bundle::manifest::AppManifest;
+#[cfg(feature = "http")]
 use paddock_host::http::{HttpIngress, HttpRoute, IngressListen, Standby};
 #[cfg(feature = "tls")]
 use paddock_host::http::{IngressTls, TlsCertificate};
-use paddock_host::{AppDeployment, Apps};
+use paddock_host::{AppDeployment, Apps, InstanceSpec};
 use tokio::sync::watch;
 
+use super::handlers::HandlerBuild;
 use crate::node::config::NodeConfig;
 #[cfg(feature = "http")]
 use crate::node::config::StandbyMode;
@@ -134,8 +137,18 @@ impl Ingress {
         name: &str,
         deployment: &AppDeployment,
     ) -> Result<(), NodeError> {
-        let routes = if granted_routes(deployment) {
-            HttpRoute::from_manifest(&deployment.manifest)
+        self.set_routes_of(name, &deployment.manifest, &deployment.spec)
+    }
+
+    #[cfg(feature = "http")]
+    fn set_routes_of(
+        &self,
+        name: &str,
+        manifest: &AppManifest,
+        spec: &InstanceSpec,
+    ) -> Result<(), NodeError> {
+        let routes = if granted_routes(spec) {
+            HttpRoute::from_manifest(manifest)
         } else {
             Vec::new()
         };
@@ -147,6 +160,50 @@ impl Ingress {
             None => Err(NodeError::Invalid(format!(
                 "{name} declares HTTP routes, and this node has no HTTP ingress ([http.<name>] in node config)"
             ))),
+        }
+    }
+
+    /// Serve `name`'s routes with an instance of `build`'s HTTP handler per
+    /// request: its routes (if granted), then its handler. A failure leaves
+    /// what was served before.
+    #[cfg(feature = "http")]
+    pub(super) fn set_handler(&self, name: &str, build: &HandlerBuild) -> Result<(), NodeError> {
+        let Some(http) = &self.http else {
+            return Err(NodeError::Invalid(format!(
+                "{name} is an HTTP handler, and this node has no HTTP ingress ([http.<name>] in node config)"
+            )));
+        };
+        self.set_routes_of(name, &build.manifest, &build.spec)?;
+        http.set_handler(name, build.handler.clone(), build.spec.clone());
+        Ok(())
+    }
+
+    /// No ingress in this build: no handler was ever compiled.
+    #[cfg(not(feature = "http"))]
+    pub(super) fn set_handler(&self, _name: &str, build: &HandlerBuild) -> Result<(), NodeError> {
+        match build.handler {}
+    }
+
+    /// Stop serving `name`'s HTTP handler and withdraw its routes; requests
+    /// in flight finish.
+    pub(super) fn remove_handler(&self, name: &str) {
+        #[cfg(feature = "http")]
+        if let Some(http) = &self.http {
+            http.remove_handler(name);
+            http.remove_routes(name);
+        }
+        #[cfg(not(feature = "http"))]
+        let _ = name;
+    }
+
+    /// Requests `name`'s HTTP handler is serving now.
+    pub(super) fn handler_requests(&self, name: &str) -> Option<usize> {
+        #[cfg(feature = "http")]
+        return self.http.as_ref().and_then(|h| h.handler_requests(name));
+        #[cfg(not(feature = "http"))]
+        {
+            let _ = name;
+            None
         }
     }
 
@@ -164,7 +221,7 @@ impl Ingress {
             .http_incoming
             .as_ref()
             .is_some_and(|scope| !scope.routes.is_empty());
-        if granted_routes(deployment) && declares {
+        if granted_routes(&deployment.spec) && declares {
             return Err(NodeError::Invalid(format!(
                 "{name} declares HTTP routes, and this build of paddock has no HTTP ingress (cargo feature `http`)"
             )));
@@ -249,6 +306,11 @@ impl Ingress {
                     s.forwarded,
                 ),
                 (
+                    "paddock_http_handler_failures_total",
+                    "HTTP handler instances that trapped, ran out of time or set no response.",
+                    s.handler_failures,
+                ),
+                (
                     "paddock_http_refused_connections_total",
                     "Connections closed on accept, over max_connections.",
                     s.refused,
@@ -285,11 +347,9 @@ impl Ingress {
     }
 }
 
-/// Whether the operator granted `deployment` its HTTP routes.
-fn granted_routes(deployment: &AppDeployment) -> bool {
-    deployment
-        .spec
-        .granted
+/// Whether the operator granted an app its HTTP routes.
+fn granted_routes(spec: &InstanceSpec) -> bool {
+    spec.granted
         .contains(&paddock_bundle::manifest::Capability::HttpIncoming)
 }
 

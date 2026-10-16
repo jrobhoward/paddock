@@ -373,6 +373,24 @@ All notable changes are recorded here. The format follows
   to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
+- HTTP handlers (ROADMAP E6): an unmodified `wasi:http/proxy` component
+  (exporting `wasi:http/incoming-handler` at any 0.2 version) deploys as an
+  app whose routes start a new instance per request, with streaming request
+  and response bodies, beside the requests-as-calls ingress. The world is
+  read from the component's exports (`paddock_bundle::HTTP_HANDLER_WORLD`);
+  the manifest must declare routes, and may not declare listeners, groups
+  or a placement other than `any`. The route's `timeout_ms` runs until the
+  response headers and again as an idle timer while either body moves;
+  `max_body` bounds the request body as it is read; a trap or timeout
+  answers 500 or 504 before the headers and cuts the stream after them;
+  each request holds a Store slot (none free: 503 with `Retry-After`).
+  Upgrades and rollbacks apply to new requests (mode `new-requests`).
+  Imports follow the usual declare-and-grant rules; `paddock:runtime/process`
+  is always available. `Runtime::load_handler`,
+  `HttpIngress::set_handler`/`remove_handler`/`handler_requests`, metric
+  `paddock_http_handler_failures_total`. Needs the `http` and `egress`
+  features. `paddock-fixture-http` is the test guest;
+  `scripts/bench.sh ingress` now also measures a handler.
 - Passivation for apps (ROADMAP E7): manifest `instances.passivate_after_ms`
   turns S11's passivation on for an app, and node config `max_processes`
   lets a node hold more instances than `max_instances` Store slots. A deploy

@@ -240,6 +240,63 @@ fn open____connection_world_with_listener____opens() {
     );
 }
 
+fn http_handler_spec(extra: serde_json::Value) -> Spec {
+    let mut appserver = appserver();
+    appserver["capabilities"]["wasi:http/incoming-handler"] =
+        json!({ "routes": [{ "path_prefix": "/hello" }] });
+    if let (Some(target), Some(extra)) = (appserver.as_object_mut(), extra.as_object()) {
+        for (k, v) in extra {
+            target.insert(k.clone(), v.clone());
+        }
+    }
+    Spec {
+        world: paddock_bundle::HTTP_HANDLER_WORLD,
+        appserver: Some(appserver),
+        ..Spec::default()
+    }
+}
+
+#[test]
+fn open____http_handler_with_route____opens() {
+    let dir = TempDir::new().unwrap();
+    let spec = http_handler_spec(json!({}));
+    let path = spec.write(&dir);
+
+    let bundle = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap();
+
+    assert_eq!(
+        bundle.manifest.component.world,
+        paddock_bundle::HTTP_HANDLER_WORLD
+    );
+}
+
+#[rstest]
+#[case::no_routes(json!({ "capabilities": {} }), "appserver.capabilities")]
+#[case::groups(
+    json!({ "capabilities": {
+        "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/hello" }] },
+        "paddock:groups": { "join": ["g"] }
+    } }),
+    "appserver.capabilities"
+)]
+#[case::singleton(json!({ "placement": { "mode": "singleton" } }), "appserver.placement")]
+#[case::listeners(json!({ "listeners": [{ "name": "lines" }] }), "appserver.listeners")]
+fn open____http_handler_with_section_it_cannot_use____refused_at_that_section(
+    #[case] extra: serde_json::Value,
+    #[case] at: &str,
+) {
+    let dir = TempDir::new().unwrap();
+    let spec = http_handler_spec(extra);
+    let path = spec.write(&dir);
+
+    let result = VerifiedBundle::open(&path, &[spec.public_key()]);
+
+    let Err(BundleError::Manifest(ManifestError::Invalid(errors))) = &result else {
+        panic!("expected an invalid manifest, got {result:?}");
+    };
+    assert_eq!(errors[0].path, at);
+}
+
 #[test]
 fn open____no_appserver_section____refused() {
     let dir = TempDir::new().unwrap();

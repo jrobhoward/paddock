@@ -222,6 +222,12 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host/src/listener.rs`: listeners and connection handlers,
   an instance per connection. `crates/paddock-fixture-conn` is its test
   guest; `examples/line-server` the SDK example.
+- `crates/paddock-host/src/http/handler.rs`: HTTP handlers, an unmodified
+  `wasi:http/proxy` component with an instance per request on its routes
+  (needs the `http` and `egress` features); the node side is
+  `crates/paddock/src/node/daemon/handlers.rs`. `crates/paddock-fixture-http`
+  is its test guest (built with `wasip2`'s `proxy::export!`, plus a
+  `paddock:runtime/process` import).
 - `crates/paddock-soak`: the `paddock-soak` binary behind `scripts/soak.sh`
   (Unix only): `failover` runs a witness and a pair as `paddock node`
   processes behind UDP proxies (each node binds `cluster.address` and

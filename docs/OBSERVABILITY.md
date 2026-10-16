@@ -81,7 +81,7 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `paddock_egress_requests_total` | counter | `outcome` (`sent`: a response came; `denied`; `limited`: over `max_concurrent`; `failed`: connection, TLS or timeout) | Outgoing HTTP requests (`wasi:http/outgoing-handler`); listed once an app has made one. |
 | `paddock_slot_timeouts_total` | counter | | Starts, wakes and upgrades that found no Store slot within `init_timeout_ms`; a start or wake then ends the instance as `crashed: no_slot`, an upgrade reverts. |
 
-With an HTTP ingress, also (no labels): `paddock_http_requests_total`, `paddock_http_server_errors_total`, `paddock_http_not_found_total`, `paddock_http_redirected_total` and `paddock_http_forwarded_total` (requests a standby redirected or forwarded to its failover partner), `paddock_http_refused_connections_total`.
+With an HTTP ingress, also (no labels): `paddock_http_requests_total`, `paddock_http_server_errors_total`, `paddock_http_not_found_total`, `paddock_http_redirected_total` and `paddock_http_forwarded_total` (requests a standby redirected or forwarded to its failover partner), `paddock_http_handler_failures_total` (HTTP handler instances that trapped, ran out of time or set no response), `paddock_http_refused_connections_total`.
 
 With a cluster transport, also, labelled `node` (the other node): `paddock_cluster_send_queue_bytes` (gauge: bytes of casts, calls and replies queued for it) and `paddock_cluster_send_refused_total` (counter: messages refused past `[cluster] send_buffer_bytes`, and notices refused past the frame cap, since the node started).
 

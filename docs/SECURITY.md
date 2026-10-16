@@ -52,6 +52,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 - **HTTP.** Routes by host and path prefix; body limit per route (1 MiB default); header timeout 10 s, body timeout 30 s; at most 1,024 connections per address; reply size limit; TLS with rustls on ring, certificates reloaded on change. No client certificates yet.
 - **Listeners.** `max_connections` and an idle timeout per listener; each connection is its own instance with its own limits.
+- **HTTP handlers.** Each request is its own instance with the app's limits and a Store slot; the request body streams to the guest under the route's `max_body`, and the route's timeout bounds the wait for headers and each pause in either body. HTTP is still parsed by hyper in the node (wasmtime's `wasi:http` host hands the guest a parsed request).
 - **Gaps.** None found.
 
 ### HTTP egress

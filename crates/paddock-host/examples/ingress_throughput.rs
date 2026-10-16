@@ -1,16 +1,20 @@
 //! HTTP ingress throughput, for `docs/BASELINE.md` (ROADMAP B7): the
 //! node's ingress (`HttpIngress`, hyper in the host) on loopback, each
 //! request a call to a pool of the SDK fixture answering `/plain` with
-//! `plain`. The load comes from keep-alive HTTP/1.1 connections on their own
-//! tokio runtime, as in spike S15.
+//! `plain`; or, with `handler`, a new instance of the HTTP-handler fixture
+//! per request answering `/hello` with `hello`, streamed (ROADMAP E6). The
+//! load comes from keep-alive HTTP/1.1 connections on their own tokio
+//! runtime, as in spike S15.
 //!
 //! ```sh
-//! cargo build --release --target wasm32-wasip2 -p paddock-fixture-sdk
+//! cargo build --release --target wasm32-wasip2 -p paddock-fixture-sdk -p paddock-fixture-http
 //! cargo run --release -p paddock-host --example ingress_throughput -- 4 4
+//! cargo run --release -p paddock-host --example ingress_throughput -- 4 4 handler
 //! ```
 //!
-//! Arguments: server tokio workers (default 4) and pool instances (default
-//! 4). The client runtime has 4 workers.
+//! Arguments: server tokio workers (default 4), pool instances (default
+//! 4; unused with `handler`), and `handler`. The client runtime has 4
+//! workers.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -19,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
 use paddock_host::http::{HttpIngress, HttpRoute, IngressListen};
-use paddock_host::{AppDeployment, Runtime, RuntimeConfig};
+use paddock_host::{AppDeployment, InstanceSpec, Runtime, RuntimeConfig};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -33,26 +37,45 @@ fn main() {
     let pool: usize = std::env::args()
         .nth(2)
         .map_or(4, |a| a.parse().expect("instances"));
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wasm32-wasip2/release/paddock_fixture_sdk.wasm"
+    let handler = std::env::args().nth(3).as_deref() == Some("handler");
+    let fixture = if handler {
+        "paddock_fixture_http"
+    } else {
+        "paddock_fixture_sdk"
+    };
+    let path = format!(
+        "{}/../../target/wasm32-wasip2/release/{fixture}.wasm",
+        env!("CARGO_MANIFEST_DIR")
     );
-    let component = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let component = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let server = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
         .enable_all()
         .build()
         .unwrap();
-    let (address, _rt, _ingress) = server.block_on(serve(component, pool));
+    let (address, _rt, _ingress) = server.block_on(serve(component, pool, handler));
+    let request: &'static [u8] = if handler {
+        b"GET /hello HTTP/1.1\r\nhost: localhost\r\n\r\n"
+    } else {
+        b"GET /plain HTTP/1.1\r\nhost: localhost\r\n\r\n"
+    };
     let client = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
         .build()
         .unwrap();
-    println!("ingress_throughput: {workers} server workers, a pool of {pool}, 4 client workers");
+    if handler {
+        println!(
+            "ingress_throughput: {workers} server workers, an HTTP handler (an instance per request), 4 client workers"
+        );
+    } else {
+        println!(
+            "ingress_throughput: {workers} server workers, a pool of {pool}, 4 client workers"
+        );
+    }
     client.block_on(async move {
         let mut us = Vec::new();
-        let mut conn = Conn::open(address).await;
+        let mut conn = Conn::open(address, request).await;
         for _ in 0..1_000 {
             conn.get().await;
         }
@@ -74,7 +97,7 @@ fn main() {
             let deadline = Instant::now() + TIMED;
             for _ in 0..connections {
                 tasks.push(tokio::spawn(async move {
-                    let mut conn = Conn::open(address).await;
+                    let mut conn = Conn::open(address, request).await;
                     let mut n = 0u64;
                     while Instant::now() < deadline {
                         conn.get().await;
@@ -95,12 +118,34 @@ fn main() {
     });
 }
 
-async fn serve(component: Vec<u8>, pool: usize) -> (SocketAddr, Runtime, HttpIngress) {
+async fn serve(
+    component: Vec<u8>,
+    pool: usize,
+    handler: bool,
+) -> (SocketAddr, Runtime, HttpIngress) {
     let rt = Runtime::new(RuntimeConfig {
-        max_instances: 64,
+        max_instances: 256,
         ..RuntimeConfig::default()
     })
     .unwrap();
+    if handler {
+        let loaded = rt.load_handler(&component, None).unwrap();
+        let ingress = HttpIngress::new(rt.start_apps(vec![]).await.unwrap());
+        let route = HttpRoute {
+            host: None,
+            path_prefix: "/hello".into(),
+            hash_header: None,
+            max_body: 1 << 20,
+            timeout: Duration::from_secs(30),
+        };
+        ingress.set_routes("web", vec![route]).unwrap();
+        ingress.set_handler("web", loaded, InstanceSpec::new("web", "1.0.0"));
+        let address = ingress
+            .listen(IngressListen::new("127.0.0.1:0".parse().unwrap()))
+            .await
+            .unwrap();
+        return (address, rt, ingress);
+    }
     let app = rt.load(&component).unwrap();
     let manifest = AppManifest {
         app: AppInfo {
@@ -143,32 +188,44 @@ async fn serve(component: Vec<u8>, pool: usize) -> (SocketAddr, Runtime, HttpIng
     (address, rt, ingress)
 }
 
-/// One keep-alive connection sending `GET /plain`.
+/// One keep-alive connection sending `request` again and again.
 struct Conn {
     stream: TcpStream,
     buf: Vec<u8>,
+    request: &'static [u8],
 }
 
 impl Conn {
-    async fn open(address: SocketAddr) -> Self {
+    async fn open(address: SocketAddr, request: &'static [u8]) -> Self {
         let stream = TcpStream::connect(address).await.unwrap();
         stream.set_nodelay(true).unwrap();
         Self {
             stream,
             buf: Vec::with_capacity(4096),
+            request,
         }
     }
 
-    /// One request; reads the headers, then `content-length` bytes.
+    /// One request; reads the headers, then `content-length` bytes or, for
+    /// a chunked body, up to its last chunk.
     async fn get(&mut self) {
-        self.stream
-            .write_all(b"GET /plain HTTP/1.1\r\nhost: localhost\r\n\r\n")
-            .await
-            .unwrap();
+        self.stream.write_all(self.request).await.unwrap();
         loop {
             if let Some(end) = self.buf.windows(4).position(|w| w == b"\r\n\r\n") {
                 let head = String::from_utf8_lossy(&self.buf[..end]).to_ascii_lowercase();
                 assert!(head.starts_with("http/1.1 200"), "{head}");
+                if head.contains("transfer-encoding: chunked") {
+                    // The fixtures' bodies never contain the last chunk's bytes.
+                    let last = loop {
+                        if let Some(at) = self.buf[end..].windows(5).position(|w| w == b"0\r\n\r\n")
+                        {
+                            break end + at + 5;
+                        }
+                        self.read().await;
+                    };
+                    self.buf.drain(..last);
+                    return;
+                }
                 let len: usize = head
                     .lines()
                     .find_map(|l| l.strip_prefix("content-length:"))

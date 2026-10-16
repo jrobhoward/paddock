@@ -330,6 +330,41 @@ impl Runtime {
         LoadedConnection::new(pre, stubbed).map_err(load)
     }
 
+    /// Compile an HTTP-handler component (`wasi:http/proxy`, exporting
+    /// `wasi:http/incoming-handler`) and link it, as [`Runtime::load`] does
+    /// for apps, keeping the compiled code in `cache` when given (see
+    /// [`Runtime::load_cached`]).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Runtime::load`], including a component that does not export
+    /// `wasi:http/incoming-handler` at a 0.2 version; [`HostError::Load`]
+    /// in a build without the `egress` feature, which links no `wasi:http`.
+    #[cfg(feature = "http")]
+    pub fn load_handler(
+        &self,
+        component: &[u8],
+        cache: Option<&Path>,
+    ) -> Result<crate::http::LoadedHandler, HostError> {
+        #[cfg(feature = "egress")]
+        {
+            let load = |e: wasmtime::Error| HostError::Load(describe(&e));
+            let (pre, stubbed) = self.link(component, cache).map_err(load)?;
+            Ok(crate::http::LoadedHandler {
+                pre: wasmtime_wasi_http::p2::bindings::ProxyPre::new(pre).map_err(load)?,
+                stubbed: Arc::new(stubbed),
+            })
+        }
+        #[cfg(not(feature = "egress"))]
+        {
+            let _ = (component, cache);
+            Err(HostError::Load(
+                "this build has no wasi:http, which HTTP handlers need (cargo feature `egress`)"
+                    .into(),
+            ))
+        }
+    }
+
     fn link(
         &self,
         component: &[u8],

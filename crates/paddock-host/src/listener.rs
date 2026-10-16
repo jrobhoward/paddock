@@ -20,6 +20,8 @@
 
 use std::net::SocketAddr;
 use std::pin::Pin;
+#[cfg(all(feature = "http", feature = "egress"))]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::task::{Context, Poll};
@@ -397,28 +399,45 @@ fn finish(rt: &RuntimeInner, shared: &Shared, pid: Pid, end: End) {
     delivery::notify_exit(rt, pid, &reason);
 }
 
-/// When a connection last moved a byte.
-struct Activity {
+/// When a connection (or an HTTP handler's request) last moved a byte.
+pub(crate) struct Activity {
     started: Instant,
     /// Milliseconds after `started`.
     last: AtomicU64,
+    /// An HTTP handler has sent its response's headers.
+    #[cfg(all(feature = "http", feature = "egress"))]
+    responded: AtomicBool,
 }
 
 impl Activity {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             started: Instant::now(),
             last: AtomicU64::new(0),
+            #[cfg(all(feature = "http", feature = "egress"))]
+            responded: AtomicBool::new(false),
         }
     }
 
-    fn touch(&self) {
+    pub(crate) fn touch(&self) {
         let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.last.store(now, Ordering::Relaxed);
     }
 
+    /// Record that the response's headers went out, as activity.
+    #[cfg(all(feature = "http", feature = "egress"))]
+    pub(crate) fn respond(&self) {
+        self.touch();
+        self.responded.store(true, Ordering::Relaxed);
+    }
+
+    #[cfg(all(feature = "http", feature = "egress"))]
+    pub(crate) fn responded(&self) -> bool {
+        self.responded.load(Ordering::Relaxed)
+    }
+
     /// Resolve once nothing has moved for `limit`.
-    async fn idle_for(&self, limit: Duration) {
+    pub(crate) async fn idle_for(&self, limit: Duration) {
         loop {
             let last = Duration::from_millis(self.last.load(Ordering::Relaxed));
             let quiet = self.started.elapsed().saturating_sub(last);

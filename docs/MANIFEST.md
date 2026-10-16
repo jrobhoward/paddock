@@ -217,7 +217,7 @@ An upgrade that adds capabilities needs `paddock upgrade --approve`. `--batch`, 
 
 ### `listeners`
 
-Only for a connection handler (a component exporting `paddock:connection/handler`): the listeners whose connections it serves, one instance per connection. An app world declares none, and a connection handler at least one.
+Only for a connection handler (a component exporting `paddock:connection/handler`): the listeners whose connections it serves, one instance per connection. An app world or an HTTP handler declares none, and a connection handler at least one.
 
 ```toml
 [[appserver.listeners]]
@@ -227,6 +227,17 @@ max_connections = 256     # default 1024: more are refused
 ```
 
 Names are unique within an app and follow the app-name rules. Upgrades keep the same listener names.
+
+### HTTP handlers
+
+A component exporting `wasi:http/incoming-handler` (any 0.2 version; the `wasi:http/proxy` world, as `wasmtime serve` runs) is an HTTP handler: each request on its routes gets a new instance, with streaming bodies, instead of a call to a running app. The world is read from the component; nothing in the manifest selects it.
+
+- `wasi:http/incoming-handler` must declare at least one route; `max_body` bounds the request body as it is read (a declared length over it is 413; past it the guest's body stream fails), and `timeout_ms` runs until the response headers (504), then again as an idle timer while either body moves (the stream is cut).
+- `limits.callback_deadline_ms` bounds the instance's guest execution; `memory_max` and the other limits apply as for any instance.
+- `listeners`, `paddock:groups` and a `placement.mode` other than `any` are refused. `instances` is not used.
+- Imports follow the rules above; `paddock:runtime/process` is available, so a handler can call apps by registered name.
+- Each request holds one of the node's `max_instances` Store slots; none free answers 503 with `Retry-After`. Upgrades apply to new requests.
+- Needs `[http]` in node config and a node built with the `http` and `egress` features (both default).
 
 ### Documentation-only and later sections
 
