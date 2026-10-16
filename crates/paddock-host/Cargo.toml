@@ -10,13 +10,16 @@ repository.workspace = true
 publish = false
 
 [features]
-default = ["http", "tls", "sql"]
+default = ["http", "tls", "sql", "egress"]
 # The HTTP ingress (`paddock_host::http`): node-level routes to apps.
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 # HTTPS on the HTTP ingress (`http::IngressTls`).
 tls = ["http", "dep:tokio-rustls"]
 # SQL datasources (`paddock:sql`, ROADMAP E5): a Postgres pool per datasource
 # in node config. Idle without one.
+# HTTP egress (`wasi:http/outgoing-handler`, ROADMAP E2): a filtering
+# sender with a connection pool. Without it, the interface is deny-stubbed.
+egress = ["tls", "dep:wasmtime-wasi-http", "dep:hyper-rustls", "dep:rustls-native-certs", "dep:tower-service", "hyper-util/client-legacy", "hyper-util/http1"]
 sql = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio-postgres-rustls", "dep:futures-util"]
 # USDT probes on the message path (`src/probe.rs`): SystemTap SDT on Linux,
 # DTrace on macOS and FreeBSD, ETW on Windows. Without it the probe calls
@@ -50,8 +53,12 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util"] }
 tracing = { workspace = true }
-wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator"] }
+wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator", "call-hook"] }
 wasmtime-wasi = { workspace = true, features = ["p2"] }
+wasmtime-wasi-http = { workspace = true, optional = true }
+hyper-rustls = { workspace = true, optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+tower-service = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }
@@ -69,9 +76,17 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time
 name = "http"
 required-features = ["tls"]
 
+[[test]]
+name = "egress"
+required-features = ["egress"]
+
 [[example]]
 name = "ingress_throughput"
 required-features = ["http"]
+
+[[example]]
+name = "egress_cost"
+required-features = ["egress"]
 
 [lints]
 workspace = true

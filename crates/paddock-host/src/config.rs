@@ -263,6 +263,8 @@ pub struct RuntimeConfig {
     pub secrets: BTreeMap<String, SecretSource>,
     /// SQL datasources, by name (ROADMAP E5).
     pub datasources: BTreeMap<String, SqlDatasource>,
+    /// HTTP egress for every app.
+    pub egress: Egress,
     /// Most log records per second per app, `wasi:logging` records and
     /// captured stdout and stderr lines together; an app's own
     /// `rate_limit_per_sec` can only lower it. 0 for no ceiling.
@@ -272,6 +274,58 @@ pub struct RuntimeConfig {
     /// instances' `pending_calls_max`; this bounds a faulty one. 0 for no
     /// limit.
     pub incoming_calls_per_peer: u32,
+}
+
+/// HTTP egress (`wasi:http/outgoing-handler`, ROADMAP E2): what every
+/// app's outgoing requests share. Each app may reach only what its
+/// manifest's `allow` lists, within [`Egress::allow`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Egress {
+    /// The most any app may be allowed, in the manifest's `allow` syntax;
+    /// `None` for no ceiling. A deploy whose manifest asks for more is
+    /// refused (`services::egress::within`).
+    pub allow: Option<Vec<String>>,
+    /// Trust the operating system's root certificates.
+    pub system_roots: bool,
+    /// More trusted certificate authorities, PEM.
+    pub ca_file: Option<PathBuf>,
+    /// Allow host names that resolve to loopback or link-local addresses
+    /// (`169.254.0.0/16`, `fe80::/10`: cloud metadata). An address written
+    /// in an allow entry is always allowed.
+    pub allow_loopback: bool,
+    /// Time allowed to open a connection.
+    pub connect_timeout: Duration,
+    /// Most time from sending a request to its response headers; a guest's
+    /// `first-byte-timeout` may only shorten it.
+    pub first_byte_timeout: Duration,
+    /// Most time between two chunks of a response body; a guest's
+    /// `between-bytes-timeout` may only shorten it.
+    pub between_bytes_timeout: Duration,
+    /// How long an idle pooled connection is kept.
+    pub pool_idle_timeout: Duration,
+    /// Idle connections kept per host.
+    pub pool_max_idle_per_host: usize,
+    /// Requests in flight at once per app, when its manifest does not set
+    /// `max_concurrent`.
+    pub max_concurrent: u32,
+}
+
+impl Default for Egress {
+    fn default() -> Self {
+        Self {
+            allow: None,
+            system_roots: true,
+            ca_file: None,
+            allow_loopback: false,
+            connect_timeout: Duration::from_secs(10),
+            first_byte_timeout: Duration::from_secs(30),
+            between_bytes_timeout: Duration::from_secs(30),
+            pool_idle_timeout: Duration::from_secs(90),
+            pool_max_idle_per_host: 32,
+            max_concurrent: 64,
+        }
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -292,6 +346,7 @@ impl Default for RuntimeConfig {
             buckets: BTreeMap::new(),
             secrets: BTreeMap::new(),
             datasources: BTreeMap::new(),
+            egress: Egress::default(),
             log_records_per_sec: 1_000,
             incoming_calls_per_peer: 10_000,
         }

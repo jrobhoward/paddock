@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
@@ -125,7 +125,6 @@ impl process::Host for InstanceState {
             // cannot read until this callback returns.
             return Err(Error::msg("call to self would deadlock"));
         }
-        let started = Instant::now();
         let result = delivery::call(
             &self.ctx.rt,
             Origin::Local(&self.ctx.me),
@@ -134,7 +133,6 @@ impl process::Host for InstanceState {
             Duration::from_millis(timeout_ms.into()),
         )
         .await;
-        self.clock.add_host_time(started.elapsed());
         Ok(result.map(Into::into).map_err(|e| (&e).into()))
     }
 

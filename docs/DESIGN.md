@@ -176,7 +176,7 @@ Every instance gets its own wasmtime `Store`, linear memory and limits, and sees
 | Mailbox | mailbox_max per instance; message_max_bytes | When full: cast is dropped and counted, call fails fast with `overloaded`. |
 | Link to another node | `[cluster] send_buffer_bytes` of messages queued per peer (64 MiB by default) | When full: the same rule as a full mailbox. Link and monitor notices are queued past it (ROADMAP D8). |
 | Filesystem | WASI preopens per manifest grant; read-only or read-write | cap-std stops path escapes. No byte quota: that needs a custom `wasi:filesystem` backend, so a manifest `quota` on a preopen is refused and the operator sets a filesystem quota per volume (SECURITY.md, S6). |
-| Network | `wasi:sockets` address check hook; `wasi:http` through a filtering proxy | Default deny. Prefer HTTP egress over raw sockets. |
+| Network | `wasi:sockets` address check hook; `wasi:http` through the host's filter and connection pool (allow list, address guard, a cap per app) | Default deny. Prefer HTTP egress over raw sockets. |
 | Storage | `wasi:keyvalue` buckets with byte quotas | Host-owned, so data survives instance crashes. |
 | Host calls | Every import runs a policy check and a rate limit | Each host function is attack surface; keep the set small. |
 | Host objects | A quota per instance on timers, monitors, links, registered names, pending calls, group memberships and watches | These live in host memory, outside `memory_max` (a timer holds its envelope), so the instance that creates them is charged for them, as seL4 charges a caller for kernel objects. The `process` functions that create them return no error, so over quota the instance crashes with `timer_limit`, `monitor_limit`, `link_limit` or `pending_call_limit`; later interfaces (groups, watches) return an error instead. Node config sets each limit's default and ceiling. Registered names need no quota: an instance holds only names its manifest lists. |
@@ -398,7 +398,7 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 | Replicated storage | `wasi:keyvalue`, durability `replicated` (protocol chosen in Phase 3); every node reads its local copy and delivers watches from it | Mnesia, Khepri | Infinispan distributed | 3 |
 | Files | `wasi:filesystem`: read-only `/priv` from the bundle, writable `/data` per app | `code:priv_dir` | — | 1 |
 | HTTP ingress | Node-level ingress delivering each request on an app's routes (`wasi:http/incoming-handler` scope) as a call; host terminates HTTP (TLS next) and routes by host/path (see "HTTP ingress") | Cowboy, inets | Undertow web container | 2 |
-| HTTP egress | `wasi:http/outgoing-handler` via filtering proxy | `httpc` | — | 2 |
+| HTTP egress | `wasi:http/outgoing-handler` through the host's filter and connection pool | `httpc` | — | 2 |
 | Sockets | `wasi:sockets` with allow-list | `gen_tcp`, `gen_udp` | — | 3 |
 | Database pools | `paddock:sql` against named datasources | — | JDBC datasources | 3 |
 | Metrics and tracing | `paddock:metrics` (per-app counters, gauges, histograms) and host counters, exported as Prometheus text (`[metrics]`, `/v1/metrics`); OTLP push later | `telemetry` | Metrics subsystem | 2 |
@@ -438,7 +438,7 @@ An extension that works on its own schedule, such as a protocol stack polling de
 
 Linking happens once per engine, so a host call is a direct call on the service's state, with no dynamic dispatch. A registry in `services/mod.rs` lists the services; adding one is a module plus a line in each registry, with no change to the process core or orchestration. Every service follows these rules:
 - An ungranted capability fails softly, as an `access-denied` error value where the interface has one, never a trap.
-- Time spent waiting in host I/O is host time and does not count against the callback deadline.
+- Time spent in a host function is host time and does not count against the callback deadline. The Store's call hook times every host import, `wasi:io` waits included (a sleep, a stream read, an HTTP response), so services do not time themselves.
 - Named resources (buckets, datasources) are declared in the manifest and bound in node configuration.
 - Usage is limited per app (rate limits, quotas, connection caps), and each operation is a probe point once B1 exists.
 

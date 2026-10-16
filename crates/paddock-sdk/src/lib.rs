@@ -38,6 +38,8 @@
 //!   on this node with publish.
 //! - `http` (cargo feature `http`): requests from the node's HTTP ingress,
 //!   delivered as calls, and the responses to them.
+//! - `http_client` (cargo feature `http-client`): requests from the app
+//!   to hosts its manifest allows (`wasi:http/outgoing-handler`).
 //! - `metrics` (cargo feature `metrics`): `paddock:metrics`, counters,
 //!   gauges and histograms the node exports.
 //! - `secrets` (cargo feature `secrets`): `paddock:secrets`, values the
@@ -66,6 +68,8 @@ mod envelope;
 pub mod groups;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "http-client")]
+pub mod http_client;
 #[cfg(feature = "keyvalue")]
 pub mod kv;
 pub mod log;

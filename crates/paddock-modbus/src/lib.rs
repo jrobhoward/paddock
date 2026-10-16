@@ -53,7 +53,6 @@ use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
 
 use paddock_host::services::{
     Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ServiceCtx, StoreData, extension_ctx,
@@ -330,16 +329,6 @@ fn range(_: server::OutOfRange) -> served::Error {
     served::Error::OutOfRange
 }
 
-/// Run a device request for a guest, counting the wait as host time.
-macro_rules! timed {
-    ($ctx:expr, $call:expr) => {{
-        let started = Instant::now();
-        let result = $call.await;
-        $ctx.add_host_time(started.elapsed());
-        Ok(result)
-    }};
-}
-
 impl client::Host for ServiceCtx<'_, State> {
     async fn read_holding(
         &mut self,
@@ -347,11 +336,10 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<u16>, client::Error>> {
-        timed!(
-            self,
-            self.state()
-                .read_words(&device, Table::Holding, address, count)
-        )
+        Ok(self
+            .state()
+            .read_words(&device, Table::Holding, address, count)
+            .await)
     }
 
     async fn read_input(
@@ -360,11 +348,10 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<u16>, client::Error>> {
-        timed!(
-            self,
-            self.state()
-                .read_words(&device, Table::Input, address, count)
-        )
+        Ok(self
+            .state()
+            .read_words(&device, Table::Input, address, count)
+            .await)
     }
 
     async fn read_coils(
@@ -373,10 +360,10 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<bool>, client::Error>> {
-        timed!(
-            self,
-            self.state().read_bits(&device, Table::Coil, address, count)
-        )
+        Ok(self
+            .state()
+            .read_bits(&device, Table::Coil, address, count)
+            .await)
     }
 
     async fn read_discrete(
@@ -385,11 +372,10 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         count: u16,
     ) -> wasmtime::Result<Result<Vec<bool>, client::Error>> {
-        timed!(
-            self,
-            self.state()
-                .read_bits(&device, Table::Discrete, address, count)
-        )
+        Ok(self
+            .state()
+            .read_bits(&device, Table::Discrete, address, count)
+            .await)
     }
 
     async fn write_holding(
@@ -398,7 +384,7 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<u16>,
     ) -> wasmtime::Result<Result<(), client::Error>> {
-        timed!(self, self.state().write_words(&device, address, values))
+        Ok(self.state().write_words(&device, address, values).await)
     }
 
     async fn write_coils(
@@ -407,7 +393,7 @@ impl client::Host for ServiceCtx<'_, State> {
         address: u16,
         values: Vec<bool>,
     ) -> wasmtime::Result<Result<(), client::Error>> {
-        timed!(self, self.state().write_bits(&device, address, values))
+        Ok(self.state().write_bits(&device, address, values).await)
     }
 }
 

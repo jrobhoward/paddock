@@ -20,6 +20,9 @@ connection = []
 groups = []
 # `paddock_sdk::http`: HTTP requests from the node's ingress, as calls.
 http = []
+# `paddock_sdk::http_client`: HTTP requests from the app
+# (`wasi:http/outgoing-handler`).
+http-client = ["dep:wasip2"]
 # `paddock_sdk::secrets`: secrets the operator binds (`paddock:secrets`).
 secrets = []
 # `paddock_sdk::metrics`: counters, gauges and histograms (`paddock:metrics`).
@@ -36,6 +39,7 @@ paddock-sdk-macros = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 wit-bindgen = { workspace = true }
+wasip2 = { workspace = true, optional = true }
 
 [lints]
 workspace = true

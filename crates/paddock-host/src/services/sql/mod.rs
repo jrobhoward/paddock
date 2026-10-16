@@ -175,8 +175,6 @@ fn not_built<T>() -> Answer<T> {
 mod run {
     //! The calls, with the `sql` feature.
 
-    use std::time::Instant;
-
     use super::pool::{self, Fault};
     use super::values::Value;
     use super::{Answer, Instance, ServiceCtx, Transaction, sql};
@@ -257,18 +255,8 @@ mod run {
         /// wait as host time.
         pub(super) async fn connect(&mut self, name: &str) -> Answer<(pool::Conn, u64)> {
             let (ds, cap) = self.datasource(name)?;
-            let started = Instant::now();
             let conn = ds.acquire(&self.state.app.clone(), cap).await;
-            self.add_host_time(started.elapsed());
             Ok((conn?, ds.max_result_bytes()))
-        }
-
-        /// Run `f` as host time.
-        pub(super) async fn timed<T>(&mut self, f: impl Future<Output = T>) -> T {
-            let started = Instant::now();
-            let out = f.await;
-            self.add_host_time(started.elapsed());
-            out
         }
     }
 
@@ -315,9 +303,7 @@ impl sql::Host for ServiceCtx<'_, Instance> {
                 Err(e) => return Ok(Err(e)),
             };
             let values = run::values_in(params);
-            let rows = self
-                .timed(pool::query(conn.client(), &statement, &values, max))
-                .await;
+            let rows = pool::query(conn.client(), &statement, &values, max).await;
             Ok(rows.map(run::rows_out).map_err(Into::into))
         }
     }
@@ -340,9 +326,7 @@ impl sql::Host for ServiceCtx<'_, Instance> {
                 Err(e) => return Ok(Err(e)),
             };
             let values = run::values_in(params);
-            let changed = self
-                .timed(pool::execute(conn.client(), &statement, &values))
-                .await;
+            let changed = pool::execute(conn.client(), &statement, &values).await;
             Ok(changed.map_err(Into::into))
         }
     }
@@ -359,7 +343,7 @@ impl sql::Host for ServiceCtx<'_, Instance> {
                 Ok(c) => c,
                 Err(e) => return Ok(Err(e)),
             };
-            if let Err(e) = self.timed(conn.simple("BEGIN")).await {
+            if let Err(e) = conn.simple("BEGIN").await {
                 return Ok(Err(e.into()));
             }
             Ok(Ok(self.table.push(Transaction::new(conn, max))?))
@@ -384,7 +368,6 @@ impl sql::HostTransaction for ServiceCtx<'_, Instance> {
             // The connection stays in the transaction while the statement
             // runs: if the instance is killed meanwhile, dropping the
             // transaction rolls it back.
-            let started = std::time::Instant::now();
             let t = self.table.get(&tx)?;
             let conn = match t.conn() {
                 Ok(c) => c,
@@ -392,7 +375,6 @@ impl sql::HostTransaction for ServiceCtx<'_, Instance> {
             };
             let values = run::values_in(params);
             let rows = pool::query(conn.client(), &statement, &values, t.max_result_bytes()).await;
-            self.add_host_time(started.elapsed());
             Ok(rows.map(run::rows_out).map_err(Into::into))
         }
     }
@@ -410,7 +392,6 @@ impl sql::HostTransaction for ServiceCtx<'_, Instance> {
         }
         #[cfg(feature = "sql")]
         {
-            let started = std::time::Instant::now();
             let t = self.table.get(&tx)?;
             let conn = match t.conn() {
                 Ok(c) => c,
@@ -418,7 +399,6 @@ impl sql::HostTransaction for ServiceCtx<'_, Instance> {
             };
             let values = run::values_in(params);
             let changed = pool::execute(conn.client(), &statement, &values).await;
-            self.add_host_time(started.elapsed());
             Ok(changed.map_err(Into::into))
         }
     }
@@ -456,7 +436,7 @@ impl ServiceCtx<'_, Instance> {
                     "the transaction has ended".into(),
                 )));
             };
-            let ended = self.timed(conn.simple(sql_text)).await;
+            let ended = conn.simple(sql_text).await;
             Ok(ended.map_err(Into::into))
         }
     }

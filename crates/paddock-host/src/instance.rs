@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tracing::Instrument;
-use wasmtime::{Store, Trap, UpdateDeadline};
+use wasmtime::{CallHook, Store, Trap, UpdateDeadline};
 
 use crate::acl::Acl;
 use crate::bindings::{CallResult, PaddockApp};
@@ -1336,6 +1336,14 @@ impl InstanceTask {
 pub(crate) fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Store<InstanceState> {
     let mut store = Store::new(engine, state);
     store.limiter(|s| &mut s.limiter);
+    store.call_hook(|mut ctx, hook| {
+        match hook {
+            CallHook::CallingHost => ctx.data_mut().clock.enter_host(),
+            CallHook::ReturningFromHost => ctx.data_mut().clock.leave_host(),
+            CallHook::CallingWasm | CallHook::ReturningFromWasm => {}
+        }
+        Ok(())
+    });
     store.epoch_deadline_callback(|mut ctx| {
         if ctx.data_mut().clock.expired() {
             Ok(UpdateDeadline::Interrupt)

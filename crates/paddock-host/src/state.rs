@@ -22,6 +22,7 @@ use crate::pid::Pid;
 use crate::process::{Timers, limit};
 use crate::runtime::RuntimeInner;
 use crate::services::config::Config;
+use crate::services::egress::Egress;
 use crate::services::groups::Groups;
 use crate::services::keyvalue::KeyValue;
 use crate::services::logging::{LogRate, Logging};
@@ -141,12 +142,7 @@ impl InstanceState {
     /// The context for an extension whose state is `S`, if one made it.
     pub(crate) fn extension_ctx<S: 'static>(&mut self) -> Option<ServiceCtx<'_, S>> {
         let state = self.services.extensions.get_mut::<S>()?;
-        Some(ServiceCtx::new(
-            state,
-            &self.tags,
-            &mut self.table,
-            &mut self.clock,
-        ))
+        Some(ServiceCtx::new(state, &self.tags, &mut self.table))
     }
 
     /// Resources handed to the guest.
@@ -225,18 +221,14 @@ macro_rules! host_state {
     ($service:ty, $field:ident) => {
         impl HostState<$service> for InstanceState {
             fn service(&mut self) -> ServiceCtx<'_, <$service as Service>::Instance> {
-                ServiceCtx::new(
-                    &mut self.services.$field,
-                    &self.tags,
-                    &mut self.table,
-                    &mut self.clock,
-                )
+                ServiceCtx::new(&mut self.services.$field, &self.tags, &mut self.table)
             }
         }
     };
 }
 
 host_state!(Config, config);
+host_state!(Egress, egress);
 host_state!(Groups, groups);
 host_state!(KeyValue, keyvalue);
 host_state!(Logging, logging);
@@ -310,13 +302,16 @@ impl ResourceLimiter for Limiter {
 
 /// Guest execution time of the current callback.
 ///
-/// The deadline counts guest execution only: host imports add the time they
-/// spend suspended to `host_time`, which is subtracted, so an instance waiting
-/// on another is not runaway code (spike S1).
+/// The deadline counts guest execution only: time inside host imports is
+/// subtracted, so an instance waiting on another, on a timer or on I/O is
+/// not runaway code (spike S1). The Store's call hook marks each entry into
+/// and return from a host import ([`new_store`](crate::instance::new_store)).
 #[derive(Debug)]
 pub(crate) struct CallbackClock {
     started: Instant,
     host_time: Duration,
+    /// When the guest called the host import running now.
+    in_host: Option<Instant>,
     limit: Duration,
     pub(crate) timed_out: bool,
 }
@@ -326,6 +321,7 @@ impl Default for CallbackClock {
         Self {
             started: Instant::now(),
             host_time: Duration::ZERO,
+            in_host: None,
             limit: Duration::MAX,
             timed_out: false,
         }
@@ -356,9 +352,16 @@ impl CallbackClock {
         self.started.elapsed().saturating_sub(self.host_time)
     }
 
-    /// Exclude time spent suspended in a host import from the deadline.
-    pub(crate) fn add_host_time(&mut self, spent: Duration) {
-        self.host_time += spent;
+    /// The guest called a host import.
+    pub(crate) fn enter_host(&mut self) {
+        self.in_host = Some(Instant::now());
+    }
+
+    /// The host import returned to the guest: its time is host time.
+    pub(crate) fn leave_host(&mut self) {
+        if let Some(entered) = self.in_host.take() {
+            self.host_time += entered.elapsed();
+        }
     }
 }
 

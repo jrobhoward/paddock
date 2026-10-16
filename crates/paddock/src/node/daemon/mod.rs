@@ -211,6 +211,7 @@ impl Node {
                         Some((name.clone(), source))
                     })
                     .collect(),
+                egress: config.egress.runtime(),
                 datasources: config
                     .datasources
                     .iter()

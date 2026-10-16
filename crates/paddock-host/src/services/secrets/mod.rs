@@ -9,7 +9,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use std::time::Instant;
 
 use paddock_bundle::manifest::{AppSpec, Capability};
 use wasmtime::Result;
@@ -130,9 +129,6 @@ impl store::Host for ServiceCtx<'_, Instance> {
         let Some(source) = state.sources.get(&name).cloned() else {
             return Ok(Err(store::Error::NotFound));
         };
-        let started = Instant::now();
-        let value = read(&name, &source).await;
-        self.add_host_time(started.elapsed());
-        Ok(value)
+        Ok(read(&name, &source).await)
     }
 }

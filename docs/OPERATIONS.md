@@ -35,6 +35,7 @@ Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back t
 | `PADDOCK_CONTACTS` | `paddock shell` | The contacts file, instead of `--contacts` (default `contacts.toml` under `$XDG_CONFIG_HOME/paddock` or `~/.config/paddock`) |
 | `XDG_CONFIG_HOME` | `paddock shell` | Where the contacts file and the shell's history (`paddock/history`) are |
 | `PADDOCK_KEY_PASSWORD` | `paddock bundle`, `paddock keygen` | The signing key's password, instead of a prompt |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | `paddock node` | Where HTTP egress reads the system's root certificates, instead of the OS defaults (`[egress] system_roots`) |
 | `RUST_LOG` | `paddock node` | Log filter (default `info`), for example `info,paddock::lease=debug` |
 
 Secrets may also come from variables the node config names (`[secrets.<name>] env = ...`).

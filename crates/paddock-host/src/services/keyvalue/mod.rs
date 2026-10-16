@@ -19,7 +19,6 @@ mod watches;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Instant;
 
 use paddock_bundle::manifest::{AccessMode, AppSpec, Bucket, Capability};
 use wasmtime::Result;
@@ -193,10 +192,7 @@ impl ServiceCtx<'_, Instance> {
         handle: &BucketHandle,
         op: Op,
     ) -> std::result::Result<Outcome, String> {
-        let started = Instant::now();
-        let outcome = self.state.store.run(handle, op).await;
-        self.add_host_time(started.elapsed());
-        outcome
+        self.state.store.run(handle, op).await
     }
 
     /// Resolve `bucket` for a `paddock:watch` operation, which writes when

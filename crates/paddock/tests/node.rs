@@ -757,8 +757,10 @@ async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
             "paddock:groups": {},
             "paddock:metrics": { "prefix": "vault" },
             "paddock:secrets": { "secrets": names },
-            // The SDK fixture imports `paddock:sql`; declared, nothing used.
-            "paddock:sql": {}
+            // The SDK fixture imports `paddock:sql` and `wasi:http`;
+            // declared, nothing used.
+            "paddock:sql": {},
+            "wasi:http/outgoing-handler": {}
         } }))
     };
     let sdk = fixture("paddock_fixture_sdk");
@@ -825,6 +827,7 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
         "paddock:groups": {},
         "paddock:secrets": { "secrets": [] },
         "paddock:sql": {},
+        "wasi:http/outgoing-handler": {},
         "paddock:metrics": { "prefix": "shop" }
     } }));
     n.client
@@ -1026,5 +1029,100 @@ async fn deploy____instances_that_never_passivate_past_max_instances____refused_
     assert!(passivating.is_ok(), "{passivating:?}");
     assert_eq!(passive, 5, "every sleepy instance passivated");
     assert!(woken.starts_with("1.0.0 count="), "{woken}");
+    n.shutdown().await;
+}
+
+/// A server answering every request on one connection with `200 hi`.
+async fn hello_server() -> std::net::SocketAddr {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut seen = Vec::new();
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = stream.read(&mut buf).await {
+                    if n == 0 {
+                        return;
+                    }
+                    seen.extend_from_slice(&buf[..n]);
+                    while let Some(end) = seen.windows(4).position(|w| w == b"\r\n\r\n") {
+                        seen.drain(..end + 4);
+                        let reply = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nhi";
+                        if stream.write_all(reply).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    address
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn egress____inside_and_outside_the_node_ceiling____fetches_or_refused() {
+    let address = hello_server().await;
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy = policy_dir.path().join("policy.toml");
+    std::fs::write(
+        &policy,
+        "[apps.fetcher]\ngrant = [\"wasi:http/outgoing-handler\"]\n",
+    )
+    .unwrap();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[egress]\nallow = [\"http://{address}\", \"*.internal\"]\n"
+    ))
+    .await;
+    let manifest = |allow: serde_json::Value| {
+        fast(json!({ "capabilities": {
+            "wasi:config": {},
+            "wasi:keyvalue": {},
+            "paddock:groups": {},
+            "paddock:secrets": { "secrets": [] },
+            "paddock:sql": {},
+            "paddock:metrics": { "prefix": "fetcher" },
+            "wasi:http/outgoing-handler": { "allow": allow }
+        } }))
+    };
+    let sdk = fixture("paddock_fixture_sdk");
+
+    let outside = n
+        .client
+        .deploy(bundle(
+            &n.key,
+            "fetcher",
+            "1.0.0",
+            &sdk,
+            manifest(json!(["https://api.example.com"])),
+            &[],
+        ))
+        .await
+        .unwrap_err();
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "fetcher",
+            "1.0.0",
+            &sdk,
+            manifest(json!([format!("http://{address}"), "*.plant.internal"])),
+            &[],
+        ))
+        .await
+        .unwrap();
+    let fetched = call(&n, "fetcher", &format!("fetch GET http://{address}/x")).await;
+    let other = call(&n, "fetcher", "fetch GET https://api.example.com/").await;
+
+    assert_eq!(kind(&outside), "invalid");
+    assert!(
+        outside
+            .to_string()
+            .contains("\"https://api.example.com\" is outside"),
+        "{outside}"
+    );
+    assert_eq!(fetched, "200 hi");
+    assert_eq!(other, "err:denied");
     n.shutdown().await;
 }

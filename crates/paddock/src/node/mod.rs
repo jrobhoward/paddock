@@ -21,9 +21,9 @@ mod state_view;
 mod store;
 
 pub use config::{
-    ArbiterKind, BucketConfig, BucketScope, ClusterConfig, ClusterRole, FailoverBinding,
-    HttpBinding, ListenerBinding, LogFormat, MemoryProfile, MetricsBinding, NodeConfig,
-    SecretBinding, TlsBinding, WitnessBinding,
+    ArbiterKind, BucketConfig, BucketScope, ClusterConfig, ClusterRole, EgressBinding,
+    FailoverBinding, HttpBinding, ListenerBinding, LogFormat, MemoryProfile, MetricsBinding,
+    NodeConfig, SecretBinding, TlsBinding, WitnessBinding,
 };
 pub use daemon::Node;
 pub use error::NodeError;

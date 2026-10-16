@@ -17,7 +17,7 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["node", "http", "tls", "sql", "probes"]
+default = ["node", "http", "tls", "sql", "egress", "probes"]
 # The node daemon (`paddock node`) and everything it runs on, wasmtime
 # included. Without it, the CLI and bundle tooling only. Alone, a node with
 # no optional capability: no HTTP ingress, no probes, no Modbus.
@@ -35,6 +35,9 @@ http = ["node", "paddock-host/http"]
 # HTTPS on the HTTP ingress, and the remote admin API (`[admin]`) with its
 # client (`paddock --remote`).
 tls = ["http", "paddock-host/tls", "dep:tokio-rustls"]
+# HTTP egress for apps (`wasi:http/outgoing-handler`, `[egress]` in node
+# config): allow-listed requests through a connection pool.
+egress = ["tls", "paddock-host/egress"]
 # SQL datasources (`[datasources.<name>]` in node config, `paddock:sql`):
 # Postgres pools, idle until an app calls one.
 sql = ["node", "paddock-host/sql"]

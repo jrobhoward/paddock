@@ -54,8 +54,8 @@ cargo llvm-cov --workspace --no-fail-fast --summary-only
 # Debug and test builds carry line tables only (backtraces keep file and
 # line); `CARGO_PROFILE_DEV_DEBUG=true` for a debugger's variables.
 # Build and test the main workspace. `paddock`'s features: `node`, `http`,
-# `tls` and `probes` by default; `modbus` off. Each optional one compiles
-# out (`scripts/check.sh features`).
+# `tls`, `sql`, `egress` and `probes` by default; `modbus` off. Each optional
+# one compiles out (`scripts/check.sh features`).
 cargo build --workspace --all-targets
 cargo test --workspace --all-features
 cargo test --workspace -- some____test____name     # single test
@@ -154,8 +154,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   fails on request, and drives every `process` function; the host's tests
   run against it.
 - `crates/paddock-fixture-sdk`: a guest that uses `wasi:config`,
-  `wasi:keyvalue` and `paddock:groups` through `paddock-sdk`'s `config`,
-  `kv` and `groups` wrappers.
+  `wasi:keyvalue`, `paddock:groups`, `wasi:http/outgoing-handler` and the
+  other services through `paddock-sdk`'s wrappers (`config`, `kv`,
+  `groups`, `http_client`, ...). Node tests that deploy it declare every
+  capability it imports.
 - `crates/paddock-fixture-services`: a guest that drives logging, config,
   keyvalue, the filesystem and stdout. Its `denied` feature adds an import no
   host implements, for deny-stub tests; nodes refuse that build, so node tests
@@ -269,10 +271,13 @@ next entry traps with `cannot enter component instance`. Killing an instance
 means dropping the future and discarding the Store; supervisors rebuild from
 `init`, never resume (S1).
 
-**`callback_deadline_ms` measures guest execution only.** Host imports record
-the time they spend and the epoch callback subtracts it, so waiting on another
-instance is not runaway code. The epoch callback yields every tick for
-fairness (S1).
+**`callback_deadline_ms` measures guest execution only.** The Store's call
+hook times every host import (`CallHook::CallingHost` to
+`ReturningFromHost`, wasmtime's `call-hook` feature) and the epoch callback
+subtracts that time, so waiting on another instance, a timer or I/O is not
+runaway code. Host functions do not time themselves. The epoch callback
+yields every tick for fairness (S1). The hook costs nothing measurable in
+`baseline` (E2, BASELINE.md).
 
 **The epoch tick bounds how long a busy instance holds a worker.** Receiving
 from a non-empty mailbox never suspends, so an instance draining a full

@@ -122,8 +122,8 @@ impl Capability {
             | Self::HttpIncoming
             | Self::Secrets
             | Self::Sql
-            | Self::Metrics => None,
-            Self::HttpOutgoing => Some(Phase::Phase2),
+            | Self::Metrics
+            | Self::HttpOutgoing => None,
             Self::Sockets => Some(Phase::Phase3),
             Self::Supervisor | Self::Admin => Some(Phase::Later),
         }

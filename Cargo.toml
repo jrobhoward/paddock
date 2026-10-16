@@ -45,7 +45,12 @@ repository = "https://github.com/jrobhoward/paddock"
 wasmtime = { version = "49", default-features = false }
 wasmtime-wasi = { version = "49", default-features = false }
 wasmtime-wasi-config = "49"
+# HTTP egress (ROADMAP E2): our own sender, so no default-send-request
+# (webpki-roots) and no p3.
+wasmtime-wasi-http = { version = "49", default-features = false, features = ["p2"] }
 wit-bindgen = "0.62"
+# The SDK's HTTP client (`paddock_sdk::http_client`): wasi:http bindings.
+wasip2 = "1"
 # Same wit-parser line as wit-bindgen 0.62, so the graph carries one copy.
 wit-parser = "0.259"
 # Same wasmparser line as wit-parser and wasmtime 49, so the graph carries one
@@ -63,6 +68,9 @@ ciborium = "0.2"
 redb = "3"
 hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12"] }
+rustls-native-certs = "0.8"
+tower-service = "0.3"
 # TLS for the HTTP ingress, on ring (Apache-2.0 AND ISC) rather than aws-lc-rs,
 # which needs cmake and carries an OpenSSL-style licence.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

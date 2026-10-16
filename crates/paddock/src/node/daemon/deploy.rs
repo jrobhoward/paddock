@@ -170,6 +170,11 @@ impl Node {
             .with_granted_buckets(&grant.granted_buckets)
             .with_granted_secrets(&grant.granted_secrets)
             .with_granted_datasources(&grant.granted_datasources);
+        paddock_host::services::egress::within(
+            &spec.services.egress.allow,
+            self.config.egress.allow.as_deref(),
+        )
+        .map_err(|e| NodeError::Invalid(format!("wasi:http/outgoing-handler: {e}")))?;
         if let Some(missing) = grant
             .granted_datasources
             .iter()

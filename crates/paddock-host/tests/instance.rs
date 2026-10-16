@@ -99,6 +99,26 @@ async fn call____guest_spins____killed_at_deadline_while_others_stay_responsive(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn call____guest_sleeps_past_deadline____host_time_so_not_killed() {
+    let (rt, app) = shared();
+    let sleeper = rt.spawn(app, spec("")).unwrap();
+
+    let started = Instant::now();
+    let reply = sleeper.call(text("sleep:800"), LONG).await;
+
+    assert_eq!(body(&reply.unwrap()), "slept");
+    assert!(started.elapsed() >= Duration::from_millis(800));
+    assert_eq!(
+        sleeper
+            .call(text("echo:alive"), LONG)
+            .await
+            .map(|r| body(&r)),
+        Ok("alive".to_string())
+    );
+    sleeper.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn call____allocates_past_memory_max____crashes_with_memory_limit() {
     let (rt, app) = shared();
     let instance = rt.spawn(app, spec("")).unwrap();

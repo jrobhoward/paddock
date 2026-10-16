@@ -353,7 +353,14 @@ pub(crate) struct AppStats {
     wake_time: Histogram,
     /// Starts, wakes and upgrades that found no Store slot in time.
     slot_timeouts: AtomicU64,
+    /// Outgoing HTTP requests by outcome ([`EGRESS_OUTCOMES`]).
+    egress: [AtomicU64; 4],
 }
+
+/// The outcomes of an outgoing HTTP request, as `paddock_egress_requests_total`
+/// labels them: sent (a response came), denied (not allowed), limited (the
+/// app's `max_concurrent` reached), failed (connection, TLS, timeout).
+pub(crate) const EGRESS_OUTCOMES: [&str; 4] = ["sent", "denied", "limited", "failed"];
 
 impl Default for AppStats {
     fn default() -> Self {
@@ -365,6 +372,7 @@ impl Default for AppStats {
             passivations: AtomicU64::new(0),
             wake_time: Histogram::new(&CALLBACK_BUCKETS),
             slot_timeouts: AtomicU64::new(0),
+            egress: Default::default(),
         }
     }
 }
@@ -395,6 +403,16 @@ impl AppStats {
     /// A start, wake or upgrade found no Store slot in time.
     pub(crate) fn slot_timeout(&self) {
         self.slot_timeouts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// An outgoing HTTP request ended with `outcome`, an index into
+    /// [`EGRESS_OUTCOMES`].
+    // Only the sender (cargo feature `egress`) counts requests.
+    #[cfg_attr(not(feature = "egress"), allow(dead_code))]
+    pub(crate) fn egress(&self, outcome: usize) {
+        if let Some(n) = self.egress.get(outcome) {
+            n.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// An instance exited with `reason`.
@@ -616,6 +634,25 @@ impl Metrics {
                 escape(app),
                 s.slot_timeouts.load(Ordering::Relaxed)
             );
+        }
+        header(
+            &mut out,
+            "paddock_egress_requests_total",
+            "counter",
+            "Outgoing HTTP requests (wasi:http), by outcome.",
+        );
+        for (app, (_, s)) in &apps {
+            if s.egress.iter().all(|n| n.load(Ordering::Relaxed) == 0) {
+                continue;
+            }
+            for (outcome, n) in EGRESS_OUTCOMES.iter().zip(&s.egress) {
+                let _ = writeln!(
+                    out,
+                    "paddock_egress_requests_total{{app=\"{}\",outcome=\"{outcome}\"}} {}",
+                    escape(app),
+                    n.load(Ordering::Relaxed)
+                );
+            }
         }
         for (app, (m, _)) in &apps {
             m.write(&mut out, app);

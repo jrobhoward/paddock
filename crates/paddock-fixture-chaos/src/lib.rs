@@ -190,6 +190,11 @@ fn run(caller: Option<CallRef>, msg: &Envelope) -> Outcome {
         })),
         "trap" => panic!("asked to trap"),
         "spin" => spin(),
+        "sleep" => {
+            // Blocks in wasi:io poll on a clock: host time, not guest time.
+            std::thread::sleep(std::time::Duration::from_millis(arg.parse().unwrap_or(0)));
+            reply("slept".into())
+        }
         "alloc" => {
             let mib: usize = arg.parse().unwrap_or(0);
             let block = vec![1u8; mib << 20];

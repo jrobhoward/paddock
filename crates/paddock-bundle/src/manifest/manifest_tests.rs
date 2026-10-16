@@ -321,10 +321,7 @@ fn unenforced_fields____design_example____lists_later_phase_fields() {
 
     assert_eq!(
         fields,
-        vec![
-            "capabilities.wasi:http/outgoing-handler is not enforced until Phase 2",
-            "config.secrets is not enforced until Phase 2",
-        ]
+        vec!["config.secrets is not enforced until Phase 2",]
     );
 }
 

@@ -51,6 +51,10 @@ pub enum HostError {
     #[error("cannot open storage: {0}")]
     Storage(String),
 
+    /// HTTP egress could not start: an unreadable CA file.
+    #[error("cannot set up HTTP egress: {0}")]
+    Egress(String),
+
     /// A preopened directory does not exist.
     #[error("cannot preopen: {0}")]
     Preopen(String),

@@ -54,6 +54,11 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 - **Listeners.** `max_connections` and an idle timeout per listener; each connection is its own instance with its own limits.
 - **Gaps.** None found.
 
+### HTTP egress
+
+- **Controls.** An app reaches only the schemes, hosts and ports its manifest's `allow` lists, inside node config's `[egress] allow`, with the methods it lists, once policy grants `wasi:http/outgoing-handler`; anything else is refused before a connection opens. A host name is resolved by the host, and one that resolves only to loopback or link-local addresses (cloud metadata at 169.254.169.254) is refused at each connection, so a name that later resolves there is refused too; an address is reached only when an entry names it. HTTPS verifies the server against the system's roots and node config's CA file. Requests in flight are capped per app, and timeouts bound the wait for headers and between body chunks. Redirects are not followed. Forbidden request headers (wasmtime's list: `connection`, `keep-alive`, `proxy-*`, `transfer-encoding`, `upgrade`, `host` set from the URL) are refused.
+- **Gaps.** Private ranges (10/8, 172.16/12, 192.168/16, fc00::/7) are allowed for any name an entry allows, since internal services live there; a `*.internal` entry trusts whoever answers DNS for that zone. Responses are parsed by hyper in the host and passed to the guest as they come; a response body has no size cap other than the guest's own memory. No outbound proxy (HTTP `CONNECT`) and no client certificates.
+
 ### SQL datasources
 
 - **Credentials** come from a node secret (`password_secret`) and never reach a guest; apps name datasources, not addresses.

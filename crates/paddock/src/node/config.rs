@@ -183,6 +183,10 @@ pub struct NodeConfig {
     /// Where Prometheus scrapes the node's metrics.
     #[serde(default)]
     pub metrics: Option<MetricsBinding>,
+    /// HTTP requests from apps (`wasi:http/outgoing-handler`): the most any
+    /// app may reach, trusted roots, timeouts and the connection pool.
+    #[serde(default)]
+    pub egress: EgressBinding,
     /// The admin API over TLS, for operators on other machines.
     #[serde(default)]
     pub admin: Option<AdminBinding>,
@@ -569,6 +573,108 @@ pub struct AdminBinding {
     pub key: Option<PathBuf>,
 }
 
+/// `[egress]`: HTTP requests from apps (ROADMAP E2). Each app reaches
+/// only what its manifest's `allow` lists, inside `allow` here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EgressBinding {
+    /// The most any app may be allowed, in the manifest's syntax
+    /// (`https://api.example.com`, `*.internal`, `http://10.0.0.5:8080`).
+    /// Unset: no ceiling. A deploy asking for more is refused.
+    #[serde(default)]
+    pub allow: Option<Vec<String>>,
+    /// Trust the operating system's root certificates.
+    #[serde(default = "yes")]
+    pub system_roots: bool,
+    /// More trusted certificate authorities (PEM).
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+    /// Let host names that resolve to loopback or link-local addresses
+    /// through (refused by default; an address in an allow entry is
+    /// always reached).
+    #[serde(default)]
+    pub allow_loopback: bool,
+    /// Time to open a connection.
+    #[serde(default = "default_egress_connect_ms")]
+    pub connect_timeout_ms: u64,
+    /// Most time to a response's headers.
+    #[serde(default = "default_egress_wait_ms")]
+    pub first_byte_timeout_ms: u64,
+    /// Most time between chunks of a response body.
+    #[serde(default = "default_egress_wait_ms")]
+    pub between_bytes_timeout_ms: u64,
+    /// How long an idle pooled connection is kept.
+    #[serde(default = "default_egress_idle_ms")]
+    pub pool_idle_timeout_ms: u64,
+    /// Idle connections kept per host.
+    #[serde(default = "default_egress_idle_per_host")]
+    pub pool_max_idle_per_host: usize,
+    /// Requests in flight per app when its manifest sets no
+    /// `max_concurrent`.
+    #[serde(default = "default_egress_concurrent")]
+    pub max_concurrent: u32,
+}
+
+impl Default for EgressBinding {
+    fn default() -> Self {
+        Self {
+            allow: None,
+            system_roots: true,
+            ca_file: None,
+            allow_loopback: false,
+            connect_timeout_ms: default_egress_connect_ms(),
+            first_byte_timeout_ms: default_egress_wait_ms(),
+            between_bytes_timeout_ms: default_egress_wait_ms(),
+            pool_idle_timeout_ms: default_egress_idle_ms(),
+            pool_max_idle_per_host: default_egress_idle_per_host(),
+            max_concurrent: default_egress_concurrent(),
+        }
+    }
+}
+
+impl EgressBinding {
+    /// The runtime's egress settings.
+    #[must_use]
+    pub fn runtime(&self) -> paddock_host::Egress {
+        let mut e = paddock_host::Egress::default();
+        e.allow.clone_from(&self.allow);
+        e.system_roots = self.system_roots;
+        e.ca_file.clone_from(&self.ca_file);
+        e.allow_loopback = self.allow_loopback;
+        e.connect_timeout = std::time::Duration::from_millis(self.connect_timeout_ms);
+        e.first_byte_timeout = std::time::Duration::from_millis(self.first_byte_timeout_ms);
+        e.between_bytes_timeout = std::time::Duration::from_millis(self.between_bytes_timeout_ms);
+        e.pool_idle_timeout = std::time::Duration::from_millis(self.pool_idle_timeout_ms);
+        e.pool_max_idle_per_host = self.pool_max_idle_per_host;
+        e.max_concurrent = self.max_concurrent;
+        e
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn default_egress_connect_ms() -> u64 {
+    10_000
+}
+
+fn default_egress_wait_ms() -> u64 {
+    30_000
+}
+
+fn default_egress_idle_ms() -> u64 {
+    90_000
+}
+
+fn default_egress_idle_per_host() -> usize {
+    32
+}
+
+fn default_egress_concurrent() -> u32 {
+    64
+}
+
 /// `[metrics]`: an address serving `GET /metrics` in the Prometheus text
 /// format. Unauthenticated: bind it to a management network or loopback.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -710,6 +816,32 @@ fn default_tick() -> u64 {
 }
 
 impl NodeConfig {
+    fn check_egress(&self) -> Result<(), NodeError> {
+        let e = &self.egress;
+        if let Some(allow) = &e.allow {
+            paddock_host::services::egress::within(allow, None)
+                .map_err(|m| NodeError::Invalid(format!("node config: egress.{m}")))?;
+        }
+        let times = [
+            ("connect_timeout_ms", e.connect_timeout_ms),
+            ("first_byte_timeout_ms", e.first_byte_timeout_ms),
+            ("between_bytes_timeout_ms", e.between_bytes_timeout_ms),
+        ];
+        for (name, ms) in times {
+            if ms == 0 {
+                return Err(NodeError::Invalid(format!(
+                    "node config: egress.{name} must be more than 0"
+                )));
+            }
+        }
+        if e.max_concurrent == 0 {
+            return Err(NodeError::Invalid(
+                "node config: egress.max_concurrent must be more than 0".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Parse a configuration from TOML.
     ///
     /// # Errors
@@ -751,6 +883,7 @@ impl NodeConfig {
             }
         }
         config.check_failover()?;
+        config.check_egress()?;
         for (name, binding) in &config.http {
             let invalid =
                 |m: String| Err(NodeError::Invalid(format!("node config: http.{name}.{m}")));

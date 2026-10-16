@@ -32,6 +32,9 @@
 //!   `observe:<name>:<label>:<n>` (a histogram with buckets 1, 10): make the
 //!   metric with label `l=<label>` and update it; `ok` or `err:<error>`.
 //! - `secret:<name>`: the secret as text, or `err:<error>`.
+//! - `fetch <method> <url> [<body>]` (space separated): an outgoing HTTP
+//!   request (`paddock_sdk::http_client`); replies `<status> <body>`, or
+//!   `err:<error>`.
 //! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
 //! - HTTP requests (`paddock_sdk::http`), by the end of the path: `/plain`
 //!   replies a plain text envelope; `/status/<n>` replies status n;
@@ -69,6 +72,20 @@ struct Fixture {
     tx: Option<paddock_sdk::sql::Transaction>,
     /// What `health` answers: healthy unless `sick:<why>` set a reason.
     sick: Option<String>,
+}
+
+/// `fetch <method> <url> [<body>]`.
+fn fetch(args: &str) -> String {
+    use paddock_sdk::http_client;
+
+    let mut parts = args.splitn(3, ' ');
+    let method = parts.next().unwrap_or("GET");
+    let url = parts.next().unwrap_or("");
+    let body = parts.next().unwrap_or("");
+    match http_client::send(&http_client::Request::new(method, url).body(body)) {
+        Ok(r) => format!("{} {}", r.status, String::from_utf8_lossy(&r.body)),
+        Err(e) => format!("err:{e}"),
+    }
 }
 
 fn metric(command: &str) -> Result<(), paddock_sdk::metrics::MetricsError> {
@@ -332,6 +349,9 @@ impl App for Fixture {
             return http(ctx, &req);
         }
         let command = msg.as_text().unwrap_or("");
+        if let Some(rest) = command.strip_prefix("fetch ") {
+            return Reply::Now(Envelope::text(fetch(rest)));
+        }
         if let Some(rest) = command.strip_prefix("sql\x1f") {
             return Reply::Now(Envelope::text(self.sql(rest)));
         }

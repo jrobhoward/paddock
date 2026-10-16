@@ -554,6 +554,32 @@ server tokio workers: 4; load generator: 4 workers, separate threads
 - **Modbus.** 160,000 points per second at the paced load (16 devices every 10 ms, every poll stored). At 64 devices polled every millisecond, the node stored 6,200 updates per second (775,000 points) with a pool of 4 and 4 workers, but fewer, 4,800 (595,000 points), with 8 and 8; the fake devices share the cores, and why more workers stored less is not explained yet.
 - **Not measured:** the cost of the per-callback metric counters, which needs a build without them.
 
+## 2026-10-15: host time by call hook, and HTTP egress (roadmap E2)
+
+Same machine as the suite above (Threadripper 1950X, 16 threads); commit bfae14b with E2's changes; the load average was 0.5 to 3 from builds between runs, so read differences under about 10% as noise.
+
+`baseline` before and after the Store's call hook (wasmtime `call-hook`, which times every host import as host time), three runs each:
+
+| Workers | Empty call p50, before | after | Casts handled per second, before | after |
+| --- | --- | --- | --- | --- |
+| 1 | 2.59, 2.60, 2.73 µs | 2.60, 2.62, 2.73 µs | 615,000 to 692,000 | 654,000 to 659,000 |
+| 4 | 3.47, 3.49, 4.56 µs | 3.53, 4.55, 4.65 µs | 472,000 to 521,000 | 431,000 to 477,000 |
+
+On 1 worker the hook is within run-to-run variation; on 4 workers both sets vary more than they differ.
+
+`egress_cost`: a guest's `GET` through `wasi:http`, the node's filter and its connection pool, to a local hyper server answering `hi`, driven by calls (each adds about 3 µs); a native hyper client on a kept-alive connection for comparison. Two runs each at 4 workers, one at 1:
+
+| Client | Workers | Mean per request, sequential | Requests per second, 16 instances at once |
+| --- | --- | --- | --- |
+| native hyper, kept-alive | 4 | 29 to 34 µs | |
+| guest, pooled | 1 | 86 µs | 15,700 |
+| guest, pooled | 4 | 140 to 164 µs | 34,100 to 35,500 |
+| guest, a new connection per request (`pool_max_idle_per_host = 0`) | 4 | 181 to 206 µs | 15,300 to 15,500 |
+
+- The pool doubles throughput under load; one request at a time it saves less, because a TCP connection on loopback is cheap (no TLS here; over a network, each new connection also costs round trips and, for HTTPS, a handshake).
+- What is left is not the connection: on 1 worker a request takes 86 µs, on 4 it takes 140 to 164 µs. wasmtime-wasi-http spawns a task per request and hyper's pooled connection runs on a task of its own, so a request crosses tasks several times, and on several workers each crossing is a wake-up on another thread. Not attributed further.
+- Spike S15 measured 172 µs mean through wasmtime's own sender (a new connection per request) on the same machine.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.

@@ -512,3 +512,58 @@ fn NodeConfig____bad_datasource____refused() {
         assert!(err.contains(want), "{err}");
     }
 }
+
+#[test]
+fn egress____unset____defaults_and_no_ceiling() {
+    let config = NodeConfig::from_toml_str("data_dir = \"/d\"\n").unwrap();
+
+    let e = config.egress.runtime();
+
+    assert_eq!(e.allow, None);
+    assert!(e.system_roots);
+    assert!(!e.allow_loopback);
+    assert_eq!(e.first_byte_timeout, std::time::Duration::from_secs(30));
+    assert_eq!(e.max_concurrent, 64);
+}
+
+#[test]
+fn egress____set____read_into_the_runtime() {
+    let config = NodeConfig::from_toml_str(
+        r#"
+data_dir = "/d"
+[egress]
+allow = ["*.internal", "https://api.example.com"]
+system_roots = false
+ca_file = "/etc/paddock/ca.pem"
+allow_loopback = true
+first_byte_timeout_ms = 500
+max_concurrent = 4
+"#,
+    )
+    .unwrap();
+
+    let e = config.egress.runtime();
+
+    assert_eq!(
+        e.allow,
+        Some(vec!["*.internal".into(), "https://api.example.com".into()])
+    );
+    assert!(!e.system_roots);
+    assert_eq!(e.ca_file, Some(PathBuf::from("/etc/paddock/ca.pem")));
+    assert!(e.allow_loopback);
+    assert_eq!(e.first_byte_timeout, std::time::Duration::from_millis(500));
+    assert_eq!(e.max_concurrent, 4);
+}
+
+#[rstest::rstest]
+#[case::bad_entry("allow = [\"https://a/b\"]", "egress.allow entry")]
+#[case::zero_timeout("connect_timeout_ms = 0", "egress.connect_timeout_ms")]
+#[case::zero_concurrent("max_concurrent = 0", "egress.max_concurrent")]
+#[case::unknown("allow_lopback = true", "allow_lopback")]
+fn egress____invalid____refused(#[case] line: &str, #[case] expected: &str) {
+    let err = NodeConfig::from_toml_str(&format!("data_dir = \"/d\"\n[egress]\n{line}\n"))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains(expected), "{err}");
+}

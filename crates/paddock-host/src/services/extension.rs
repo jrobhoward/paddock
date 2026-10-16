@@ -21,9 +21,9 @@
 //!    (or to the `paddock` crate's node builder).
 //!
 //! Extensions follow the rules of the built-in services
-//! ([`crate::services`]): fail softly when not granted, count time spent
-//! waiting as host time ([`ServiceCtx::add_host_time`]), and read named
-//! resources from the scope rather than host paths.
+//! ([`crate::services`]): fail softly when not granted, and read named
+//! resources from the scope rather than host paths. Time spent in their
+//! host functions is host time without their doing anything.
 //!
 //! An extension that works on its own schedule (polling devices, serving a
 //! port) does it from [`Extension::start`], which runs once the node's apps

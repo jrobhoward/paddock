@@ -53,8 +53,8 @@ mod upgrade;
 
 pub use apps::{AppDeployment, AppHandle, AppStatus, Apps, UpgradeOptions, UpgradeReport};
 pub use config::{
-    HostObjectRequest, HostObjects, MemoryProfile, RuntimeConfig, SecretSource, SharedBucket,
-    SqlDatasource, SqlTls,
+    Egress, HostObjectRequest, HostObjects, MemoryProfile, RuntimeConfig, SecretSource,
+    SharedBucket, SqlDatasource, SqlTls,
 };
 pub use error::HostError;
 pub use instance::{InstanceEvent, InstanceHandle, SnapshotError};

@@ -347,6 +347,24 @@ All notable changes are recorded here. The format follows
   stream sends an empty line every 15 seconds, and a client gives up after
   45 seconds without one; a follower that falls behind is told how many
   records or events it missed.
+- HTTP egress (ROADMAP E2): `wasi:http/outgoing-handler` is linked and
+  enforced. A request goes out only to a scheme, host and port the
+  manifest's `allow` lists (origins, bare hosts, `*.suffix` patterns or
+  addresses), with its `methods`, at most `max_concurrent` per app at once,
+  through one connection pool for the node (hyper-util, rustls with the
+  system's roots and `[egress] ca_file`). A name resolving only to loopback
+  or link-local addresses is refused unless `[egress] allow_loopback`.
+  Node config `[egress]`: `allow` (a ceiling every manifest must fit inside,
+  checked at deploy), timeouts, pool size and the default
+  `max_concurrent`. Refusals are wasi:http error codes, never traps.
+  Metric `paddock_egress_requests_total{app,outcome}`. Cargo feature
+  `egress` in `paddock-host` and `paddock`, on by default.
+- `paddock_sdk::http_client` (SDK feature `http-client`): blocking `get`,
+  `post` and `send` over `wasi:http`, with `HttpError` naming refusals
+  (`Denied`, `Limited`, `Prohibited`), timeouts and TLS failures.
+  `paddock-fixture-sdk` uses it (`fetch <method> <url>`).
+- `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
+  through the pool against a native client, pooled and not.
 - Passivation for apps (ROADMAP E7): manifest `instances.passivate_after_ms`
   turns S11's passivation on for an app, and node config `max_processes`
   lets a node hold more instances than `max_instances` Store slots. A deploy
@@ -757,3 +775,11 @@ All notable changes are recorded here. The format follows
   feature gives the CLI and bundle tooling without wasmtime.
 - `rustbridge-bundle` is a git dependency on rustbridge's `experiment/wasm`
   branch instead of a sibling checkout, so CI can build the workspace.
+- Host time is measured by the Store's call hook (wasmtime's `call-hook`
+  feature): time inside any host import, `wasi:io` waits included, no
+  longer counts against `callback_deadline_ms`. A guest that sleeps or
+  waits on a stream or an HTTP response past its deadline is no longer
+  killed with `timeout`. `ServiceCtx::add_host_time` is removed;
+  extensions need not time their host functions.
+- The manifest's `wasi:http/outgoing-handler` is no longer reported as
+  not enforced.

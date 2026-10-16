@@ -175,7 +175,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `wasi:http/incoming-handler` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
 | `paddock:secrets` | `secrets = ["db-password"]`: names the app reads. Each name needs a `[secrets.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`secrets = [...]`); reading an ungranted one returns `access-denied`. | enforced |
 | `paddock:metrics` | `prefix` (required; letters, digits, `_`): every metric is exported as `<prefix>_<name>` with an `app` label. `max_series` (default 1000): most name and label combinations the app may hold; past it, registering returns `limit-reached`. | enforced |
-| `wasi:http/outgoing-handler` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 2) |
+| `wasi:http/outgoing-handler` | `allow`: what the app may reach, each entry a scheme, host and port: `https://api.example.com` (port 443), `http://plc.internal:8080`, a bare `api.example.com` (HTTPS), `*.internal` (any host under `internal`, HTTPS, 443), or an address, `http://10.0.0.5:8080`, `https://[fd00::1]` (reached only as written, never through a name). No path, query or user. `methods` (upper case; empty for any). `max_concurrent`: requests in flight at once across the app's instances (default: the node's `[egress] max_concurrent`, 64); past it a request fails at once with `connection-limit-reached`. Anything else is refused with `HTTP-request-denied`, and a name that resolves only to loopback or link-local addresses with `destination-IP-prohibited`, unless node config sets `allow_loopback`. Node config's `[egress] allow` is a ceiling: a deploy asking for more is refused. Cargo feature `egress` (on by default); `paddock_sdk::http_client` is the SDK's client. | enforced |
 | `paddock:sql` | `datasources.<name>.max_connections` (default 4): the SQL datasources the app uses, and how many connections its instances hold on each at once, transactions included. Each name needs a `[datasources.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`datasources = [...]`); using an ungranted one returns `access-denied`. A call that cannot get a connection within the datasource's `acquire_timeout_ms` returns `limit-reached`. Postgres only; see `wit/sql/sql.wit` for what values carry. | enforced |
 | `wasi:sockets` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
 | `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
@@ -275,6 +275,18 @@ connect_timeout_ms = 5000
 acquire_timeout_ms = 5000              # a call waiting longer for a connection gets limit-reached
 statement_timeout_ms = 30000           # the server cancels longer statements (timeout)
 max_result_bytes = "16MiB"             # larger results are refused (too-large)
+
+[egress]                               # HTTP requests from apps (wasi:http/outgoing-handler); every key optional
+allow = ["*.internal", "https://api.example.com"]  # the most any app may reach (manifest syntax); unset: no ceiling
+system_roots = true                    # trust the OS root certificates (SSL_CERT_FILE and SSL_CERT_DIR are read)
+ca_file = "/etc/paddock/egress-ca.pem" # more CAs, PEM (a private CA)
+allow_loopback = false                 # names resolving to loopback or link-local (169.254.x.x, fe80::) are refused
+connect_timeout_ms = 10000
+first_byte_timeout_ms = 30000          # to the response headers; an app's own timeout may only be shorter
+between_bytes_timeout_ms = 30000       # between chunks of a response body
+pool_idle_timeout_ms = 90000           # idle pooled connections are closed after this
+pool_max_idle_per_host = 32
+max_concurrent = 64                    # requests in flight per app, unless its manifest says
 
 [metrics]
 address = "127.0.0.1:9100"             # GET /metrics for Prometheus; unauthenticated, keep it off public networks

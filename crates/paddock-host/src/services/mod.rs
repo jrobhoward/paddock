@@ -14,7 +14,7 @@
 //!   `ServiceCtx`.
 //!
 //! Host functions see only their own state and the instance facilities every
-//! service shares (tags, the callback clock, the resource table), never the
+//! service shares (tags, the resource table), never the
 //! rest of the instance. Linking happens once per engine, so a host call is a
 //! direct call on the service's state.
 //!
@@ -23,9 +23,9 @@
 //! - A capability the operator did not grant is still linked and fails
 //!   softly: an `access-denied` error value where the interface has one,
 //!   never a trap.
-//! - Time spent waiting in host I/O is host time
-//!   (`ServiceCtx::add_host_time`), not counted against the callback
-//!   deadline.
+//! - Time spent in a host function is host time, not counted against the
+//!   callback deadline: the Store's call hook measures every host import,
+//!   so services do not time themselves.
 //! - Named resources (buckets, datasources) are declared in the manifest and
 //!   bound in node configuration, so an app does not name host paths or
 //!   addresses.
@@ -38,6 +38,7 @@
 //! `announce`, `link`, `INTERFACES`); the process core and orchestration do not change.
 
 pub mod config;
+pub mod egress;
 pub mod extension;
 pub mod groups;
 pub mod keyvalue;
@@ -53,7 +54,6 @@ pub use extension::{
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use paddock_bundle::manifest::{AppSpec, Capability};
 use wasmtime::component::{HasData, Linker, ResourceTable};
@@ -65,7 +65,6 @@ use crate::message::Envelope;
 use crate::output::Tags;
 use crate::pid::Pid;
 use crate::spec::InstanceSpec;
-use crate::state::CallbackClock;
 
 /// One host service. See the module documentation.
 pub(crate) trait Service: Sized + 'static {
@@ -140,7 +139,6 @@ pub struct ServiceCtx<'a, I> {
     pub(crate) tags: &'a Tags,
     /// Resources handed to the guest.
     pub(crate) table: &'a mut ResourceTable,
-    clock: &'a mut CallbackClock,
 }
 
 impl<I> std::fmt::Debug for ServiceCtx<'_, I> {
@@ -181,23 +179,8 @@ impl<'a, I> ServiceCtx<'a, I> {
         self.table
     }
 
-    pub(crate) fn new(
-        state: &'a mut I,
-        tags: &'a Tags,
-        table: &'a mut ResourceTable,
-        clock: &'a mut CallbackClock,
-    ) -> Self {
-        Self {
-            state,
-            tags,
-            table,
-            clock,
-        }
-    }
-
-    /// Exclude time spent waiting in the host from the callback deadline.
-    pub fn add_host_time(&mut self, spent: Duration) {
-        self.clock.add_host_time(spent);
+    pub(crate) fn new(state: &'a mut I, tags: &'a Tags, table: &'a mut ResourceTable) -> Self {
+        Self { state, tags, table }
     }
 }
 
@@ -220,6 +203,8 @@ impl<S: Service> HasData for Ctx<S> {
 pub struct ServiceSpecs {
     /// `wasi:config`.
     pub config: config::ConfigSpec,
+    /// `wasi:http/outgoing-handler`.
+    pub egress: egress::EgressSpec,
     /// `paddock:groups`.
     pub groups: groups::GroupsSpec,
     /// `wasi:keyvalue`.
@@ -240,6 +225,7 @@ impl ServiceSpecs {
     pub(crate) fn from_manifest(manifest: &AppSpec) -> Self {
         Self {
             config: config::Config::spec(manifest),
+            egress: egress::Egress::spec(manifest),
             groups: groups::Groups::spec(manifest),
             keyvalue: keyvalue::KeyValue::spec(manifest),
             logging: logging::Logging::spec(manifest),
@@ -259,6 +245,7 @@ impl ServiceSpecs {
 /// Every service's node-wide state.
 pub(crate) struct Shared {
     config: Arc<()>,
+    egress: Arc<egress::Shared>,
     groups: Arc<groups::Shared>,
     keyvalue: Arc<<keyvalue::KeyValue as Service>::Shared>,
     pub(crate) logging: Arc<logging::Shared>,
@@ -271,6 +258,7 @@ impl Shared {
     pub(crate) fn new(config: &RuntimeConfig) -> Result<Self, HostError> {
         Ok(Self {
             config: Arc::new(config::Config::shared(config)?),
+            egress: Arc::new(egress::Egress::shared(config)?),
             groups: Arc::new(groups::Groups::shared(config)?),
             keyvalue: Arc::new(keyvalue::KeyValue::shared(config)?),
             logging: Arc::new(logging::Logging::shared(config)?),
@@ -288,6 +276,7 @@ impl Shared {
     /// Tell every service that `pid` exited.
     pub(crate) fn exited(&self, pid: Pid) {
         config::Config::exited(&self.config, pid);
+        egress::Egress::exited(&self.egress, pid);
         groups::Groups::exited(&self.groups, pid);
         keyvalue::KeyValue::exited(&self.keyvalue, pid);
         logging::Logging::exited(&self.logging, pid);
@@ -300,6 +289,7 @@ impl Shared {
 /// Every service's state for one instance.
 pub(crate) struct States {
     pub(crate) config: config::Instance,
+    pub(crate) egress: egress::Instance,
     pub(crate) groups: groups::Instance,
     pub(crate) keyvalue: keyvalue::Instance,
     pub(crate) logging: logging::Instance,
@@ -313,6 +303,7 @@ impl States {
     /// Every service's announcements, in registry order.
     pub(crate) fn announce(&self, tags: &Tags) -> Vec<(String, Envelope)> {
         let mut events = config::Config::announce(&self.config, tags);
+        events.extend(egress::Egress::announce(&self.egress, tags));
         events.extend(groups::Groups::announce(&self.groups, tags));
         events.extend(keyvalue::KeyValue::announce(&self.keyvalue, tags));
         events.extend(logging::Logging::announce(&self.logging, tags));
@@ -361,6 +352,11 @@ impl States {
                 &services.config,
                 &info(config::Config::CAPABILITY),
             ),
+            egress: egress::Egress::instance(
+                &shared.egress,
+                &services.egress,
+                &info(egress::Egress::CAPABILITY),
+            ),
             groups: groups::Groups::instance(
                 &shared.groups,
                 &services.groups,
@@ -396,6 +392,7 @@ impl States {
 pub(crate) fn link<T>(linker: &mut Linker<T>) -> wasmtime::Result<()>
 where
     T: HostState<config::Config>
+        + HostState<egress::Egress>
         + HostState<groups::Groups>
         + HostState<keyvalue::KeyValue>
         + HostState<logging::Logging>
@@ -404,6 +401,7 @@ where
         + HostState<sql::Sql>,
 {
     config::Config::link(linker)?;
+    egress::Egress::link(linker)?;
     groups::Groups::link(linker)?;
     keyvalue::KeyValue::link(linker)?;
     logging::Logging::link(linker)?;
@@ -416,6 +414,7 @@ where
 /// The interfaces the services link, `package/interface`.
 pub(crate) const INTERFACES: &[&[&str]] = &[
     config::Config::INTERFACES,
+    egress::Egress::INTERFACES,
     groups::Groups::INTERFACES,
     keyvalue::KeyValue::INTERFACES,
     logging::Logging::INTERFACES,
