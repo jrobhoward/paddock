@@ -373,6 +373,11 @@ All notable changes are recorded here. The format follows
   to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
+- Hash routing (`instances.routing = "hash:<field>"`) reads the routing
+  field of a CBOR body without decoding the rest (ROADMAP B8 follow-up);
+  the same key as before for every body, checked against the full decode
+  by property tests. `modbus_load` stores about 25% more updates with
+  about 12% less CPU.
 - CI runs the test job on Linux arm64 too (`ubuntu-24.04-arm`, ROADMAP G3).
 - Faster calls into an app's pool (ROADMAP B8): picking an instance no
   longer copies the supervisor's child list on every message, which every

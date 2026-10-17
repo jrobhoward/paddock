@@ -113,18 +113,183 @@ pub fn routing_key(msg: &Envelope, field: &str) -> Option<Vec<u8>> {
                 _ => None,
             }
         }
-        "application/cbor" => {
-            let value: ciborium::Value = ciborium::from_reader(msg.body.as_slice()).ok()?;
-            let map = value.as_map()?;
-            let (_, found) = map.iter().find(|(k, _)| k.as_text() == Some(field))?;
-            match found {
-                ciborium::Value::Text(s) => Some(s.clone().into_bytes()),
-                ciborium::Value::Integer(i) => Some(i128::from(*i).to_string().into_bytes()),
-                ciborium::Value::Bytes(b) => Some(b.clone()),
-                _ => None,
+        "application/cbor" => match walk::field(&msg.body, field) {
+            Ok(found) => found,
+            Err(walk::Stop::Invalid) => None,
+            Err(walk::Stop::Unsure) => tree_key(&msg.body, field),
+        },
+        _ => None,
+    }
+}
+
+/// The routing key read by decoding the whole body into a CBOR value tree:
+/// the reference [`walk`] agrees with, and its fallback for bodies it does
+/// not read itself.
+fn tree_key(body: &[u8], field: &str) -> Option<Vec<u8>> {
+    let value: ciborium::Value = ciborium::from_reader(body).ok()?;
+    let map = value.as_map()?;
+    let (_, found) = map.iter().find(|(k, _)| k.as_text() == Some(field))?;
+    match found {
+        ciborium::Value::Text(s) => Some(s.clone().into_bytes()),
+        ciborium::Value::Integer(i) => Some(i128::from(*i).to_string().into_bytes()),
+        ciborium::Value::Bytes(b) => Some(b.clone()),
+        _ => None,
+    }
+}
+
+/// Reading one top-level field of a CBOR map without building the rest
+/// (ROADMAP B8: every hash-routed message was decoded whole). The walk
+/// reads every item, so a body that does not decode still has no key, and
+/// copies out only the field's value. It handles maps and arrays (of known
+/// length or not), text, bytes, integers, floats and the simple values
+/// `false`, `true` and `null`; anything else (a tag, another
+/// simple value, nesting near ciborium's recursion limit) stops it as
+/// [`Stop::Unsure`], and the caller decodes the value tree instead, so the
+/// answer is always the tree's.
+mod walk {
+    use ciborium_ll::{Decoder, Header};
+
+    /// Why the walk gave no answer.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum Stop {
+        /// Not CBOR, or cut short: no key, as for the value tree.
+        Invalid,
+        /// Something the walk leaves to the value tree.
+        Unsure,
+    }
+
+    /// Below ciborium's recursion limit (256), with room to spare.
+    const DEPTH_MAX: usize = 128;
+
+    type Walker<'a> = Decoder<&'a [u8]>;
+
+    fn pull(d: &mut Walker<'_>) -> Result<Header, Stop> {
+        d.pull().map_err(|_| Stop::Invalid)
+    }
+
+    /// The value of the first entry named `field` in the map `body` holds:
+    /// `Some` for text, an integer or bytes, `None` for another value, no
+    /// such entry, or a body that is not a map.
+    pub(super) fn field(body: &[u8], field: &str) -> Result<Option<Vec<u8>>, Stop> {
+        let mut d = Decoder::from(body);
+        let len = match pull(&mut d)? {
+            Header::Map(len) => len,
+            Header::Tag(_) => return Err(Stop::Unsure),
+            // A top-level item that is not a map has no fields.
+            _ => return Ok(None),
+        };
+        let mut found: Option<Option<Vec<u8>>> = None;
+        let mut key = Vec::new();
+        let mut seen = 0usize;
+        loop {
+            let header = match len {
+                Some(n) if seen == n => break,
+                _ => pull(&mut d)?,
+            };
+            let named = match header {
+                Header::Break if len.is_none() => break,
+                Header::Text(n) => {
+                    key.clear();
+                    read(&mut d, header, n, Some(&mut key))?;
+                    key == field.as_bytes()
+                }
+                other => {
+                    skip(&mut d, other, 1)?;
+                    false
+                }
+            };
+            let value = pull(&mut d)?;
+            if named && found.is_none() {
+                found = Some(scalar(&mut d, value)?);
+            } else {
+                skip(&mut d, value, 1)?;
+            }
+            seen += 1;
+        }
+        Ok(found.flatten())
+    }
+
+    /// A field's value as the routing key, or `None` for another kind of
+    /// value (read and dropped).
+    fn scalar(d: &mut Walker<'_>, header: Header) -> Result<Option<Vec<u8>>, Stop> {
+        match header {
+            Header::Text(n) | Header::Bytes(n) => {
+                let mut out = Vec::new();
+                read(d, header, n, Some(&mut out))?;
+                Ok(Some(out))
+            }
+            Header::Positive(u) => Ok(Some(u.to_string().into_bytes())),
+            Header::Negative(n) => Ok(Some((-1 - i128::from(n)).to_string().into_bytes())),
+            other => skip(d, other, 1).map(|()| None),
+        }
+    }
+
+    /// Read a text or byte string (segmented or not), into `out` if given;
+    /// text is checked as UTF-8.
+    fn read(
+        d: &mut Walker<'_>,
+        header: Header,
+        len: Option<usize>,
+        mut out: Option<&mut Vec<u8>>,
+    ) -> Result<(), Stop> {
+        let mut buf = [0u8; 256];
+        if let Header::Text(_) = header {
+            let mut segments = d.text(len);
+            while let Some(mut segment) = segments.pull().map_err(|_| Stop::Invalid)? {
+                while let Some(chunk) = segment.pull(&mut buf).map_err(|_| Stop::Invalid)? {
+                    if let Some(out) = out.as_deref_mut() {
+                        out.extend_from_slice(chunk.as_bytes());
+                    }
+                }
+            }
+        } else {
+            let mut segments = d.bytes(len);
+            while let Some(mut segment) = segments.pull().map_err(|_| Stop::Invalid)? {
+                while let Some(chunk) = segment.pull(&mut buf).map_err(|_| Stop::Invalid)? {
+                    if let Some(out) = out.as_deref_mut() {
+                        out.extend_from_slice(chunk);
+                    }
+                }
             }
         }
-        _ => None,
+        Ok(())
+    }
+
+    /// Read one item that began with `header`, and drop it.
+    fn skip(d: &mut Walker<'_>, header: Header, depth: usize) -> Result<(), Stop> {
+        if depth > DEPTH_MAX {
+            return Err(Stop::Unsure);
+        }
+        match header {
+            Header::Positive(_) | Header::Negative(_) | Header::Float(_) => Ok(()),
+            // false, true, null.
+            Header::Simple(20..=22) => Ok(()),
+            Header::Simple(_) | Header::Tag(_) => Err(Stop::Unsure),
+            Header::Break => Err(Stop::Invalid),
+            Header::Text(n) | Header::Bytes(n) => read(d, header, n, None),
+            Header::Array(len) => items(d, len, 1, depth),
+            Header::Map(len) => items(d, len, 2, depth),
+        }
+    }
+
+    /// Drop `len` entries of `per` items each (until a break if `None`).
+    fn items(d: &mut Walker<'_>, len: Option<usize>, per: usize, depth: usize) -> Result<(), Stop> {
+        let mut seen = 0usize;
+        loop {
+            if len == Some(seen) {
+                return Ok(());
+            }
+            let first = pull(d)?;
+            if first == Header::Break && len.is_none() {
+                return Ok(());
+            }
+            skip(d, first, depth + 1)?;
+            for _ in 1..per {
+                let next = pull(d)?;
+                skip(d, next, depth + 1)?;
+            }
+            seen += 1;
+        }
     }
 }
 

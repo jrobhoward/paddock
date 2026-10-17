@@ -66,6 +66,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
 ciborium = "0.2"
+# The same line as ciborium: its low-level decoder, for reading one field of
+# a CBOR map without decoding the rest (hash routing).
+ciborium-ll = "0.2"
 redb = "3"
 hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio"] }

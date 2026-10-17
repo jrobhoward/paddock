@@ -31,7 +31,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's planned items are done: E5, E7, P1, E2, F4, E6 and F5 (2026-10-15 and 16). Of what is left:
 
 1. H5 and E4b wait for a user who needs them; skip them unless one appears.
-2. Stage 6: G2 on the Pi (the last of Phase 2a's exit), waiting on the Pi's NVMe drive; G3 (Linux arm64 in CI) needs no Pi.
+2. Stage 6: G2 on the Pi (the last of Phase 2a's exit), waiting on the Pi's NVMe drive.
 
 ## Order
 
@@ -83,7 +83,6 @@ Done on 2026-10-15: E5, SQL datasources (`paddock:sql`, Postgres): `query`, `exe
 - [ ] **E4b OTLP push** beside the Prometheus endpoint, when a site needs push. Review the opentelemetry crates with cargo-deny first.
 - [ ] **Smaller open items.**
   - Tests: `failover_watch____promotion_node_loss_and_return____a_line_each` (`crates/paddock/tests/failover.rs`) failed 1 run in 3 on 2026-10-16, alone and with the machine loaded: the first `primary` line can come before the lease makes `may_run` true; wait for a line with both.
-  - Hash routing decodes each message's whole CBOR body into a value tree to read one top-level field (most of the host's CBOR work under `modbus_load`); walk the map instead (ciborium 0.2 keeps its deserializer private, so with `ciborium-ll`). B8, 2026-10-16.
   - One hot shared `memory` bucket does not scale with writers: `modbus_load` stores fewer updates with a pool of 8 than of 4 on the same bucket. Node-wide, every memory bucket shares one lock (`storage::Memory`); a lock per bucket would help several apps, not one hot bucket. Guidance in WRITING_APPS (fewer writers per hot bucket, or a bucket per device group) or sharding, if a site hits it. B8, 2026-10-16.
   - Cluster calls: writing frames from the sender's task when the stream is free would save a hand-off each way (B8 measured about 25 to 50 µs of hand-offs over the QUIC floor).
   - HTTP handlers: reusing an instance across requests (opt-in, once wasmtime's reusing `ProxyHandler` runs without `component-model-async`, or with WASI 0.3); probes for handler requests; a guest that drops its response body without `finish` and returns normally ends the body cleanly, because wasmtime 49 does not tell that from `finish` (a trap or timeout does cut it).
@@ -101,10 +100,9 @@ Done on 2026-10-15: E5, SQL datasources (`paddock:sql`, Postgres): `query`, `exe
 
 On an idle machine only.
 
-Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run is BASELINE.md's 2026-10-15 section, which replaces the numbers flagged provisional on 2026-10-09 and records Modbus throughput. Done on 2026-10-16: B8, what B7 left unexplained (BASELINE.md, 2026-10-16): the call between nodes is mostly QUIC and tokio wakes (`quic_floor`); the ingress gap was per-request waste, removed (78k to 85k, 88k to 99k without guest CBOR, at 32 connections); `modbus_load`'s drop comes from the pool size on one shared bucket; the metric counters cost nothing measurable; boxing the callback futures saves nothing.
+Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run is BASELINE.md's 2026-10-15 section, which replaces the numbers flagged provisional on 2026-10-09 and records Modbus throughput. Done on 2026-10-16: B8, what B7 left unexplained (BASELINE.md, 2026-10-16): the call between nodes is mostly QUIC and tokio wakes (`quic_floor`); the ingress gap was per-request waste, removed (78k to 85k, 88k to 99k without guest CBOR, at 32 connections); `modbus_load`'s drop comes from the pool size on one shared bucket; the metric counters cost nothing measurable; boxing the callback futures saves nothing. Hash routing then stopped decoding whole bodies (it walks the CBOR map for the key): `modbus_load` (64 devices, pool of 4, 8 workers) stores about 25% more updates with about 12% less CPU. G3, Linux arm64 in CI (`ubuntu-24.04-arm` in the test matrix), the same day.
 
 - [ ] **G2 Raspberry Pi 5 baseline**: `scripts/bench.sh` on the Pi, and instances per GB with the dense profile.
-- [ ] **G3 Linux arm64 in CI.** The test job runs on `ubuntu-24.04-arm` too (added 2026-10-16); done once its first run on GitHub passes.
 - [ ] **G5 Dedicated workers and CPU budgets** for latency-critical instances: priority classes mapped to separate worker sets, a CPU budget per period per app (`CallbackClock`), and a rule for priority inversion. Measure first (S15 saw 10–47 µs over native at one connection that client-side timing could not explain).
 - [ ] **G1 Large machine** (tabled 2026-10-07: none with more than 16 cores or several sockets is available). `scripts/bench.sh` at 32 to 80 workers; watch the process table, registry and pool round robin for contention. Until then no design may assume one core or one socket.
 

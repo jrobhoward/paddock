@@ -641,7 +641,7 @@ What is left is spread thin: hyper's header-read timer (S15 has none), counters,
 | 8 | 4 | 5,679 |
 | 8 | 8 | 4,595 |
 
-Neither run uses its cores (about 3.3 busy either way), and lock waits are under 0.1% of samples. Every instance writes its 125-key batch into the one shared `memory` bucket, whose `Txn::get`, key comparisons and inserts lead the profile; more writers on more cores likely move its 8,000 keys between caches (not confirmed with hardware counters). The host also decodes each update's whole CBOR body to read its `device` key for hash routing (ROADMAP smaller items).
+Neither run uses its cores (about 3.3 busy either way), and lock waits are under 0.1% of samples. Every instance writes its 125-key batch into the one shared `memory` bucket, whose `Txn::get`, key comparisons and inserts lead the profile; more writers on more cores likely move its 8,000 keys between caches (not confirmed with hardware counters). The host also decoded each update's whole CBOR body to read its `device` key for hash routing; it now walks the map for the key, falling back to a full decode only for encodings it leaves alone (tags, unusual simple values). Alternated in one session, 64 devices, a pool of 4, 8 workers: 7,176 and 6,518 updates/s stored before, 8,454 and 8,784 after, with 294 and 311 s of user CPU before against 269 and 264 s after.
 
 **Per-callback metric counters.** Nothing measurable: `baseline` (4 workers) and `pool_load 16` with the counters and with them compiled out agree within run-to-run noise (empty call p50 3.5 to 4.6 µs either way; 369k to 384k calls/s at 64 clients either way).
 

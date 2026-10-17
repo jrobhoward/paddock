@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+use proptest::prelude::*;
 use rstest::rstest;
 
 use super::*;
@@ -102,4 +103,116 @@ fn pick_index____empty_pool____none() {
     let next = AtomicUsize::new(0);
 
     assert_eq!(pick_index(0, None, &next), None);
+}
+
+fn arb_value() -> impl Strategy<Value = ciborium::Value> {
+    use ciborium::Value;
+    let leaf = prop_oneof![
+        any::<i64>().prop_map(|i| Value::Integer(i.into())),
+        any::<u64>().prop_map(|i| Value::Integer(i.into())),
+        "[a-z]{0,6}".prop_map(Value::Text),
+        proptest::collection::vec(any::<u8>(), 0..6).prop_map(Value::Bytes),
+        any::<bool>().prop_map(Value::Bool),
+        any::<f64>().prop_map(Value::Float),
+        Just(Value::Null),
+    ];
+    leaf.prop_recursive(3, 24, 4, |inner| {
+        prop_oneof![
+            proptest::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+            proptest::collection::vec((inner.clone(), inner.clone()), 0..4).prop_map(Value::Map),
+            (0u64..40, inner).prop_map(|(t, v)| Value::Tag(t, Box::new(v))),
+        ]
+    })
+}
+
+proptest! {
+    /// Maps with the field, without it, twice, under other keys, nested,
+    /// tagged, and other values entirely, cut short or with bytes after:
+    /// the walk agrees with decoding the whole body.
+    #[test]
+    fn routing_key____any_cbor____same_as_decoding_the_whole_body(
+        entries in proptest::collection::vec(("(k|device|[a-z]{1,3})", arb_value()), 0..6),
+        int_keys in proptest::collection::vec((any::<i64>(), arb_value()), 0..2),
+        other in arb_value(),
+        as_map in any::<bool>(),
+        trailing in proptest::collection::vec(any::<u8>(), 0..3),
+        cut in 0usize..3,
+    ) {
+        use ciborium::Value;
+        let value = if as_map {
+            let mut map: Vec<(Value, Value)> =
+                entries.into_iter().map(|(k, v)| (Value::Text(k), v)).collect();
+            map.extend(int_keys.into_iter().map(|(k, v)| (Value::Integer(k.into()), v)));
+            Value::Map(map)
+        } else {
+            other
+        };
+        let mut body = cbor(&value);
+        if cut == 1 {
+            body.pop();
+        }
+        body.extend(trailing);
+        let msg = Envelope::new("application/cbor", body.clone());
+
+        prop_assert_eq!(routing_key(&msg, "k"), tree_key(&body, "k"));
+        prop_assert_eq!(routing_key(&msg, "device"), tree_key(&body, "device"));
+    }
+
+    /// Any bytes at all.
+    #[test]
+    fn routing_key____random_bytes____same_as_decoding_the_whole_body(
+        body in proptest::collection::vec(any::<u8>(), 0..64),
+    ) {
+        let msg = Envelope::new("application/cbor", body.clone());
+
+        prop_assert_eq!(routing_key(&msg, "k"), tree_key(&body, "k"));
+    }
+}
+
+/// Encodings ciborium's writer never makes: lengths not known up front,
+/// segmented strings, the field after a nested indefinite array.
+#[rstest]
+// {_ "k": "ab"} (indefinite map)
+#[case(&[0xbf, 0x61, b'k', 0x62, b'a', b'b', 0xff], Some(b"ab".to_vec()))]
+// {"k": (_ "a" "b")} (segmented text)
+#[case(&[0xa1, 0x61, b'k', 0x7f, 0x61, b'a', 0x61, b'b', 0xff], Some(b"ab".to_vec()))]
+// {"x": [_ 1, 2], "k": h'0102'} (indefinite array, then bytes)
+#[case(&[0xa2, 0x61, b'x', 0x9f, 0x01, 0x02, 0xff, 0x61, b'k', 0x42, 0x01, 0x02], Some(vec![1, 2]))]
+// {"k": -5}
+#[case(&[0xa1, 0x61, b'k', 0x24], Some(b"-5".to_vec()))]
+// {_ "k": 1 (no break: cut short)
+#[case(&[0xbf, 0x61, b'k', 0x01], None)]
+// {"k": 1, "z": undefined}
+#[case(&[0xa2, 0x61, b'k', 0x01, 0x61, b'z', 0xf7], None)]
+fn routing_key____unusual_encodings____same_as_decoding_the_whole_body(
+    #[case] body: &[u8],
+    #[case] expected: Option<Vec<u8>>,
+) {
+    let msg = Envelope::new("application/cbor", body.to_vec());
+
+    let key = routing_key(&msg, "k");
+
+    assert_eq!(key, tree_key(body, "k"));
+    if body.last() != Some(&0xf7) {
+        assert_eq!(key, expected);
+    }
+}
+
+#[test]
+fn walk____plain_map____answers_itself_without_the_value_tree() {
+    let value = ciborium::Value::Map(vec![
+        (
+            ciborium::Value::Text("points".into()),
+            ciborium::Value::Array(vec![ciborium::Value::Integer(1.into()); 125]),
+        ),
+        (
+            ciborium::Value::Text("device".into()),
+            ciborium::Value::Text("pump-1".into()),
+        ),
+    ]);
+    let body = cbor(&value);
+
+    let walked = walk::field(&body, "device");
+
+    assert_eq!(walked, Ok(Some(b"pump-1".to_vec())));
 }
