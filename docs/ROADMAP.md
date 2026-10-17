@@ -31,7 +31,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's planned items are done, and stage 6's but G2. Of what is left:
 
 1. G2 on the Pi (the last of Phase 2a's exit), waiting on the Pi's NVMe drive.
-2. Phase 3 (planned 2026-10-16, below) can start before G2 and W1: X1, then K1.
+2. Phase 3 (planned 2026-10-16, below) can start before G2 and W1: X1's first step and K1's model are done (2026-10-16 and 2026-10-17); K2 is next.
 3. W1 (Phase 2's docs) once G2 is done; H5 and E4b only for a user who needs them.
 
 ## Order
@@ -134,16 +134,15 @@ Planned on 2026-10-16. Exit: the SCADA reference app (X1) runs a full release cy
 
 Decided 2026-10-16: the pair and its witness are the target topology, and general clusters of many nodes come later; replicated buckets replicate synchronously within the pair, using the failover epochs and leases, not Raft; blue-green upgrades, guest sockets, native-process plugins and moving instances are in scope; general placement, global names, more guest SDKs and fuel metering are parked.
 
-Order: X1 first, so the app drives the rest; K1 (the model) before K2 and K3; N1 alongside K, since it shares no code; M1 after K2; U1 after K2 and M1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
+Order: X1 first, so the app drives the rest; K2 before K3; N1 alongside K, since it shares no code; M1 after K2; U1 after K2 and M1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
 
 ```
-X1 app ─► K1 model ─► K2 shared ─► K3 app buckets ─► M1 move ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
+X1 app ─► K2 shared ─► K3 app buckets ─► M1 move ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
             N1 sockets (alongside K)              N2 native plugins (S19 spike first)
 ```
 
 - [ ] **X1 The SCADA reference app.** First step done on 2026-10-16 (`examples/scada`: `points`, `hmi` over HTTP with long polls, the `control` singleton with alarms, writes, an event log and two versions, `drill.sh` on three `paddock node` processes; its first report is in the README). Left, as K, M and U land: the point table in a replicated shared bucket (K2), so only the primary polls the devices and the standby's table comes from it; `control`'s buckets `replicated` (K3); the drill's switchover and upgrades through M1 and U1 instead of single-node commands; a history of point values if the exit needs one. Its acceptance test is X2's.
-- [ ] **K1 Pair replication, modelled first.** Spike S20: a TLA+ model of synchronous replication between the pair, extending `docs/tla`'s layer 2 (the leader is the failover primary at its epoch; a write commits once the standby has it, or alone while the primary holds a lease the witness granted with the standby gone; a stale epoch's writes are refused; a standby that rejoins catches up from the log, or from a snapshot past the log's start). Properties: no committed write lost over any single failure or planned switchover, no two nodes committing at one index, reads on request linearizable. The vacuity checks of bug 5 from the start. Decides the commit rule, the catch-up path and the log's length.
-- [ ] **K2 Replicated shared buckets.** `scope = "cluster"` for shared buckets on a pair, as K1 specifies: writes forwarded to the primary, each node keeps a full copy in redb and serves reads and watches from it, linearizable reads on request, writes refused as `unavailable` without a lease; frames on the cluster transport, metrics, `paddock status` showing each bucket's index and lag. A soak kind that checks both copies agree after each heal. Conformance with K1's model as for failover (R rules in VERIFICATION.md).
+- [ ] **K2 Replicated shared buckets.** `scope = "cluster"` for shared buckets on a pair, by the rules of spike S20's model (R1 to R7 in [spikes/s20](../spikes/s20/README.md), checked 2026-10-17): a log in the Raft shape led by the failover primary at its epoch, committing once the standby has the entry on disk, or alone once the witness has recorded the standby out of date; a no-op per epoch and a read barrier; catch-up by entries, else a snapshot that keeps the suffix the standby holds; the log's length bounded by bytes and age, for performance only. The witness keeps the out-of-date record on disk and refuses to promote that node while it stands, so `failover/witness.rs`, its wire frames and `docs/tla/FailoverL2.tla` change too. Then: writes forwarded to the primary, each node keeps a full copy in redb and serves reads and watches from it, linearizable reads on request, writes refused as `unavailable` without a lease; frames on the cluster transport, metrics, `paddock status` showing each bucket's index and lag. A soak kind that checks both copies agree after each heal. Conformance with S20's model as for failover (R rules in VERIFICATION.md).
 - [ ] **K3 Replicated app buckets.** Durability `replicated` for an app's own buckets (manifest `wasi:keyvalue` `durability`), on K2's machinery, so a singleton's state survives a failover. Quotas and watches as for local buckets.
 - [ ] **M1 Moving instances** (spike S17, then the feature). A running instance's snapshot carried to the other node and loaded there: a planned switchover hands a singleton over with its memory state instead of restarting it from `init`, and a node can be drained. To settle first: the new pid, what happens to links, monitors and names, and messages sent during the move.
 - [ ] **U1 Releases across the pair.** An upgrade of both nodes as one operation over the remote admin API: the standby first, a switchover (moving singletons with M1), then the other node, with gates between steps and an abort that rolls back what was done. Rules for the time two versions run at once: snapshot formats, wire versions, an app's messages.
@@ -251,3 +250,4 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | S17 | Moving a running instance to another node | Investigation |
 | S18 | Hot-standby instances following the primary | Investigation |
 | S19 | Ports or nodes for external processes | Investigation |
+| S20 | TLA+ model of replication within the HA pair | Done (K1): rules R1 to R7; no committed write lost with one failure at a time, exhaustive to about 2.2 billion states, and each rule's absence gives a counterexample ([spikes/s20](../spikes/s20/README.md)) |

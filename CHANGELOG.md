@@ -543,6 +543,8 @@ All notable changes are recorded here. The format follows
   rollback, the primary lost mid-upgrade) on a pair and a witness and
   reports failed requests and point update gaps per step.
   `paddock-modbus`'s `fake_device` example serves fake devices to it.
+- `spikes/s20`: a TLA+ model of replication within the HA pair (ROADMAP
+  K1), with the commit, read and catch-up rules K2 implements.
 
 ### Fixed
 
