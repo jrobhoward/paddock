@@ -104,7 +104,7 @@ On an idle machine only.
 Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run is BASELINE.md's 2026-10-15 section, which replaces the numbers flagged provisional on 2026-10-09 and records Modbus throughput. Done on 2026-10-16: B8, what B7 left unexplained (BASELINE.md, 2026-10-16): the call between nodes is mostly QUIC and tokio wakes (`quic_floor`); the ingress gap was per-request waste, removed (78k to 85k, 88k to 99k without guest CBOR, at 32 connections); `modbus_load`'s drop comes from the pool size on one shared bucket; the metric counters cost nothing measurable; boxing the callback futures saves nothing.
 
 - [ ] **G2 Raspberry Pi 5 baseline**: `scripts/bench.sh` on the Pi, and instances per GB with the dense profile.
-- [ ] **G3 Linux arm64 in CI.**
+- [ ] **G3 Linux arm64 in CI.** The test job runs on `ubuntu-24.04-arm` too (added 2026-10-16); done once its first run on GitHub passes.
 - [ ] **G5 Dedicated workers and CPU budgets** for latency-critical instances: priority classes mapped to separate worker sets, a CPU budget per period per app (`CallbackClock`), and a rule for priority inversion. Measure first (S15 saw 10–47 µs over native at one connection that client-side timing could not explain).
 - [ ] **G1 Large machine** (tabled 2026-10-07: none with more than 16 cores or several sockets is available). `scripts/bench.sh` at 32 to 80 workers; watch the process table, registry and pool round robin for contention. Until then no design may assume one core or one socket.
 

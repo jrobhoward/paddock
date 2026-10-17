@@ -373,6 +373,7 @@ All notable changes are recorded here. The format follows
   to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
+- CI runs the test job on Linux arm64 too (`ubuntu-24.04-arm`, ROADMAP G3).
 - Faster calls into an app's pool (ROADMAP B8): picking an instance no
   longer copies the supervisor's child list on every message, which every
   host-to-app call and every HTTP request paid.

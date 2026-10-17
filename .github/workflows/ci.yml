@@ -21,14 +21,16 @@ defaults:
 
 jobs:
   # The host will touch per-OS behaviour (sockets, filesystem preopens,
-  # address-space limits), so every OS runs the whole suite.
+  # address-space limits, the serial tty layer), so every OS runs the whole
+  # suite, and Linux on arm64 too (ROADMAP G3: the Raspberry Pi 5 and other
+  # arm64 nodes; wasmtime's code generator differs by architecture).
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
