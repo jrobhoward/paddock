@@ -98,7 +98,7 @@ pub fn rewrite(src: &Path, dst: &Path, edit: impl Fn(&str, Vec<u8>) -> Vec<u8>) 
     let mut out = zip::ZipWriter::new(std::fs::File::create(dst).unwrap());
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
-        let name = file.name().to_string();
+        let name = file.name().unwrap().into_owned();
         let mut contents = Vec::new();
         file.read_to_end(&mut contents).unwrap();
         out.start_file(&name, zip::write::SimpleFileOptions::default())

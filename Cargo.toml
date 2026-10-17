@@ -129,7 +129,7 @@ rustix = { version = "1.1", default-features = false, features = ["std", "proces
 tempfile = "3"
 wat = "1.259"
 # Same major as rustbridge-bundle's, so tests add no second copy.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "forbid"
@@ -186,3 +186,7 @@ opt-level = 3
 
 [profile.dev.package.wasmparser]
 opt-level = 3
+
+# TEMPORARY, do not commit: the local rustbridge checkout, until its zip 9 change is pushed.
+[patch."https://github.com/jrobhoward/rustbridge"]
+rustbridge-bundle = { path = "../rustbridge/crates/rustbridge-bundle" }

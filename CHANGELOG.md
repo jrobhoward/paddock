@@ -373,6 +373,9 @@ All notable changes are recorded here. The format follows
   to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
+- `zip` 9 (RUSTSEC-2026-0367, -0368, -0369, all in `ZipArchive::extract`,
+  which neither Paddock nor `rustbridge-bundle` calls), through
+  `rustbridge-bundle` and `paddock-bundle`'s test helpers.
 - Hash routing (`instances.routing = "hash:<field>"`) reads the routing
   field of a CBOR body without decoding the rest (ROADMAP B8 follow-up);
   the same key as before for every body, checked against the full decode

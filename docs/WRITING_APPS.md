@@ -172,6 +172,7 @@ if let Some(points) = batch::items::<Point>(&msg) {
 - Batch per destination, not per app: with `instances.routing = "hash:..."`, keep items that must stay in order on one key in one batch to one instance.
 - Items buffered when the sender exits are lost, as unsent casts would be.
 - Protocol extensions already batch: the Modbus extension sends one update per device and scan with every point that changed.
+- A pool writing into one shared bucket does not get faster with more instances. Writes to a bucket take turns, so past a few writers more instances add contention: with 64 devices polled every millisecond, a pool of 4 stored more updates than a pool of 8 on the same bucket (`modbus_load`, [BASELINE.md](BASELINE.md), 2026-10-16). Keep the writing pool small, batch each update into one write, or give groups of devices buckets of their own.
 
 ## State across upgrades
 
