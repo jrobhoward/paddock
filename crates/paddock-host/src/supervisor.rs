@@ -253,6 +253,13 @@ impl SupervisorHandle {
         self.shared.children.borrow().clone()
     }
 
+    /// Run `f` on the children without copying them, for a pool picking
+    /// one on every message. `f` runs under the children's read lock, so
+    /// it must be quick and must not wait.
+    pub(crate) fn with_children<R>(&self, f: impl FnOnce(&[Child]) -> R) -> R {
+        f(&self.shared.children.borrow())
+    }
+
     /// A receiver that sees every change to the children.
     #[must_use]
     pub fn subscribe_children(&self) -> watch::Receiver<Vec<Child>> {

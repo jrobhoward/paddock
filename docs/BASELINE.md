@@ -607,6 +607,46 @@ Same machine (Threadripper 1950X, 16 threads); load average 0.89 at the start (`
 - A handler serves about 30% of the pool's requests per second with 32 to 128 connections, and adds about 115 µs to one request: S15 measured the same shape (21,000 to 23,000 at 32 connections, 164 to 193 µs p50) with `wasmtime serve`'s model. The split between instantiation and the `wasi:http` resources was not measured.
 - Peak resident memory was lower for the handler run (28.9 MiB against 38.2 MiB): the pool keeps 4 instances alive, a handler only those serving a request.
 
+## 2026-10-16: what B7 left unexplained (roadmap B8)
+
+Same machine (Threadripper 1950X, 16 threads). Benchmarks ran back to back, so the load average (1.5 to 6) is mostly their own; each comparison alternates its two sides in one session. `perf` profiles were taken with `kernel.perf_event_paranoid = 2` and `line-tables-only` debug info.
+
+**A call between nodes (106 µs).** The floor is QUIC and tokio, not Paddock. `quic_floor` runs bare quinn over loopback (TLS 1.3 on ring, one stream, 64-byte frames, one in flight):
+
+| Runtime | Round trip p50 |
+| --- | --- |
+| 4 workers | 52 to 98 µs (it flips between runs) |
+| 2 workers | 96 µs |
+| 1 worker (multi-thread) | 61 µs |
+| current thread | 31 µs |
+
+Paddock's two-node call measured 102 to 126 µs in the same session: about 25 to 50 µs over the floor, the four extra task hand-offs per call (the data writer task and the instance or waiting caller, each way). Writing a frame's length and body separately costs nothing (98.5 against 98.2 µs). Most of the floor is wakes crossing threads on an idle runtime; under load the 16- and 64-caller figures are what matter.
+
+**HTTP ingress against S15 (82k against 110k).** Not the client: under the same client, `ingress_throughput ... s15` (S15's bare hyper service calling chaos instances) served 134k to 136k requests/s at 32 connections, the ingress 88k with a guest doing no CBOR (`chaos` mode) and 78k with the SDK fixture. The profile showed waste on every request, now removed: the app's pool copied its supervisor's whole child list to pick one instance (every message to an app paid it, not only HTTP), the app and handler were looked up twice, headers were copied into strings and the envelope built as a CBOR value tree, and a GET armed a body timer. After (envelope bytes unchanged, checked by a test):
+
+| Mode | 1 connection p50 | 32 connections | 128 connections |
+| --- | --- | --- | --- |
+| `chaos` (host cost only) | 85 → 71 µs | 88k → 99k | 94k → 110k |
+| default (SDK guest) | 86 → 79 µs | 78k → 85k | 84k → 97k |
+| `s15` (for reference) | 53 to 60 µs | 134k to 136k | 154k |
+
+What is left is spread thin: hyper's header-read timer (S15 has none), counters, route matching. The guest's CBOR costs about 12% at 32 connections.
+
+**`modbus_load` with 8 workers.** The pool size, not the workers: with 64 devices polled every millisecond (saturated, 64,000 polls/s asked):
+
+| Pool | Workers | Updates stored/s |
+| --- | --- | --- |
+| 4 | 4 | 5,820, 5,878 |
+| 4 | 8 | 7,018, 6,579 |
+| 8 | 4 | 5,679 |
+| 8 | 8 | 4,595 |
+
+Neither run uses its cores (about 3.3 busy either way), and lock waits are under 0.1% of samples. Every instance writes its 125-key batch into the one shared `memory` bucket, whose `Txn::get`, key comparisons and inserts lead the profile; more writers on more cores likely move its 8,000 keys between caches (not confirmed with hardware counters). The host also decodes each update's whole CBOR body to read its `device` key for hash routing (ROADMAP smaller items).
+
+**Per-callback metric counters.** Nothing measurable: `baseline` (4 workers) and `pool_load 16` with the counters and with them compiled out agree within run-to-run noise (empty call p50 3.5 to 4.6 µs either way; 369k to 384k calls/s at 64 clients either way).
+
+**Boxing the guest callback futures.** Not worth it: a passivated instance stays at 19.3 KiB resident either way (an idle task never touches the futures' space), and call latency does not change.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.

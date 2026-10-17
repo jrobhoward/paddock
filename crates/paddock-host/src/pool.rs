@@ -44,21 +44,37 @@ impl Pool {
         &self,
         live: impl Fn(&InstanceHandle) -> bool,
     ) -> Option<InstanceHandle> {
-        let members: Vec<InstanceHandle> = self.members().into_iter().filter(|h| live(h)).collect();
-        let index = pick_index(members.len(), None, &self.next)?;
-        members.into_iter().nth(index)
+        self.pick_among(None, live)
     }
 
     /// Pick an instance for `msg` (round-robin when there is no message, or
     /// no routing key in it).
     pub(crate) fn pick(&self, msg: Option<&Envelope>) -> Option<InstanceHandle> {
-        let members = self.members();
         let key = match (&self.routing, msg) {
             (Routing::Hash(field), Some(msg)) => routing_key(msg, field),
             _ => None,
         };
-        let index = pick_index(members.len(), key.as_deref(), &self.next)?;
-        members.into_iter().nth(index)
+        self.pick_among(key.as_deref(), |_| true)
+    }
+
+    /// The member `key` hashes to among those `accept` accepts (the next in
+    /// turn without a key). Counts and picks over the supervisor's children
+    /// in place, cloning only the handle picked: this runs on every message
+    /// to the app.
+    fn pick_among(
+        &self,
+        key: Option<&[u8]>,
+        accept: impl Fn(&InstanceHandle) -> bool,
+    ) -> Option<InstanceHandle> {
+        self.supervisor.with_children(|children| {
+            let members = children
+                .iter()
+                .filter(|c| c.app.as_deref() == Some(self.app.as_str()))
+                .filter_map(|c| c.instance())
+                .filter(|h| accept(h));
+            let index = pick_index(members.clone().count(), key, &self.next)?;
+            members.into_iter().nth(index).cloned()
+        })
     }
 }
 

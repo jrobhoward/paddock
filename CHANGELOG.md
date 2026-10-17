@@ -373,6 +373,17 @@ All notable changes are recorded here. The format follows
   to 4.5 times the points of one cast each).
 - `egress_cost` example and `scripts/bench.sh egress`: a guest's requests
   through the pool against a native client, pooled and not.
+- Faster calls into an app's pool (ROADMAP B8): picking an instance no
+  longer copies the supervisor's child list on every message, which every
+  host-to-app call and every HTTP request paid.
+- HTTP ingress (ROADMAP B8): one app and handler lookup per request, the
+  request envelope encoded straight from the request (the same bytes,
+  without copying headers or a CBOR value tree), and no body timer for a
+  request without a body. On the 16-thread machine: 78k to 85k requests/s
+  at 32 connections with the SDK fixture, one-connection p50 86 to 79 µs.
+- `quic_floor` example (bare quinn ping-pong, the floor under a call
+  between nodes) and `ingress_throughput`'s `s15` and `chaos` modes, in
+  `scripts/bench.sh`'s `cluster` and `ingress` runs.
 - `paddock failover confirm`'s help and OPERATIONS.md ("Confirming a
   promotion") state when to confirm: only with the old primary down and
   kept down until the pair hears each other, since an old primary that

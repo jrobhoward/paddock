@@ -4,6 +4,10 @@
 
 use super::*;
 
+fn text(s: &str) -> Value {
+    Value::Text(s.to_string())
+}
+
 fn route(host: Option<&str>, prefix: &str) -> HttpRoute {
     HttpRoute {
         host: host.map(str::to_string),
@@ -44,22 +48,79 @@ fn pick____several_routes____longest_prefix_then_named_host_wins() {
     assert_eq!(fallback, "root");
 }
 
+fn sample_headers() -> hyper::HeaderMap {
+    let mut headers = hyper::HeaderMap::new();
+    headers.insert("x-tenant", HeaderValue::from_static("t1"));
+    headers.append("accept", HeaderValue::from_static("a"));
+    headers.append("accept", HeaderValue::from_static("b"));
+    headers.insert("x-raw", HeaderValue::from_bytes(b"caf\xe9").unwrap());
+    headers
+}
+
+fn sample_request(headers: &hyper::HeaderMap) -> RequestEnvelope<'_> {
+    RequestEnvelope {
+        scheme: "https",
+        method: "POST",
+        path: "/orders",
+        query: Some("a=1"),
+        headers,
+        body: b"hi",
+        key: Some("t1".into()),
+    }
+}
+
 #[test]
 fn request_envelope____key_and_body____cbor_map_routable_by_key() {
-    let env = request_envelope(
-        "https",
-        "POST",
-        "/orders",
-        Some("a=1".into()),
-        &[("x-tenant".into(), "t1".into())],
-        b"hi",
-        Some("t1".into()),
-    );
+    let headers = sample_headers();
 
+    let env = request_envelope(&sample_request(&headers));
     let key = crate::pool::routing_key(&env, "key");
 
     assert_eq!(env.schema.as_deref(), Some(REQUEST_SCHEMA));
     assert_eq!(key.as_deref(), Some(b"t1".as_slice()));
+}
+
+/// The format apps read: the same bytes as a CBOR value tree built field
+/// by field, as the envelope was encoded before ROADMAP B8.
+#[rstest::rstest]
+#[case::with_query_and_key(Some("a=1"), Some("t1"))]
+#[case::without_either(None, None)]
+fn request_envelope____encoded_directly____same_bytes_as_a_value_tree(
+    #[case] query: Option<&str>,
+    #[case] key: Option<&str>,
+) {
+    let headers = sample_headers();
+    let request = RequestEnvelope {
+        query,
+        key: key.map(Into::into),
+        ..sample_request(&headers)
+    };
+    let tree_headers = headers
+        .iter()
+        .map(|(k, v)| {
+            Value::Array(vec![
+                text(k.as_str()),
+                text(&String::from_utf8_lossy(v.as_bytes())),
+            ])
+        })
+        .collect();
+    let mut map = vec![
+        (text("scheme"), text("https")),
+        (text("method"), text("POST")),
+        (text("path"), text("/orders")),
+        (text("query"), query.map_or(Value::Null, text)),
+        (text("headers"), Value::Array(tree_headers)),
+        (text("body"), Value::Bytes(b"hi".to_vec())),
+    ];
+    if let Some(key) = key {
+        map.push((text("key"), text(key)));
+    }
+    let mut expected = Vec::new();
+    ciborium::into_writer(&Value::Map(map), &mut expected).unwrap();
+
+    let env = request_envelope(&request);
+
+    assert_eq!(env.body, expected);
 }
 
 #[test]

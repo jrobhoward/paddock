@@ -625,18 +625,19 @@ async fn handle(
     let Some((app, route)) = picked else {
         return status(StatusCode::NOT_FOUND, "no route");
     };
+    // Looked up once: both are on every request's path.
+    let target = inner.apps.app(&app);
+    let handler = inner
+        .handlers
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&app)
+        .cloned();
     let partner = match &spec.standby {
         Standby::Refuse => None,
-        _ if inner.apps.app(&app).is_some() => None,
+        _ if target.is_some() => None,
         // HTTP handlers are never singletons: they run wherever deployed.
-        _ if inner
-            .handlers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains_key(&app) =>
-        {
-            None
-        }
+        _ if handler.is_some() => None,
         standby => inner.elsewhere.runs(&app).map(|node| (standby, node)),
     };
     let forward_to = match partner {
@@ -652,37 +653,29 @@ async fn handle(
     if declared.is_some_and(|n| n > route.max_body) {
         return status(StatusCode::PAYLOAD_TOO_LARGE, "body too large");
     }
-    let handler = inner
-        .handlers
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&app)
-        .cloned();
     if let Some(handler) = handler {
         return serve_handler(inner, &handler, &route, scheme, req).await;
     }
-    let method = req.method().as_str().to_string();
-    let query = req.uri().query().map(str::to_string);
-    let headers: Vec<(String, String)> = req
-        .headers()
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.as_str().to_string(),
-                String::from_utf8_lossy(v.as_bytes()).into_owned(),
-            )
-        })
-        .collect();
-    let key = route
-        .hash_header
-        .as_deref()
-        .and_then(|h| req.headers().get(h))
-        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
+    let (parts, body) = req.into_parts();
     let limit = usize::try_from(route.max_body).unwrap_or(usize::MAX);
-    let read = Limited::new(req.into_body(), limit).collect();
-    let body = match tokio::time::timeout(spec.body_timeout, read).await {
+    // A request hyper knows has no body (a GET without a length) arms no
+    // body timer: one timer fewer per request (ROADMAP B8).
+    let body_empty = hyper::body::Body::is_end_stream(&body);
+    let read = async {
+        Limited::new(body, limit)
+            .collect()
+            .await
+            .map(http_body_util::Collected::to_bytes)
+    };
+    let read = async {
+        if body_empty {
+            return Ok(Ok(Bytes::new()));
+        }
+        tokio::time::timeout(spec.body_timeout, read).await
+    };
+    let body = match read.await {
         Err(_) => return status(StatusCode::REQUEST_TIMEOUT, "body not received in time"),
-        Ok(Ok(b)) => b.to_bytes(),
+        Ok(Ok(b)) => b,
         Ok(Err(e))
             if e.downcast_ref::<http_body_util::LengthLimitError>()
                 .is_some() =>
@@ -691,8 +684,21 @@ async fn handle(
         }
         Ok(Err(_)) => return status(StatusCode::BAD_REQUEST, "unreadable body"),
     };
-    let msg = request_envelope(scheme, &method, &path, query, &headers, &body, key);
-    let result = match (forward_to, inner.apps.app(&app)) {
+    let key = route
+        .hash_header
+        .as_deref()
+        .and_then(|h| parts.headers.get(h))
+        .map(|v| String::from_utf8_lossy(v.as_bytes()));
+    let msg = request_envelope(&RequestEnvelope {
+        scheme,
+        method: parts.method.as_str(),
+        path: &path,
+        query: parts.uri.query(),
+        headers: &parts.headers,
+        body: &body,
+        key,
+    });
+    let result = match (forward_to, target) {
         (Some(node), _) => {
             inner.counters.forwarded.fetch_add(1, Ordering::Relaxed);
             inner
@@ -766,38 +772,65 @@ async fn serve_handler(
     status(StatusCode::SERVICE_UNAVAILABLE, "app not running")
 }
 
-fn text(s: &str) -> Value {
-    Value::Text(s.to_string())
+/// A request as the app receives it, borrowed from the request: encoded
+/// straight to CBOR, without copying headers or building a value tree
+/// (ROADMAP B8). The map's keys and their order are the request format in
+/// the module documentation.
+struct RequestEnvelope<'a> {
+    scheme: &'a str,
+    method: &'a str,
+    path: &'a str,
+    query: Option<&'a str>,
+    headers: &'a hyper::HeaderMap,
+    body: &'a [u8],
+    key: Option<std::borrow::Cow<'a, str>>,
+}
+
+impl serde::Serialize for RequestEnvelope<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+
+        /// The headers, as `[[name, value]]`; values not UTF-8 lossily.
+        struct Headers<'a>(&'a hyper::HeaderMap);
+        impl serde::Serialize for Headers<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+                for (name, value) in self.0 {
+                    seq.serialize_element(&(
+                        name.as_str(),
+                        String::from_utf8_lossy(value.as_bytes()),
+                    ))?;
+                }
+                seq.end()
+            }
+        }
+        /// A CBOR byte string, not an array of integers.
+        struct Bytes<'a>(&'a [u8]);
+        impl serde::Serialize for Bytes<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_bytes(self.0)
+            }
+        }
+
+        let mut map = serializer.serialize_map(Some(6 + usize::from(self.key.is_some())))?;
+        map.serialize_entry("scheme", self.scheme)?;
+        map.serialize_entry("method", self.method)?;
+        map.serialize_entry("path", self.path)?;
+        map.serialize_entry("query", &self.query)?;
+        map.serialize_entry("headers", &Headers(self.headers))?;
+        map.serialize_entry("body", &Bytes(self.body))?;
+        if let Some(key) = &self.key {
+            map.serialize_entry("key", key)?;
+        }
+        map.end()
+    }
 }
 
 /// The call a request becomes.
-fn request_envelope(
-    scheme: &str,
-    method: &str,
-    path: &str,
-    query: Option<String>,
-    headers: &[(String, String)],
-    body: &[u8],
-    key: Option<String>,
-) -> Envelope {
-    let headers = headers
-        .iter()
-        .map(|(k, v)| Value::Array(vec![text(k), text(v)]))
-        .collect();
-    let mut map = vec![
-        (text("scheme"), text(scheme)),
-        (text("method"), text(method)),
-        (text("path"), text(path)),
-        (text("query"), query.map_or(Value::Null, Value::Text)),
-        (text("headers"), Value::Array(headers)),
-        (text("body"), Value::Bytes(body.to_vec())),
-    ];
-    if let Some(key) = key {
-        map.push((text("key"), Value::Text(key)));
-    }
+fn request_envelope(request: &RequestEnvelope<'_>) -> Envelope {
     let mut out = Vec::new();
-    // Writing a CBOR value to a Vec cannot fail.
-    let _ = ciborium::into_writer(&Value::Map(map), &mut out);
+    // Writing CBOR to a Vec cannot fail.
+    let _ = ciborium::into_writer(request, &mut out);
     Envelope {
         content_type: "application/cbor".into(),
         schema: Some(REQUEST_SCHEMA.into()),
