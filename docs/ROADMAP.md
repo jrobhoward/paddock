@@ -28,10 +28,11 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Next
 
-Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's planned items are done: E5, E7, P1, E2, F4, E6 and F5 (2026-10-15 and 16). Of what is left:
+Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's planned items are done, and stage 6's but G2. Of what is left:
 
-1. H5 and E4b wait for a user who needs them; skip them unless one appears.
-2. Stage 6: G2 on the Pi (the last of Phase 2a's exit), waiting on the Pi's NVMe drive.
+1. G2 on the Pi (the last of Phase 2a's exit), waiting on the Pi's NVMe drive.
+2. Phase 3 (planned 2026-10-16, below) can start before G2 and W1: X1, then K1.
+3. W1 (Phase 2's docs) once G2 is done; H5 and E4b only for a user who needs them.
 
 ## Order
 
@@ -129,26 +130,39 @@ Docs known to be out of date, cleared by W1:
 
 ## Phase 3
 
-From DESIGN.md's roadmap, not yet broken into items:
+Planned on 2026-10-16. Exit: the SCADA reference app (X1) runs a full release cycle on an HA pair and a witness with zero downtime: deploy, an upgrade with state migration on both nodes, a planned switchover, a rollback, and a node lost in the middle of the upgrade, while the HMI keeps answering and point updates keep flowing (X2).
 
-- placement across nodes;
-- opt-in global names (Raft);
-- replicated buckets (`scope = "cluster"` on shared buckets). Raft, or HAppliance-style synchronous replication in an HA pair with a witness, is chosen then. Writes go to the leader, each node keeps a full copy for reads and delivers watches from it, linearizable reads are on request, and writes in a minority partition fail as `unavailable`. Later: keys owned by a pid, and a `mirrored` asynchronous durability. DESIGN.md, "Shared buckets and watches";
-- sockets for guests;
-- native-process plugins (see S19);
-- blue-green upgrades;
-- more guest SDKs;
-- fuel metering.
+Decided 2026-10-16: the pair and its witness are the target topology, and general clusters of many nodes come later; replicated buckets replicate synchronously within the pair, using the failover epochs and leases, not Raft; blue-green upgrades, guest sockets, native-process plugins and moving instances are in scope; general placement, global names, more guest SDKs and fuel metering are parked.
 
-The rustbridge work for Phase 3 is the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait and the native-process runner.
+Order: X1 first, so the app drives the rest; K1 (the model) before K2 and K3; N1 alongside K, since it shares no code; M1 after K2; U1 after K2 and M1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
+
+```
+X1 app ─► K1 model ─► K2 shared ─► K3 app buckets ─► M1 move ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
+            N1 sockets (alongside K)              N2 native plugins (S19 spike first)
+```
+
+- [ ] **X1 The SCADA reference app.** Grow `examples/scada` into the exit workload: a `points` pool writing the point table into a replicated shared bucket (K2), an alarm singleton with its state in a replicated app bucket (K3), the HMI over HTTP reading the table and watching it, and a history or event log; a drill script that runs the release cycle on three `paddock node` processes (the pair and the witness) with the fake devices. Built in steps as K, M and U land; its acceptance test is X2's.
+- [ ] **K1 Pair replication, modelled first.** Spike S20: a TLA+ model of synchronous replication between the pair, extending `docs/tla`'s layer 2 (the leader is the failover primary at its epoch; a write commits once the standby has it, or alone while the primary holds a lease the witness granted with the standby gone; a stale epoch's writes are refused; a standby that rejoins catches up from the log, or from a snapshot past the log's start). Properties: no committed write lost over any single failure or planned switchover, no two nodes committing at one index, reads on request linearizable. The vacuity checks of bug 5 from the start. Decides the commit rule, the catch-up path and the log's length.
+- [ ] **K2 Replicated shared buckets.** `scope = "cluster"` for shared buckets on a pair, as K1 specifies: writes forwarded to the primary, each node keeps a full copy in redb and serves reads and watches from it, linearizable reads on request, writes refused as `unavailable` without a lease; frames on the cluster transport, metrics, `paddock status` showing each bucket's index and lag. A soak kind that checks both copies agree after each heal. Conformance with K1's model as for failover (R rules in VERIFICATION.md).
+- [ ] **K3 Replicated app buckets.** Durability `replicated` for an app's own buckets (manifest `wasi:keyvalue` `durability`), on K2's machinery, so a singleton's state survives a failover. Quotas and watches as for local buckets.
+- [ ] **M1 Moving instances** (spike S17, then the feature). A running instance's snapshot carried to the other node and loaded there: a planned switchover hands a singleton over with its memory state instead of restarting it from `init`, and a node can be drained. To settle first: the new pid, what happens to links, monitors and names, and messages sent during the move.
+- [ ] **U1 Releases across the pair.** An upgrade of both nodes as one operation over the remote admin API: the standby first, a switchover (moving singletons with M1), then the other node, with gates between steps and an abort that rolls back what was done. Rules for the time two versions run at once: snapshot formats, wire versions, an app's messages.
+- [ ] **U2 Blue-green upgrades.** Two versions of an app side by side, traffic moved in steps (HTTP routes and pool routing by weight), then the old version retired, or the new one dropped.
+- [ ] **N1 Guest sockets.** `wasi:sockets` under policy: the manifest's scope enforced (S4's separate bind and connect rules), the address guard of HTTP egress, connection caps per app; for apps that speak MQTT, OPC UA or a database protocol themselves. SECURITY.md's boundary.
+- [ ] **N2 Native-process plugins.** Spike S19 first (an Erlang-style port, the host spawning and supervising a process over stdio, against a native process joining as a node through a client library), then the chosen one, with rustbridge's native runner: supervised like an instance, its own limits, granted capabilities only.
+- [ ] **X2 Exit.** X1's drill passes: the release cycle with zero downtime on the pair and the witness, under the soak's faults for an hour, with the HMI's error rate and point update gaps recorded. Then a docs pass for Phase 3, as W1 for Phase 2.
+
+Parked from Phase 3 (2026-10-16): placement across many nodes (labels, spread, `all-nodes`); opt-in global names (Raft); more guest SDKs; fuel metering.
+
+The rustbridge work for Phase 3 is the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait and the native-process runner (N2).
 
 ## Investigations
 
 Questions for later, each a spike with a time-box when scheduled.
 
-- **S17 Moving a running instance to another node.** The snapshot pair that upgrades use (`snapshot`, `load_snapshot`), carried over the cluster network and loaded on the other node. To settle: the new pid (pids name their node), what happens to links, monitors and registered names, and how messages sent during the move are handled. After D3; shares its mechanism with passivation (S11, E7).
+- **S17 Moving a running instance to another node** (scheduled as Phase 3's M1). The snapshot pair that upgrades use (`snapshot`, `load_snapshot`), carried over the cluster network and loaded on the other node. To settle: the new pid (pids name their node), what happens to links, monitors and registered names, and how messages sent during the move are handled. After D3; shares its mechanism with passivation (S11, E7).
 - **S18 Checking hot-standby instances follow the primary.** Compare the primary's and the standby's sequences of host calls (from probes), allowing for timestamps, to find a standby that has diverged. After D4.
-- **S19 Ports or nodes for external processes.** An Erlang-style port (the host spawns a process and talks over stdio, owned and supervised like an instance) against a native process joining as a cluster node through a client library. Relates to Phase 3's native-process plugins and rustbridge's native runner.
+- **S19 Ports or nodes for external processes** (scheduled as Phase 3's N2). An Erlang-style port (the host spawns a process and talks over stdio, owned and supervised like an instance) against a native process joining as a cluster node through a client library. Relates to Phase 3's native-process plugins and rustbridge's native runner.
 - **ZFS.** A node's data directory on a dataset: snapshots for backups and for seeding a standby's buckets.
 - **Jails and containers.** Running native plugins (S19) in FreeBSD jails as HAppliance does, or the node itself in a rootless container.
 - **S9 Debugging guests** (parked). wasmtime 49 offers a native debugger (`Config::debug_info` with `debug-builtins`: GDB and LLDB on JIT code, pausing the whole node, for development nodes) and an experimental guest debug API (`Config::guest_debug`: breakpoints and stepping per Store, which could park one instance behind a Debug Adapter Protocol endpoint while the others run; needs the guest's DWARF, an Engine of its own, and time parked counted as host time). The spike would check whether `guest_debug` works in wasmtime 49, measure the slowdown, and try one DAP session from VS Code. Time-box 2 days; if the API is not ready, document the native route.
@@ -167,6 +181,10 @@ Questions for later, each a spike with a time-box when scheduled.
 - **`gen_statem` support in the SDK**: state timeouts and `postpone` on the existing callbacks and timers.
 - **WASI 0.3 world** (`paddock:runtime@0.2.0`, async), when wasmtime marks component-model async stable and Rust has `wasm32-wasip3`; rerun S15's connection sweep first (DESIGN.md, "WASI 0.2 to 0.3 migration").
 - **Serial ports for apps** (narrowed out of F5 on 2026-10-16, no user yet): a port bound like a listener and served by a connection handler as one byte stream, or frames (by delimiter, idle gap or length) cast to an app with a `write` import, as an extension. Would reuse F5's tty layer, moved into a crate of its own.
+- **Placement across many nodes** (from Phase 3, 2026-10-16): node labels required or preferred, `spread`, `all-nodes`; the pair needs none of them.
+- **Opt-in global names** (from Phase 3, 2026-10-16): a cluster-wide registry on Raft; cluster-wide groups (D4) cover lookups across nodes meanwhile.
+- **More guest SDKs** (from Phase 3, 2026-10-16): other Component Model languages; any can target the WIT today without an SDK.
+- **Fuel metering** (from Phase 3, 2026-10-16): deterministic CPU accounting in place of the epoch deadline.
 - **Modbus RTU** (narrowed out of F5 on 2026-10-16; likely never): RTU master in `paddock-modbus`, one task per bus polling each unit in turn, over F5's tty layer; an RTU server would need tokio-modbus's MPL-licensed serial feature or an implementation of Paddock's own. Last on this plan.
 
 ## Code areas
