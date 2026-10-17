@@ -960,10 +960,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-scada-control"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.62.0",
+]
+
+[[package]]
 name = "example-scada-hmi"
 version = "0.0.0"
 dependencies = [
  "paddock-sdk",
+ "serde",
 ]
 
 [[package]]
@@ -972,7 +983,6 @@ version = "0.0.0"
 dependencies = [
  "paddock-sdk",
  "serde",
- "wit-bindgen 0.62.0",
 ]
 
 [[package]]

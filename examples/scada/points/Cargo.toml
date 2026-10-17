@@ -15,7 +15,6 @@ crate-type = ["cdylib"]
 [dependencies]
 paddock-sdk = { workspace = true, features = ["keyvalue"] }
 serde = { workspace = true }
-wit-bindgen = { workspace = true }
 
 [lints]
 workspace = true

@@ -141,13 +141,11 @@ async fn run(workers: usize) {
             sbom: None,
         },
         spec: AppSpec::from_json_value(&json!({
-            "registered_names": ["points-api"],
             "instances": { "count": pool, "routing": "hash:device" },
             "limits": { "mailbox_max": 10000 },
             "capabilities": {
                 "wasi:logging": {},
-                "wasi:keyvalue": { "shared": { "points": "rw" } },
-                "extensions": { PACKAGE: { "write": names } }
+                "wasi:keyvalue": { "shared": { "points": "rw" } }
             }
         }))
         .unwrap(),

@@ -24,6 +24,7 @@ members = [
     "examples/greeter/service",
     "examples/http-counter",
     "examples/line-server",
+    "examples/scada/control",
     "examples/scada/hmi",
     "examples/scada/points",
     "examples/tally",

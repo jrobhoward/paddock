@@ -1,0 +1,27 @@
+[package]
+name = "example-scada-control"
+version = "0.0.0"
+description = "Paddock example: SCADA alarms, operator writes and an event log, as a singleton"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# v1 by default; `v2` counts how often each alarm was raised and migrates
+# v1 snapshots.
+[features]
+v2 = []
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["config", "http", "keyvalue", "watch"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

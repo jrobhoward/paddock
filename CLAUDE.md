@@ -209,8 +209,12 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   WIT in its `wit/`), depending on `paddock-host` alone; linked into
   `paddock node` by `paddock`'s `modbus` feature (off by default). Device tasks,
   change detection and the update format (`points`), the server.
-  `examples/scada` is its demo (`points` pool, `hmi` connection handler);
-  `crates/paddock/tests/scada.rs` runs it against a fake device.
+  `examples/scada` is its demo and Phase 3's reference app (`points` pool,
+  `hmi` HTTP pool, `control` singleton in two versions, `drill.sh`, the
+  release drill on a pair and a witness); `crates/paddock/tests/scada.rs`
+  runs it on one node against a fake device, and
+  `crates/paddock-modbus/examples/fake_device.rs` serves fake devices to
+  the drill.
 - `crates/paddock-host/src/metrics.rs`: app metrics (per app, lock-free
   series) and the host's per-app counters, rendered as Prometheus text;
   the `paddock:metrics` service is `src/services/metrics`. Metric names

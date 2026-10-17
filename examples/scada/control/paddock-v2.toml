@@ -1,0 +1,56 @@
+# Version 2 of control (paddock.toml): counts how often each alarm was
+# raised, and migrates version 1 snapshots. Build with `--features v2`.
+#
+# Alarms, operator writes and the event log, as a singleton: on an HA pair
+# it runs on the primary only, and each node's HTTP listener forwards its
+# routes there from the standby (`standby = "forward"`). Needs `[http]`
+# and the `points` bucket in node config (see ../points/paddock.toml), the
+# Modbus devices it writes, and in policy:
+#
+#   [apps.control]
+#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging",
+#            "wasi:config", "paddock-modbus:modbus"]
+#   buckets = ["points"]
+#
+# Its `rules` can be set per node in `[config.control]`.
+[app]
+name = "control"
+version = "2.0.0"
+description = "SCADA alarms, operator writes and an event log (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.placement]
+mode = "singleton"
+
+[appserver.upgrade]
+mode = "snapshot"
+snapshot_version = 2
+from_versions = ["^1"]
+
+# `name: key > limit` or `name: key < limit`, separated by commas. Each
+# device also has an alarm `<device>-offline`.
+[appserver.config.defaults]
+rules = "pump-1-pressure: pump-1/holding/1 > 150, pump-2-pressure: pump-2/holding/1 > 150"
+
+[appserver.capabilities."wasi:http/incoming-handler"]
+routes = [
+  { path_prefix = "/scada/alarms" },
+  { path_prefix = "/scada/events" },
+  { path_prefix = "/scada/write" },
+]
+max_body = "1KiB"
+timeout_ms = 5000
+
+[appserver.capabilities."wasi:keyvalue".buckets]
+alarms = { durability = "disk" }
+events = { durability = "disk" }
+
+[appserver.capabilities."wasi:keyvalue".shared]
+points = "ro"
+
+[appserver.capabilities."wasi:config"]
+
+[appserver.capabilities."wasi:logging"]
+
+[appserver.capabilities.extensions."paddock-modbus:modbus"]
+write = ["pump-1", "pump-2"]

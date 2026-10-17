@@ -533,6 +533,16 @@ All notable changes are recorded here. The format follows
   Metrics per peer: `paddock_cluster_send_queue_bytes`,
   `paddock_cluster_send_refused_total`. `Mesh::set_send_budget` gives the
   in-memory transport the same budget for tests.
+- The SCADA example as Phase 3's reference app (`examples/scada`, see its
+  README): `hmi` serves the point table over HTTP with long polls
+  (`GET /scada/points?after=<revision>&wait_ms=<n>`), and a new `control`
+  singleton raises alarms from the table (rules in config, and one per
+  device offline), takes acknowledgements and device writes, and keeps an
+  event log, in two versions with a snapshot migration each way.
+  `examples/scada/drill.sh` runs a release cycle (upgrades, a switchover, a
+  rollback, the primary lost mid-upgrade) on a pair and a witness and
+  reports failed requests and point update gaps per step.
+  `paddock-modbus`'s `fake_device` example serves fake devices to it.
 
 ### Fixed
 
@@ -847,3 +857,6 @@ All notable changes are recorded here. The format follows
   extensions need not time their host functions.
 - The manifest's `wasi:http/outgoing-handler` is no longer reported as
   not enforced.
+- `examples/scada`'s `hmi` is an HTTP app instead of a line protocol on a
+  listener, and `points` no longer registers `points-api`, answers
+  queries or writes to devices (`control` does).

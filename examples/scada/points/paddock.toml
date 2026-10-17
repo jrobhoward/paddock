@@ -11,16 +11,13 @@
 #   deliver_to = "points"
 #   holding = [{ start = 0, count = 10 }]
 #
-# and in policy: grant = ["wasi:keyvalue", "paddock-modbus:modbus"],
+# and in policy: grant = ["wasi:logging", "wasi:keyvalue"],
 # buckets = ["points"].
 [app]
 name = "points"
 version = "1.0.0"
 description = "Modbus point table in a shared bucket (paddock example)"
 license = "MIT OR Apache-2.0"
-
-[appserver]
-registered_names = ["points-api"]
 
 [appserver.instances]
 count = 4
@@ -30,6 +27,3 @@ routing = "hash:device"
 
 [appserver.capabilities."wasi:keyvalue".shared]
 points = "rw"
-
-[appserver.capabilities.extensions."paddock-modbus:modbus"]
-write = ["pump-1"]

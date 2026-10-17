@@ -1,16 +1,25 @@
-# The operator's line protocol: one instance per connection on the `hmi`
-# listener, forwarding each command to `points-api`. Bind it in node
-# config:
+# The operator's view of the point table over HTTP, on every node. Needs
+# `[http]` and the `points` bucket in node config (see
+# ../points/paddock.toml), and in policy:
 #
-#   [listeners.hmi]
-#   address = "127.0.0.1:7071"
+#   [apps.hmi]
+#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
+#   buckets = ["points"]
 [app]
 name = "hmi"
 version = "1.0.0"
-description = "Answers point queries over TCP (paddock example)"
+description = "Serves the point table over HTTP, with long polls (paddock example)"
 license = "MIT OR Apache-2.0"
 
-[[appserver.listeners]]
-name = "hmi"
-idle_timeout_ms = 60000
-max_connections = 64
+[appserver.instances]
+count = 2
+
+[appserver.capabilities."wasi:http/incoming-handler"]
+routes = [{ path_prefix = "/scada/points" }]
+max_body = "1KiB"
+timeout_ms = 30000
+
+[appserver.capabilities."wasi:keyvalue".shared]
+points = "ro"
+
+[appserver.capabilities."wasi:logging"]
