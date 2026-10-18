@@ -1,0 +1,19 @@
+[package]
+name = "example-ledger"
+version = "0.0.0"
+description = "Paddock example: entries in a shared bucket, replicated on an HA pair when the node scopes it to the cluster"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["keyvalue", "watch"] }
+
+[lints]
+workspace = true

@@ -78,7 +78,13 @@ impl Node {
             .arg("--config")
             .arg(&self.config)
             .env("NO_COLOR", "1")
-            .env("RUST_LOG", "info,paddock::lease=debug")
+            // `PADDOCK_SOAK_LOG` overrides the nodes' filter (it must keep
+            // `paddock::lease=debug`, which the checker reads).
+            .env(
+                "RUST_LOG",
+                std::env::var("PADDOCK_SOAK_LOG")
+                    .unwrap_or_else(|_| "info,paddock::lease=debug".into()),
+            )
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)

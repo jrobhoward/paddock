@@ -79,6 +79,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
             "example-ping-pong",
             "example-chaos",
             "example-line-server",
+            "example-ledger",
         ],
         None,
         "plain",
@@ -189,14 +190,27 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
         "line-server.rbp",
     )
     .await;
+    let ledger = bundle(
+        ex.join("ledger/paddock.toml"),
+        plain_wasm.join("example_ledger.wasm"),
+        "ledger.rbp",
+    )
+    .await;
     let lines_port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
         .port();
 
+    let policy = dir.path().join("policy.toml");
+    std::fs::write(
+        &policy,
+        "[apps.ledger]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"ledger\"]\n",
+    )
+    .unwrap();
     let toml = format!(
-        "data_dir = {:?}\nadmin_socket = {:?}\nmax_instances = 16\ntrusted_keys = [{:?}, {:?}]\n[listeners.lines]\naddress = \"127.0.0.1:{lines_port}\"\n",
+        "data_dir = {:?}\nadmin_socket = {:?}\nmax_instances = 16\ntrusted_keys = [{:?}, {:?}]\npolicy = {policy:?}\n[listeners.lines]\naddress = \"127.0.0.1:{lines_port}\"\n\
+         [buckets.ledger]\ndurability = \"disk\"\n",
         dir.path().join("data"),
         socket,
         encrypted.stdout,
@@ -312,6 +326,16 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
         "{}",
         status.stdout
     );
+
+    // ledger: entries in a shared bucket (node-scoped here; on a pair,
+    // `scope = "cluster"` replicates it, as the replication soak runs it).
+    let deployed = paddock(&socket, &["deploy", s(&ledger)]).await;
+    assert!(deployed.ok, "{}", deployed.stderr);
+    let mut ledger_replies = Vec::new();
+    for command in ["put a 1", "put b 2", "get a", "latest b", "get zz", "keys"] {
+        ledger_replies.push(paddock(&socket, &["call", "ledger", command]).await.stdout);
+    }
+    assert_eq!(ledger_replies, ["ok", "ok", "1", "2", "none", "a,b"]);
 
     node.shutdown().await;
     let _ = stop.send(());

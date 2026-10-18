@@ -179,3 +179,34 @@ fn packet____for_or_from_an_earlier_creation____discarded() {
     // Each `count` call counts itself too.
     assert_eq!(counts, vec!["2", "3", "5"]);
 }
+
+#[test]
+fn join____seeds_answer_and_the_introduction_lost____member_learned_from_the_gossip() {
+    let (before, after) = simulate_attached(
+        33,
+        &[Role::Member, Role::Member, Role::Witness],
+        |sim| async move {
+            sim.node(2).rt.join_cluster(&[3]);
+            pass(200).await;
+            // Node 1 joins through the witness, whose answers are lost (on
+            // QUIC, with a connection replaced as they were sent). Nothing
+            // from node 2 reaches node 1: over QUIC only the lower id
+            // dials, so node 2 has no way to node 1 until node 1 dials.
+            for _ in 0..3 {
+                sim.mesh
+                    .lose_next(3, 1, |f| matches!(f, Frame::Members { .. }));
+            }
+            sim.mesh.stall_one_way(2, 1);
+            sim.node(1).rt.join_cluster(&[3]);
+            pass(200).await;
+            let before = known(&sim.node(1).rt);
+            // A gossip every ten heartbeats (1 s here); the losses may take
+            // one.
+            pass(3000).await;
+            (before, known(&sim.node(1).rt))
+        },
+    );
+
+    assert_eq!(before, vec![(1, 1), (3, 1)], "the loss took effect");
+    assert_eq!(after, vec![(1, 1), (2, 1), (3, 1)]);
+}

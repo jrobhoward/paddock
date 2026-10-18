@@ -944,6 +944,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-ledger"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+]
+
+[[package]]
 name = "example-line-server"
 version = "0.0.0"
 dependencies = [

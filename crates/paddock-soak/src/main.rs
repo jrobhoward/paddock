@@ -6,6 +6,10 @@
 //!   between two nodes, with `SIGKILL` and `SIGSTOP` of nodes, on a schedule
 //!   drawn from a seed. Every so often everything is healed and exactly one
 //!   node must run the singleton.
+//! - `replication`: the failover cluster with a `cluster` bucket on the
+//!   pair, written through both nodes by the ledger example; after each
+//!   heal both copies must agree and hold every acknowledged write
+//!   (ROADMAP K2).
 //! - `cluster`: three member nodes behind the same proxies, their instances
 //!   linking and monitoring each other at random under link and node
 //!   faults; after each heal every link and monitor must be listed on both

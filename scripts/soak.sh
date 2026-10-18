@@ -7,6 +7,11 @@
 #             proxies, under link cuts, holds and loss, SIGKILL and SIGSTOP
 #             (paddock-soak failover); fails on any moment when both nodes
 #             ran the singleton, or a heal after which other than one runs it
+#   replication  the failover cluster with a replicated (`cluster`) bucket
+#             on the pair, written through both nodes by the ledger example
+#             under the same faults (paddock-soak replication); fails when,
+#             after a heal, the copies differ, an acknowledged write is
+#             missing, or a refused one appears
 #   cluster   three member nodes behind the same proxies, their instances
 #             linking, monitoring and killing each other at random under the
 #             same faults (paddock-soak cluster); fails when, after a heal,
@@ -27,20 +32,27 @@
 #   --serial SPEC         give the failover pair a serial line the runs also
 #                         cut: `pty`, or DEV_A,DEV_B for two devices joined by
 #                         a null-modem cable (default: none)
+#   --replication-minutes M  length of each replication run (default 10);
+#                         it uses --serial too
 #   --cluster-minutes M   length of each cluster run (default 10)
 #   --chaos-minutes M     length of each chaos run (default 5)
 #   --sim-seeds N         random scenarios per sim run (default 200)
-#   --only KIND           run only sim, failover, cluster or chaos
+#   --only KIND           run only sim, failover, replication, cluster or
+#                         chaos
 #   --keep                keep the directories of runs that passed
 #
 # Each run gets a directory named <round>-<kind>-<seed> with its seed, logs
 # and result; a run that passed is removed unless --keep. summary.txt in
-# --dir lists every run. Rerun a failover, cluster or chaos run with the same seed:
+# --dir lists every run. Rerun a failover, replication, cluster or chaos run
+# with the same seed:
 #   target/release/paddock-soak failover --dir DIR --seed SEED
 # (timing still differs between runs, so a seed does not replay exactly),
 # and recheck a failover run's logs with paddock-soak check DIR. Replay a
 # simulation seed exactly with PADDOCK_SIM_SEED=<seed> (scenarios) or
 # PADDOCK_SIM_FAILOVER_FIRST_SEED=<seed> PADDOCK_SIM_FAILOVER_SEEDS=1.
+#
+# PADDOCK_SOAK_LOG sets the nodes' RUST_LOG (keep paddock::lease=debug, which
+# the failover check reads), for example to add paddock_host::transport=debug.
 #
 # Exit status: 0 when every run passed, 1 when one failed, 2 on a usage error.
 
@@ -56,6 +68,7 @@ dir=""
 seed=$(( (RANDOM << 15 | RANDOM) ))
 failover_minutes=10
 serial=""
+replication_minutes=10
 cluster_minutes=10
 chaos_minutes=5
 sim_seeds=200
@@ -68,6 +81,7 @@ while [ "$#" -gt 0 ]; do
         --seed) seed=${2:-}; shift ;;
         --failover-minutes) failover_minutes=${2:-}; shift ;;
         --serial) serial=${2:-}; shift ;;
+        --replication-minutes) replication_minutes=${2:-}; shift ;;
         --cluster-minutes) cluster_minutes=${2:-}; shift ;;
         --chaos-minutes) chaos_minutes=${2:-}; shift ;;
         --sim-seeds) sim_seeds=${2:-}; shift ;;
@@ -83,9 +97,9 @@ if [ -z "$hours" ]; then
     exit 2
 fi
 case "$only" in
-    "") kinds="sim failover cluster chaos" ;;
-    sim | failover | cluster | chaos) kinds=$only ;;
-    *) echo "soak: --only takes sim, failover, cluster or chaos" >&2; exit 2 ;;
+    "") kinds="sim failover replication cluster chaos" ;;
+    sim | failover | replication | cluster | chaos) kinds=$only ;;
+    *) echo "soak: --only takes sim, failover, replication, cluster or chaos" >&2; exit 2 ;;
 esac
 [ -n "$dir" ] || dir=target/soak/$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$dir"
@@ -93,7 +107,7 @@ summary=$dir/summary.txt
 
 echo "soak: building (release)"
 cargo build --release --locked -p paddock -p paddock-soak || exit 1
-cargo build --release --locked --target wasm32-wasip2 -p example-counter -p example-chaos \
+cargo build --release --locked --target wasm32-wasip2 -p example-counter -p example-chaos -p example-ledger \
     -p paddock-fixture-chaos || exit 1
 
 now() { date +%s; }
@@ -121,6 +135,11 @@ while [ "$(now)" -lt "$deadline" ]; do
             failover)
                 target/release/paddock-soak failover --dir "$run" --seed "$seed" \
                     --minutes "$(fit "$failover_minutes")" ${serial:+--serial "$serial"} \
+                    > "$run/output.txt" 2>&1
+                ;;
+            replication)
+                target/release/paddock-soak replication --dir "$run" --seed "$seed" \
+                    --minutes "$(fit "$replication_minutes")" ${serial:+--serial "$serial"} \
                     > "$run/output.txt" 2>&1
                 ;;
             cluster)

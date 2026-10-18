@@ -23,6 +23,7 @@ members = [
     "examples/greeter/node",
     "examples/greeter/service",
     "examples/http-counter",
+    "examples/ledger",
     "examples/line-server",
     "examples/scada/control",
     "examples/scada/hmi",

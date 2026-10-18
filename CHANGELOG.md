@@ -560,6 +560,14 @@ All notable changes are recorded here. The format follows
   return then; reads and watches use the node's own copy; a standby that
   falls behind catches up from the log or a snapshot. Without a primary
   holding its lease, writes fail (`paddock:watch` `unavailable`).
+- `examples/ledger`: text entries in a shared bucket by `paddock call`
+  (`put`, `get`, `latest`, `keys`), the example for `cluster` buckets.
+- `paddock-soak replication` (and `scripts/soak.sh`'s `replication` kind,
+  `--replication-minutes`): the failover soak's witness and pair under
+  the same faults, with a `cluster` bucket the ledger example writes
+  through both nodes; after each heal it fails unless both copies list
+  the same keys, every acknowledged write is among them, and no write the
+  client was told was refused appears.
 - `paddock:watch` `get-linearizable` (`paddock_sdk::watch::get_linearizable`):
   a read served by the HA pair's primary on a replicated bucket, the same
   as `get` elsewhere.
@@ -572,6 +580,12 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A node that missed the members list a seed sent when it joined (lost
+  with a connection replaced or cut as it was sent) never learned of the
+  members it lacked, and when only the other node of such a pair dials
+  (the lower id), the two never connected; an HA pair then stayed apart
+  after a heal (found by the replication soak). Each node now sends every
+  member it knows to each peer it reaches every ten heartbeats.
 - The tests `start_apps____dependencies____providers_start_first_and_stop_last`
   and `shutdown____running_children____stopped_gracefully_in_reverse_order`
   failed now and then under load: two waiter tasks recorded the stop order

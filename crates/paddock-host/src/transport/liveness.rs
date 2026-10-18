@@ -31,7 +31,7 @@
 //! heard) from a dead node (both silent).
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::Duration;
 
@@ -195,6 +195,8 @@ pub(crate) struct Liveness {
     started: AtomicBool,
     /// What this node's beats carry.
     payload: RwLock<Vec<u8>>,
+    /// Heartbeat rounds so far, for the membership gossip.
+    rounds: AtomicU64,
 }
 
 impl std::fmt::Debug for Liveness {
@@ -216,6 +218,7 @@ impl Liveness {
             events: broadcast::channel(1024).0,
             started: AtomicBool::new(false),
             payload: RwLock::new(Vec::new()),
+            rounds: AtomicU64::new(0),
         }
     }
 
@@ -600,4 +603,27 @@ fn round(rt: &Arc<RuntimeInner>) {
     }
     // Process groups: a snapshot to each peer in a new session (ROADMAP D4).
     rt.services.groups().sync(rt);
+    // Membership gossip: every member this node knows, to each peer it
+    // reaches, every few rounds. Joins pass members on once; a `Members`
+    // lost with a session that ended (a connection replaced or cut as it
+    // was sent) would otherwise leave a node that never learns of a member,
+    // and, when only the other node of that pair dials, never connects to
+    // it (found by the replication soak, 2026-10-17).
+    if liveness.rounds.fetch_add(1, Ordering::Relaxed) % GOSSIP_ROUNDS == GOSSIP_ROUNDS - 1 {
+        let members = rt.membership.list();
+        for node in rt.membership.others() {
+            if liveness.reachable(node) {
+                super::send(
+                    rt,
+                    node,
+                    Frame::Members {
+                        members: members.clone(),
+                    },
+                );
+            }
+        }
+    }
 }
+
+/// Heartbeat rounds between membership gossips.
+const GOSSIP_ROUNDS: u64 = 10;

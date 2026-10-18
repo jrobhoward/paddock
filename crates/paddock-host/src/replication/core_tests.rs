@@ -188,7 +188,7 @@ async fn write____without_a_lease_or_on_the_standby____unavailable() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn standby_gone____primary_records_it_out_of_date_then_commits_alone() {
+async fn primary____standby_gone____records_it_out_of_date_then_commits_alone() {
     let mut pair = Pair::running();
 
     pair.write(A, vec![set(7, "a", "1")]);
@@ -209,7 +209,7 @@ async fn standby_gone____primary_records_it_out_of_date_then_commits_alone() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn standby_silent_on_every_path____asks_at_once() {
+async fn primary____standby_silent_on_every_path____asks_the_witness_at_once() {
     let mut pair = Pair::running();
 
     pair.write(A, vec![set(7, "a", "1")]);
@@ -220,7 +220,7 @@ async fn standby_silent_on_every_path____asks_at_once() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn standby_back____caught_up_then_sync_and_the_record_cleared() {
+async fn primary____standby_back____caught_up_then_sync_and_the_record_cleared() {
     let mut pair = Pair::running();
     pair.write(A, vec![set(7, "a", "1")]);
     pair.drop_all();
@@ -244,7 +244,7 @@ async fn standby_back____caught_up_then_sync_and_the_record_cleared() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn lost_append____resent_after_the_timeout() {
+async fn append____lost____resent_after_the_timeout() {
     let mut pair = Pair::running();
 
     pair.write(A, vec![set(7, "a", "1")]);
@@ -259,7 +259,7 @@ async fn lost_append____resent_after_the_timeout() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn primary_steps_down____waiting_writes_answered_unknown() {
+async fn primary____steps_down____waiting_writes_answered_unknown() {
     let mut pair = Pair::running();
     pair.write(A, vec![set(7, "a", "1")]);
     pair.drop_all();
@@ -293,7 +293,7 @@ async fn new_primary____stale_suffix_on_the_standby____dropped_and_replaced() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn standby_far_behind____catches_up_from_a_snapshot_in_chunks() {
+async fn standby____far_behind____catches_up_from_a_snapshot_in_chunks() {
     let mut pair = Pair::new(Config {
         keep: 0,
         chunk_bytes: 64,
@@ -361,7 +361,7 @@ async fn snapshot____standby_holds_its_last_entry____keeps_its_log_and_commits()
 }
 
 #[tokio::test(start_paused = true)]
-async fn read_ready____only_once_the_epochs_noop_commits_with_the_lease() {
+async fn read_ready____new_primary____only_once_its_noop_commits_with_the_lease() {
     let mut pair = Pair::new(config());
     pair.lead(B, lead(Standing::Standby, 1, false));
     pair.lead(A, lead(Standing::Primary, 1, true));

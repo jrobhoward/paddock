@@ -7,6 +7,7 @@ pub(crate) mod events;
 pub(crate) mod failover;
 pub(crate) mod node;
 pub(crate) mod proxy;
+pub(crate) mod replication;
 pub(crate) mod rng;
 pub(crate) mod time;
 
@@ -48,6 +49,28 @@ enum Command {
         /// run cuts too: `pty` (two ptys joined by the runner), or
         /// `DEV_A,DEV_B`, two devices joined by a null-modem cable (node 1
         /// is relayed to `DEV_A` through a pty, node 2 opens `DEV_B`).
+        #[arg(long)]
+        serial: Option<String>,
+    },
+    /// A witness and a pair as for `failover`, with a `cluster` bucket the
+    /// ledger example writes through both nodes; fails when, after a heal,
+    /// the copies differ, an acknowledged write is missing, or a refused
+    /// one appears.
+    Replication {
+        #[command(flatten)]
+        run: Run,
+        /// Length of each episode of faults before everything is healed.
+        #[arg(long, default_value_t = 60)]
+        episode_s: u64,
+        #[arg(long, default_value_t = 200)]
+        heartbeat_ms: u64,
+        #[arg(long, default_value_t = 1000)]
+        node_timeout_ms: u64,
+        #[arg(long, default_value_t = 2000)]
+        lease_ms: u64,
+        #[arg(long, default_value_t = 300)]
+        margin_ms: u64,
+        /// As for `failover`.
         #[arg(long)]
         serial: Option<String>,
     },
@@ -127,6 +150,36 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
         } => {
             let (dir, root, paddock, seed, minutes) = prepare(run)?;
             failover::run(&failover::Args {
+                dir,
+                root,
+                paddock,
+                seed,
+                minutes,
+                episode: Duration::from_secs(episode_s),
+                timings: failover::Timings {
+                    heartbeat_ms,
+                    node_timeout_ms,
+                    lease_ms,
+                    margin_ms,
+                },
+                serial: serial
+                    .as_deref()
+                    .map(failover::SerialSpec::parse)
+                    .transpose()?,
+            })
+            .await
+        }
+        Command::Replication {
+            run,
+            episode_s,
+            heartbeat_ms,
+            node_timeout_ms,
+            lease_ms,
+            margin_ms,
+            serial,
+        } => {
+            let (dir, root, paddock, seed, minutes) = prepare(run)?;
+            replication::run(&failover::Args {
                 dir,
                 root,
                 paddock,

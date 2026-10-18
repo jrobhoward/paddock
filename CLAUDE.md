@@ -146,6 +146,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   counter in Postgres (`paddock:sql`, tutorial chapter 4), run by
   `crates/paddock/tests/tally.rs` against a scratch Postgres
   (`crates/paddock-host/tests/common/pg.rs`, shared by path).
+  `examples/ledger` puts and gets text entries in a shared bucket, by
+  `paddock call`: the example for `cluster` buckets, driven by
+  `tests/examples.rs` and written through by the replication soak.
   `examples/failover/` is a demo script (a witness and a pair as three
   `paddock node` processes, the primary killed), not a crate.
   `examples/tracing/` is a demo script and bpftrace scripts for the
@@ -248,7 +251,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-soak`: the `paddock-soak` binary behind `scripts/soak.sh`
   (Unix only): `failover` runs a witness and a pair as `paddock node`
   processes behind UDP proxies (each node binds `cluster.address` and
-  advertises its proxy's) under seeded faults, `cluster` three member nodes
+  advertises its proxy's) under seeded faults, `replication` the same
+  cluster with a `cluster` bucket the ledger example writes through both
+  nodes, checked after each heal that the copies agree and hold every
+  acknowledged write, `cluster` three member nodes
   behind the same proxies whose `paddock-fixture-chaos` instances link and
   monitor each other at random, checked after each heal for agreement
   between every node's `ps` links and monitors, `chaos` the chaos example on

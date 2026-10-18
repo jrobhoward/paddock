@@ -45,7 +45,7 @@ pub(crate) struct Timings {
 
 impl Timings {
     /// Time for the pair to hand over after a fault ends, with slack.
-    fn settle(&self) -> Duration {
+    pub(crate) fn settle(&self) -> Duration {
         Duration::from_millis(self.node_timeout_ms + 2 * self.lease_ms + 2 * self.margin_ms + 2000)
     }
 }
@@ -117,13 +117,42 @@ impl Drop for SerialLine {
 /// The serial line's speed.
 const BAUD: u32 = 115_200;
 
+/// What the cluster runs: the app deployed to the pair, and what the
+/// pair's node configs and policy add.
+#[derive(Debug)]
+pub(crate) struct Setup {
+    /// The app's name, and its manifest and component.
+    pub app: &'static str,
+    pub manifest: String,
+    pub wasm: PathBuf,
+    /// Added to each pair node's config, before its `[cluster]` table.
+    pub pair_config: String,
+    /// The pair's operator policy, if the app needs grants.
+    pub policy: Option<String>,
+}
+
+/// The counter example as a singleton.
+fn singleton(args: &Args) -> anyhow::Result<Setup> {
+    let manifest = std::fs::read_to_string(args.root.join("examples/counter/paddock.toml"))?
+        + "\n[appserver.placement]\nmode = \"singleton\"\n";
+    Ok(Setup {
+        app: APP,
+        manifest,
+        wasm: args
+            .root
+            .join("target/wasm32-wasip2/release/example_counter.wasm"),
+        pair_config: String::new(),
+        policy: None,
+    })
+}
+
 /// Run, check, and return whether the run passed.
 pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
     let events = Arc::new(EventLog::create(&args.dir.join("events.jsonl"))?);
     let deadline = Instant::now() + Duration::from_secs_f64(args.minutes * 60.0);
     let mut rng = Rng::new(args.seed);
     let outcome = {
-        let mut cluster = Cluster::start(args, events.clone()).await?;
+        let mut cluster = Cluster::start(args, &singleton(args)?, events.clone()).await?;
         let mut ok = cluster.settle().await;
         while Instant::now() < deadline {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -163,8 +192,8 @@ enum Kind {
 
 /// The three nodes, their proxies and the faults between them.
 #[derive(Debug)]
-struct Cluster {
-    nodes: Vec<Node>,
+pub(crate) struct Cluster {
+    pub(crate) nodes: Vec<Node>,
     faults: Arc<Faults>,
     events: Arc<EventLog>,
     timings: Timings,
@@ -173,8 +202,12 @@ struct Cluster {
 
 impl Cluster {
     /// Keys, configs, proxies and the bundle; start the witness and the
-    /// pair; deploy the singleton to the pair.
-    async fn start(args: &Args, events: Arc<EventLog>) -> anyhow::Result<Self> {
+    /// pair; deploy the app to the pair.
+    pub(crate) async fn start(
+        args: &Args,
+        setup: &Setup,
+        events: Arc<EventLog>,
+    ) -> anyhow::Result<Self> {
         let dir = &args.dir;
         let t = args.timings;
         let mut peers_file = String::from("[peers]\n");
@@ -188,12 +221,10 @@ impl Cluster {
         }
         std::fs::write(dir.join("peers.toml"), peers_file)?;
 
-        let manifest = std::fs::read_to_string(args.root.join("examples/counter/paddock.toml"))?
-            + "\n[appserver.placement]\nmode = \"singleton\"\n";
-        let wasm = args
-            .root
-            .join("target/wasm32-wasip2/release/example_counter.wasm");
-        let (app, signer) = bundle(&args.paddock, dir, APP, &manifest, &wasm)?;
+        let (app, signer) = bundle(&args.paddock, dir, setup.app, &setup.manifest, &setup.wasm)?;
+        if let Some(policy) = &setup.policy {
+            std::fs::write(dir.join("policy.toml"), policy)?;
+        }
 
         let bound: Vec<_> = (0..3).map(|_| free_udp()).collect::<Result<_, _>>()?;
         let names: HashMap<_, _> = bound.iter().copied().zip(1..=3).collect();
@@ -221,6 +252,16 @@ impl Cluster {
                 t.heartbeat_ms,
                 t.node_timeout_ms,
             );
+            if n != 3 {
+                // The policy is a root key and the extra tables follow the
+                // root keys: both go before `[cluster]`.
+                let mut extra = String::new();
+                if setup.policy.is_some() {
+                    let _ = writeln!(extra, "policy = {:?}", dir.join("policy.toml"));
+                }
+                extra += &setup.pair_config;
+                config = config.replacen("[cluster]\n", &format!("{extra}[cluster]\n"), 1);
+            }
             if n == 3 {
                 config += "role = \"witness\"\n[witness]\npair = [1, 2]\nfirst = 1\n";
             } else {
@@ -292,7 +333,7 @@ impl Cluster {
     }
 
     /// Faults for `length`, each undone after its time or at the end.
-    async fn episode(&mut self, rng: &mut Rng, length: Duration) -> anyhow::Result<()> {
+    pub(crate) async fn episode(&mut self, rng: &mut Rng, length: Duration) -> anyhow::Result<()> {
         let end = Instant::now() + length;
         let mut active: Vec<(Instant, Undo)> = Vec::new();
         while Instant::now() < end {
@@ -398,7 +439,7 @@ impl Cluster {
     }
 
     /// Every link passing, every node running and continued.
-    async fn heal(&mut self) -> anyhow::Result<()> {
+    pub(crate) async fn heal(&mut self) -> anyhow::Result<()> {
         self.faults.heal_all().await;
         if self.serial.as_ref().is_some_and(|l| *l.cut.borrow()) {
             self.set_serial(false);

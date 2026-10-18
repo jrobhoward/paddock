@@ -1,0 +1,27 @@
+# Entries in the node's shared `ledger` bucket. On an HA pair, scope the
+# bucket to the cluster and every entry is kept on both nodes: a write
+# from either node returns once the primary has committed it. Needs, in
+# node config (on both nodes of a pair):
+#
+#   [buckets.ledger]
+#   durability = "disk"
+#   scope = "cluster"          # on a pair with [failover] arbiter "witness"
+#
+# and in policy:
+#
+#   [apps.ledger]
+#   grant = ["wasi:keyvalue"]
+#   buckets = ["ledger"]
+#
+# Bundle with:
+#   cargo build -p example-ledger --target wasm32-wasip2 --release
+#   paddock bundle examples/ledger/paddock.toml target/wasm32-wasip2/release/example_ledger.wasm --key paddock.key
+# then `paddock call ledger "put a 1"`, `paddock call ledger "get a"`.
+[app]
+name = "ledger"
+version = "1.0.0"
+description = "Entries in a shared bucket, replicated on an HA pair (paddock example)"
+license = "MIT OR Apache-2.0"
+
+[appserver.capabilities."wasi:keyvalue".shared]
+ledger = "rw"

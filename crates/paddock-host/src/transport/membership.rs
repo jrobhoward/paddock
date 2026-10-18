@@ -6,7 +6,9 @@
 //! newcomer on to the other members. A node that learns of a member it did
 //! not know sends it a join of its own, so every pair ends up connected (a
 //! full mesh, as Erlang's `connect_all`). Each node heartbeats every member
-//! it knows ([`super::liveness`]).
+//! it knows ([`super::liveness`]), and every ten heartbeats sends every
+//! member it knows to each peer it reaches, so a node that missed a join's
+//! answer still learns of every member.
 //!
 //! Membership and liveness are separate: a member that stops answering
 //! stays a member, with its session ended, until it answers again or
