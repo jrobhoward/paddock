@@ -67,9 +67,9 @@ Checked on 2026-10-17 with TLC 2026.02.28 (OpenJDK 21) on the 16-core developmen
 | `Vac_*` (eight) | one at a time | 124 to 12,543 (stopped) | each violated, as required |
 | `Sync1` | as `Design1`, with `PromoteAlone = FALSE` | 36,602,522 | pass (6 min 9 s) |
 | `SyncNoOutdated`, `SyncVac_*` (three) | one at a time, `PromoteAlone = FALSE` | under 13,000 each (stopped) | each violated, as required |
-| `EagerSeq` | as `DesignSeq`, with `PromoteAlone = FALSE` and `EagerSync = TRUE` (K2's rules) | running | |
+| `EagerSeq` | as `DesignSeq`, with `PromoteAlone = FALSE` and `EagerSync = TRUE` (K2's rules) | 4,300,097,334 | pass (14 h 34 min, 12 workers, depth 70, contended)* |
 | `Eager1` | as `Design1`, with both | 59,429,764 | pass (14 min 32 s, 8 workers, contended) |
 | `EagerNoReportInSync` | one at a time, both, R2's report allowed while alone | stopped early | `LeaderComplete` violated, as required |
 | `EagerVac_Report` | one at a time, both | stopped early | `NoReport` violated, as required |
 
-\* At two billion states, TLC's 64-bit fingerprints probably collided once or a few times (its estimates: 1.3 optimistic, 0.5 from the actual fingerprints), so a handful of states may have gone unexplored. `Design1`, a subset with no collision risk to speak of, passed too, and every rule-off config finds its counterexample within 7 million states. A second run with another fingerprint seed (`-fp 2`) would close that gap at the cost of another six and a half hours.
+\* At two billion states and more, TLC's 64-bit fingerprints probably collided once or a few times (its estimates: 1.3 optimistic and 0.5 from the actual fingerprints for `DesignSeq`, 5.7 and 0.5 for `EagerSeq`), so a handful of states may have gone unexplored. `Design1`, a subset with no collision risk to speak of, passed too, and every rule-off config finds its counterexample within 7 million states. A second run with another fingerprint seed (`-fp 2`) would close that gap at the cost of another six and a half hours.
