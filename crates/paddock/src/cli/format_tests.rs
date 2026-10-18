@@ -161,7 +161,33 @@ fn primary() -> paddock::api::FailoverInfo {
         paths: [("link".to_string(), true)].into(),
         singletons: vec![],
         generation: 7,
+        partner_outdated: false,
+        replication: None,
     }
+}
+
+#[test]
+fn failover____primary_with_cluster_buckets____replication_line() {
+    let mut info = primary();
+    info.partner_outdated = true;
+    info.replication = Some(paddock::api::ReplicationInfo {
+        buckets: vec!["points".into()],
+        commit: 40,
+        last: 42,
+        base: 0,
+        partner_matched: Some(30),
+        alone: true,
+    });
+
+    let out = failover(&info);
+
+    assert!(out.contains("\noutdated:   the partner lacks"), "{out}");
+    assert!(
+        out.ends_with(
+            "\nreplicated: points (commit 40, last 42, partner at 30, 12 behind, committing alone)"
+        ),
+        "{out}"
+    );
 }
 
 #[test]
@@ -200,6 +226,8 @@ fn failover____standby_waiting____says_how_to_confirm() {
         paths: [("link".to_string(), false), ("serial".to_string(), true)].into(),
         singletons: vec!["leader".into()],
         generation: 2,
+        partner_outdated: false,
+        replication: None,
     };
 
     let out = failover(&info);

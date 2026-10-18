@@ -329,8 +329,9 @@ where
 
 /// Three `paddock node` processes in `d`: a witness and the pair, each of
 /// the pair with an HTTP listener on its own port and `http_extra(n)` in
-/// that listener's table, and the board bundled from `manifest` deployed to
-/// both. Waits for node 1 primary and node 2 standby.
+/// that listener's table, the `board` bucket on disk (with `bucket_extra`
+/// in its table), and the board bundled from `manifest` deployed to both.
+/// Waits for node 1 primary and node 2 standby.
 struct Pair {
     _witness: Process,
     n1: Process,
@@ -343,6 +344,7 @@ async fn start_pair(
     manifest: &Path,
     grant: &str,
     http_extra: impl Fn(u32, &[u16; 2]) -> String,
+    bucket_extra: &str,
 ) -> Pair {
     use std::os::unix::fs::PermissionsExt;
 
@@ -398,7 +400,7 @@ async fn start_pair(
         if n != 3 {
             let port = ports[usize::try_from(n - 1).unwrap()];
             t += &format!(
-                "[http.main]\naddress = \"127.0.0.1:{port}\"\n{}[buckets.board]\ndurability = \"disk\"\n",
+                "[http.main]\naddress = \"127.0.0.1:{port}\"\n{}[buckets.board]\ndurability = \"disk\"\n{bucket_extra}",
                 http_extra(n, &ports)
             );
         }
@@ -445,7 +447,7 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby() 
         mut n1,
         n2,
         ports,
-    } = start_pair(dir.path(), &manifest, grant, |_, _| String::new()).await;
+    } = start_pair(dir.path(), &manifest, grant, |_, _| String::new(), "").await;
     // The primary must see the standby's instance in the group first.
     until("a write reaches the standby", || async {
         write(ports[0]).await.2 == 1
@@ -522,10 +524,16 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
         mut n1,
         n2,
         ports,
-    } = start_pair(d, &manifest, grant, |n, ports| {
-        let partner = ports[usize::try_from(2 - n).unwrap()];
-        format!("partner_url = \"http://127.0.0.1:{partner}/\"\n")
-    })
+    } = start_pair(
+        d,
+        &manifest,
+        grant,
+        |n, ports| {
+            let partner = ports[usize::try_from(2 - n).unwrap()];
+            format!("partner_url = \"http://127.0.0.1:{partner}/\"\n")
+        },
+        "",
+    )
     .await;
     board(ports[0]).await;
 
@@ -563,7 +571,14 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
         mut n1,
         n2,
         ports,
-    } = start_pair(d, &manifest, grant, |_, _| "standby = \"forward\"\n".into()).await;
+    } = start_pair(
+        d,
+        &manifest,
+        grant,
+        |_, _| "standby = \"forward\"\n".into(),
+        "",
+    )
+    .await;
     let (_, primary_pid) = board(ports[0]).await;
     // Forwarding starts once the standby hears the primary.
     until("the standby forwards", || async {
@@ -588,4 +603,64 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
     assert_eq!(answered_by, primary_pid, "the primary's instance answered");
     assert_eq!(after, 0, "node 2 serves its own board");
     assert!(own_pid.starts_with("<2."), "{own_pid}");
+}
+
+/// The board on a `cluster` bucket (ROADMAP K2): the bucket itself is
+/// replicated between the pair, so the count survives `kill -9` of the
+/// primary without the app replicating anything.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby() {
+    let dir = short_dir();
+    let manifest = root().join("examples/board/paddock.toml");
+    let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
+    let Pair {
+        _witness,
+        mut n1,
+        n2,
+        ports,
+    } = start_pair(
+        dir.path(),
+        &manifest,
+        grant,
+        |_, _| String::new(),
+        "scope = \"cluster\"\n",
+    )
+    .await;
+
+    let mut written = Vec::new();
+    for _ in 0..3 {
+        until("a write commits", || async {
+            write(ports[0]).await.0 == 200
+        })
+        .await;
+        written.push(board(ports[0]).await.0);
+    }
+    until("the standby's copy has every write", || async {
+        board(ports[1]).await.0 == 3
+    })
+    .await;
+    let status = paddock::api::Client::new(&n1.socket)
+        .failover()
+        .await
+        .unwrap();
+    n1.child.kill().await.unwrap();
+    until("node 2 primary", || async { n2.role().await == "primary" }).await;
+    let after_failover = board(ports[1]).await.0;
+    until("a write on the new primary commits", || async {
+        write(ports[1]).await.0 == 200
+    })
+    .await;
+    let standing = paddock::api::Client::new(&n2.socket)
+        .failover()
+        .await
+        .unwrap();
+
+    assert_eq!(written, [1, 2, 3]);
+    let replication = status.replication.unwrap();
+    assert_eq!(replication.buckets, ["board"]);
+    assert_eq!(replication.partner_matched, Some(replication.last));
+    assert_eq!(after_failover, 3, "every committed write survived");
+    assert_eq!(board(ports[1]).await.0, 4);
+    assert!(standing.partner_outdated, "committed alone once recorded");
+    assert!(standing.replication.unwrap().alone);
 }

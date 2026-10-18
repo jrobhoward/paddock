@@ -42,6 +42,7 @@ mod pool;
 mod probe;
 mod process;
 mod registry;
+mod replication;
 mod runtime;
 pub mod services;
 mod spec;
@@ -70,6 +71,7 @@ pub use pid::Pid;
 #[cfg(fuzzing)]
 #[doc(hidden)]
 pub use pool::routing_key;
+pub use replication::ReplicationStatus;
 pub use runtime::{LoadedApp, Runtime};
 pub use spec::{InstanceSpec, PRIV_PATH, Preopen};
 pub use supervisor::{

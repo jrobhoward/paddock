@@ -71,6 +71,14 @@ CONSTANTS Crashes, LanFaults, SerialFaults, WanFaults, WitnessCrashes, Compactio
 \* Design switches.
 CONSTANTS Outdated, ReportOnlyInSync, CommitWhileRunning, DurableAck, ReadBarrier,
           LeaseReads, KeepSuffix
+\* PromoteAlone: a grant records the partner out of date and the new primary
+\* starts alone, and a resumed one alone if the record stands. Otherwise
+\* both start in sync and go alone like any primary, so a pair that never
+\* commits alone never has a record standing.
+CONSTANTS PromoteAlone
+\* EagerSync: an alone primary may return to sync mode at any time, not only
+\* once the partner holds the whole log (under steady writes it never does).
+CONSTANTS EagerSync
 
 Nodes == {A, B}
 \* MaxFaults <- NoBound in a config (TLC configs take no negative numbers).
@@ -186,8 +194,8 @@ Promote(n) ==
     /\ lease' = [lease EXCEPT ![n] = TRUE]
     /\ wEpoch' = epoch[n] + 1
     /\ wPromoted' = n
-    /\ wAlone' = Outdated
-    /\ mode' = [mode EXCEPT ![n] = "alone"]
+    /\ wAlone' = (Outdated /\ PromoteAlone)
+    /\ mode' = [mode EXCEPT ![n] = IF Outdated /\ ~PromoteAlone THEN "sync" ELSE "alone"]
     /\ TakeOver(n)
     /\ UNCHANGED <<alive, yielding, netVars, dataVars, q, acked, writes, faults, switchovers>>
 
@@ -227,7 +235,7 @@ Resume(n) ==
     /\ epoch' = [epoch EXCEPT ![n] = wEpoch]
     /\ lease' = [lease EXCEPT ![n] = TRUE]
     /\ yielding' = [yielding EXCEPT ![n] = FALSE]
-    /\ mode' = [mode EXCEPT ![n] = IF wAlone THEN "alone" ELSE "sync"]
+    /\ mode' = [mode EXCEPT ![n] = IF wAlone /\ PromoteAlone THEN "alone" ELSE "sync"]
     /\ TakeOver(n)
     /\ UNCHANGED <<alive, netVars, witVars, dataVars, q, acked, writes, faults, switchovers>>
 
@@ -349,7 +357,7 @@ GoAlone(n) ==
 
 \* The partner has acked the whole log: commit in sync again.
 GoSync(n) ==
-    /\ Leads(n) /\ mode[n] = "alone" /\ match[n] = Len(log[n])
+    /\ Leads(n) /\ mode[n] = "alone" /\ (EagerSync \/ match[n] = Len(log[n]))
     /\ mode' = [mode EXCEPT ![n] = "sync"]
     /\ UNCHANGED <<foVars, netVars, witVars, dataVars, next, match, q, acked,
                    writes, faults, switchovers>>

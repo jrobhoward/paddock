@@ -10,11 +10,11 @@ A node reads its configuration, keys and policy from wherever its config file na
 | --- | --- | --- |
 | `state.json` | Deployed apps: versions, running or stopped, deploy order | yes |
 | `bundles/<app>/<version>.rbp` | The signed bundles of each app's current and previous version | yes |
-| `kv/` | Keyvalue data: each app's buckets and the shared buckets (redb) | yes, from a stopped node or a filesystem snapshot |
+| `kv/` | Keyvalue data: each app's buckets and the shared buckets, and on a pair node the replicated log with its `cluster` buckets (redb) | yes, from a stopped node or a filesystem snapshot |
 | `audit.log` | Every admin change, one JSON record per line | as policy requires |
 | `creation` | Raised on every start; part of every pid | never restore an older one (see below) |
 | `failover-epoch` | A pair node's highest failover epoch | never restore an older one |
-| `witness-state` | A witness's epoch and the node it last promoted | never restore an older one |
+| `witness-state` | A witness's epoch, the node it last promoted, and `outdated` while that node's partner lacks replicated writes | never restore an older one |
 | `priv/<app>/<version>/` | Each bundle's `priv/` files, extracted again on every start | no |
 | `compiled/<app>/<version>/` | Compiled components, so a restart does not compile again; only files owned by the node's user and not writable by group or others are read | no |
 | `tmp/` | Uploads being verified | no |
@@ -22,6 +22,8 @@ A node reads its configuration, keys and policy from wherever its config file na
 | `admin.sock` | The admin API (mode 0600), unless `admin_socket` names another path | no |
 
 Restoring a backup: keep the current `creation`, `failover-epoch` and `witness-state` files rather than the backup's. Each must never go back: `creation` keeps pids from an earlier run from being reused, and the epochs are failover's fencing tokens.
+
+`cluster` buckets are kept on both nodes of a pair, so a node whose `kv/` is lost or older needs no restore: started while its partner runs as primary, it rejoins as the standby and the primary brings it up to date (from its log, or with a snapshot). Restoring an older `kv/` on a node that then leads (the only node left, or both nodes) loses every write since the backup.
 
 Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back them up with the apps' data.
 
@@ -74,7 +76,7 @@ Reaching the primary of a pair from outside needs no root. Either put a load bal
 
 ### Planned switchover
 
-`paddock failover switchover` on the primary hands its singletons to the standby, for maintenance of the primary or to swap roles on purpose. The primary stops its singletons gracefully (each runs `terminate`), then steps down; the standby runs them within about a lease and its margins (3.5 to 4 s with the defaults; no node timeout), and the old primary rejoins as its standby. It is refused, and nothing stops, when the node is not the primary, its arbiter is not a witness, or it does not hear its partner as a standby (a moment after the partner becomes one, try again). Recorded in the audit log as `failover_switchover`.
+`paddock failover switchover` on the primary hands its singletons to the standby, for maintenance of the primary or to swap roles on purpose. The primary stops its singletons gracefully (each runs `terminate`), then steps down; the standby runs them within about a lease and its margins (3.5 to 4 s with the defaults; no node timeout), and the old primary rejoins as its standby. It is refused, and nothing stops, when the node is not the primary, its arbiter is not a witness, it does not hear its partner as a standby (a moment after the partner becomes one, try again), or the partner is still catching up on replicated writes (the witness has it recorded out of date). Recorded in the audit log as `failover_switchover`.
 
 ### Confirming a promotion
 

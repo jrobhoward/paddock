@@ -199,12 +199,19 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-host/src/failover/`: an HA pair's roles, epochs and
   leases (`node.rs`: one type per standing; transitions consume the state
   and return the next, named after the actions in `docs/tla/FailoverL2.tla`)
-  and the witness (`witness.rs`). The rules are R1 to R11 in
+  and the witness (`witness.rs`). The rules are R1 to R13 in
   `docs/tla/VERIFICATION.md`; a change to a transition means updating the
   matching action in the model and rerunning it. `tests/simulation/failover.rs` logs `may_run` and checks that a
   singleton never runs on both nodes. On the node, `crates/paddock/src/node/gate.rs`
   starts and kills `singleton` apps as `may_run` changes;
   `crates/paddock/tests/failover.rs` runs a pair and a witness over QUIC.
+- `crates/paddock-host/src/replication/`: `cluster` shared buckets on the
+  HA pair (ROADMAP K2). `core.rs` is the replica as a state machine whose
+  transitions are named after spike S20's actions
+  (`spikes/s20/PairReplication.tla`); `log.rs` the log, in the keyvalue
+  redb file; `mod.rs` the task around them. The rules are S20's R1 to R7
+  and R13 in `docs/tla/VERIFICATION.md`; `tests/simulation/replication.rs`
+  checks that no acknowledged write is lost under single faults.
 - `crates/paddock-modbus`: the Modbus TCP extension (`paddock-modbus:modbus`,
   WIT in its `wit/`), depending on `paddock-host` alone; linked into
   `paddock node` by `paddock`'s `modbus` feature (off by default). Device tasks,

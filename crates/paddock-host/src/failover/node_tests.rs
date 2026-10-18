@@ -65,6 +65,7 @@ fn ctx() -> Ctx {
         epoch: 0,
         may_run: false,
         awaiting_confirmation: false,
+        partner_outdated: false,
     };
     Ctx {
         rt: Weak::new(),
@@ -117,7 +118,11 @@ async fn primary(env: &Fake) -> Node {
     let state = down(1).step(&mut ctx, env, Instant::now());
     let state = state.on_message(
         &mut ctx,
-        FailoverMsg::Granted { seq: 0, epoch: 1 },
+        FailoverMsg::Granted {
+            seq: 0,
+            epoch: 1,
+            outdated: false,
+        },
         Instant::now(),
     );
     Node { state, ctx }
@@ -145,7 +150,11 @@ async fn down____not_yet____waits_the_time_given_then_asks_again_and_resumes() {
     let after_the_wait = env.requests();
     let state = state.on_message(
         &mut ctx,
-        FailoverMsg::Granted { seq: 1, epoch: 1 },
+        FailoverMsg::Granted {
+            seq: 1,
+            epoch: 1,
+            outdated: false,
+        },
         Instant::now(),
     );
 
@@ -164,7 +173,11 @@ async fn down____grant_for_a_request_it_never_sent____ignored() {
 
     let state = state.on_message(
         &mut ctx,
-        FailoverMsg::Granted { seq: 7, epoch: 1 },
+        FailoverMsg::Granted {
+            seq: 7,
+            epoch: 1,
+            outdated: false,
+        },
         Instant::now(),
     );
 
@@ -198,7 +211,11 @@ async fn primary____fenced____steps_down_only_for_a_higher_epoch() {
     let state = down(1).step(&mut ctx, &env, Instant::now());
     let primary = state.on_message(
         &mut ctx,
-        FailoverMsg::Granted { seq: 0, epoch: 2 },
+        FailoverMsg::Granted {
+            seq: 0,
+            epoch: 2,
+            outdated: false,
+        },
         Instant::now(),
     );
 
@@ -218,7 +235,11 @@ async fn primary____lease_ok_for_a_renewal____extends_from_its_send_time() {
     let state = down(1).step(&mut ctx, &env, Instant::now());
     let state = state.on_message(
         &mut ctx,
-        FailoverMsg::Granted { seq: 0, epoch: 1 },
+        FailoverMsg::Granted {
+            seq: 0,
+            epoch: 1,
+            outdated: false,
+        },
         Instant::now(),
     );
     tokio::time::advance(Duration::from_secs(1)).await;
@@ -306,7 +327,11 @@ async fn standby____partner_yields____asks_at_once_and_does_not_stand_down() {
     let still_standby = matches!(state, State::Standby(_));
     let state = state.on_message(
         &mut ctx,
-        FailoverMsg::Granted { seq: 1, epoch: 2 },
+        FailoverMsg::Granted {
+            seq: 1,
+            epoch: 2,
+            outdated: false,
+        },
         Instant::now(),
     );
 
@@ -318,4 +343,123 @@ async fn standby____partner_yields____asks_at_once_and_does_not_stand_down() {
         "asked on the first step that heard the yield"
     );
     assert!(matches!(state, State::Primary(ref p) if p.epoch == 2));
+}
+
+impl Fake {
+    /// The changes to the record sent to the witness: (seq, epoch, outdated).
+    fn records(&self) -> Vec<(u64, u64, bool)> {
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(to, m)| match m {
+                FailoverMsg::Record {
+                    seq,
+                    epoch,
+                    outdated,
+                } if *to == WITNESS => Some((*seq, *epoch, *outdated)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+fn record_ask(
+    epoch: u64,
+    outdated: bool,
+) -> (RecordAsk, oneshot::Receiver<Result<(), RecordRefused>>) {
+    let (reply, answer) = oneshot::channel();
+    (
+        RecordAsk {
+            epoch,
+            outdated,
+            reply,
+        },
+        answer,
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn record____primary_at_its_epoch____answered_once_the_witness_keeps_it() {
+    let env = Fake::default();
+    let mut node = primary(&env).await;
+    partner_says(&env, Standing::Standby, false, false, 1);
+    let (ask, mut answer) = record_ask(1, true);
+
+    node.record(&env, ask, Instant::now());
+    let sent = env.records();
+    let before = answer.try_recv();
+    let (seq, _, _) = sent[0];
+    node.apply(|state, ctx| {
+        state.on_message(
+            ctx,
+            FailoverMsg::Recorded {
+                seq,
+                outdated: true,
+            },
+            Instant::now(),
+        )
+    });
+    let leadership = node.state.leadership(&node.ctx.cfg, Instant::now());
+    let switchover = node.switchover(&env, Instant::now(), true);
+
+    assert_eq!(sent, vec![(seq, 1, true)]);
+    assert_eq!(before, Err(oneshot::error::TryRecvError::Empty));
+    assert_eq!(answer.try_recv(), Ok(Ok(())));
+    assert!(leadership.partner_outdated);
+    assert_eq!(switchover, Err(SwitchoverRefused::PartnerOutdated));
+}
+
+#[tokio::test(start_paused = true)]
+async fn record____not_primary_or_another_epoch____refused_without_asking() {
+    let env = Fake::default();
+    let mut down = Node {
+        state: down(1),
+        ctx: ctx(),
+    };
+    let mut primary = primary(&env).await;
+    let (ask_down, mut answer_down) = record_ask(1, true);
+    let (ask_stale, mut answer_stale) = record_ask(2, true);
+
+    down.record(&env, ask_down, Instant::now());
+    primary.record(&env, ask_stale, Instant::now());
+
+    assert_eq!(answer_down.try_recv(), Ok(Err(RecordRefused::NotPrimary)));
+    assert_eq!(answer_stale.try_recv(), Ok(Err(RecordRefused::NotPrimary)));
+    assert!(env.records().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn record____unanswered_for_a_lease____dropped() {
+    let env = Fake::default();
+    let mut node = primary(&env).await;
+    partner_says(&env, Standing::Standby, false, false, 1);
+    let (ask, mut answer) = record_ask(1, true);
+
+    node.record(&env, ask, Instant::now());
+    tokio::time::advance(Duration::from_millis(3_100)).await;
+    partner_says(&env, Standing::Standby, false, false, 1);
+    node.apply(|state, ctx| state.step(ctx, &env, Instant::now()));
+
+    assert_eq!(answer.try_recv(), Err(oneshot::error::TryRecvError::Closed));
+}
+
+#[tokio::test(start_paused = true)]
+async fn granted____resume_with_the_record_standing____primary_knows_its_partner_outdated() {
+    let env = Fake::default();
+    let mut ctx = ctx();
+    wait_out().await;
+
+    let state = down(1).step(&mut ctx, &env, Instant::now());
+    let state = state.on_message(
+        &mut ctx,
+        FailoverMsg::Granted {
+            seq: 0,
+            epoch: 1,
+            outdated: true,
+        },
+        Instant::now(),
+    );
+
+    assert!(state.leadership(&ctx.cfg, Instant::now()).partner_outdated);
 }

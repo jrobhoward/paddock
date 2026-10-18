@@ -26,6 +26,15 @@
 //!   node (S16's `NoLeaseSafe`).
 //! - [`Arbiter::Operator`]: as `Paths`, but only once an operator confirms.
 //!
+//! For replicated buckets (ROADMAP K2), the witness also keeps a record
+//! that the primary's partner is out of date
+//! (`record_partner`; spike S20's R1, R13 in
+//! `docs/tla/VERIFICATION.md`): set before the primary commits a write
+//! without its partner, cleared once the partner has caught up. While it
+//! stands the witness does not promote the partner, and a planned
+//! switchover is refused. A pair that never commits without its partner
+//! never sets it.
+//!
 //! A primary that meets a higher epoch, from its partner or at the witness,
 //! steps down. A node that starts, or steps down, is `Down`: it rejoins a
 //! primary it hears, or, with a witness, resumes as primary if the witness
@@ -51,7 +60,7 @@ mod node;
 mod witness;
 
 use node::Node;
-use witness::{Decision, Grant, Witness};
+use witness::{Decision, Grant, Record, Witness};
 
 use crate::error::HostError;
 use crate::runtime::{Runtime, RuntimeInner};
@@ -105,10 +114,35 @@ impl FailoverConfig {
     }
 }
 
-/// Keeps the witness's state durable: called with the new epoch and the
-/// node promoted at it before a grant is answered. An error withholds the
-/// grant (the requester asks again).
-pub type WitnessPersist = Arc<dyn Fn(u64, u32) -> Result<(), String> + Send + Sync>;
+/// What a witness keeps on disk (R10, R13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WitnessState {
+    /// Its epoch.
+    pub epoch: u64,
+    /// The node it promoted at that epoch.
+    pub promoted: u32,
+    /// The partner of `promoted` is recorded out of date: it may lack
+    /// replicated writes `promoted` committed alone, and is not promoted.
+    pub outdated: bool,
+}
+
+impl WitnessState {
+    /// A witness's state.
+    #[must_use]
+    pub fn new(epoch: u64, promoted: u32, outdated: bool) -> Self {
+        Self {
+            epoch,
+            promoted,
+            outdated,
+        }
+    }
+}
+
+/// Keeps the witness's state durable: called with the state a grant or a
+/// change to the record leads to, before it is answered. An error
+/// withholds the answer (the requester asks again).
+pub type WitnessPersist = Arc<dyn Fn(WitnessState) -> Result<(), String> + Send + Sync>;
 
 /// How the witness arbitrates one pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,9 +156,9 @@ pub struct WitnessConfig {
     pub lease: Duration,
     /// As in [`FailoverConfig`]; both must agree.
     pub margin: Duration,
-    /// The epoch and the node promoted at it, as last kept on disk, for a
-    /// witness that restarts; `None` starts at epoch 1 with `first`.
-    pub resume: Option<(u64, u32)>,
+    /// The state last kept on disk, for a witness that restarts; `None`
+    /// starts at epoch 1 with `first` and no record.
+    pub resume: Option<WitnessState>,
 }
 
 impl WitnessConfig {
@@ -167,6 +201,11 @@ pub struct Leadership {
     /// or it cannot be reached), and only an operator's
     /// [`FailoverHandle::confirm`] would promote this node.
     pub awaiting_confirmation: bool,
+    /// A primary whose partner the witness has recorded out of date (R13):
+    /// a replicated write committed without it. Until the record is
+    /// cleared the partner is not promoted, and a planned switchover is
+    /// refused.
+    pub partner_outdated: bool,
 }
 
 /// Messages between a node of the pair and the witness.
@@ -209,6 +248,9 @@ pub enum FailoverMsg {
         seq: u64,
         /// The new epoch.
         epoch: u64,
+        /// Whether the sender's partner is recorded out of date: never
+        /// after a promotion, as before for a resume.
+        outdated: bool,
     },
     /// Ask again in `wait_ms`: the partner's lease has not run out.
     NotYet {
@@ -219,6 +261,24 @@ pub enum FailoverMsg {
     Refused {
         /// The witness's epoch.
         epoch: u64,
+    },
+    /// Record the sender's partner out of date, or clear the record (R13).
+    /// Taken only from the node promoted at the witness's epoch; anything
+    /// else gets [`FailoverMsg::Fenced`].
+    Record {
+        /// Echoed in [`FailoverMsg::Recorded`].
+        seq: u64,
+        /// The sender's epoch.
+        epoch: u64,
+        /// Set the record, or clear it.
+        outdated: bool,
+    },
+    /// The record is as asked, and kept on disk.
+    Recorded {
+        /// From [`FailoverMsg::Record`].
+        seq: u64,
+        /// The record now.
+        outdated: bool,
     },
 }
 
@@ -255,9 +315,32 @@ pub enum SwitchoverRefused {
     /// lease, so nobody would take over.
     #[error("the partner is not heard as a confirming standby")]
     NoStandby,
+    /// The witness has recorded the partner out of date: it lacks
+    /// replicated writes and would not be promoted (R13).
+    #[error("the partner is catching up on replicated writes")]
+    PartnerOutdated,
     /// The failover task has ended (the runtime is gone).
     #[error("failover is not running")]
     Stopped,
+}
+
+/// Why the witness's record was not changed, for replicated buckets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum RecordRefused {
+    /// This node is not the primary at that epoch, or has no witness.
+    #[error("this node is not the primary at that epoch with a witness")]
+    NotPrimary,
+    /// No answer: the witness cannot be reached, or the node stepped down
+    /// meanwhile. Ask again.
+    #[error("the witness did not answer")]
+    NoAnswer,
+}
+
+/// A change to the witness's record asked of the failover task.
+pub(super) struct RecordAsk {
+    pub(super) epoch: u64,
+    pub(super) outdated: bool,
+    pub(super) reply: oneshot::Sender<Result<(), RecordRefused>>,
 }
 
 impl FailoverHandle {
@@ -366,6 +449,8 @@ impl RunUntil {
 /// lease singletons run under.
 pub(crate) struct Shared {
     inbox: Mutex<Option<Inbox>>,
+    /// To this node's failover task, for [`record_partner`].
+    records: Mutex<Option<mpsc::UnboundedSender<RecordAsk>>>,
     witness: Mutex<Option<Witness>>,
     persist: Mutex<Option<WitnessPersist>>,
     run_until: watch::Sender<RunUntil>,
@@ -375,6 +460,7 @@ impl Default for Shared {
     fn default() -> Self {
         Self {
             inbox: Mutex::default(),
+            records: Mutex::default(),
             witness: Mutex::default(),
             persist: Mutex::default(),
             run_until: watch::Sender::new(RunUntil::Always),
@@ -404,7 +490,11 @@ impl Shared {
             None => return self.forward(from, msg),
             Some(None) => return,
             Some(Some(Decision::Answer(reply))) => reply,
-            Some(Some(Decision::Grant(grant))) => match self.keep(grant) {
+            Some(Some(Decision::Grant(grant))) => match self.keep(Change::Grant(grant)) {
+                Some(reply) => reply,
+                None => return,
+            },
+            Some(Some(Decision::Record(record))) => match self.keep(Change::Record(record)) {
                 Some(reply) => reply,
                 None => return,
             },
@@ -412,24 +502,29 @@ impl Shared {
         transport::send(rt, from, Frame::Failover(reply));
     }
 
-    /// Keep `grant` on disk, then apply it (R10): the answer, or `None` if
+    /// Keep `change` on disk, then apply it (R10): the answer, or `None` if
     /// it could not be kept and was dropped. The witness answers nothing
     /// from the pair meanwhile ([`Witness::handle`]).
-    fn keep(&self, grant: Grant) -> Option<FailoverMsg> {
+    fn keep(&self, change: Change) -> Option<FailoverMsg> {
         let persist = self
             .persist
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        let kept = persist.map_or(Ok(()), |persist| persist(grant.epoch, grant.promoted));
+        let state = match change {
+            Change::Grant(grant) => grant.state(),
+            Change::Record(record) => record.state,
+        };
+        let kept = persist.map_or(Ok(()), |persist| persist(state));
         let mut witness = self.witness.lock().unwrap_or_else(PoisonError::into_inner);
         let w = witness.as_mut()?;
-        match kept {
-            Ok(()) => Some(w.apply(grant)),
-            Err(e) => {
+        match (kept, change) {
+            (Ok(()), Change::Grant(grant)) => Some(w.apply(grant)),
+            (Ok(()), Change::Record(record)) => Some(w.apply_record(record)),
+            (Err(e), _) => {
                 w.abandon();
                 drop(witness);
-                tracing::error!(error = %e, "witness state not kept; grant withheld");
+                tracing::error!(error = %e, "witness state not kept; answer withheld");
                 None
             }
         }
@@ -457,6 +552,13 @@ impl Shared {
             );
         }
     }
+}
+
+/// A change the witness keeps on disk before applying it.
+#[derive(Debug, Clone, Copy)]
+enum Change {
+    Grant(Grant),
+    Record(Record),
 }
 
 // ------------------------------------------------------------------ beats
@@ -639,16 +741,33 @@ impl Runtime {
             epoch: cfg.epoch,
             may_run: false,
             awaiting_confirmation: false,
+            partner_outdated: false,
         };
         let (tx, leadership) = watch::channel(initial);
+        if rt.services.keyvalue().has_replicated() {
+            if !matches!(cfg.arbiter, Arbiter::Witness(_)) {
+                return Err(HostError::Engine(
+                    "replicated buckets need failover arbiter \"witness\"".into(),
+                ));
+            }
+            crate::replication::start(rt, cfg.partner, leadership.clone())?;
+        }
         let node = Node::start(rt, cfg, tx);
         let confirm = Arc::new(Notify::new());
         let (switchover, switchovers) = mpsc::unbounded_channel();
+        let (records_tx, records) = mpsc::unbounded_channel();
+        *rt.failover
+            .records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(records_tx);
         tokio::spawn(node::run(
             node,
-            inbox,
-            confirm.clone(),
-            switchovers,
+            node::Inputs {
+                inbox,
+                confirm: confirm.clone(),
+                switchovers,
+                records,
+            },
             rt.liveness.interval(),
         ));
         Ok(FailoverHandle {
@@ -705,6 +824,40 @@ impl Runtime {
         *slot = Some(Witness::start(cfg));
         Ok(())
     }
+}
+
+/// Set or clear the witness's record that this node's partner is out of
+/// date (R13), as the primary at `epoch`, and wait for the witness to
+/// keep it. Set it before committing a replicated write the partner
+/// has not acknowledged; clear it once the partner holds every
+/// committed write and this node commits only with its
+/// acknowledgement.
+///
+/// # Errors
+///
+/// [`RecordRefused::NotPrimary`] unless this node is the primary at
+/// `epoch` with a witness arbiter; [`RecordRefused::NoAnswer`] if the
+/// witness did not answer within a lease or this node stepped down.
+pub(crate) async fn record_partner(
+    rt: &RuntimeInner,
+    epoch: u64,
+    outdated: bool,
+) -> Result<(), RecordRefused> {
+    let tx = rt
+        .failover
+        .records
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+        .ok_or(RecordRefused::NotPrimary)?;
+    let (reply, answer) = oneshot::channel();
+    tx.send(RecordAsk {
+        epoch,
+        outdated,
+        reply,
+    })
+    .map_err(|_| RecordRefused::NoAnswer)?;
+    answer.await.unwrap_or(Err(RecordRefused::NoAnswer))
 }
 
 #[cfg(test)]

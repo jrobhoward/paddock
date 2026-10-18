@@ -26,7 +26,9 @@
 //! [buckets.points]
 //! durability = "disk"           # or "memory"
 //! quota = "256MiB"
-//! scope = "node"                # "cluster" is Phase 3
+//! scope = "node"                # or "cluster": replicated on an HA pair
+//!                               # (durability "disk", [failover] with
+//!                               # arbiter "witness"; both nodes the same)
 //!
 //! # Node-level config overrides, per app, on top of the manifest defaults.
 //! # HTTP ingress: every app's `wasi:http/incoming-handler` routes, on
@@ -287,7 +289,8 @@ pub struct BucketConfig {
     /// Most bytes the bucket holds, across every app writing it.
     #[serde(default)]
     pub quota: Option<ByteSize>,
-    /// Where the bucket's data lives.
+    /// Where the bucket's data lives: this node, or both nodes of the HA
+    /// pair, replicated (ROADMAP K2).
     #[serde(default)]
     pub scope: BucketScope,
 }
@@ -930,11 +933,18 @@ impl NodeConfig {
                 )));
             }
         }
+        let witness_pair = config
+            .failover
+            .as_ref()
+            .is_some_and(|f| f.arbiter == ArbiterKind::Witness);
         for (name, bucket) in &config.buckets {
-            let problem = if bucket.scope == BucketScope::Cluster {
-                Some("scope \"cluster\" is not supported until Phase 3")
-            } else if bucket.durability == Durability::Replicated {
-                Some("durability \"replicated\" is not supported until Phase 3")
+            let problem = if bucket.durability == Durability::Replicated {
+                Some("durability \"replicated\" is for app buckets; use scope \"cluster\"")
+            } else if bucket.scope == BucketScope::Cluster && bucket.durability != Durability::Disk
+            {
+                Some("scope \"cluster\" needs durability \"disk\"")
+            } else if bucket.scope == BucketScope::Cluster && !witness_pair {
+                Some("scope \"cluster\" needs [failover] with arbiter \"witness\"")
             } else if bucket.quota.is_some_and(|q| q.bytes() == 0) {
                 Some("quota must be more than 0")
             } else {

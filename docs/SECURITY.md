@@ -76,9 +76,14 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### Liveness, membership and failover
 
-- **Controls.** As for node and node; the failover rules R1 to R11 and their model (`docs/tla/VERIFICATION.md`). Serial heartbeat frames carry a CRC-16 and the sender's and receiver's node ids; frames that fail either check are dropped.
+- **Controls.** As for node and node; the failover rules R1 to R13 and their model (`docs/tla/VERIFICATION.md`). Serial heartbeat frames carry a CRC-16 and the sender's and receiver's node ids; frames that fail either check are dropped.
 - **Serial line.** Frames on the pair's serial cable are not authenticated: whoever can reach the cable or a device on it can forge beats, which can keep a standby from promoting (a forged "primary alive") or renew a lease a primary would otherwise lose. The cable is treated as part of the pair's physical enclosure.
 - **Gaps.** S5 is fixed. With a witness, an operator is asked to confirm a promotion only while the witness cannot be reached either, and a confirmation then is final: if the partner confirmed gone was alive, or restarts, and reaches the witness but not this node, both run until they hear each other (VERIFICATION.md, A9 and finding 6, accepted 2026-10-16); operators confirm only a partner that is down and stays down (powered off or fenced) until then. A primary paused past its lease no longer runs its singleton's callbacks when it continues (A8 in `docs/tla/VERIFICATION.md`).
+
+### Replicated buckets
+
+- **Controls.** Replication frames are taken only from the node's configured partner, over the cluster transport's mutual TLS, and are decoded by the replication module (CBOR) before anything is applied; an entry is applied only at the receiver's own epoch and after an entry that matches (spike S20's R6). Writes from the partner pass the same quota rules as local ones, with the quota the primary had. Linearizable reads are served only by a primary inside its lease.
+- **Gaps.** The partner is trusted with the bucket's whole contents: a compromised partner can write, or snapshot over, every `cluster` bucket. A standby forwards any write a local app makes; the primary applies it without checking that the app is granted the bucket there (grants are per node, configured alike).
 
 ### Bundles, manifests and policy
 

@@ -25,6 +25,7 @@
 //!   as `watch`, replaying changes after `<after>`.
 //! - `unwatch:<id>`: `ok`.
 //! - `entry:<bucket>:<key>`: `<value>@<revision>` or `none`.
+//! - `latest:<bucket>:<key>`: as `entry`, read linearizably.
 //! - `rev:<bucket>`: the bucket's revision.
 //! - `cas:<bucket>:<key>:<expected or ->:<value>`: the new revision.
 //! - `cad:<bucket>:<key>:<expected>`: the bucket's new revision.
@@ -205,13 +206,14 @@ fn http(ctx: &mut Ctx, req: &Request) -> Reply {
     Reply::Now(Response::text(200, echo).header("x-fixture", "sdk").into())
 }
 
-const WATCH_VERBS: [&str; 9] = [
+const WATCH_VERBS: [&str; 10] = [
     "watch",
     "watch-prefix",
     "resume",
     "resume-prefix",
     "unwatch",
     "entry",
+    "latest",
     "rev",
     "cas",
     "cad",
@@ -232,6 +234,10 @@ fn watching(command: &str) -> Result<String, WatchError> {
         "resume-prefix" => started(watch::resume(bucket, key, true, number(rest))?),
         "unwatch" => watch::unwatch(number(bucket)).map(|()| "ok".to_string())?,
         "entry" => watch::get(bucket, key)?.map_or_else(
+            || "none".into(),
+            |e| format!("{}@{}", String::from_utf8_lossy(&e.value), e.revision),
+        ),
+        "latest" => watch::get_linearizable(bucket, key)?.map_or_else(
             || "none".into(),
             |e| format!("{}@{}", String::from_utf8_lossy(&e.value), e.revision),
         ),

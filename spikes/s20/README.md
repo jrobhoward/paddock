@@ -12,6 +12,8 @@
 - **R6. Catch-up by log, else by snapshot.** A standby takes an Append at its own epoch only, if the entry before it matches (index and epoch); it drops a conflicting suffix, and answers with its match index, or with its commit index on a mismatch, from which the primary resends. A primary resends from the first index not acked when no ack comes within a timeout: without it, an Append or snapshot lost with the LAN is never resent and the standby never catches up (found as a deadlock). A standby that needs entries the primary has compacted gets a snapshot.
 - **R7. A snapshot keeps what follows it.** A standby that already holds a snapshot's last entry (same index and epoch) keeps its log and only moves its snapshot point; otherwise the snapshot replaces its log. Replacing it anyway throws away entries the standby has already acked, which the primary may have committed (`NoKeepSuffix`: the primary then crashes and the standby is promoted without the write).
 
+**Corrections for K2 (2026-10-17).** Two rules as first written cost availability, and K2 changed them; both are design switches in the model, checked below. `PromoteAlone = FALSE`: a promotion clears the record and the new primary (or a resumed one) starts in sync mode, going alone through the witness like any primary. As first written, every promotion recorded the partner out of date, so a pair with nothing to replicate could not fail back if the new primary crashed before reporting. `EagerSync = TRUE`: an alone primary may return to sync mode at any time (R2's report still needs the partner to hold every committed entry). As first written, it returned only once the partner had acked the whole log, which under steady writes never happens, so the record never cleared and the standby could never be promoted.
+
 **The log's length is a performance choice, not a safety one.** Any node may compact up to its commit index at any time: with R6 and R7 the model loses nothing. The log only needs to reach back far enough that a standby back from a typical outage catches up by entries rather than by a snapshot. K2 sets that bound by bytes and age, and keeps entries a standby has not acked while the bound allows.
 
 **What the lease does here.** Reads need the lease (R5): a primary cut off from its partner on the LAN and the serial line and from the witness loses its lease while it still leads; the witness promotes the standby, which commits, and without the lease rule the old primary then serves a stale read (`Links3NoLeaseReads`). That takes three failures at once, beyond the single-failure guarantee, but nothing else stops it. Writes do not need the lease: a stale primary gets no acks (a standby acks only at its own epoch) and cannot commit alone (the witness records only at its epoch), so with commits allowed without the lease no committed write is lost or replaced under the same three link failures (`Links3NoCommitRunning`, exhaustive). The design keeps "commit only while holding the lease" anyway, as DESIGN.md has it ("writes refused as `unavailable` without a lease"): it costs nothing, and a client is not told a write committed by a primary that is about to learn it was replaced. Random simulation of three failures with crashes as well (`Sim3NoLeaseReads`, 15 minutes, about 240,000 traces) did not find the stale read; the exhaustive run on link failures alone found it in 12 steps.
@@ -24,6 +26,7 @@
 cd spikes/s20
 bash mkcfg.sh                       # writes every config
 ./run.sh DesignSeq Design1         # exhaustive, checkpoints, into ~/tla-runs/s20-<date>
+./run.sh EagerSeq Eager1           # K2's rules (PromoteAlone = FALSE, EagerSync = TRUE)
 # One config by hand; each rule-off and vacuity config ends in seconds.
 java -XX:+UseParallelGC -jar ~/tla/tla2tools.jar -workers auto -deadlock -config NoOutdated.cfg PairReplication.tla
 # Random traces for the three-fault configs.
@@ -62,5 +65,11 @@ Checked on 2026-10-17 with TLC 2026.02.28 (OpenJDK 21) on the 16-core developmen
 | `Links3NoCommitRunning` | three link failures at once, no crashes | 5,775,685 | pass: commits need no lease |
 | `Sim2Design` | two at a time, two in the run, plus a planned switchover | random: about 9.4 million traces, 575 million states | no violation (30 min time box, 12 workers) |
 | `Vac_*` (eight) | one at a time | 124 to 12,543 (stopped) | each violated, as required |
+| `Sync1` | as `Design1`, with `PromoteAlone = FALSE` | 36,602,522 | pass (6 min 9 s) |
+| `SyncNoOutdated`, `SyncVac_*` (three) | one at a time, `PromoteAlone = FALSE` | under 13,000 each (stopped) | each violated, as required |
+| `EagerSeq` | as `DesignSeq`, with `PromoteAlone = FALSE` and `EagerSync = TRUE` (K2's rules) | running | |
+| `Eager1` | as `Design1`, with both | 59,429,764 | pass (14 min 32 s, 8 workers, contended) |
+| `EagerNoReportInSync` | one at a time, both, R2's report allowed while alone | stopped early | `LeaderComplete` violated, as required |
+| `EagerVac_Report` | one at a time, both | stopped early | `NoReport` violated, as required |
 
 \* At two billion states, TLC's 64-bit fingerprints probably collided once or a few times (its estimates: 1.3 optimistic, 0.5 from the actual fingerprints), so a handful of states may have gone unexplored. `Design1`, a subset with no collision risk to speak of, passed too, and every rule-off config finds its counterexample within 7 million states. A second run with another fingerprint seed (`-fp 2`) would close that gap at the cost of another six and a half hours.

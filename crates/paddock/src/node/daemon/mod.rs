@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use crate::api::Done;
 use paddock_bundle::OperatorPolicy;
+use paddock_bundle::manifest::Durability;
 use paddock_host::failover::FailoverHandle;
 use paddock_host::services::{Extension, StartedExtensions};
 use paddock_host::transport::quic::QuicTransport;
@@ -27,7 +28,7 @@ use paddock_host::{
 use serde_json::json;
 
 use super::audit::Audit;
-use super::config::{ClusterRole, MemoryProfile, NodeConfig};
+use super::config::{BucketScope, ClusterRole, MemoryProfile, NodeConfig};
 use super::error::{NodeError, internal};
 use super::events::{self, Events};
 use super::gate::Gate;
@@ -225,8 +226,14 @@ impl Node {
                     .buckets
                     .iter()
                     .map(|(name, b)| {
+                        // A cluster bucket is on disk on both nodes,
+                        // replicated between them.
+                        let durability = match b.scope {
+                            BucketScope::Cluster => Durability::Replicated,
+                            BucketScope::Node => b.durability,
+                        };
                         let bucket = SharedBucket {
-                            durability: b.durability,
+                            durability,
                             quota: b.quota.map(|q| q.bytes()),
                         };
                         (name.clone(), bucket)
@@ -409,6 +416,51 @@ fn metrics_text(
         .clone();
     if let Some(quic) = quic {
         text.push_str(&cluster_metrics(&quic.send_stats()));
+    }
+    if let Some(s) = rt.replication_status() {
+        text.push_str(&replication_metrics(
+            s.commit,
+            s.last,
+            s.partner_matched,
+            s.alone,
+        ));
+    }
+    text
+}
+
+/// The replicated log (`cluster` buckets) in the Prometheus text format:
+/// its commit and last index, and on the primary how far the standby
+/// trails and whether it commits alone.
+fn replication_metrics(commit: u64, last: u64, matched: Option<u64>, alone: bool) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    let mut gauge = |name: &str, help: &str, value: u64| {
+        let _ = writeln!(
+            text,
+            "# HELP {name} {help}\n# TYPE {name} gauge\n{name} {value}"
+        );
+    };
+    gauge(
+        "paddock_replication_commit_index",
+        "The last replicated log entry applied to this node's cluster buckets.",
+        commit,
+    );
+    gauge(
+        "paddock_replication_last_index",
+        "The last entry in this node's replicated log.",
+        last,
+    );
+    if let Some(matched) = matched {
+        gauge(
+            "paddock_replication_partner_lag_entries",
+            "On the primary, log entries the standby has not acknowledged.",
+            last.saturating_sub(matched),
+        );
+        gauge(
+            "paddock_replication_alone",
+            "On the primary, 1 while it commits without the standby.",
+            u64::from(alone),
+        );
     }
     text
 }

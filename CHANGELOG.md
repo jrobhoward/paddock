@@ -545,6 +545,30 @@ All notable changes are recorded here. The format follows
   `paddock-modbus`'s `fake_device` example serves fake devices to it.
 - `spikes/s20`: a TLA+ model of replication within the HA pair (ROADMAP
   K1), with the commit, read and catch-up rules K2 implements.
+- The witness keeps a record that the primary's partner is out of date,
+  for replicated buckets (ROADMAP K2, R13 in `docs/tla/VERIFICATION.md`):
+  set and cleared by the primary at its epoch (`FailoverMsg::Record`),
+  kept in `witness-state` (` outdated`), and while it stands the witness
+  does not promote the partner and a planned switchover is refused
+  (`SwitchoverRefused::PartnerOutdated`). `Leadership::partner_outdated`
+  shows it on the primary.
+- Replicated shared buckets (ROADMAP K2): `scope = "cluster"` in
+  `[buckets.<name>]` (with `durability = "disk"`, on a pair with
+  `arbiter = "witness"`) keeps the bucket on both nodes. Writes from
+  either node commit on the primary once the standby has them on disk, or
+  alone once the witness has recorded the standby out of date, and
+  return then; reads and watches use the node's own copy; a standby that
+  falls behind catches up from the log or a snapshot. Without a primary
+  holding its lease, writes fail (`paddock:watch` `unavailable`).
+- `paddock:watch` `get-linearizable` (`paddock_sdk::watch::get_linearizable`):
+  a read served by the HA pair's primary on a replicated bucket, the same
+  as `get` elsewhere.
+- `paddock failover` shows the replicated log (commit and last index, how
+  far the standby trails, whether the primary commits alone) and whether
+  the partner is recorded out of date (`FailoverInfo::replication`,
+  `partner_outdated`); `Runtime::replication_status`. Metrics
+  `paddock_replication_commit_index`, `paddock_replication_last_index`,
+  `paddock_replication_partner_lag_entries`, `paddock_replication_alone`.
 
 ### Fixed
 
@@ -663,6 +687,12 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Cluster wire format version 6: replication between the pair
+  (`Replication`) and the witness's record (`Record`, `Recorded`, and
+  `Granted`'s `outdated`). Nodes speak version 6 only.
+- Breaking (`paddock_host::failover`): `WitnessPersist` takes a
+  `WitnessState` (epoch, promoted node, record), and
+  `WitnessConfig::resume` is an `Option<WitnessState>`.
 - Cluster wire format version 4: group frames (`GroupSync`, `GroupJoin`,
   `GroupLeave`, `GroupPublish`). Nodes speak version 4 only.
 - Cluster wire format version 3: casts, calls, exit signals and links

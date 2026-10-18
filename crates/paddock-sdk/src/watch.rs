@@ -51,7 +51,8 @@ pub enum WatchError {
     TooOld(u64),
     /// Compare-and-swap found the key at this revision (`None`: absent).
     Conflict(Option<u64>),
-    /// The bucket cannot be reached (replicated buckets, later).
+    /// A replicated bucket with no primary that can take it now, or a
+    /// write whose outcome is unknown (its primary stepped down first).
     Unavailable,
     /// Storage failed, or a quota was exceeded.
     Other(String),
@@ -184,6 +185,20 @@ pub fn unwatch(id: u64) -> Result<(), WatchError> {
 /// As for [`WatchError`], other than `TooOld` and `Conflict`.
 pub fn get(bucket: &str, key: &str) -> Result<Option<Entry>, WatchError> {
     Ok(wit::get(bucket, key)?.map(|e| Entry {
+        value: e.value,
+        revision: e.revision,
+    }))
+}
+
+/// As [`get`], but linearizable: on a replicated bucket, served by the HA
+/// pair's primary, so it reflects every write committed before the call.
+/// [`get`] reads this node's copy, which may trail the primary slightly.
+///
+/// # Errors
+///
+/// As for [`get`]; `Unavailable` when no primary can serve it.
+pub fn get_linearizable(bucket: &str, key: &str) -> Result<Option<Entry>, WatchError> {
+    Ok(wit::get_linearizable(bucket, key)?.map(|e| Entry {
         value: e.value,
         revision: e.revision,
     }))

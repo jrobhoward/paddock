@@ -48,11 +48,22 @@ fn shared_with_witness(witness: Option<u32>) -> (Shared, mpsc::UnboundedReceiver
 fn forward____answer_from_the_witness____reaches_the_node() {
     let (shared, mut rx) = shared_with_witness(Some(3));
 
-    shared.forward(3, FailoverMsg::Granted { seq: 0, epoch: 2 });
+    shared.forward(
+        3,
+        FailoverMsg::Granted {
+            seq: 0,
+            epoch: 2,
+            outdated: false,
+        },
+    );
 
     assert_eq!(
         rx.try_recv().ok(),
-        Some(FailoverMsg::Granted { seq: 0, epoch: 2 })
+        Some(FailoverMsg::Granted {
+            seq: 0,
+            epoch: 2,
+            outdated: false
+        })
     );
 }
 
@@ -66,7 +77,14 @@ fn forward____answer_from_another_member____dropped(
 ) {
     let (shared, mut rx) = shared_with_witness(witness);
 
-    shared.forward(from, FailoverMsg::Granted { seq: 0, epoch: 9 });
+    shared.forward(
+        from,
+        FailoverMsg::Granted {
+            seq: 0,
+            epoch: 9,
+            outdated: false,
+        },
+    );
 
     assert!(rx.try_recv().is_err());
 }

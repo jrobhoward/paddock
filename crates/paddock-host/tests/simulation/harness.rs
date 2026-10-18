@@ -23,7 +23,7 @@ use std::future::Future;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use paddock_bundle::manifest::{Capability, GroupsScope};
+use paddock_bundle::manifest::{AccessMode, Capability, GroupsScope};
 use paddock_host::acl::Acl;
 use paddock_host::transport::liveness::NodeEvent;
 use paddock_host::transport::memory::Mesh;
@@ -58,13 +58,20 @@ pub struct SimNode {
 }
 
 impl SimNode {
-    fn new(node: u32) -> Self {
-        Self::start(node, 1, Role::Member)
-    }
-
     /// Start node `node`'s `creation` with `role`, not yet in the mesh.
     pub fn start(node: u32, creation: u32, role: Role) -> Self {
-        let rt = Runtime::new(RuntimeConfig {
+        Self::start_with(node, creation, role, |_| {})
+    }
+
+    /// [`SimNode::start`], with `configure` changing the runtime's
+    /// configuration first.
+    pub fn start_with(
+        node: u32,
+        creation: u32,
+        role: Role,
+        configure: impl FnOnce(&mut RuntimeConfig),
+    ) -> Self {
+        let mut config = RuntimeConfig {
             node,
             creation,
             role,
@@ -73,8 +80,9 @@ impl SimNode {
             heartbeat_interval: HEARTBEAT,
             node_timeout: NODE_TIMEOUT,
             ..RuntimeConfig::default()
-        })
-        .unwrap();
+        };
+        configure(&mut config);
+        let rt = Runtime::new(config).unwrap();
         let app = rt.load(chaos()).unwrap();
         Self {
             rt,
@@ -103,6 +111,19 @@ impl SimNode {
             join: names.clone(),
             publish: names,
         };
+        self.rt.spawn(loaded, s).unwrap()
+    }
+
+    /// Start an SDK fixture instance granted keyvalue, with read-write use
+    /// of the node's shared bucket `bucket`.
+    pub fn spawn_kv(&self, bucket: &str) -> InstanceHandle {
+        let loaded = self.sdk.get_or_init(|| self.rt.load(sdk()).unwrap());
+        let mut s = InstanceSpec {
+            callback_deadline: Duration::from_secs(5),
+            granted: [Capability::KeyValue].into(),
+            ..InstanceSpec::new("kv", "1.0.0")
+        };
+        s.services.keyvalue.shared = [(bucket.to_string(), AccessMode::Rw)].into();
         self.rt.spawn(loaded, s).unwrap()
     }
 
@@ -144,6 +165,17 @@ where
     F: FnOnce(Sim) -> Fut,
     Fut: Future<Output = T>,
 {
+    simulate_with(seed, nodes, |_, _| {}, scenario)
+}
+
+/// [`simulate`], with `configure` changing each node's runtime
+/// configuration (given its id) before it starts.
+pub fn simulate_with<C, F, Fut, T>(seed: u64, nodes: u32, configure: C, scenario: F) -> T
+where
+    C: Fn(u32, &mut RuntimeConfig),
+    F: FnOnce(Sim) -> Fut,
+    Fut: Future<Output = T>,
+{
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .start_paused(true)
@@ -153,7 +185,7 @@ where
         let mesh = Mesh::new(seed);
         let nodes = (1..=nodes)
             .map(|id| {
-                let node = SimNode::new(id);
+                let node = SimNode::start_with(id, 1, Role::Member, |c| configure(id, c));
                 mesh.join(&node.rt).unwrap();
                 node
             })

@@ -50,6 +50,30 @@ async fn changes____one_in_progress____the_next_waits_for_it() {
 }
 
 #[test]
+fn replication_metrics____primary____indexes_lag_and_alone() {
+    let primary = replication_metrics(40, 42, Some(30), true);
+    let standby = replication_metrics(40, 40, None, false);
+
+    assert!(
+        primary.contains("\npaddock_replication_commit_index 40\n"),
+        "{primary}"
+    );
+    assert!(
+        primary.contains("\npaddock_replication_partner_lag_entries 12\n"),
+        "{primary}"
+    );
+    assert!(
+        primary.contains("\npaddock_replication_alone 1\n"),
+        "{primary}"
+    );
+    assert!(
+        primary.contains("# TYPE paddock_replication_last_index gauge\n"),
+        "{primary}"
+    );
+    assert!(!standby.contains("lag"), "{standby}");
+}
+
+#[test]
 fn cluster_metrics____two_peers____queued_bytes_and_refused_per_node() {
     let mut a = paddock_host::transport::LaneStats::default();
     a.queued_bytes = 512;

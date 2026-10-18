@@ -2,14 +2,14 @@
 
 use std::time::Duration;
 
-use crate::api::{Done, FailoverInfo, MemberInfo};
+use crate::api::{Done, FailoverInfo, MemberInfo, ReplicationInfo};
 use paddock_host::Role;
 use paddock_host::failover::{Arbiter, FailoverConfig, SwitchoverRefused, WitnessConfig};
 use paddock_host::transport::quic::{NodeIdentity, QuicConfig, QuicTransport};
 use serde_json::json;
 
 use super::Node;
-use crate::node::config::ArbiterKind;
+use crate::node::config::{ArbiterKind, BucketScope};
 use crate::node::error::NodeError;
 use crate::node::gate;
 
@@ -225,6 +225,21 @@ impl Node {
                 .unwrap_or_default(),
             singletons,
             generation: *self.leadership.borrow(),
+            partner_outdated: now.partner_outdated,
+            replication: self.rt.replication_status().map(|s| ReplicationInfo {
+                buckets: self
+                    .config
+                    .buckets
+                    .iter()
+                    .filter(|(_, b)| b.scope == BucketScope::Cluster)
+                    .map(|(name, _)| name.clone())
+                    .collect(),
+                commit: s.commit,
+                last: s.last,
+                base: s.base,
+                partner_matched: s.partner_matched,
+                alone: s.alone,
+            }),
         })
     }
 

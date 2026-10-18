@@ -635,7 +635,8 @@ pub enum Durability {
     Memory,
     /// On the node's disk; survives node restarts.
     Disk,
-    /// Replicated across nodes. Not supported until Phase 3.
+    /// Replicated across the HA pair: how a node's `cluster` shared buckets
+    /// are kept. For an app's own buckets, not supported until ROADMAP K3.
     Replicated,
 }
 

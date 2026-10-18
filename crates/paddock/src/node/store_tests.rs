@@ -94,11 +94,38 @@ fn Store____witness_state____none_then_kept() {
     let store = Store::open(dir.path()).unwrap();
     let before = store.load_witness().unwrap();
 
-    (store.witness_persist())(4, 2).unwrap();
+    (store.witness_persist())(WitnessState::new(4, 2, false)).unwrap();
     drop(store);
     let after = Store::open(dir.path()).unwrap().load_witness().unwrap();
 
-    assert_eq!((before, after), (None, Some((4, 2))));
+    assert_eq!(
+        (before, after),
+        (None, Some(WitnessState::new(4, 2, false)))
+    );
+}
+
+#[test]
+fn Store____witness_state_outdated____kept_and_read_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+
+    (store.witness_persist())(WitnessState::new(5, 1, true)).unwrap();
+    let text = std::fs::read_to_string(dir.path().join("witness-state")).unwrap();
+    let loaded = store.load_witness().unwrap();
+
+    assert_eq!(text, "5 1 outdated");
+    assert_eq!(loaded, Some(WitnessState::new(5, 1, true)));
+}
+
+#[test]
+fn Store____witness_state_unknown_word____error() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    std::fs::write(dir.path().join("witness-state"), "5 1 stale").unwrap();
+
+    let loaded = store.load_witness();
+
+    assert!(loaded.is_err());
 }
 
 #[test]

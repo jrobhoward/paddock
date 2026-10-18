@@ -273,6 +273,11 @@ impl Shared {
         &self.groups
     }
 
+    /// Keyvalue buckets, which replication writes (ROADMAP K2).
+    pub(crate) fn keyvalue(&self) -> &Arc<keyvalue::storage::KvStore> {
+        &self.keyvalue
+    }
+
     /// Tell every service that `pid` exited.
     pub(crate) fn exited(&self, pid: Pid) {
         config::Config::exited(&self.config, pid);

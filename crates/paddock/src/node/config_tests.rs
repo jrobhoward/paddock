@@ -147,6 +147,7 @@ fn NodeConfig____buckets____read_with_defaults() {
 fn NodeConfig____unsupported_bucket____refused() {
     let cases = [
         ("scope = \"cluster\"", "cluster"),
+        ("scope = \"cluster\"\ndurability = \"disk\"", "witness"),
         ("durability = \"replicated\"", "replicated"),
         ("quota = 0", "quota"),
     ];
@@ -168,6 +169,18 @@ fn NodeConfig____unsupported_bucket____refused() {
             "{err}"
         );
     }
+}
+
+#[test]
+fn NodeConfig____cluster_bucket_on_a_witness_pair____read() {
+    let text = format!(
+        "{CLUSTERED}[failover]\npartner = 2\narbiter = \"witness\"\nwitness = 3\n\
+         [buckets.points]\ndurability = \"disk\"\nscope = \"cluster\"\n"
+    );
+
+    let config = NodeConfig::from_toml_str(&text).unwrap();
+
+    assert_eq!(config.buckets["points"].scope, BucketScope::Cluster);
 }
 
 #[test]

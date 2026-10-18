@@ -39,6 +39,20 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
             epoch: 7,
             confirmed_ago_ms: 9,
         }),
+        Frame::Failover(FailoverMsg::Granted {
+            seq: 4,
+            epoch: 8,
+            outdated: true,
+        }),
+        Frame::Failover(FailoverMsg::Record {
+            seq: 5,
+            epoch: 8,
+            outdated: true,
+        }),
+        Frame::Failover(FailoverMsg::Recorded {
+            seq: 5,
+            outdated: false,
+        }),
         Frame::Cast {
             from: Some(pid(1)),
             sender: Some(crate::acl::Stamp {

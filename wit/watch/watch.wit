@@ -26,7 +26,10 @@ interface watch {
     /// Compare-and-swap found another revision: the key's current one, or
     /// none if the key does not exist.
     conflict(option<u64>),
-    /// The bucket cannot be reached (replicated buckets, Phase 3).
+    /// A replicated bucket, and no primary can take the operation now: a
+    /// write while the pair has no primary with a lease, or a write whose
+    /// primary stepped down before it committed (it may yet commit, or
+    /// not: read before retrying a compare-and-swap).
     unavailable,
     /// Storage failed, or a quota was exceeded.
     other(string),
@@ -67,6 +70,14 @@ interface watch {
 
   /// The value of `key`, with its revision.
   get: func(bucket: string, key: string) -> result<option<entry>, error>;
+
+  /// As `get`, but linearizable: on a replicated bucket, the HA pair's
+  /// primary serves it once it holds its lease and has committed an entry
+  /// of its own epoch, so it reflects every write that committed before
+  /// it was asked (`get` reads this node's copy, which may trail the
+  /// primary slightly). `unavailable` when no primary can serve it within
+  /// a few seconds. On any other bucket, the same as `get`.
+  get-linearizable: func(bucket: string, key: string) -> result<option<entry>, error>;
 
   /// The bucket's current revision (0 before its first change).
   revision: func(bucket: string) -> result<u64, error>;

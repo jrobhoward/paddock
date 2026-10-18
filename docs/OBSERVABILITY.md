@@ -85,6 +85,8 @@ With an HTTP ingress, also (no labels): `paddock_http_requests_total`, `paddock_
 
 With a cluster transport, also, labelled `node` (the other node): `paddock_cluster_send_queue_bytes` (gauge: bytes of casts, calls and replies queued for it) and `paddock_cluster_send_refused_total` (counter: messages refused past `[cluster] send_buffer_bytes`, and notices refused past the frame cap, since the node started).
 
+On a pair node with `cluster` buckets (ROADMAP K2), gauges for the replicated log: `paddock_replication_commit_index` (the last entry applied to this node's copy) and `paddock_replication_last_index` (the last entry in its log); on the primary, `paddock_replication_partner_lag_entries` (entries the standby has not acknowledged) and `paddock_replication_alone` (1 while it commits without the standby, which the witness has recorded out of date).
+
 Gauges are read when the metrics are rendered; counters are kept per app from the node's start, and a counter's series starts once the app's first instance starts.
 
 ## Probes

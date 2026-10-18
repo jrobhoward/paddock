@@ -5,18 +5,20 @@
 //! The transitions are named after the actions of the TLA+ model
 //! (`docs/tla/FailoverL2.tla`): `fenced`, `stand_down`, `ask`, `cancel`,
 //! `rejoin`, `resume`, `granted`, `switchover`, and so on, so a change
-//! here can be checked against the model action by action.
+//! here can be checked against the model action by action. `record` and
+//! `recorded` are spike S20's `GoAlone` and `ReportSynced` at the witness
+//! (`spikes/s20/PairReplication.tla`).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use tokio::sync::{Notify, mpsc, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::Instant;
 
 use super::{
-    Arbiter, FailoverConfig, FailoverMsg, Leadership, PartnerView, RunUntil, Standing, Status,
-    SwitchoverAsk, SwitchoverRefused,
+    Arbiter, FailoverConfig, FailoverMsg, Leadership, PartnerView, RecordAsk, RecordRefused,
+    RunUntil, Standing, Status, SwitchoverAsk, SwitchoverRefused,
 };
 use crate::runtime::RuntimeInner;
 use crate::transport::liveness::Beat;
@@ -73,6 +75,13 @@ pub(super) struct Primary {
     /// Renewals sent to the witness and not yet answered, by sequence.
     renewals: BTreeMap<u64, Instant>,
     next_seq: u64,
+    /// The witness has recorded the partner out of date (R13).
+    partner_outdated: bool,
+    /// Changes to the record sent to the witness and not yet answered, by
+    /// sequence: when each left, and who waits for it. Dropped, and so
+    /// answered `NoAnswer`, a lease after they left or when this node
+    /// stops being primary.
+    records: BTreeMap<u64, (Instant, oneshot::Sender<Result<(), RecordRefused>>)>,
 }
 
 /// Takes over when the primary is gone.
@@ -192,6 +201,7 @@ impl State {
             epoch: self.epoch(),
             may_run,
             awaiting_confirmation: matches!(self, Self::Standby(s) if s.awaiting),
+            partner_outdated: matches!(self, Self::Primary(p) if p.partner_outdated),
         }
     }
 
@@ -216,10 +226,27 @@ impl State {
         match (self, msg) {
             (Self::Primary(p), FailoverMsg::LeaseOk { seq }) => p.lease_ok(ctx, seq),
             (Self::Primary(p), FailoverMsg::Fenced { epoch }) => p.fenced(ctx, epoch, now),
-            (Self::Standby(s), FailoverMsg::Granted { seq, epoch }) => s.granted(ctx, seq, epoch),
+            (Self::Primary(p), FailoverMsg::Recorded { seq, outdated }) => {
+                p.recorded(seq, outdated)
+            }
+            (
+                Self::Standby(s),
+                FailoverMsg::Granted {
+                    seq,
+                    epoch,
+                    outdated,
+                },
+            ) => s.granted(ctx, seq, epoch, outdated),
             (Self::Standby(s), FailoverMsg::NotYet { wait_ms }) => s.not_yet(wait_ms, now),
             (Self::Standby(s), FailoverMsg::Refused { epoch }) => s.refused(ctx, epoch, now),
-            (Self::Down(d), FailoverMsg::Granted { seq, epoch }) => d.granted(ctx, seq, epoch),
+            (
+                Self::Down(d),
+                FailoverMsg::Granted {
+                    seq,
+                    epoch,
+                    outdated,
+                },
+            ) => d.granted(ctx, seq, epoch, outdated),
             (Self::Down(d), FailoverMsg::NotYet { wait_ms }) => d.not_yet(wait_ms, now),
             (Self::Down(d), FailoverMsg::Refused { epoch }) => d.refused(ctx, epoch, now),
             // Anything else is no news to this standing.
@@ -284,8 +311,15 @@ impl Ctx {
     }
 
     /// Become primary at `epoch`, with a lease from `lease_from` (a grant)
-    /// or none (`Paths`, `Operator`, or an override).
-    fn promote(&mut self, epoch: u64, lease_from: Option<Instant>, overridden: bool) -> State {
+    /// or none (`Paths`, `Operator`, or an override), its partner recorded
+    /// out of date or not.
+    fn promote(
+        &mut self,
+        epoch: u64,
+        lease_from: Option<Instant>,
+        overridden: bool,
+        partner_outdated: bool,
+    ) -> State {
         self.confirmed_by_operator = false;
         self.requests.clear();
         State::Primary(Primary {
@@ -294,6 +328,8 @@ impl Ctx {
             overridden,
             renewals: BTreeMap::new(),
             next_seq: 0,
+            partner_outdated,
+            records: BTreeMap::new(),
         })
     }
 
@@ -365,6 +401,36 @@ impl Primary {
         State::Primary(self)
     }
 
+    /// `Recorded`: the witness keeps the record asked for in `seq`.
+    fn recorded(mut self, seq: u64, outdated: bool) -> State {
+        if let Some((_, reply)) = self.records.remove(&seq) {
+            self.partner_outdated = outdated;
+            let _ = reply.send(Ok(()));
+        }
+        State::Primary(self)
+    }
+
+    /// `Record`: ask the witness to set or clear the record, at this
+    /// primary's epoch.
+    fn record(&mut self, ctx: &Ctx, env: &dyn Env, ask: RecordAsk, now: Instant) {
+        if ask.epoch != self.epoch || self.overridden {
+            // An overridden primary is unknown to the witness.
+            let _ = ask.reply.send(Err(RecordRefused::NotPrimary));
+            return;
+        }
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.records.insert(seq, (now, ask.reply));
+        ctx.to_witness(
+            env,
+            FailoverMsg::Record {
+                seq,
+                epoch: self.epoch,
+                outdated: ask.outdated,
+            },
+        );
+    }
+
     /// `Fenced`: the witness's epoch is higher.
     fn fenced(self, ctx: &mut Ctx, epoch: u64, now: Instant) -> State {
         if epoch > self.epoch {
@@ -399,6 +465,7 @@ impl Primary {
             // Answers older than a lease are of no use.
             let horizon = now.checked_sub(ctx.cfg.lease).unwrap_or(now);
             self.renewals.retain(|_, sent| *sent >= horizon);
+            self.records.retain(|_, (sent, _)| *sent >= horizon);
             ctx.to_witness(
                 env,
                 FailoverMsg::Renew {
@@ -426,9 +493,9 @@ impl Primary {
 impl Standby {
     /// `Granted`: promoted, with a lease from when the granted request
     /// left.
-    fn granted(self, ctx: &mut Ctx, seq: u64, epoch: u64) -> State {
+    fn granted(self, ctx: &mut Ctx, seq: u64, epoch: u64, outdated: bool) -> State {
         match ctx.granted_request(self.asking.as_ref(), seq) {
-            Some(sent) => ctx.promote(epoch, Some(sent), false),
+            Some(sent) => ctx.promote(epoch, Some(sent), false, outdated),
             None => State::Standby(self),
         }
     }
@@ -511,14 +578,14 @@ impl Standby {
                 self.awaiting = !ctx.confirmed_by_operator && !ctx.witness_reachable(env);
                 // `Override`, once the partner's lease is out.
                 if ctx.confirmed_by_operator && ctx.waited_out(now) {
-                    return ctx.promote(self.epoch + 1, None, true);
+                    return ctx.promote(self.epoch + 1, None, true, false);
                 }
                 State::Standby(self)
             }
-            Arbiter::Paths => ctx.promote(self.epoch + 1, None, false),
+            Arbiter::Paths => ctx.promote(self.epoch + 1, None, false, false),
             Arbiter::Operator => {
                 if ctx.confirmed_by_operator {
-                    return ctx.promote(self.epoch + 1, None, false);
+                    return ctx.promote(self.epoch + 1, None, false, false);
                 }
                 self.asking = Some(self.asking.unwrap_or_default());
                 self.awaiting = true;
@@ -530,9 +597,9 @@ impl Standby {
 
 impl Down {
     /// `Granted`: resumed as primary.
-    fn granted(self, ctx: &mut Ctx, seq: u64, epoch: u64) -> State {
+    fn granted(self, ctx: &mut Ctx, seq: u64, epoch: u64, outdated: bool) -> State {
         match ctx.granted_request(Some(&self.asking), seq) {
-            Some(sent) => ctx.promote(epoch, Some(sent), false),
+            Some(sent) => ctx.promote(epoch, Some(sent), false, outdated),
             None => State::Down(self),
         }
     }
@@ -584,7 +651,7 @@ impl Down {
                     .any(|(_, _, s)| s.standing == Standing::Down);
                 let alone = !partner.any_live && ctx.cfg.arbiter == Arbiter::Paths;
                 if (partner_down && env.node() < ctx.cfg.partner) || alone {
-                    ctx.promote(self.epoch + 1, None, false)
+                    ctx.promote(self.epoch + 1, None, false, false)
                 } else {
                     State::Down(self)
                 }
@@ -724,6 +791,9 @@ impl Node {
         }
         match &self.state {
             State::Primary(p) if p.overridden => return Err(SwitchoverRefused::Overridden),
+            State::Primary(p) if p.partner_outdated => {
+                return Err(SwitchoverRefused::PartnerOutdated);
+            }
             State::Primary(_) => {}
             State::Standby(_) | State::Down(_) => return Err(SwitchoverRefused::NotPrimary),
         }
@@ -742,6 +812,18 @@ impl Node {
             other => other,
         });
         Ok(())
+    }
+
+    /// A change to the witness's record, asked by the replication layer.
+    fn record(&mut self, env: &dyn Env, ask: RecordAsk, now: Instant) {
+        match &mut self.state {
+            State::Primary(p) if matches!(self.ctx.cfg.arbiter, Arbiter::Witness(_)) => {
+                p.record(&self.ctx, env, ask, now);
+            }
+            _ => {
+                let _ = ask.reply.send(Err(RecordRefused::NotPrimary));
+            }
+        }
     }
 
     fn publish(&mut self, rt: &RuntimeInner, now: Instant) {
@@ -770,15 +852,28 @@ impl Node {
     }
 }
 
-/// Step, handle the witness's answers and an operator's confirmation, and
-/// publish after each, until the runtime is gone.
-pub(super) async fn run(
-    mut node: Node,
-    mut inbox: mpsc::UnboundedReceiver<FailoverMsg>,
-    confirm: Arc<Notify>,
-    mut switchovers: mpsc::UnboundedReceiver<SwitchoverAsk>,
-    interval: Duration,
-) {
+/// What the failover task takes besides its steps.
+pub(super) struct Inputs {
+    /// The witness's answers.
+    pub(super) inbox: mpsc::UnboundedReceiver<FailoverMsg>,
+    /// An operator's confirmation.
+    pub(super) confirm: Arc<Notify>,
+    /// Planned switchovers.
+    pub(super) switchovers: mpsc::UnboundedReceiver<SwitchoverAsk>,
+    /// Changes to the witness's record, from the replication layer.
+    pub(super) records: mpsc::UnboundedReceiver<RecordAsk>,
+}
+
+/// Step, handle the witness's answers, an operator's confirmation, planned
+/// switchovers and changes to the record, and publish after each, until
+/// the runtime is gone.
+pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
+    let Inputs {
+        mut inbox,
+        confirm,
+        mut switchovers,
+        mut records,
+    } = inputs;
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -796,6 +891,10 @@ pub(super) async fn run(
             Some(ask) = switchovers.recv() => {
                 let Some(rt) = node.ctx.rt.upgrade() else { return };
                 let _ = ask.reply.send(node.switchover(&*rt, Instant::now(), ask.check_only));
+            }
+            Some(ask) = records.recv() => {
+                let Some(rt) = node.ctx.rt.upgrade() else { return };
+                node.record(&*rt, ask, Instant::now());
             }
             () = async { tokio::time::sleep_until(lease_end.unwrap_or(now)).await },
                 if lease_end.is_some() => {}

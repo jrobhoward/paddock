@@ -8,7 +8,7 @@
 //! ├── kv/                        keyvalue disk buckets
 //! ├── tmp/                       uploads being verified
 //! ├── failover-epoch             the highest failover epoch reached
-//! ├── witness-state              a witness's epoch and the node it promoted
+//! ├── witness-state              a witness's epoch, the node it promoted, its record
 //! ├── node.lock                  held while a node has the directory open
 //! └── audit.log                  one JSON object per line
 //! ```
@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use paddock_host::failover::WitnessState;
 use serde::{Deserialize, Serialize};
 
 use super::error::{NodeError, internal};
@@ -121,27 +122,42 @@ impl Store {
         move |epoch: u64| write_durable(&root, "failover-epoch", &epoch.to_string())
     }
 
-    /// A witness's epoch and the node it promoted at it, if it ever
-    /// granted one.
-    pub(crate) fn load_witness(&self) -> Result<Option<(u64, u32)>, NodeError> {
+    /// A witness's epoch, the node it promoted at it, and whether that
+    /// node's partner is recorded out of date, if it ever granted one:
+    /// `<epoch> <node>`, followed by ` outdated` while the record stands.
+    pub(crate) fn load_witness(&self) -> Result<Option<WitnessState>, NodeError> {
         let path = self.root.join("witness-state");
         let Some(text) = read_optional(&path)? else {
             return Ok(None);
         };
-        let bad = || NodeError::Internal(format!("{}: not \"<epoch> <node>\"", path.display()));
+        let bad = || {
+            NodeError::Internal(format!(
+                "{}: not \"<epoch> <node> [outdated]\"",
+                path.display()
+            ))
+        };
         let mut parts = text.split_whitespace();
         let epoch = parts.next().and_then(|e| e.parse().ok()).ok_or_else(bad)?;
         let node = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
-        Ok(Some((epoch, node)))
+        let outdated = match parts.next() {
+            None => false,
+            Some("outdated") => true,
+            Some(_) => return Err(bad()),
+        };
+        if parts.next().is_some() {
+            return Err(bad());
+        }
+        Ok(Some(WitnessState::new(epoch, node, outdated)))
     }
 
-    /// What the witness's grants keep: written and synced to disk before
-    /// each grant is answered.
+    /// What the witness keeps: written and synced to disk before each
+    /// grant or change to its record is answered.
     pub(crate) fn witness_persist(&self) -> paddock_host::failover::WitnessPersist {
         let root = self.root.clone();
-        std::sync::Arc::new(move |epoch, node| {
-            write_durable(&root, "witness-state", &format!("{epoch} {node}"))
-                .map_err(|e| e.to_string())
+        std::sync::Arc::new(move |state: WitnessState| {
+            let outdated = if state.outdated { " outdated" } else { "" };
+            let text = format!("{} {}{outdated}", state.epoch, state.promoted);
+            write_durable(&root, "witness-state", &text).map_err(|e| e.to_string())
         })
     }
 

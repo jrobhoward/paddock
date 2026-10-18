@@ -14,13 +14,13 @@
 //! callback deadline. Paddock's own host on the vendored
 //! `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (spike S7).
 
-mod storage;
+pub(crate) mod storage;
 mod watches;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use paddock_bundle::manifest::{AccessMode, AppSpec, Bucket, Capability};
+use paddock_bundle::manifest::{AccessMode, AppSpec, Bucket, Capability, Durability};
 use wasmtime::Result;
 use wasmtime::component::{Linker, Resource};
 
@@ -30,7 +30,7 @@ use crate::error::HostError;
 use crate::instance::InstanceHandle;
 use crate::pid::Pid;
 
-use storage::{BucketHandle, KvStore, Op, Outcome, SHARED};
+use storage::{BucketHandle, KvStore, Op, Outcome, SHARED, StoreError};
 
 mod bindings {
     // Generated code carries no doc comments.
@@ -115,8 +115,13 @@ impl Instance {
             return Err(Refused::AccessDenied);
         };
         let bucket = self.store.shared(name).ok_or(Refused::NoSuchStore)?;
+        let space = if bucket.durability == Durability::Replicated {
+            crate::replication::SPACE
+        } else {
+            SHARED
+        };
         Ok(BucketHandle {
-            space: SHARED.to_string(),
+            space: space.to_string(),
             name: name.to_string(),
             durability: bucket.durability,
             quota: bucket.quota,
@@ -184,14 +189,17 @@ impl ServiceCtx<'_, Instance> {
         if !handle.writable && !op.read_only() {
             return Ok(Err(store::Error::AccessDenied));
         }
-        Ok(self.run_on(&handle, op).await.map_err(store::Error::Other))
+        Ok(self
+            .run_on(&handle, op)
+            .await
+            .map_err(|e| store::Error::Other(e.to_string())))
     }
 
     async fn run_on(
         &mut self,
         handle: &BucketHandle,
         op: Op,
-    ) -> std::result::Result<Outcome, String> {
+    ) -> std::result::Result<Outcome, StoreError> {
         self.state.store.run(handle, op).await
     }
 
@@ -222,7 +230,14 @@ impl ServiceCtx<'_, Instance> {
         op: Op,
     ) -> std::result::Result<Outcome, watch::Error> {
         let handle = self.watch_bucket(bucket, !op.read_only())?;
-        self.run_on(&handle, op).await.map_err(watch::Error::Other)
+        self.run_on(&handle, op).await.map_err(watch_error)
+    }
+}
+
+fn watch_error(e: StoreError) -> watch::Error {
+    match e {
+        StoreError::Unavailable(_) => watch::Error::Unavailable,
+        StoreError::Other(why) => watch::Error::Other(why),
     }
 }
 
@@ -419,7 +434,7 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             }
             (Err(e), _) => {
                 self.state.store.watches.remove(me, w.id);
-                return Ok(Err(watch::Error::Other(e)));
+                return Ok(Err(watch_error(e)));
             }
         };
         Ok(Ok(watch::Started { id: w.id, revision }))
@@ -439,6 +454,31 @@ impl watch::Host for ServiceCtx<'_, Instance> {
         Ok(self
             .watch_op(&bucket, Op::Entry(key))
             .await
+            .and_then(|o| match o {
+                Outcome::Entry(e) => {
+                    Ok(e.map(|(value, revision)| watch::Entry { value, revision }))
+                }
+                other => Err(watch::Error::Other(format!(
+                    "unexpected storage outcome {other:?}"
+                ))),
+            }))
+    }
+
+    async fn get_linearizable(
+        &mut self,
+        bucket: String,
+        key: String,
+    ) -> Result<std::result::Result<Option<watch::Entry>, watch::Error>> {
+        let handle = match self.watch_bucket(&bucket, false) {
+            Ok(h) => h,
+            Err(e) => return Ok(Err(e)),
+        };
+        Ok(self
+            .state
+            .store
+            .run_linearizable(&handle, Op::Entry(key))
+            .await
+            .map_err(watch_error)
             .and_then(|o| match o {
                 Outcome::Entry(e) => {
                     Ok(e.map(|(value, revision)| watch::Entry { value, revision }))

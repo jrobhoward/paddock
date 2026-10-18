@@ -57,7 +57,7 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 | Orchestration | `apps`, `pool`, `supervisor`, `upgrade`, `spec` | App sets in dependency order, a root supervisor per app, pools and routing, snapshot and restart upgrades |
 | Services | `services::{config, keyvalue, groups, logging, secrets, metrics, extension}`, `metrics` | Guest-facing interfaces on the `Service` pattern; extensions from other crates |
 | I/O | `http` (and `http::tls`), `listener` | The HTTP ingress (a request is a call) and listeners (an instance per connection) |
-| Cluster | `transport::{liveness, membership, wire, quic, memory}`, `failover::{node, witness}` | Frames between nodes, heartbeats and sessions, joining, QUIC with pinned keys, the in-memory mesh for tests, the HA pair and witness |
+| Cluster | `transport::{liveness, membership, wire, quic, memory}`, `failover::{node, witness}`, `replication::{core, log}` | Frames between nodes, heartbeats and sessions, joining, QUIC with pinned keys, the in-memory mesh for tests, the HA pair and witness, replicated buckets on the pair |
 | Observability | `probe`, `metrics` | USDT probes on the message path; Prometheus text |
 
 `delivery` is the one place a pid is routed: a live local instance, a dead local pid (`noproc`), or another node (a frame on the transport, or `noconnection`). Process-core code goes through it, never the process table directly.
@@ -155,7 +155,26 @@ An upgrade takes the same verify and compile steps, then either swaps each insta
 - **The witness** (`failover::witness`) answers one request at a time under a lock, and writes its epoch and promoted node to disk before a grant leaves.
 - **The gate** (`node::gate`) follows the leadership on the node: it writes the epoch to `failover-epoch` before acting on it, starts the held singletons from `init` when `may_run` is set, and kills them without `terminate` when it drops. It logs `singleton starting` and `singleton killed`, which the soak's checker reads.
 
-The rules are R1 to R11 in `docs/tla/VERIFICATION.md`; the assumptions the model makes, and which the code does not meet (A8: process pauses), are listed there.
+The rules are R1 to R13 in `docs/tla/VERIFICATION.md`; the assumptions the model makes, and which the code does not meet (A8: process pauses), are listed there.
+
+## A replicated write
+
+```
+   instance on node 2 (standby)     node 2 replication task        node 1 replication task (primary)
+   wasi:keyvalue set ──► KvStore::run ──► forwards Write ─────────────►  appends at epoch e (synced)
+                                                                         Append ──────────┐
+                                    appends (synced), Ack  ◄──────────────────────────────┘
+                                    ───────────────────────────────────►  commits: applies to its
+                                                                          @cluster copy, notifies
+                                                                          watches, answers Done
+   set returns ◄──────────────────  Done  ◄────────────────────────────  next Append or heartbeat
+                                    applies to its copy, notifies       carries the commit index
+```
+
+- **`KvStore`** sends a write to a `cluster` bucket (`Durability::Replicated` in the `@cluster` namespace) to the replication task and waits for its answer; reads are local, from this node's copy. `get-linearizable` goes to the task too, which serves it on the primary (or forwards it).
+- **The replication task** (`replication::Task`) owns the replica, a state machine named after spike S20's actions (`replication::core`), over the log (`replication::log`), which lives in the same redb file as the disk buckets: entries, and the commit index applied with the data in one transaction. It follows the failover leadership, takes frames from the partner (`Frame::Replication`), forwards the standby's writes and linearizable reads to the primary, asks the failover task to set or clear the witness's record (`failover::record_partner`), and ticks each heartbeat interval to resend, send the commit index and compact. Its redb work runs under `block_in_place`.
+
+The rules are spike S20's R1 to R7, mapped to the code in `docs/tla/VERIFICATION.md` with the witness's record (R13).
 
 ## Threads and tasks
 
@@ -174,6 +193,7 @@ A node runs one tokio multi-threaded runtime, one worker per core by default. No
 | Listener accept, connection instance | several per listener; 1 per connection | `listener` | stop; connection close or idle timeout |
 | Liveness loop | 1, once a node has a peer | `Liveness::add_peer` | runtime drop |
 | Failover node loop | 1 on a pair member | `Runtime::start_failover` | runtime drop |
+| Replication task; a record request to the failover loop | 1 on a pair member with `cluster` buckets; 1 per request | `Runtime::start_failover` | runtime drop; answer |
 | QUIC accept, new-member dialer | 1 each | `QuicTransport` | stop |
 | QUIC per connection: 2 writers, 2 readers, close watcher | 5 per peer | connection setup | connection close |
 | QUIC redial | 1 per lost peer or seed | connection loss | reconnected or stop |
@@ -201,6 +221,7 @@ The epoch ticker is an OS thread so that a node whose workers all run spinning g
 | Members and creations | `transport::membership::Membership` | std `Mutex` |
 | Failover inbox; the witness's record and its persistence | `failover::Shared` | std `Mutex` each |
 | Services' shared state: buckets (memory, and the redb handle), watches, groups, log rate buckets, metric series, secret sources | `services::Shared` | per service |
+| The replica: role, mode, the partner's match index, writes waiting to commit, a snapshot in transfer | `replication::Task` (owned by its task, no lock) | none |
 | Failover role for `hot-standby` instances | `RuntimeInner::failover_role` | std `RwLock` |
 
 No std lock is held across an `.await` (`await_holding_lock` is denied).
@@ -236,10 +257,10 @@ A guest's state lives only in its Store. A crash or restart starts from `init`; 
 ├── state.json                 apps, versions, running or stopped
 ├── bundles/<app>/<version>.rbp
 ├── priv/<app>/<version>/...   files the app sees at /priv
-├── kv/                        disk buckets (one redb file)
+├── kv/                        disk buckets and the replicated log with its cluster buckets (one redb file)
 ├── tmp/                       uploads being verified
 ├── failover-epoch             the highest epoch reached; written and synced before acting
-├── witness-state              a witness's epoch and promoted node; synced before a grant
+├── witness-state              a witness's epoch, promoted node and record; synced before a grant or record change
 ├── node.lock                  held while a node has the directory open
 └── audit.log                  one JSON object per line
 ```

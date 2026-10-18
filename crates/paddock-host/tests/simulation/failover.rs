@@ -285,13 +285,13 @@ fn witness_write_fails_once____primary_cut_off____standby_promoted_at_the_next_e
         async move {
             let failures = Arc::new(Mutex::new(1));
             let log = kept.clone();
-            let persist: WitnessPersist = Arc::new(move |epoch, node| {
+            let persist: WitnessPersist = Arc::new(move |state| {
                 let mut failures = failures.lock().unwrap();
-                if epoch >= 2 && *failures > 0 {
+                if state.epoch >= 2 && *failures > 0 {
                     *failures -= 1;
                     return Err("disk full".into());
                 }
-                log.lock().unwrap().push((epoch, node));
+                log.lock().unwrap().push((state.epoch, state.promoted));
                 Ok(())
             });
             let pair = start_kept(&sim, witness(), Some(persist));

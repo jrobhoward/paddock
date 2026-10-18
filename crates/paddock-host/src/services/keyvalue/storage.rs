@@ -20,13 +20,16 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use paddock_bundle::manifest::Durability;
-use redb::{ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{ReadableDatabase, ReadableTable, TableDefinition, TableHandle};
+
+use tokio::sync::watch;
 
 use super::watches::Watches;
 use crate::config::SharedBucket;
+use crate::replication::{Handle, Refusal, ReplicationStatus, SPACE};
 
 /// Keys per `list-keys` page.
 pub(crate) const PAGE: usize = 256;
@@ -47,17 +50,21 @@ pub struct BucketHandle {
     pub(crate) writable: bool,
 }
 
-/// One storage operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One storage operation. Serializable: a replicated bucket's log carries
+/// its writes ([`crate::replication`]), and a standby forwards them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Op {
     Get(String),
-    Set(String, Vec<u8>),
+    Set(
+        String,
+        #[serde(with = "crate::transport::wire::bytes")] Vec<u8>,
+    ),
     Delete(String),
     Exists(String),
     Keys(Option<u64>),
     Increment(String, u64),
     GetMany(Vec<String>),
-    SetMany(Vec<(String, Vec<u8>)>),
+    SetMany(#[serde(with = "crate::transport::wire::blobs::pairs")] Vec<(String, Vec<u8>)>),
     DeleteMany(Vec<String>),
     /// The bucket's revision and the key's.
     Revision(String),
@@ -74,6 +81,7 @@ pub(crate) enum Op {
     Swap {
         key: String,
         expected: Option<u64>,
+        #[serde(with = "crate::transport::wire::bytes")]
         value: Vec<u8>,
     },
     /// Delete the key if its revision is `expected`.
@@ -98,22 +106,26 @@ impl Op {
     }
 }
 
-/// What an operation returns.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What an operation returns. Serializable, for operations a standby
+/// forwards to the primary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Outcome {
     Done,
-    Value(Option<Vec<u8>>),
+    Value(#[serde(with = "crate::transport::wire::blobs::option")] Option<Vec<u8>>),
     Exists(bool),
     Keys(Vec<String>, Option<u64>),
     Count(u64),
-    Values(Vec<Option<(String, Vec<u8>)>>),
+    Values(
+        #[serde(with = "crate::transport::wire::blobs::option_pairs")]
+        Vec<Option<(String, Vec<u8>)>>,
+    ),
     /// The bucket's revision, and the key's if it has one.
     Revision {
         bucket: u64,
         key: Option<u64>,
     },
     /// A value and its revision.
-    Entry(Option<(Vec<u8>, u64)>),
+    Entry(#[serde(with = "crate::transport::wire::blobs::entry")] Option<(Vec<u8>, u64)>),
     /// The bucket's revision, the revision of its latest delete, and the
     /// matching keys changed since, with their revisions.
     Since {
@@ -441,10 +453,56 @@ impl Txn for MemBucket {
 /// A bucket in storage: its namespace (app or [`SHARED`]) and name.
 pub(crate) type Key = (String, String);
 
+/// Why a storage operation failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StoreError {
+    /// A replicated bucket, and no primary can take the operation now (or
+    /// a write's outcome is unknown: it may yet commit).
+    Unavailable(String),
+    /// Anything else: storage, a quota, a malformed counter.
+    Other(String),
+}
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(why) => write!(f, "unavailable: {why}"),
+            Self::Other(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<String> for StoreError {
+    fn from(why: String) -> Self {
+        Self::Other(why)
+    }
+}
+
+impl From<&str> for StoreError {
+    fn from(why: &str) -> Self {
+        Self::Other(why.to_string())
+    }
+}
+
+impl From<Refusal> for StoreError {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Unavailable => {
+                Self::Unavailable("no primary with a lease can take it now".into())
+            }
+            Refusal::Unknown => Self::Unavailable(
+                "not committed in time, or the primary stepped down; the write may yet commit"
+                    .into(),
+            ),
+            Refusal::Failed(why) => Self::Other(why),
+        }
+    }
+}
+
 /// Every bucket on the node. Backends sit behind [`KvStore::run`], one per
-/// durability: [`Memory`], [`Disk`], and a replicated one in Phase 3. Each
-/// runs [`apply`] in one transaction, so guests see the same rules from
-/// all of them.
+/// durability: [`Memory`], [`Disk`], and replicated shared buckets through
+/// [`crate::replication`]. Each runs [`apply`] in one transaction, so
+/// guests see the same rules from all of them.
 #[derive(Debug)]
 pub(crate) struct KvStore {
     memory: Memory,
@@ -453,6 +511,8 @@ pub(crate) struct KvStore {
     shared: BTreeMap<String, SharedBucket>,
     /// Watches, told about every change after it commits.
     pub(crate) watches: Watches,
+    /// Replication, once started: its task, and where it stands.
+    replication: OnceLock<(Handle, watch::Receiver<ReplicationStatus>)>,
 }
 
 /// The memory backend.
@@ -471,8 +531,10 @@ impl Memory {
     }
 }
 
+/// The disk backend: one redb file, which also holds a replicated bucket's
+/// log ([`crate::replication`]).
 #[derive(Debug)]
-struct Disk {
+pub(crate) struct Disk {
     db: redb::Database,
     /// Bucket sizes, computed on first use and kept after each commit.
     sizes: Mutex<HashMap<Key, u64>>,
@@ -487,7 +549,7 @@ impl KvStore {
         if data_dir.is_none()
             && let Some((name, _)) = shared
                 .iter()
-                .find(|(_, b)| b.durability == Durability::Disk)
+                .find(|(_, b)| b.durability != Durability::Memory)
         {
             return Err(format!(
                 "shared bucket '{name}' is on disk, and the node has no data directory"
@@ -511,7 +573,34 @@ impl KvStore {
             disk,
             shared,
             watches: Watches::default(),
+            replication: OnceLock::new(),
         })
+    }
+
+    /// Whether the node configures replicated shared buckets.
+    pub(crate) fn has_replicated(&self) -> bool {
+        self.shared
+            .values()
+            .any(|b| b.durability == Durability::Replicated)
+    }
+
+    /// Route replicated buckets through `handle`; once only.
+    pub(crate) fn set_replication(
+        &self,
+        handle: Handle,
+        status: watch::Receiver<ReplicationStatus>,
+    ) -> Result<(), ()> {
+        self.replication.set((handle, status)).map_err(|_| ())
+    }
+
+    /// The replication task, once started.
+    pub(crate) fn replication(&self) -> Option<&Handle> {
+        self.replication.get().map(|(h, _)| h)
+    }
+
+    /// Where replication stands, once started.
+    pub(crate) fn replication_status(&self) -> Option<watch::Receiver<ReplicationStatus>> {
+        self.replication.get().map(|(_, s)| s.clone())
     }
 
     /// The shared bucket `name`, if the node configures it.
@@ -519,8 +608,21 @@ impl KvStore {
         self.shared.get(name)
     }
 
-    /// Run one operation against a bucket.
-    pub(crate) async fn run(&self, bucket: &BucketHandle, op: Op) -> Result<Outcome, String> {
+    /// The disk backend, if the node has a data directory.
+    pub(crate) fn disk(&self) -> Option<Arc<Disk>> {
+        self.disk.clone()
+    }
+
+    /// Run one operation against a bucket. A write to a replicated bucket
+    /// returns once it commits, and its watches hear of it from
+    /// replication, on every node; a read is local.
+    pub(crate) async fn run(&self, bucket: &BucketHandle, op: Op) -> Result<Outcome, StoreError> {
+        if bucket.space == SPACE && !op.read_only() {
+            let handle = self
+                .replication()
+                .ok_or_else(|| StoreError::Unavailable("replication is not running".into()))?;
+            return Ok(handle.write(&bucket.name, bucket.quota, op).await?);
+        }
         let key = (bucket.space.clone(), bucket.name.clone());
         let applied = self.apply(bucket, key.clone(), op).await?;
         if let Some(revision) = applied.revision {
@@ -529,8 +631,33 @@ impl KvStore {
         Ok(applied.outcome)
     }
 
+    /// A read that reflects every write committed before it: on a
+    /// replicated bucket, served by the primary (spike S20's R5); on any
+    /// other, as [`KvStore::run`].
+    pub(crate) async fn run_linearizable(
+        &self,
+        bucket: &BucketHandle,
+        op: Op,
+    ) -> Result<Outcome, StoreError> {
+        if bucket.space != SPACE {
+            return self.run(bucket, op).await;
+        }
+        let handle = self
+            .replication()
+            .ok_or_else(|| StoreError::Unavailable("replication is not running".into()))?;
+        Ok(handle.read(&bucket.name, op).await?)
+    }
+
     /// Run `op` on the bucket's backend.
     async fn apply(&self, bucket: &BucketHandle, key: Key, op: Op) -> Result<Applied, String> {
+        if bucket.space == SPACE {
+            // A replicated bucket's local copy, for reads.
+            let disk = self
+                .disk
+                .clone()
+                .ok_or("disk storage is not configured on this node")?;
+            return disk.run(&key, op, bucket.quota);
+        }
         match bucket.durability {
             Durability::Memory => self.memory.run(key, op, bucket.quota),
             Durability::Disk => {
@@ -552,7 +679,7 @@ impl KvStore {
                     .map_err(|e| format!("storage task failed: {e}"))?
             }
             Durability::Replicated => {
-                Err("replicated buckets are not supported until Phase 3".into())
+                Err("replicated app buckets are not supported yet (ROADMAP K3)".into())
             }
         }
     }
@@ -579,8 +706,195 @@ fn open_read<K: redb::Key + 'static, V: redb::Value + 'static>(
     }
 }
 
+/// One bucket's whole contents, for a snapshot of a replicated bucket.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct BucketDump {
+    pub(crate) name: String,
+    /// The bucket's revision and its latest delete's.
+    pub(crate) revision: u64,
+    pub(crate) deleted: u64,
+    /// Keys, values and their revisions, in key order.
+    pub(crate) entries: Vec<DumpEntry>,
+}
+
+/// One key of a [`BucketDump`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct DumpEntry {
+    pub(crate) key: String,
+    #[serde(with = "crate::transport::wire::bytes")]
+    pub(crate) value: Vec<u8>,
+    pub(crate) revision: u64,
+}
+
 impl Disk {
-    fn run(&self, key: &Key, op: Op, quota: Option<u64>) -> Result<Applied, String> {
+    /// An in-memory database, for tests.
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Self {
+        let db = redb::Database::builder()
+            .create_with_backend(redb::backends::InMemoryBackend::new())
+            .unwrap_or_else(|e| panic!("in-memory database: {e}"));
+        Self {
+            db,
+            sizes: Mutex::default(),
+        }
+    }
+
+    /// The database, for transactions spanning buckets and the replicated
+    /// log.
+    pub(crate) fn db(&self) -> &redb::Database {
+        &self.db
+    }
+
+    /// Run a write `op` on bucket `key` inside `txn`, which the caller
+    /// commits. The cached size is updated at once; after an abort, call
+    /// [`Disk::forget_sizes`].
+    pub(crate) fn apply_in(
+        &self,
+        txn: &redb::WriteTransaction,
+        key: &Key,
+        op: Op,
+        quota: Option<u64>,
+    ) -> Result<Applied, String> {
+        let name = format!("{}/{}", key.0, key.1);
+        let rev_name = format!("{name}#rev");
+        let table: TableDefinition<&str, &[u8]> = TableDefinition::new(&name);
+        let revs: TableDefinition<&str, u64> = TableDefinition::new(&rev_name);
+        let cached = self
+            .sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .copied();
+        let e = |err: &dyn std::fmt::Display| err.to_string();
+        let applied = {
+            let mut view = DiskWrite {
+                table: txn.open_table(table).map_err(|err| e(&err))?,
+                revs: txn.open_table(revs).map_err(|err| e(&err))?,
+                buckets: txn.open_table(REVISIONS).map_err(|err| e(&err))?,
+                name: &name,
+                cached,
+            };
+            apply(&mut view, op, quota)?
+        };
+        self.remember(key, applied.bytes);
+        Ok(applied)
+    }
+
+    /// Drop the cached sizes of every bucket in `space`, after a
+    /// transaction that changed them was aborted or replaced them.
+    pub(crate) fn forget_sizes(&self, space: &str) {
+        self.sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(s, _), _| s != space);
+    }
+
+    /// Every bucket in `space`, as `txn` sees it.
+    pub(crate) fn export(
+        &self,
+        txn: &redb::ReadTransaction,
+        space: &str,
+    ) -> Result<Vec<BucketDump>, String> {
+        let e = |err: &dyn std::fmt::Display| err.to_string();
+        let prefix = format!("{space}/");
+        let mut names: Vec<String> = txn
+            .list_tables()
+            .map_err(|err| e(&err))?
+            .map(|t| t.name().to_string())
+            .filter(|n| n.starts_with(&prefix) && !n.ends_with("#rev"))
+            .collect();
+        names.sort();
+        let buckets = open_read(txn, REVISIONS)?;
+        let mut dumps = Vec::with_capacity(names.len());
+        for name in names {
+            let table: TableDefinition<&str, &[u8]> = TableDefinition::new(&name);
+            let rev_name = format!("{name}#rev");
+            let revs: TableDefinition<&str, u64> = TableDefinition::new(&rev_name);
+            let revs = open_read(txn, revs)?;
+            let mut entries = Vec::new();
+            if let Some(t) = open_read(txn, table)? {
+                for entry in t.iter().map_err(|err| e(&err))? {
+                    let (k, v) = entry.map_err(|err| e(&err))?;
+                    let key = k.value().to_string();
+                    let revision = read_u64(revs.as_ref(), &key)?.unwrap_or(0);
+                    entries.push(DumpEntry {
+                        key,
+                        value: v.value().to_vec(),
+                        revision,
+                    });
+                }
+            }
+            dumps.push(BucketDump {
+                revision: read_u64(buckets.as_ref(), &name)?.unwrap_or(0),
+                deleted: read_u64(buckets.as_ref(), &deleted_key(&name))?.unwrap_or(0),
+                name: name[prefix.len()..].to_string(),
+                entries,
+            });
+        }
+        Ok(dumps)
+    }
+
+    /// Replace every bucket in `space` with `dumps`, inside `txn`, which
+    /// the caller commits; then [`Disk::forget_sizes`].
+    pub(crate) fn import(
+        &self,
+        txn: &redb::WriteTransaction,
+        space: &str,
+        dumps: &[BucketDump],
+    ) -> Result<(), String> {
+        let e = |err: &dyn std::fmt::Display| err.to_string();
+        let prefix = format!("{space}/");
+        let old: Vec<String> = txn
+            .list_tables()
+            .map_err(|err| e(&err))?
+            .map(|t| t.name().to_string())
+            .filter(|n| n.starts_with(&prefix))
+            .collect();
+        let mut buckets = txn.open_table(REVISIONS).map_err(|err| e(&err))?;
+        for name in &old {
+            // Values and revisions have different types; delete both ways.
+            let values: TableDefinition<&str, &[u8]> = TableDefinition::new(name);
+            let revs: TableDefinition<&str, u64> = TableDefinition::new(name);
+            if name.ends_with("#rev") {
+                txn.delete_table(revs).map_err(|err| e(&err))?;
+            } else {
+                txn.delete_table(values).map_err(|err| e(&err))?;
+                buckets.remove(name.as_str()).map_err(|err| e(&err))?;
+                buckets
+                    .remove(deleted_key(name).as_str())
+                    .map_err(|err| e(&err))?;
+            }
+        }
+        for dump in dumps {
+            let name = format!("{prefix}{}", dump.name);
+            let rev_name = format!("{name}#rev");
+            let values: TableDefinition<&str, &[u8]> = TableDefinition::new(&name);
+            let revs: TableDefinition<&str, u64> = TableDefinition::new(&rev_name);
+            let mut values = txn.open_table(values).map_err(|err| e(&err))?;
+            let mut revs = txn.open_table(revs).map_err(|err| e(&err))?;
+            for entry in &dump.entries {
+                values
+                    .insert(entry.key.as_str(), entry.value.as_slice())
+                    .map_err(|err| e(&err))?;
+                revs.insert(entry.key.as_str(), entry.revision)
+                    .map_err(|err| e(&err))?;
+            }
+            if dump.revision > 0 {
+                buckets
+                    .insert(name.as_str(), dump.revision)
+                    .map_err(|err| e(&err))?;
+            }
+            if dump.deleted > 0 {
+                buckets
+                    .insert(deleted_key(&name).as_str(), dump.deleted)
+                    .map_err(|err| e(&err))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Run `op` on bucket `key` in its own transaction.
+    pub(crate) fn run(&self, key: &Key, op: Op, quota: Option<u64>) -> Result<Applied, String> {
         // A bucket is two tables: values, and each key's revision.
         let name = format!("{}/{}", key.0, key.1);
         let rev_name = format!("{name}#rev");

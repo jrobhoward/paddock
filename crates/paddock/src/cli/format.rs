@@ -298,6 +298,29 @@ pub(crate) fn failover(f: &paddock::api::FailoverInfo) -> String {
             "\nwaiting:    the partner looks gone and no witness can decide; `paddock failover confirm` promotes this node",
         );
     }
+    if f.partner_outdated {
+        out.push_str(
+            "\noutdated:   the partner lacks replicated writes; it is not promoted until it catches up",
+        );
+    }
+    if let Some(r) = &f.replication {
+        out.push_str(&format!(
+            "\nreplicated: {} (commit {}, last {}",
+            r.buckets.join(", "),
+            r.commit,
+            r.last
+        ));
+        if let Some(matched) = r.partner_matched {
+            out.push_str(&format!(
+                ", partner at {matched}, {} behind",
+                r.last.saturating_sub(matched)
+            ));
+        }
+        if r.alone {
+            out.push_str(", committing alone");
+        }
+        out.push(')');
+    }
     out
 }
 

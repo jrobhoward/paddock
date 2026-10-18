@@ -18,13 +18,16 @@ use super::Packet;
 /// for messaging ACLs; version 4 carries process groups across nodes
 /// (`GroupSync`, `GroupJoin`, `GroupLeave`, `GroupPublish`); version 5
 /// calls an app on another node by name (`AppCall`, for requests a
-/// standby's ingress forwards).
-pub const VERSION: u16 = 5;
+/// standby's ingress forwards); version 6 replicates buckets between an HA
+/// pair (`Replication`) and carries the witness's record of a partner out
+/// of date (`Record`, `Recorded`, and `Granted`'s `outdated`).
+pub const VERSION: u16 = 6;
 
-/// The oldest protocol version this node reads. A version 4 node cannot
-/// read `AppCall`, and a node does not track which version each peer
-/// agreed, so version 4 is not spoken.
-pub const MIN_VERSION: u16 = 5;
+/// The oldest protocol version this node reads. A version 5 node cannot
+/// read `Replication`, `Record` or a `Granted` with `outdated`, and a node
+/// does not track which version each peer agreed, so version 5 is not
+/// spoken.
+pub const MIN_VERSION: u16 = 6;
 
 /// The first message each side of a connection sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +159,104 @@ pub(crate) mod bytes {
     }
 }
 
+/// Byte strings inside other types: keyvalue values in replicated log
+/// entries and in the outcomes of forwarded operations
+/// ([`crate::replication`]).
+pub(crate) mod blobs {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    struct BlobRef<'a>(&'a [u8]);
+
+    impl Serialize for BlobRef<'_> {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.serialize_bytes(self.0)
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct Blob(#[serde(with = "super::bytes")] Vec<u8>);
+
+    /// `Option<Vec<u8>>`.
+    pub(crate) mod option {
+        use super::{Blob, BlobRef, Deserialize, Deserializer, Serialize, Serializer};
+
+        pub(crate) fn serialize<S: Serializer>(
+            v: &Option<Vec<u8>>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            v.as_deref().map(BlobRef).serialize(s)
+        }
+
+        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<Vec<u8>>, D::Error> {
+            Ok(Option::<Blob>::deserialize(d)?.map(|b| b.0))
+        }
+    }
+
+    /// `Vec<(String, Vec<u8>)>`.
+    pub(crate) mod pairs {
+        use super::{Blob, BlobRef, Deserialize, Deserializer, Serializer};
+
+        pub(crate) fn serialize<S: Serializer>(
+            v: &[(String, Vec<u8>)],
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            s.collect_seq(v.iter().map(|(k, b)| (k, BlobRef(b))))
+        }
+
+        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Vec<(String, Vec<u8>)>, D::Error> {
+            Ok(Vec::<(String, Blob)>::deserialize(d)?
+                .into_iter()
+                .map(|(k, b)| (k, b.0))
+                .collect())
+        }
+    }
+
+    /// `Vec<Option<(String, Vec<u8>)>>`.
+    pub(crate) mod option_pairs {
+        use super::{Blob, BlobRef, Deserialize, Deserializer, Serializer};
+
+        type OptionPairs = Vec<Option<(String, Vec<u8>)>>;
+
+        pub(crate) fn serialize<S: Serializer>(
+            v: &[Option<(String, Vec<u8>)>],
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            s.collect_seq(v.iter().map(|p| p.as_ref().map(|(k, b)| (k, BlobRef(b)))))
+        }
+
+        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<OptionPairs, D::Error> {
+            Ok(Vec::<Option<(String, Blob)>>::deserialize(d)?
+                .into_iter()
+                .map(|p| p.map(|(k, b)| (k, b.0)))
+                .collect())
+        }
+    }
+
+    /// `Option<(Vec<u8>, u64)>`.
+    pub(crate) mod entry {
+        use super::{Blob, BlobRef, Deserialize, Deserializer, Serialize, Serializer};
+
+        pub(crate) fn serialize<S: Serializer>(
+            v: &Option<(Vec<u8>, u64)>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            v.as_ref().map(|(b, r)| (BlobRef(b), r)).serialize(s)
+        }
+
+        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<(Vec<u8>, u64)>, D::Error> {
+            Ok(Option::<(Blob, u64)>::deserialize(d)?.map(|(b, r)| (b.0, r)))
+        }
+    }
+}
+
 /// [`crate::failover::FailoverMsg`] on the wire, through a mirror type so
 /// the failover module carries no wire concerns.
 pub(crate) mod failover {
@@ -184,12 +285,22 @@ pub(crate) mod failover {
         Granted {
             seq: u64,
             epoch: u64,
+            outdated: bool,
         },
         NotYet {
             wait_ms: u64,
         },
         Refused {
             epoch: u64,
+        },
+        Record {
+            seq: u64,
+            epoch: u64,
+            outdated: bool,
+        },
+        Recorded {
+            seq: u64,
+            outdated: bool,
         },
     }
 
@@ -209,9 +320,27 @@ pub(crate) mod failover {
             },
             FailoverMsg::LeaseOk { seq } => Wire::LeaseOk { seq },
             FailoverMsg::Fenced { epoch } => Wire::Fenced { epoch },
-            FailoverMsg::Granted { seq, epoch } => Wire::Granted { seq, epoch },
+            FailoverMsg::Granted {
+                seq,
+                epoch,
+                outdated,
+            } => Wire::Granted {
+                seq,
+                epoch,
+                outdated,
+            },
             FailoverMsg::NotYet { wait_ms } => Wire::NotYet { wait_ms },
             FailoverMsg::Refused { epoch } => Wire::Refused { epoch },
+            FailoverMsg::Record {
+                seq,
+                epoch,
+                outdated,
+            } => Wire::Record {
+                seq,
+                epoch,
+                outdated,
+            },
+            FailoverMsg::Recorded { seq, outdated } => Wire::Recorded { seq, outdated },
         };
         wire.serialize(s)
     }
@@ -232,9 +361,27 @@ pub(crate) mod failover {
             },
             Wire::LeaseOk { seq } => FailoverMsg::LeaseOk { seq },
             Wire::Fenced { epoch } => FailoverMsg::Fenced { epoch },
-            Wire::Granted { seq, epoch } => FailoverMsg::Granted { seq, epoch },
+            Wire::Granted {
+                seq,
+                epoch,
+                outdated,
+            } => FailoverMsg::Granted {
+                seq,
+                epoch,
+                outdated,
+            },
             Wire::NotYet { wait_ms } => FailoverMsg::NotYet { wait_ms },
             Wire::Refused { epoch } => FailoverMsg::Refused { epoch },
+            Wire::Record {
+                seq,
+                epoch,
+                outdated,
+            } => FailoverMsg::Record {
+                seq,
+                epoch,
+                outdated,
+            },
+            Wire::Recorded { seq, outdated } => FailoverMsg::Recorded { seq, outdated },
         })
     }
 }

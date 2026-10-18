@@ -348,7 +348,7 @@ async fn KvStore____disk_quota_after_reopen____counts_existing_data() {
     let store = KvStore::open(Some(dir.path()), BTreeMap::new()).unwrap();
     let result = store.run(&b, set("b", "12")).await;
 
-    assert!(result.unwrap_err().contains("quota"));
+    assert!(result.unwrap_err().to_string().contains("quota"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -359,7 +359,7 @@ async fn KvStore____disk_bucket_without_data_dir____error() {
         .run(&handle("app", "d", Durability::Disk), Op::Get("k".into()))
         .await;
 
-    assert!(result.unwrap_err().contains("not configured"));
+    assert!(result.unwrap_err().to_string().contains("not configured"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

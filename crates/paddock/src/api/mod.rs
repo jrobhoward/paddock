@@ -216,6 +216,32 @@ pub struct FailoverInfo {
     /// as `after` to wait for the next ([`crate::api::Client::failover_after`]).
     #[serde(default)]
     pub generation: u64,
+    /// On the primary: the witness has the partner recorded out of date
+    /// (it lacks replicated writes committed without it), so it is not
+    /// promoted, and a switchover is refused, until it catches up.
+    #[serde(default)]
+    pub partner_outdated: bool,
+    /// Where the replicated log stands, with `cluster` buckets.
+    #[serde(default)]
+    pub replication: Option<ReplicationInfo>,
+}
+
+/// A node's replicated log (`cluster` buckets, ROADMAP K2): one log for
+/// every such bucket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplicationInfo {
+    /// The `cluster` buckets it carries.
+    pub buckets: Vec<String>,
+    /// The last entry applied to this node's copy.
+    pub commit: u64,
+    /// The last entry in this node's log.
+    pub last: u64,
+    /// Entries up to here are compacted.
+    pub base: u64,
+    /// On the primary, the last entry the standby acknowledged.
+    pub partner_matched: Option<u64>,
+    /// On the primary, whether it commits without the standby.
+    pub alone: bool,
 }
 
 /// What a deploy did.

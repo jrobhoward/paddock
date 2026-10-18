@@ -224,6 +224,14 @@ pub enum Frame {
         /// Why.
         reason: ExitReason,
     },
+    /// Replication between the nodes of an HA pair (ROADMAP K2): log
+    /// entries, acknowledgements, snapshots, and operations the standby
+    /// forwards to the primary, as CBOR the replication module reads.
+    Replication {
+        /// The message.
+        #[serde(with = "wire::bytes")]
+        body: Vec<u8>,
+    },
     /// A call from the sending node's host to the app called `app` on the
     /// receiving node, whose pool picks the instance as for a local caller
     /// (an HTTP request forwarded from a standby's ingress, ROADMAP D11);
@@ -684,6 +692,7 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
             welcome(rt, &new, Some(from_node));
         }
         Frame::Failover(msg) => rt.failover.deliver(rt, from_node, msg),
+        Frame::Replication { body } => crate::replication::deliver(rt, from_node, &body),
         Frame::Leave => {
             if rt.membership.remove(from_node) {
                 end_session(rt, from_node);
