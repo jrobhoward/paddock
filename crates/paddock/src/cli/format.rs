@@ -305,10 +305,11 @@ pub(crate) fn failover(f: &paddock::api::FailoverInfo) -> String {
     }
     if let Some(r) = &f.replication {
         out.push_str(&format!(
-            "\nreplicated: {} (commit {}, last {}",
+            "\nreplicated: {} (commit {}, last {}, log {} KiB",
             r.buckets.join(", "),
             r.commit,
-            r.last
+            r.last,
+            r.log_bytes.div_ceil(1024)
         ));
         if let Some(matched) = r.partner_matched {
             out.push_str(&format!(

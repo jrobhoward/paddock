@@ -29,6 +29,7 @@ BENCHES=(
   "batch|points per second between apps, one cast each or batched (F4)|R/examples/batch_cost 1; R/examples/batch_cost 4"
   "egress|outgoing HTTP from a guest through the pool|R/examples/egress_cost 1; R/examples/egress_cost 4; R/examples/egress_cost 4 nopool"
   "cluster|calls, casts and payloads between two nodes over QUIC, and bare quinn's floor|R/examples/cluster_throughput 4; R/examples/quic_floor 4"
+  "replication|writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket (K2)|R/examples/replication_cost 4"
   "passivation|wake cost, instances per Store slot, random calls|R/examples/passivation_cost 4 1000 100000; R/examples/passivation_cost 4 100 2000; R/examples/passivation_cost 4 1000 1000 off"
   "modbus|Modbus points through the scada pool|R/examples/modbus_load 16 100 10 4 4; R/examples/modbus_load 64 125 1 4 4; R/examples/modbus_load 64 125 1 8 8"
   "s14|spike S14: storage in the guest and host services|S/s14-bench spikes/target/wasm32-wasip2/release/s14_guest.wasm"

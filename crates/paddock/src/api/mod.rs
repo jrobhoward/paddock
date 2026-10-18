@@ -238,6 +238,10 @@ pub struct ReplicationInfo {
     pub last: u64,
     /// Entries up to here are compacted.
     pub base: u64,
+    /// The encoded size of the entries in the log (`[failover]
+    /// replication_log_max` bounds it).
+    #[serde(default)]
+    pub log_bytes: u64,
     /// On the primary, the last entry the standby acknowledged.
     pub partner_matched: Option<u64>,
     /// On the primary, whether it commits without the standby.

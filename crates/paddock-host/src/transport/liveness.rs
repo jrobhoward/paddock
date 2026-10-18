@@ -603,24 +603,32 @@ fn round(rt: &Arc<RuntimeInner>) {
     }
     // Process groups: a snapshot to each peer in a new session (ROADMAP D4).
     rt.services.groups().sync(rt);
-    // Membership gossip: every member this node knows, to each peer it
-    // reaches, every few rounds. Joins pass members on once; a `Members`
-    // lost with a session that ended (a connection replaced or cut as it
-    // was sent) would otherwise leave a node that never learns of a member,
-    // and, when only the other node of that pair dials, never connects to
-    // it (found by the replication soak, 2026-10-17).
+    // Membership gossip, every few rounds: every member this node knows,
+    // to each member it reaches, and a join to each peer it watches and
+    // reaches that is not yet a member. Joins pass members on once; a
+    // `Members` lost with a session that ended (a connection replaced or
+    // cut as it was sent) would otherwise leave a node that never learns
+    // of a member, and, when only the other node of that pair dials, never
+    // connects to it; a join sent while its seed was still marked
+    // unreachable, after an outage, is dropped and never sent again (both
+    // found by the replication soak, 2026-10-17 and 2026-10-18).
     if liveness.rounds.fetch_add(1, Ordering::Relaxed) % GOSSIP_ROUNDS == GOSSIP_ROUNDS - 1 {
         let members = rt.membership.list();
-        for node in rt.membership.others() {
-            if liveness.reachable(node) {
-                super::send(
-                    rt,
-                    node,
-                    Frame::Members {
-                        members: members.clone(),
-                    },
-                );
+        let others = rt.membership.others();
+        for node in liveness.watched() {
+            if !liveness.reachable(node) {
+                continue;
             }
+            let frame = if others.contains(&node) {
+                Frame::Members {
+                    members: members.clone(),
+                }
+            } else {
+                Frame::Join {
+                    member: rt.membership.me(),
+                }
+            };
+            super::send(rt, node, frame);
         }
     }
 }

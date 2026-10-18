@@ -2,6 +2,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+use std::time::Duration;
+
 use super::*;
 use crate::services::keyvalue::storage::Outcome;
 
@@ -158,4 +160,36 @@ fn install____snapshot_of_another_log____buckets_and_indexes_replaced() {
     assert_eq!(get(&target, "b"), Some(b"2".to_vec()));
     assert_eq!(get(&target, "stale"), None);
     assert_eq!(target.snapshot().unwrap().buckets, snap.buckets);
+}
+
+#[tokio::test(start_paused = true)]
+async fn compact_target____within_both_bounds____nothing_and_never_past_the_commit_index() {
+    let mut log = log();
+    log.append(1, &[noop(1), set(1, "a", "1"), set(1, "b", "2")])
+        .unwrap();
+    log.commit_to(2).unwrap();
+    let now = tokio::time::Instant::now();
+
+    let within = log.compact_target(now, 1 << 20, Duration::from_secs(60));
+    let over_bytes = log.compact_target(now, 0, Duration::from_secs(60));
+
+    assert_eq!(within, 0);
+    assert_eq!(over_bytes, 2, "only committed entries are dropped");
+}
+
+#[tokio::test(start_paused = true)]
+async fn compact_target____oldest_entries_past_the_age____dropped_up_to_the_younger() {
+    let mut log = log();
+    log.append(1, &[noop(1), set(1, "a", "1")]).unwrap();
+    tokio::time::advance(Duration::from_secs(120)).await;
+    log.append(3, &[set(1, "b", "2")]).unwrap();
+    log.commit_to(3).unwrap();
+    let now = tokio::time::Instant::now();
+
+    let to = log.compact_target(now, u64::MAX, Duration::from_secs(60));
+    let bytes = log.bytes();
+    log.compact(to).unwrap();
+
+    assert_eq!(to, 2);
+    assert!(log.bytes() < bytes && log.bytes() > 0);
 }

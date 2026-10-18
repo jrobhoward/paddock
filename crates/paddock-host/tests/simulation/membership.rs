@@ -210,3 +210,31 @@ fn join____seeds_answer_and_the_introduction_lost____member_learned_from_the_gos
     assert_eq!(before, vec![(1, 1), (3, 1)], "the loss took effect");
     assert_eq!(after, vec![(1, 1), (2, 1), (3, 1)]);
 }
+
+#[test]
+fn join____lost_while_the_seed_was_unreachable____sent_again_with_the_gossip() {
+    let (before, after) = simulate_attached(
+        34,
+        &[Role::Member, Role::Member, Role::Witness],
+        |sim| async move {
+            sim.node(2).rt.join_cluster(&[3]);
+            pass(200).await;
+            // Node 1's join is lost, as one sent while its seed was still
+            // marked unreachable is.
+            sim.mesh
+                .lose_next(1, 3, |f| matches!(f, Frame::Join { .. }));
+            sim.node(1).rt.join_cluster(&[3]);
+            pass(200).await;
+            let before = (known(&sim.node(1).rt), known(&sim.node(3).rt));
+            pass(3000).await;
+            (before, known(&sim.node(1).rt))
+        },
+    );
+
+    assert_eq!(
+        before,
+        (vec![(1, 1)], vec![(2, 1), (3, 1)]),
+        "the loss took effect"
+    );
+    assert_eq!(after, vec![(1, 1), (2, 1), (3, 1)]);
+}

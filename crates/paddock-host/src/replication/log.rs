@@ -5,15 +5,22 @@
 //! Entries run from `base + 1` to `last`; entries up to `base` were
 //! compacted (or came in a snapshot), and `base_epoch` is the epoch of the
 //! entry at `base`. Every entry up to `commit` has been applied to the
-//! `@cluster` buckets. Each change here is one redb transaction, synced
-//! before it returns: an entry is on disk before it is acknowledged or
-//! committed (spike S20's R3), and the commit index survives a crash with
-//! the data it covers.
+//! `@cluster` buckets. Each change here is one redb transaction. Appends,
+//! compaction and snapshots are synced before they return: an entry is on
+//! disk before it is acknowledged or committed (spike S20's R3). Applying
+//! committed entries is not synced: the entries are on disk already, and
+//! the commit index is kept in the same transaction as the data it covers,
+//! so a crash loses both together and the node applies those entries
+//! again, alike, once it learns the commit index anew (a lower commit
+//! index after a crash, as the model allows). Every later synced
+//! transaction makes the applies before it durable.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use redb::{ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
+use tokio::time::Instant;
 
 use crate::services::keyvalue::storage::{Applied, BucketDump, Disk, Op};
 
@@ -95,13 +102,26 @@ pub(crate) struct Committed {
     pub(crate) write: Option<(String, Result<Applied, String>)>,
 }
 
+/// What the log remembers in memory of each entry it holds.
+#[derive(Debug, Clone, Copy)]
+struct Held {
+    epoch: u64,
+    /// Its encoded size.
+    bytes: u64,
+    /// When this node appended it (when it opened the log, for entries it
+    /// found there).
+    at: Instant,
+}
+
 /// The log, with what it holds cached in memory.
 pub(crate) struct Log {
     disk: Arc<Disk>,
     base: u64,
     base_epoch: u64,
-    /// The epochs of entries `base + 1 ..= last`.
-    epochs: Vec<u64>,
+    /// Entries `base + 1 ..= last`.
+    held: Vec<Held>,
+    /// The sum of their sizes.
+    bytes: u64,
     commit: u64,
 }
 
@@ -141,7 +161,8 @@ impl Log {
             Err(redb::TableError::TableDoesNotExist(_)) => (0, 0, 0),
             Err(e) => return Err(err(e)),
         };
-        let mut epochs = Vec::new();
+        let mut held = Vec::new();
+        let now = Instant::now();
         match txn.open_table(LOG) {
             Ok(log) => {
                 for (expected, item) in (base + 1..).zip(log.range(base + 1..).map_err(err)?) {
@@ -153,7 +174,11 @@ impl Log {
                             expected - 1
                         ));
                     }
-                    epochs.push(decode(v.value())?.epoch);
+                    held.push(Held {
+                        epoch: decode(v.value())?.epoch,
+                        bytes: v.value().len() as u64,
+                        at: now,
+                    });
                 }
             }
             Err(redb::TableError::TableDoesNotExist(_)) => {}
@@ -163,7 +188,8 @@ impl Log {
             disk,
             base,
             base_epoch,
-            epochs,
+            bytes: held.iter().map(|h| h.bytes).sum(),
+            held,
             commit,
         })
     }
@@ -178,7 +204,7 @@ impl Log {
     }
 
     pub(crate) fn last(&self) -> u64 {
-        self.base + self.epochs.len() as u64
+        self.base + self.held.len() as u64
     }
 
     pub(crate) fn commit(&self) -> u64 {
@@ -198,12 +224,12 @@ impl Log {
             return None;
         }
         let i = usize::try_from(index - self.base - 1).ok()?;
-        self.epochs.get(i).copied()
+        self.held.get(i).map(|h| h.epoch)
     }
 
     /// The epoch of the last entry.
     pub(crate) fn last_epoch(&self) -> u64 {
-        self.epochs.last().copied().unwrap_or(self.base_epoch)
+        self.held.last().map_or(self.base_epoch, |h| h.epoch)
     }
 
     /// Write `entries` from index `from`, dropping whatever the log held
@@ -218,6 +244,8 @@ impl Log {
             ));
         }
         let txn = self.disk.db().begin_write().map_err(err)?;
+        let mut added = Vec::with_capacity(entries.len());
+        let now = Instant::now();
         {
             let mut log = txn.open_table(LOG).map_err(err)?;
             for index in from..=self.last() {
@@ -226,12 +254,20 @@ impl Log {
             for (i, entry) in entries.iter().enumerate() {
                 let bytes = encode(entry)?;
                 log.insert(from + i as u64, bytes.as_slice()).map_err(err)?;
+                added.push(Held {
+                    epoch: entry.epoch,
+                    bytes: bytes.len() as u64,
+                    at: now,
+                });
             }
         }
         txn.commit().map_err(err)?;
-        self.epochs
-            .truncate(usize::try_from(from - self.base - 1).unwrap_or(usize::MAX));
-        self.epochs.extend(entries.iter().map(|e| e.epoch));
+        let dropped = self
+            .held
+            .drain(usize::try_from(from - self.base - 1).unwrap_or(usize::MAX)..);
+        self.bytes -= dropped.map(|h| h.bytes).sum::<u64>();
+        self.bytes += added.iter().map(|h| h.bytes).sum::<u64>();
+        self.held.extend(added);
         Ok(())
     }
 
@@ -276,7 +312,9 @@ impl Log {
                 self.last()
             ));
         }
-        let txn = self.disk.db().begin_write().map_err(err)?;
+        let mut txn = self.disk.db().begin_write().map_err(err)?;
+        // Not synced: see the module's documentation.
+        txn.set_durability(redb::Durability::None).map_err(err)?;
         let result = self.apply_range(&txn, to);
         let committed = match result {
             Ok(c) => c,
@@ -320,6 +358,31 @@ impl Log {
         Ok(committed)
     }
 
+    /// How far to compact for the log to hold at most `max_bytes` and no
+    /// entry older than `max_age`: past the oldest entries until both
+    /// hold, but never past the commit index. Within both bounds nothing
+    /// is dropped, so a standby back from an outage catches up from the
+    /// log; past them, from a snapshot.
+    pub(crate) fn compact_target(&self, now: Instant, max_bytes: u64, max_age: Duration) -> u64 {
+        let mut to = self.base;
+        let mut bytes = self.bytes;
+        for h in &self.held {
+            if to >= self.commit
+                || (bytes <= max_bytes && now.saturating_duration_since(h.at) <= max_age)
+            {
+                break;
+            }
+            to += 1;
+            bytes -= h.bytes;
+        }
+        to
+    }
+
+    /// The encoded size of the entries the log holds.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
     /// Drop entries up to `to`, which must be committed.
     pub(crate) fn compact(&mut self, to: u64) -> Result<(), String> {
         if to <= self.base {
@@ -345,8 +408,10 @@ impl Log {
             meta.insert("base_epoch", epoch).map_err(err)?;
         }
         txn.commit().map_err(err)?;
-        self.epochs
+        let dropped = self
+            .held
             .drain(..usize::try_from(to - self.base).unwrap_or(usize::MAX));
+        self.bytes -= dropped.map(|h| h.bytes).sum::<u64>();
         self.base = to;
         self.base_epoch = epoch;
         Ok(())
@@ -392,7 +457,8 @@ impl Log {
         self.base = snap.index;
         self.base_epoch = snap.epoch;
         self.commit = snap.index;
-        self.epochs.clear();
+        self.held.clear();
+        self.bytes = 0;
         Ok(())
     }
 }

@@ -32,9 +32,11 @@ pub(crate) struct Config {
     pub(crate) batch_bytes: usize,
     /// Most entries sent and not yet acknowledged.
     pub(crate) window: u64,
-    /// Entries kept behind the commit index, so a partner back from a
-    /// short outage catches up from the log rather than a snapshot.
-    pub(crate) keep: u64,
+    /// The most bytes of entries the log keeps, and the oldest entry it
+    /// keeps: within both, a partner back from an outage catches up from
+    /// the log rather than a snapshot. Only committed entries are dropped.
+    pub(crate) log_bytes: u64,
+    pub(crate) log_age: Duration,
     /// How long an entry waits for the partner before the primary asks to
     /// commit without it; at once when the partner is heard on no path.
     pub(crate) alone_after: Duration,
@@ -50,7 +52,8 @@ impl Default for Config {
             batch: 256,
             batch_bytes: 256 << 10,
             window: 4096,
-            keep: 10_000,
+            log_bytes: 64 << 20,
+            log_age: Duration::from_secs(3600),
             alone_after: Duration::from_secs(1),
             resend_after: Duration::from_millis(500),
             chunk_bytes: 256 << 10,
@@ -463,14 +466,16 @@ impl Replica {
                 });
             }
         }
-        self.compact()?;
+        self.compact(now)?;
         self.progress(now, &mut out)?;
         Ok(out)
     }
 
-    /// `Compact`: keep `keep` entries behind the commit index.
-    fn compact(&mut self) -> Result<(), String> {
-        let to = self.log.commit().saturating_sub(self.cfg.keep);
+    /// `Compact`: past the oldest entries while the log is over its bounds.
+    fn compact(&mut self, now: Instant) -> Result<(), String> {
+        let to = self
+            .log
+            .compact_target(now, self.cfg.log_bytes, self.cfg.log_age);
         if to > self.log.base() {
             self.log.compact(to)?;
         }

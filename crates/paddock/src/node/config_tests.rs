@@ -244,6 +244,8 @@ fn NodeConfig____failover____read_with_defaults() {
             lease_ms: 3_000,
             margin_ms: 500,
             serial: None,
+            replication_log_max: ByteSize::mib(64),
+            replication_log_age_s: 3600,
         })
     );
 }

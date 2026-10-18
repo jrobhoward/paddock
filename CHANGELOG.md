@@ -560,6 +560,16 @@ All notable changes are recorded here. The format follows
   return then; reads and watches use the node's own copy; a standby that
   falls behind catches up from the log or a snapshot. Without a primary
   holding its lease, writes fail (`paddock:watch` `unavailable`).
+- The replicated log is bounded by bytes and age (`[failover]`
+  `replication_log_max`, default 64 MiB, and `replication_log_age_s`,
+  default an hour; `FailoverConfig::replication_log_bytes` and
+  `replication_log_age`): within both a partner catches up from the log,
+  past them the oldest committed entries are dropped and it catches up
+  from a snapshot. `paddock failover` shows the log's size
+  (`ReplicationInfo::log_bytes`).
+- `replication_cost` (`scripts/bench.sh replication`): writes to a
+  replicated bucket on a pair and a witness over QUIC, against a disk
+  bucket (BASELINE.md, 2026-10-18).
 - `examples/ledger`: text entries in a shared bucket by `paddock call`
   (`put`, `get`, `latest`, `keys`), the example for `cluster` buckets.
 - `paddock-soak replication` (and `scripts/soak.sh`'s `replication` kind,
@@ -584,8 +594,11 @@ All notable changes are recorded here. The format follows
   with a connection replaced or cut as it was sent) never learned of the
   members it lacked, and when only the other node of such a pair dials
   (the lower id), the two never connected; an HA pair then stayed apart
-  after a heal (found by the replication soak). Each node now sends every
-  member it knows to each peer it reaches every ten heartbeats.
+  after a heal (found by the replication soak). The same followed when a
+  node's join was dropped because its seed was still marked unreachable
+  after an outage. Every ten heartbeats each node now sends every member
+  it knows to each member it reaches, and a join to each peer it watches
+  that is not yet a member.
 - The tests `start_apps____dependencies____providers_start_first_and_stop_last`
   and `shutdown____running_children____stopped_gracefully_in_reverse_order`
   failed now and then under load: two waiter tasks recorded the stop order
@@ -701,6 +714,10 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Applying committed entries of the replicated log is no longer synced
+  to disk (the entries are synced in both nodes' logs already): a
+  replicated write takes about 2.3 ms at p50 on loopback instead of 3.6 ms
+  (BASELINE.md, 2026-10-18).
 - Cluster wire format version 6: replication between the pair
   (`Replication`) and the witness's record (`Record`, `Recorded`, and
   `Granted`'s `outdated`). Nodes speak version 6 only.

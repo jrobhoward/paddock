@@ -23,10 +23,7 @@ struct Pair {
 }
 
 fn config() -> Config {
-    Config {
-        keep: 100,
-        ..Config::default()
-    }
+    Config::default()
 }
 
 fn replica(cfg: Config) -> Replica {
@@ -295,7 +292,7 @@ async fn new_primary____stale_suffix_on_the_standby____dropped_and_replaced() {
 #[tokio::test(start_paused = true)]
 async fn standby____far_behind____catches_up_from_a_snapshot_in_chunks() {
     let mut pair = Pair::new(Config {
-        keep: 0,
+        log_bytes: 0,
         chunk_bytes: 64,
         ..Config::default()
     });

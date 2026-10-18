@@ -140,6 +140,8 @@ impl Node {
         cfg.lease = Duration::from_millis(f.lease_ms);
         cfg.margin = Duration::from_millis(f.margin_ms);
         cfg.epoch = epoch;
+        cfg.replication_log_bytes = f.replication_log_max.bytes();
+        cfg.replication_log_age = Duration::from_secs(f.replication_log_age_s);
         let handle = self
             .rt
             .start_failover(cfg)
@@ -237,6 +239,7 @@ impl Node {
                 commit: s.commit,
                 last: s.last,
                 base: s.base,
+                log_bytes: s.log_bytes,
                 partner_matched: s.partner_matched,
                 alone: s.alone,
             }),

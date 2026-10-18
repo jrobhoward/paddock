@@ -528,6 +528,22 @@ pub struct FailoverBinding {
     /// A serial line to the partner, a second heartbeat path.
     #[serde(default)]
     pub serial: Option<SerialBinding>,
+    /// With `cluster` buckets: the most the replicated log keeps, in bytes,
+    /// and its oldest entry's age in seconds. A partner back from an outage
+    /// within both catches up from the log, past them from a snapshot.
+    #[serde(default = "default_replication_log_max")]
+    pub replication_log_max: ByteSize,
+    /// See `replication_log_max`.
+    #[serde(default = "default_replication_log_age_s")]
+    pub replication_log_age_s: u64,
+}
+
+fn default_replication_log_max() -> ByteSize {
+    ByteSize::mib(64)
+}
+
+fn default_replication_log_age_s() -> u64 {
+    3600
 }
 
 /// `[failover] serial`: the device of a serial line to the partner.

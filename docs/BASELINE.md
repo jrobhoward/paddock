@@ -647,6 +647,26 @@ Neither run uses its cores (about 3.3 busy either way), and lock waits are under
 
 **Boxing the guest callback futures.** Not worth it: a passivated instance stays at 19.3 KiB resident either way (an idle task never touches the futures' space), and call latency does not change.
 
+## 2026-10-18: replicated buckets (roadmap K2)
+
+`replication_cost` (`scripts/bench.sh replication`): an HA pair and a witness as three runtimes in one process over QUIC on loopback, 4 tokio workers for all three, each pair node's keyvalue database on the root filesystem (ext4 on a Samsung 970 EVO Plus NVMe), the SDK fixture writing 2,000 sequential writes, or as many as 16 or 64 writers manage in 5 s. 16-core machine, idle. Two builds alternated three times each: applying committed entries synced (one synced redb commit per apply) and unsynced (as shipped: the entries are already synced in both nodes' logs; see `replication/log.rs`).
+
+| Write | Synced apply | Unsynced apply |
+| --- | --- | --- |
+| Disk bucket (node scope), 1 writer | 375 to 965/s, p50 0.9 to 2.5 ms | 950 to 970/s, p50 0.9 ms |
+| Replicated, 1 writer on the primary | 208 to 241/s, p50 3.6 ms, p99 11 to 14 ms | 361 to 365/s, p50 2.3 ms, p99 6.9 to 8.4 ms |
+| Replicated, 1 writer on the standby (forwarded) | 228 to 231/s, p50 3.8 ms | 338 to 343/s, p50 2.6 ms |
+| Disk bucket, 16 or 64 writers | about 1,000/s | about 1,000/s |
+| Replicated, 16 writers on the primary | 1,371 to 1,476/s | 1,513 to 1,594/s |
+| Replicated, 64 writers on the primary | 3,799 to 4,159/s | 3,970 to 4,288/s |
+| Alone (standby gone), 1 writer | 278 to 500/s | 274 to 690/s |
+| Alone, 16 writers | 2,896 to 3,005/s | 1,472 to 3,789/s |
+
+- A replicated write costs a synced append on the primary, the frame to the standby, a synced append there and the acknowledgement; with the apply unsynced, 2.3 ms at p50, about 2.5 times a disk bucket write at its faster mode. A forwarded write adds about 0.2 ms.
+- Writers arriving together share an append on each node (group commit), so 64 writers reach about four times a disk bucket's rate, which takes one synced commit per write.
+- The disk bucket's single-writer figure and the alone figures jump between two modes from run to run with no change in the code (0.9 or 2.5 ms for the same write), which looks like the drive's fsync latency; take ranges, not single runs.
+- Not measured: between machines (the network adds its round trip), on the Pi, or with large values.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.

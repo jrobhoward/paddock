@@ -97,11 +97,19 @@ pub struct FailoverConfig {
     /// stopped, kept on disk, so epochs (fencing tokens) never go back. 0
     /// for a node's first start.
     pub epoch: u64,
+    /// With replicated buckets: the most bytes of entries the replicated
+    /// log keeps, and the age of the oldest entry it keeps. Within both, a
+    /// partner back from an outage catches up from the log; past them, the
+    /// oldest committed entries are dropped and it catches up from a
+    /// snapshot of the buckets.
+    pub replication_log_bytes: u64,
+    /// See [`FailoverConfig::replication_log_bytes`].
+    pub replication_log_age: Duration,
 }
 
 impl FailoverConfig {
     /// A configuration with a 3 s lease and a 500 ms margin, starting at
-    /// epoch 0.
+    /// epoch 0, and a replicated log of up to 64 MiB and an hour.
     #[must_use]
     pub fn new(partner: u32, arbiter: Arbiter) -> Self {
         Self {
@@ -110,6 +118,8 @@ impl FailoverConfig {
             lease: Duration::from_secs(3),
             margin: Duration::from_millis(500),
             epoch: 0,
+            replication_log_bytes: 64 << 20,
+            replication_log_age: Duration::from_secs(3600),
         }
     }
 }
@@ -750,7 +760,7 @@ impl Runtime {
                     "replicated buckets need failover arbiter \"witness\"".into(),
                 ));
             }
-            crate::replication::start(rt, cfg.partner, leadership.clone())?;
+            crate::replication::start(rt, &cfg, leadership.clone())?;
         }
         let node = Node::start(rt, cfg, tx);
         let confirm = Arc::new(Notify::new());

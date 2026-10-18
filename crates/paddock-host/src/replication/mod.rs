@@ -33,7 +33,7 @@ pub(crate) use self::core::Refusal;
 use self::core::{Config, Effect, Lead, Msg, Replica, Waiter, Write};
 pub(crate) use self::log::SPACE;
 use crate::error::HostError;
-use crate::failover::{Leadership, RunUntil, Standing};
+use crate::failover::{FailoverConfig, Leadership, RunUntil, Standing};
 use crate::runtime::{Runtime, RuntimeInner};
 use crate::services::keyvalue::storage::{KvStore, Op, Outcome};
 use crate::transport::{self, Frame};
@@ -148,6 +148,8 @@ pub struct ReplicationStatus {
     pub last: u64,
     /// The first entry still in its log, less one (compacted up to here).
     pub base: u64,
+    /// The encoded size of the entries in its log.
+    pub log_bytes: u64,
     /// On the primary, the last entry the standby acknowledged.
     pub partner_matched: Option<u64>,
     /// On the primary, whether it commits without its partner (the witness
@@ -169,13 +171,14 @@ impl Runtime {
 }
 
 /// Start replication for this node's replicated buckets, following
-/// `leadership`, with `partner` the other node of the pair. Nothing to do
-/// without replicated buckets.
+/// `leadership`, with the pair and the log's bounds from `cfg`. Nothing to
+/// do without replicated buckets.
 pub(crate) fn start(
     rt: &Arc<RuntimeInner>,
-    partner: u32,
+    cfg: &FailoverConfig,
     leadership: watch::Receiver<Leadership>,
 ) -> Result<(), HostError> {
+    let partner = cfg.partner;
     let kv = rt.services.keyvalue().clone();
     if !kv.has_replicated() {
         return Ok(());
@@ -184,7 +187,12 @@ pub(crate) fn start(
         .disk()
         .ok_or_else(|| HostError::Engine("replicated buckets need a data directory".into()))?;
     let log = log::Log::open(disk).map_err(HostError::Storage)?;
-    let replica = Replica::new(Config::default(), log);
+    let config = Config {
+        log_bytes: cfg.replication_log_bytes,
+        log_age: cfg.replication_log_age,
+        ..Config::default()
+    };
+    let replica = Replica::new(config, log);
     let (tx, rx) = mpsc::unbounded_channel();
     let first = leadership.borrow().clone();
     let (status, status_rx) = watch::channel(status_of(&replica, &first));
@@ -222,6 +230,7 @@ fn status_of(replica: &Replica, lead: &Leadership) -> ReplicationStatus {
         commit: replica.log().commit(),
         last: replica.log().last(),
         base: replica.log().base(),
+        log_bytes: replica.log().bytes(),
         partner_matched: replica.matched(),
         alone: replica.alone(),
     }

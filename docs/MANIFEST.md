@@ -343,6 +343,9 @@ lease_ms = 3000                        # how long a renewal keeps the primary's 
 margin_ms = 500                        # singletons stop this long before the lease ends; under half of lease_ms
 serial = { device = "/dev/ttyUSB0", baud = 115200 }  # optional: a second heartbeat path over a null-modem
                                        # cable to the partner (Unix; baud default 115200, the same on both nodes)
+replication_log_max = "64MiB"          # with cluster buckets: the replicated log keeps at most this
+replication_log_age_s = 3600           # and no entry older; a partner back within both catches up
+                                       # from the log, past them from a snapshot
 
 [limits]                               # host objects per instance; the value for apps that
 timers_max = 10000                     # set none, and the most a manifest may ask for (a
