@@ -793,3 +793,122 @@ async fn failover_serial____line_cut_and_restored_then_primary_killed____paths_f
         p.child.kill().await.unwrap();
     }
 }
+
+/// The SDK fixture as a singleton with its own `replicated` bucket
+/// `state` (ROADMAP K3).
+fn replicated_singleton(signer: &minisign::KeyPair) -> Vec<u8> {
+    let manifest = fast(serde_json::json!({
+        "placement": { "mode": "singleton" },
+        "capabilities": {
+            "wasi:config": {},
+            "wasi:keyvalue": { "buckets": { "state": { "durability": "replicated" } } },
+            "paddock:groups": {},
+            "paddock:metrics": { "prefix": "vault" },
+            "paddock:secrets": { "secrets": [] },
+            // The SDK fixture imports `paddock:sql` and `wasi:http`;
+            // declared, nothing used.
+            "paddock:sql": {},
+            "wasi:http/outgoing-handler": {}
+        }
+    }));
+    bundle(
+        signer,
+        "vault",
+        "1.0.0",
+        &fixture("paddock_fixture_sdk"),
+        manifest,
+        &[],
+    )
+}
+
+async fn call_text(c: &paddock::api::Client, app: &str, body: &str) -> String {
+    match c
+        .call(app, "text/plain", body.as_bytes().to_vec(), 5_000)
+        .await
+    {
+        Ok((_, reply)) => String::from_utf8(reply).unwrap(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failover____singleton_with_replicated_bucket_primary_killed____new_primary_has_every_write()
+ {
+    let dir = tempfile::Builder::new()
+        .prefix("pfr")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let policy = dir.path().join("policy.toml");
+    std::fs::write(&policy, "[apps.vault]\ngrant = [\"wasi:keyvalue\"]\n").unwrap();
+    let replicating = |n: u32, a: &str| {
+        format!(
+            "policy = {policy:?}\n{}replication = true\n",
+            member(n, dir.path(), &peers, a, &a3)
+        )
+    };
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &replicating(1, &a1)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &replicating(2, &a2)).await;
+    n1.client
+        .deploy(replicated_singleton(&signer))
+        .await
+        .unwrap();
+    n2.client
+        .deploy(replicated_singleton(&signer))
+        .await
+        .unwrap();
+    let runs = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move {
+            c.status("vault")
+                .await
+                .is_ok_and(|d| d.summary.status == "running")
+        }
+    };
+    until("node 1 runs the singleton", || runs(&n1.client)).await;
+    until("node 2 standby", || {
+        let c = n2.client.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == "standby") }
+    })
+    .await;
+
+    let mut acked = Vec::new();
+    for i in 0..20 {
+        acked.push(call_text(&n1.client, "vault", &format!("set:state:k{i}:v{i}")).await);
+    }
+    n1.child.kill().await.unwrap();
+    until("node 2 runs the singleton", || runs(&n2.client)).await;
+    let last = call_text(&n2.client, "vault", "get:state:k19").await;
+    let keys = call_text(&n2.client, "vault", "keys:state").await;
+    let after = call_text(&n2.client, "vault", "set:state:k20:v20").await;
+    let log = std::fs::read_to_string(dir.path().join("node-2.log")).unwrap();
+    let waited = log.find("singleton waiting");
+    let started = log.rfind("singleton started");
+
+    assert!(acked.iter().all(|r| r == "ok"), "{acked:?}");
+    // Promoted before its copy was current (the witness had to record
+    // node 1 out of date first), it held the singleton until then.
+    assert!(waited.is_some() && waited < started, "{log}");
+    assert_eq!(last, "v19");
+    assert_eq!(keys.split(',').count(), 20, "{keys}");
+    assert_eq!(after, "ok");
+    for p in [&mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn gate____replicated_bucket_on_a_node_without_replication____deploy_refused() {
+    let (_dir, mut n) = alone("paths").await;
+
+    let refused = n.client.deploy(replicated_singleton(&n.key)).await;
+
+    let err = refused.unwrap_err().to_string();
+    assert!(err.contains("does not replicate"), "{err}");
+    n.shutdown().await;
+}

@@ -142,6 +142,7 @@ impl Node {
         cfg.epoch = epoch;
         cfg.replication_log_bytes = f.replication_log_max.bytes();
         cfg.replication_log_age = Duration::from_secs(f.replication_log_age_s);
+        cfg.replication = f.replication;
         let handle = self
             .rt
             .start_failover(cfg)

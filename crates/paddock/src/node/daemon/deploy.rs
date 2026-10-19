@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use crate::api::{DeployResponse, Done};
-use paddock_bundle::manifest::AppManifest;
+use paddock_bundle::manifest::{AppManifest, Durability};
 use paddock_bundle::{BundleError, VerifiedBundle};
 use paddock_host::{AppDeployment, AppHandle, InstanceSpec, LoadedConnection};
 use serde_json::json;
@@ -220,6 +220,19 @@ impl Node {
         {
             return Err(NodeError::Invalid(format!(
                 "shared bucket '{missing}' is not configured on this node"
+            )));
+        }
+        if !self.config.replicates()
+            && let Some((bucket, _)) = spec
+                .services
+                .keyvalue
+                .buckets
+                .iter()
+                .find(|(_, b)| b.durability == Durability::Replicated)
+        {
+            return Err(NodeError::Invalid(format!(
+                "bucket '{bucket}' is replicated, and this node does not replicate \
+                 ([failover] replication = true, with arbiter \"witness\")"
             )));
         }
         if let Some(overrides) = self.config.config.get(&name) {

@@ -105,6 +105,13 @@ pub struct FailoverConfig {
     pub replication_log_bytes: u64,
     /// See [`FailoverConfig::replication_log_bytes`].
     pub replication_log_age: Duration,
+    /// Run replication for apps' `replicated` buckets, with or without
+    /// replicated shared buckets (which run it anyway). Needs the witness
+    /// arbiter and a data directory. A primary that commits without its
+    /// standby has the witness record the standby out of date, which then
+    /// cannot be promoted until it catches up, so a pair without
+    /// replicated buckets leaves this off.
+    pub replication: bool,
 }
 
 impl FailoverConfig {
@@ -120,6 +127,7 @@ impl FailoverConfig {
             epoch: 0,
             replication_log_bytes: 64 << 20,
             replication_log_age: Duration::from_secs(3600),
+            replication: false,
         }
     }
 }
@@ -754,7 +762,7 @@ impl Runtime {
             partner_outdated: false,
         };
         let (tx, leadership) = watch::channel(initial);
-        if rt.services.keyvalue().has_replicated() {
+        if cfg.replication || rt.services.keyvalue().has_replicated() {
             if !matches!(cfg.arbiter, Arbiter::Witness(_)) {
                 return Err(HostError::Engine(
                     "replicated buckets need failover arbiter \"witness\"".into(),

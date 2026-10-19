@@ -10,7 +10,6 @@ use std::fmt;
 use serde::Serialize;
 
 use crate::manifest::AppSpec;
-use crate::manifest::capabilities::{Capability, Durability};
 use crate::manifest::lifecycle::{Kind, UpgradeMode};
 use crate::manifest::sections::{NameScope, PlacementMode};
 
@@ -95,18 +94,6 @@ impl AppSpec {
         for capability in self.capabilities.declared() {
             if let Some(phase) = capability.phase() {
                 out.add(format!("capabilities.{}", capability.key()), phase);
-            }
-        }
-        if let Some(kv) = &self.capabilities.keyvalue {
-            for (name, bucket) in &kv.buckets {
-                out.add_if(
-                    bucket.durability == Durability::Replicated,
-                    format!(
-                        "capabilities.{}.buckets.{name}.durability",
-                        Capability::KeyValue.key()
-                    ),
-                    Phase::Phase3,
-                );
             }
         }
     }

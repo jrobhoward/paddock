@@ -528,7 +528,12 @@ pub struct FailoverBinding {
     /// A serial line to the partner, a second heartbeat path.
     #[serde(default)]
     pub serial: Option<SerialBinding>,
-    /// With `cluster` buckets: the most the replicated log keeps, in bytes,
+    /// Run replication for apps' `replicated` buckets. Implied by a
+    /// `cluster` shared bucket; needs `arbiter = "witness"`. Set alike on
+    /// both nodes. Off, a pair fails over without replicating.
+    #[serde(default)]
+    pub replication: bool,
+    /// With replication: the most the replicated log keeps, in bytes,
     /// and its oldest entry's age in seconds. A partner back from an outage
     /// within both catches up from the log, past them from a snapshot.
     #[serde(default = "default_replication_log_max")]
@@ -857,6 +862,25 @@ fn default_tick() -> u64 {
 }
 
 impl NodeConfig {
+    /// The names of the `cluster` shared buckets.
+    pub(crate) fn cluster_buckets(&self) -> std::collections::BTreeSet<String> {
+        self.buckets
+            .iter()
+            .filter(|(_, b)| b.scope == BucketScope::Cluster)
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
+    /// Whether this node runs replication: `[failover] replication`, or a
+    /// `cluster` shared bucket.
+    pub(crate) fn replicates(&self) -> bool {
+        self.failover.as_ref().is_some_and(|f| f.replication)
+            || self
+                .buckets
+                .values()
+                .any(|b| b.scope == BucketScope::Cluster)
+    }
+
     fn check_egress(&self) -> Result<(), NodeError> {
         let e = &self.egress;
         if let Some(allow) = &e.allow {
@@ -953,8 +977,21 @@ impl NodeConfig {
             .failover
             .as_ref()
             .is_some_and(|f| f.arbiter == ArbiterKind::Witness);
+        if let Some(f) = &config.failover
+            && f.replication
+            && f.arbiter != ArbiterKind::Witness
+        {
+            return Err(NodeError::Invalid(
+                "node config: failover.replication needs arbiter \"witness\"".into(),
+            ));
+        }
         for (name, bucket) in &config.buckets {
-            let problem = if bucket.durability == Durability::Replicated {
+            let problem = if !paddock_bundle::manifest::is_valid_name(name) {
+                Some(
+                    "not a valid name (lowercase letters, digits, '-' and '_', \
+                     starting with a letter or digit)",
+                )
+            } else if bucket.durability == Durability::Replicated {
                 Some("durability \"replicated\" is for app buckets; use scope \"cluster\"")
             } else if bucket.scope == BucketScope::Cluster && bucket.durability != Durability::Disk
             {

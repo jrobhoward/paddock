@@ -169,7 +169,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | --- | --- | --- |
 | `wasi:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted; it can only lower the node's `[limits] log_records_per_sec` (default 1000), and captured stdout and stderr lines count against the same budget. Control characters in the text are escaped, so a record stays on one line. | enforced |
 | `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
-| `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (refused for an app's own buckets until ROADMAP K3; a node's `cluster` shared buckets are replicated now). `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `paddock:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
+| `wasi:keyvalue` | `buckets.<name> = { durability, quota }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (kept whole on both nodes of an HA pair, as a `cluster` shared bucket is, so it survives losing either node; needs a node with `[failover] replication = true`, or the deploy is refused). A bucket whose durability changes in an upgrade starts empty in its new durability. `quota` is a byte cap per bucket. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `paddock:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
 | `paddock:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. Groups span the cluster: members on every node are listed and published to, except where `messaging_acl` keeps two apps apart. | enforced |
 | `wasi:filesystem` | `preopens."<guest path>" = { volume, mode }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`. Paddock enforces no byte quota on a volume and refuses `quota` here: give each writable volume a filesystem quota of its own (a ZFS dataset quota, an XFS project quota, or a separate mount). `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
 | `wasi:http/incoming-handler` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
@@ -343,7 +343,9 @@ lease_ms = 3000                        # how long a renewal keeps the primary's 
 margin_ms = 500                        # singletons stop this long before the lease ends; under half of lease_ms
 serial = { device = "/dev/ttyUSB0", baud = 115200 }  # optional: a second heartbeat path over a null-modem
                                        # cable to the partner (Unix; baud default 115200, the same on both nodes)
-replication_log_max = "64MiB"          # with cluster buckets: the replicated log keeps at most this
+replication = true                     # run replication for apps' "replicated" buckets (needs arbiter "witness";
+                                       # implied by a cluster bucket; set alike on both nodes)
+replication_log_max = "64MiB"          # with replication: the replicated log keeps at most this
 replication_log_age_s = 3600           # and no entry older; a partner back within both catches up
                                        # from the log, past them from a snapshot
 
@@ -363,6 +365,8 @@ scope = "node"                         # or "cluster": replicated on the HA pair
 ```
 
 A deploy is refused if the manifest lists a shared bucket the node does not configure.
+
+Bucket names here follow the manifest's rule: lowercase letters, digits, `-` and `_`, starting with a letter or digit.
 
 A `cluster` bucket is kept whole on both nodes of an HA pair: `durability = "disk"`, on a node with `[failover]` and `arbiter = "witness"`, configured alike on both nodes. A write from either node commits on the primary once the standby has it on disk (or, with the standby gone, once the witness has recorded it out of date) and returns then; reads and watches use the node's own copy, which may trail the primary slightly, and `paddock:watch`'s `get-linearizable` reads through the primary. Without a primary holding its lease, writes fail (`unavailable` from `paddock:watch`). A bucket that changes scope starts empty. `paddock failover` shows where the log stands.
 

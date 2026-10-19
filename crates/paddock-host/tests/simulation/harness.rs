@@ -23,7 +23,7 @@ use std::future::Future;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use paddock_bundle::manifest::{AccessMode, Capability, GroupsScope};
+use paddock_bundle::manifest::{AccessMode, Bucket, Capability, Durability, GroupsScope};
 use paddock_host::acl::Acl;
 use paddock_host::transport::liveness::NodeEvent;
 use paddock_host::transport::memory::Mesh;
@@ -124,6 +124,23 @@ impl SimNode {
             ..InstanceSpec::new("kv", "1.0.0")
         };
         s.services.keyvalue.shared = [(bucket.to_string(), AccessMode::Rw)].into();
+        self.rt.spawn(loaded, s).unwrap()
+    }
+
+    /// Start an SDK fixture instance as app `app`, with its own
+    /// `replicated` bucket `bucket`.
+    pub fn spawn_kv_replicated(&self, app: &str, bucket: &str) -> InstanceHandle {
+        let loaded = self.sdk.get_or_init(|| self.rt.load(sdk()).unwrap());
+        let mut s = InstanceSpec {
+            callback_deadline: Duration::from_secs(5),
+            granted: [Capability::KeyValue].into(),
+            ..InstanceSpec::new(app, "1.0.0")
+        };
+        let replicated = Bucket {
+            durability: Durability::Replicated,
+            quota: None,
+        };
+        s.services.keyvalue.buckets = [(bucket.to_string(), replicated)].into();
         self.rt.spawn(loaded, s).unwrap()
     }
 

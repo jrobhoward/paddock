@@ -103,9 +103,20 @@ impl Instance {
             return Err(Refused::AccessDenied);
         }
         if let Some(bucket) = self.buckets.get(name) {
+            // A replicated app bucket is kept in the replicated namespace
+            // as `<app>/<bucket>`, in the log the pair's shared buckets
+            // use; shared bucket names cannot hold a `/`.
+            let (space, name) = if bucket.durability == Durability::Replicated {
+                (
+                    crate::replication::SPACE.to_string(),
+                    format!("{app}/{name}"),
+                )
+            } else {
+                (app.to_string(), name.to_string())
+            };
             return Ok(BucketHandle {
-                space: app.to_string(),
-                name: name.to_string(),
+                space,
+                name,
                 durability: bucket.durability,
                 quota: bucket.quota.map(|q| q.bytes()),
                 writable: true,

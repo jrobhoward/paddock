@@ -334,8 +334,7 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
         "limits": { "fuel_per_message": 10, "storage_quota": "1GiB", "open_files": 4, "outbound_connections": 2 },
         "capabilities": {
             "wasi:sockets": {},
-            "paddock:admin": {},
-            "wasi:keyvalue": { "buckets": { "r": { "durability": "replicated" } } }
+            "paddock:admin": {}
         },
         "upgrade": { "mode": "blue-green" },
         "placement": { "mode": "all-nodes", "required_labels": { "zone": "a" }, "spread": "zone" },
@@ -363,10 +362,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             ("limits.outbound_connections".into(), Phase::Later),
             ("capabilities.wasi:sockets".into(), Phase::Phase3),
             ("capabilities.paddock:admin".into(), Phase::Later),
-            (
-                "capabilities.wasi:keyvalue.buckets.r.durability".into(),
-                Phase::Phase3
-            ),
             ("upgrade.mode".into(), Phase::Later),
             ("placement.mode".into(), Phase::Phase3),
             ("placement.required_labels".into(), Phase::Phase3),

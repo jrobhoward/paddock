@@ -379,3 +379,76 @@ fn replicated____no_ack_and_no_witness____write_answered_within_the_timeout() {
     assert!(waited < Duration::from_secs(7), "{waited:?}");
     assert_eq!(after_heal, "stuck", "its entry committed once healed");
 }
+
+/// The pair nodes' configuration for apps' own replicated buckets: a data
+/// directory each, no shared buckets.
+fn configure_apps(dirs: &[PathBuf; 2]) -> impl Fn(u32, &mut RuntimeConfig) + '_ {
+    move |node, config| {
+        if node <= 2 {
+            config.data_dir = Some(dirs[usize::try_from(node - 1).unwrap()].clone());
+        }
+    }
+}
+
+/// [`start`] with `replication` set, for apps' replicated buckets.
+fn start_replicating(sim: &Sim) -> Vec<FailoverHandle> {
+    sim.mesh.add_path(SERIAL);
+    sim.mesh.cut_path(1, 3, SERIAL);
+    sim.mesh.cut_path(2, 3, SERIAL);
+    let mut witness = WitnessConfig::new([1, 2], 1);
+    witness.lease = LEASE;
+    witness.margin = MARGIN;
+    sim.node(3).rt.serve_witness(witness).unwrap();
+    (1..=2)
+        .map(|node| {
+            let mut cfg = failover(node);
+            cfg.replication = true;
+            sim.node(node).rt.start_failover(cfg).unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn replicated____app_buckets_primary_cut_off____each_app_keeps_its_writes() {
+    let (_root, dirs) = dirs();
+    let (acked, a_after, b_after, ready, healed) =
+        simulate_with(63, 3, configure_apps(&dirs), |sim| async move {
+            let _handles = start_replicating(&sim);
+            let p = primary(&sim).await;
+            let s = 3 - p;
+            let a = sim.node(p).spawn_kv_replicated("a", BUCKET);
+            let b = sim.node(s).spawn_kv_replicated("b", BUCKET);
+            let acked = vec![set(&a, "k", "from-a").await, set(&b, "k", "from-b").await];
+
+            isolate(&sim, p);
+            pass(4_000).await;
+            let a_after = get(&sim.node(s).spawn_kv_replicated("a", BUCKET), "k").await;
+            let b_after = get(&sim.node(s).spawn_kv_replicated("b", BUCKET), "k").await;
+            let ready = sim.node(s).rt.replication_status().is_some_and(|r| r.ready);
+            heal(&sim);
+            settled(&sim).await;
+            let healed = keys(&sim.node(p).spawn_kv_replicated("a", BUCKET)).await;
+            (acked, a_after, b_after, ready, healed)
+        });
+
+    assert_eq!(acked, ["ok", "ok"]);
+    assert_eq!(a_after, "from-a");
+    assert_eq!(b_after, "from-b");
+    assert!(ready, "the new primary's copy is current");
+    assert_eq!(healed, "k");
+}
+
+#[test]
+fn replicated____pair_without_replication____runs_none() {
+    let (_root, dirs) = dirs();
+    let statuses = simulate_with(64, 3, configure_apps(&dirs), |sim| async move {
+        let _handles = start(&sim);
+        pass(3_000).await;
+        [
+            sim.node(1).rt.replication_status(),
+            sim.node(2).rt.replication_status(),
+        ]
+    });
+
+    assert_eq!(statuses, [None, None]);
+}

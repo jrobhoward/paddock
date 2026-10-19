@@ -581,6 +581,16 @@ All notable changes are recorded here. The format follows
 - `paddock:watch` `get-linearizable` (`paddock_sdk::watch::get_linearizable`):
   a read served by the HA pair's primary on a replicated bucket, the same
   as `get` elsewhere.
+- Replicated app buckets (ROADMAP K3): `durability = "replicated"` for an
+  app's own `wasi:keyvalue` buckets, kept whole on both nodes of an HA
+  pair in the log `cluster` shared buckets use, with the same quotas,
+  watches and `get-linearizable`. Any placement. Node config
+  `[failover] replication = true` (witness arbiter; implied by a `cluster`
+  bucket) runs replication; a deploy with a replicated bucket is refused on
+  a node without it. A singleton opening a replicated bucket (its own or a
+  `cluster` one) starts on a new primary only once that node's copy holds
+  every committed write (`ReplicationStatus::ready`,
+  `Runtime::replication_updates`), logging `singleton waiting` meanwhile.
 - `paddock failover` shows the replicated log (commit and last index, how
   far the standby trails, whether the primary commits alone) and whether
   the partner is recorded out of date (`FailoverInfo::replication`,
@@ -717,6 +727,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Node config `[buckets.<name>]` names follow the manifest's rule
+  (lowercase letters, digits, `-` and `_`); any other name, which no app
+  could open, refuses the start.
 - Applying committed entries of the replicated log is no longer synced
   to disk (the entries are synced in both nodes' logs already): a
   replicated write takes about 2.3 ms at p50 on loopback instead of 3.6 ms

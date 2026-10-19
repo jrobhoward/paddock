@@ -500,8 +500,8 @@ impl From<Refusal> for StoreError {
 }
 
 /// Every bucket on the node. Backends sit behind [`KvStore::run`], one per
-/// durability: [`Memory`], [`Disk`], and replicated shared buckets through
-/// [`crate::replication`]. Each runs [`apply`] in one transaction, so
+/// durability: [`Memory`], [`Disk`], and replicated buckets (shared, and
+/// apps' own as `<app>/<bucket>`) through [`crate::replication`]. Each runs [`apply`] in one transaction, so
 /// guests see the same rules from all of them.
 #[derive(Debug)]
 pub(crate) struct KvStore {
@@ -678,9 +678,8 @@ impl KvStore {
                     .await
                     .map_err(|e| format!("storage task failed: {e}"))?
             }
-            Durability::Replicated => {
-                Err("replicated app buckets are not supported yet (ROADMAP K3)".into())
-            }
+            // Opened in the replicated namespace, handled above.
+            Durability::Replicated => Err("a replicated bucket outside replication".into()),
         }
     }
 }

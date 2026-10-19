@@ -184,6 +184,33 @@ fn NodeConfig____cluster_bucket_on_a_witness_pair____read() {
 }
 
 #[test]
+fn NodeConfig____bucket_name_with_a_slash____refused() {
+    let text = "data_dir = \"/d\"\n[buckets.\"app/points\"]\n";
+
+    let err = NodeConfig::from_toml_str(text).unwrap_err().to_string();
+
+    assert!(err.contains("not a valid name"), "{err}");
+}
+
+#[test]
+fn NodeConfig____failover_replication____needs_the_witness() {
+    let with = |arbiter: &str| {
+        format!("{CLUSTERED}[failover]\npartner = 2\n{arbiter}\nreplication = true\n")
+    };
+
+    let witness = NodeConfig::from_toml_str(&with("arbiter = \"witness\"\nwitness = 3")).unwrap();
+    let paths = NodeConfig::from_toml_str(&with("arbiter = \"paths\""));
+
+    assert!(witness.replicates());
+    assert!(
+        paths
+            .unwrap_err()
+            .to_string()
+            .contains("replication needs arbiter"),
+    );
+}
+
+#[test]
 fn NodeConfig____secrets____one_source_each() {
     let ok = NodeConfig::from_toml_str(
         "data_dir = \"/d\"\n[secrets.db]\nfile = \"/run/db\"\n[secrets.api]\nenv = \"API\"\n",
@@ -244,6 +271,7 @@ fn NodeConfig____failover____read_with_defaults() {
             lease_ms: 3_000,
             margin_ms: 500,
             serial: None,
+            replication: false,
             replication_log_max: ByteSize::mib(64),
             replication_log_age_s: 3600,
         })

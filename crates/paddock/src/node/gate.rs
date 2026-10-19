@@ -6,6 +6,12 @@
 //! leadership with `may_run` starts them from `init`; one without kills
 //! them at once (no `terminate`: the lease may be ending).
 //!
+//! A singleton with a replicated bucket (its own `replicated` bucket, or a
+//! `cluster` shared bucket) also waits until replication reports this
+//! node's copy holding every committed write at the current epoch (R5), so
+//! its first read after a failover sees every write acknowledged before
+//! it. It logs `singleton waiting` meanwhile.
+//!
 //! A singleton held but not running is checked as a start would be (its
 //! dependencies, its supervision), so a node that does not run it refuses
 //! what the primary would. A start that still fails when the node may run
@@ -18,14 +24,17 @@
 //! switchover `singleton stopped`. `scripts/soak.sh` reads these records to
 //! check that no two nodes run a singleton at once.
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 use std::sync::PoisonError;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use paddock_bundle::manifest::PlacementMode;
+use paddock_bundle::manifest::{Durability, PlacementMode};
 use paddock_host::failover::{Leadership, Standing};
-use paddock_host::{AppDeployment, AppHandle, Apps, HostError, Runtime, UpgradeError};
+use paddock_host::{
+    AppDeployment, AppHandle, Apps, HostError, ReplicationStatus, Runtime, UpgradeError,
+};
 use tokio::sync::watch;
 
 use super::error::NodeError;
@@ -51,6 +60,10 @@ pub(super) struct Gate {
     op: tokio::sync::Mutex<()>,
     held: Mutex<Vec<Held>>,
     may_run: AtomicBool,
+    /// Whether replication has this node's copy current (R5).
+    ready: AtomicBool,
+    /// The node's `cluster` shared buckets.
+    cluster: BTreeSet<String>,
     closed: AtomicBool,
 }
 
@@ -74,14 +87,29 @@ pub(super) fn role_name(standing: Standing) -> &'static str {
 }
 
 impl Gate {
-    pub(super) fn new(apps: Apps) -> Self {
+    /// The gate of a node whose `cluster` shared buckets are `cluster`.
+    pub(super) fn new(apps: Apps, cluster: BTreeSet<String>) -> Self {
         Self {
             apps,
             op: tokio::sync::Mutex::new(()),
             held: Mutex::default(),
             may_run: AtomicBool::new(false),
+            ready: AtomicBool::new(false),
+            cluster,
             closed: AtomicBool::new(false),
         }
+    }
+
+    /// Whether `deployment` must wait for replication before it starts:
+    /// it opens a replicated bucket, and this node's copy may trail.
+    fn waits(&self, deployment: &AppDeployment) -> bool {
+        let kv = &deployment.spec.services.keyvalue;
+        let replicated = kv
+            .buckets
+            .values()
+            .any(|b| b.durability == Durability::Replicated)
+            || kv.shared.keys().any(|b| self.cluster.contains(b));
+        replicated && !self.ready.load(Ordering::Relaxed)
     }
 
     fn held(&self) -> std::sync::MutexGuard<'_, Vec<Held>> {
@@ -130,6 +158,10 @@ impl Gate {
             previous: None,
         });
         if !self.may_run.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        if self.waits(&deployment) {
+            tracing::info!(app = %name, "singleton waiting: replicated buckets catching up");
             return Ok(None);
         }
         tracing::info!(app = %name, "singleton starting: this node is primary");
@@ -254,6 +286,10 @@ impl Gate {
             if self.apps.app(&name).is_some() {
                 continue;
             }
+            if self.waits(&current) {
+                tracing::info!(app = %name, "singleton waiting: replicated buckets catching up");
+                continue;
+            }
             tracing::info!(app = %name, "singleton starting: this node is primary");
             match self.apps.add(current).await {
                 Ok(app) => {
@@ -270,11 +306,28 @@ impl Gate {
     }
 
     /// Whether a held singleton is missing while this node may run them:
-    /// a start that failed, to try again.
+    /// a start that failed, to try again. One waiting for replication
+    /// starts when replication is ready ([`Gate::set_ready`]).
     fn missing(&self) -> bool {
         self.may_run.load(Ordering::Relaxed)
             && !self.closed.load(Ordering::Relaxed)
-            && self.held().iter().any(|h| self.apps.app(&h.name).is_none())
+            && self
+                .held()
+                .iter()
+                .any(|h| self.apps.app(&h.name).is_none() && !self.waits(&h.current))
+    }
+
+    /// Record whether replication has this node's copy current, and start
+    /// the singletons that waited for it. A singleton already running is
+    /// not stopped when it stops being current: only `may_run` does that.
+    async fn set_ready(&self, ready: bool) {
+        let _op = self.op.lock().await;
+        if self.ready.swap(ready, Ordering::Relaxed) == ready || !ready {
+            return;
+        }
+        if self.may_run.load(Ordering::Relaxed) && !self.closed.load(Ordering::Relaxed) {
+            self.start_held().await;
+        }
     }
 
     /// Try the failed starts again, if this node may still run singletons.
@@ -324,8 +377,11 @@ pub(super) async fn follow(
     mut leadership: watch::Receiver<Leadership>,
     mut stop: watch::Receiver<bool>,
 ) {
+    let mut replication = rt.replication_updates();
     loop {
         let now = leadership.borrow_and_update().clone();
+        gate.set_ready(ready_at(replication.as_mut(), now.epoch))
+            .await;
         if now.epoch > saved {
             match save_epoch(now.epoch) {
                 Ok(()) => saved = now.epoch,
@@ -342,16 +398,44 @@ pub(super) async fn follow(
             let woke = tokio::select! {
                 changed = leadership.changed() => {
                     if changed.is_err() { return }
-                    false
+                    Some(false)
                 }
+                () = replication_changed(replication.as_mut()) => None,
                 _ = stop.wait_for(|s| *s) => return,
-                () = tokio::time::sleep(wait), if retry => true,
+                () = tokio::time::sleep(wait), if retry => Some(true),
             };
-            if !woke {
-                break;
+            match woke {
+                // Replication's status changed: start what waited for it.
+                None => {
+                    gate.set_ready(ready_at(replication.as_mut(), now.epoch))
+                        .await;
+                    continue;
+                }
+                Some(false) => break,
+                Some(true) => {}
             }
             gate.retry().await;
             wait = (wait * 2).min(RETRY_MAX);
         }
+    }
+}
+
+/// Whether replication, if it runs, has this node's copy current at
+/// `epoch`. Without replication there is nothing to wait for.
+fn ready_at(replication: Option<&mut watch::Receiver<ReplicationStatus>>, epoch: u64) -> bool {
+    replication.is_none_or(|r| {
+        let s = r.borrow_and_update();
+        s.ready && s.epoch == epoch
+    })
+}
+
+/// The next change of replication's status; never, without replication or
+/// once it has stopped.
+async fn replication_changed(replication: Option<&mut watch::Receiver<ReplicationStatus>>) {
+    let Some(r) = replication else {
+        return std::future::pending().await;
+    };
+    if r.changed().await.is_err() {
+        std::future::pending::<()>().await;
     }
 }

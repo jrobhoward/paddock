@@ -251,7 +251,7 @@ impl Node {
         let gate = config
             .failover
             .is_some()
-            .then(|| Arc::new(Gate::new(apps.clone())));
+            .then(|| Arc::new(Gate::new(apps.clone(), config.cluster_buckets())));
         let node = Self {
             rt,
             apps,

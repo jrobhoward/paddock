@@ -155,6 +155,10 @@ pub struct ReplicationStatus {
     /// On the primary, whether it commits without its partner (the witness
     /// has the partner recorded out of date).
     pub alone: bool,
+    /// Whether this node's copy holds every committed write: on the
+    /// primary holding its lease, once it committed an entry of its own
+    /// epoch (R5). A singleton with replicated buckets starts only then.
+    pub ready: bool,
 }
 
 impl Runtime {
@@ -168,11 +172,17 @@ impl Runtime {
             .replication_status()
             .map(|s| *s.borrow())
     }
+
+    /// [`Runtime::replication_status`] as it changes, if replication runs.
+    #[must_use]
+    pub fn replication_updates(&self) -> Option<watch::Receiver<ReplicationStatus>> {
+        self.inner().services.keyvalue().replication_status()
+    }
 }
 
 /// Start replication for this node's replicated buckets, following
-/// `leadership`, with the pair and the log's bounds from `cfg`. Nothing to
-/// do without replicated buckets.
+/// `leadership`, with the pair and the log's bounds from `cfg`. Called when
+/// the node has replicated shared buckets or `cfg.replication` is set.
 pub(crate) fn start(
     rt: &Arc<RuntimeInner>,
     cfg: &FailoverConfig,
@@ -180,9 +190,6 @@ pub(crate) fn start(
 ) -> Result<(), HostError> {
     let partner = cfg.partner;
     let kv = rt.services.keyvalue().clone();
-    if !kv.has_replicated() {
-        return Ok(());
-    }
     let disk = kv
         .disk()
         .ok_or_else(|| HostError::Engine("replicated buckets need a data directory".into()))?;
@@ -233,6 +240,7 @@ fn status_of(replica: &Replica, lead: &Leadership) -> ReplicationStatus {
         log_bytes: replica.log().bytes(),
         partner_matched: replica.matched(),
         alone: replica.alone(),
+        ready: replica.read_ready(),
     }
 }
 
