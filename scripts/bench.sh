@@ -86,7 +86,7 @@ stamp=$(date -u +%Y-%m-%dT%H%MZ)
 out=target/bench/$stamp.md
 log=target/bench/$stamp.log
 : >"$log"
-cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //')
+cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //' || true)
 # arm64 has no `model name`: the board's name and lscpu's core model.
 if [ -z "$cpu" ]; then
   board=$(tr -d '\0' 2>/dev/null </proc/device-tree/model || true)

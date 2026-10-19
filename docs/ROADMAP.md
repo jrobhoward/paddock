@@ -20,7 +20,7 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 
 | Phase | Exit | Left |
 | --- | --- | --- |
-| 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Baseline numbers on the Pi (G2) |
+| 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Met on 2026-10-18 (G2, the Pi's baselines) |
 | 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | Met: the rest on 2026-10-15, the serial line criterion on 2026-10-16 (F5) |
 | 3: application server | One real workload runs a full release cycle with zero downtime | See "Phase 3" |
 
@@ -28,11 +28,10 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Next
 
-Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's planned items are done, and stage 6's but G2. Of what is left:
+Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
-1. G2 on the Pi (the last of Phase 2a's exit), waiting on the Pi's NVMe drive.
-2. Phase 3 (planned 2026-10-16, below) can start before G2 and W1: X1's first step, K1 and K2 are done (2026-10-16 to 2026-10-18); K3 and X1's point table on a cluster bucket are next.
-3. W1 (Phase 2's docs) once G2 is done; H5 and E4b only for a user who needs them.
+1. Phase 3 (planned 2026-10-16, below): X1's first step, K1 and K2 are done (2026-10-16 to 2026-10-18); K3 and X1's point table on a cluster bucket are next.
+2. W1 (Phase 2's docs), now unblocked; H5 and E4b only for a user who needs them.
 
 ## Order
 
@@ -101,9 +100,7 @@ Done on 2026-10-15: E5, SQL datasources (`paddock:sql`, Postgres): `query`, `exe
 
 On an idle machine only.
 
-Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run is BASELINE.md's 2026-10-15 section, which replaces the numbers flagged provisional on 2026-10-09 and records Modbus throughput. Done on 2026-10-16: B8, what B7 left unexplained (BASELINE.md, 2026-10-16): the call between nodes is mostly QUIC and tokio wakes (`quic_floor`); the ingress gap was per-request waste, removed (78k to 85k, 88k to 99k without guest CBOR, at 32 connections); `modbus_load`'s drop comes from the pool size on one shared bucket; the metric counters cost nothing measurable; boxing the callback futures saves nothing. Hash routing then stopped decoding whole bodies (it walks the CBOR map for the key): `modbus_load` (64 devices, pool of 4, 8 workers) stores about 25% more updates with about 12% less CPU. G3, Linux arm64 in CI (`ubuntu-24.04-arm` in the test matrix), the same day.
-
-- [ ] **G2 Raspberry Pi 5 baseline**: `scripts/bench.sh` on the Pi, and instances per GB with the dense profile.
+Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run is BASELINE.md's 2026-10-15 section, which replaces the numbers flagged provisional on 2026-10-09 and records Modbus throughput. Done on 2026-10-16: B8, what B7 left unexplained (BASELINE.md, 2026-10-16): the call between nodes is mostly QUIC and tokio wakes (`quic_floor`); the ingress gap was per-request waste, removed (78k to 85k, 88k to 99k without guest CBOR, at 32 connections); `modbus_load`'s drop comes from the pool size on one shared bucket; the metric counters cost nothing measurable; boxing the callback futures saves nothing. Hash routing then stopped decoding whole bodies (it walks the CBOR map for the key): `modbus_load` (64 devices, pool of 4, 8 workers) stores about 25% more updates with about 12% less CPU. G3, Linux arm64 in CI (`ubuntu-24.04-arm` in the test matrix), the same day. Done on 2026-10-18: G2, the Raspberry Pi 5 baseline (BASELINE.md, 2026-10-18): the suite on the Pi, and about 9,400 idle live instances per GiB on the dense profile (40,000 held), 54,000 passivated. Left open from it: an idle live instance takes about 110 KiB on the Pi against 58 to 63 KiB on the 16-core machine, not explained, and epoch checks cost up to 1.5 times in tight loops there.
 - [ ] **G5 Dedicated workers and CPU budgets** for latency-critical instances: priority classes mapped to separate worker sets, a CPU budget per period per app (`CallbackClock`), and a rule for priority inversion. Measure first (S15 saw 10–47 µs over native at one connection that client-side timing could not explain).
 - [ ] **G1 Large machine** (tabled 2026-10-07: none with more than 16 cores or several sockets is available). `scripts/bench.sh` at 32 to 80 workers; watch the process table, registry and pool round robin for contention. Until then no design may assume one core or one socket.
 

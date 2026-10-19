@@ -711,6 +711,9 @@ All notable changes are recorded here. The format follows
   first of its two streams finished, discarding a `Leave` still unread on
   the other, and kept the departed node as a member. A peer now closes once
   both streams have finished, and the leaving node waits for that close.
+- `scripts/bench.sh` runs on arm64 Linux: it exited before its first
+  benchmark when `/proc/cpuinfo` had no `model name` line, before its
+  fallback to the board's name could run.
 
 ### Changed
 

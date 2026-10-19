@@ -667,6 +667,440 @@ Neither run uses its cores (about 3.3 busy either way), and lock waits are under
 - The disk bucket's single-writer figure and the alone figures jump between two modes from run to run with no change in the code (0.9 or 2.5 ms for the same write), which looks like the drive's fsync latency; take ranges, not single runs.
 - Not measured: between machines (the network adds its round trip), on the Pi, or with large values.
 
+## 2026-10-18: Raspberry Pi 5 (roadmap G2)
+
+Raspberry Pi 5 Model B Rev 1.1 (Cortex-A76), 4 cores, 8 GiB, Ubuntu 26.04, Linux 7.0.0-1020-raspi, 4 KiB pages; rustc 1.99.1; commit 7d7095d; `scripts/bench.sh` with every benchmark but `s14` and `s15` (the spikes workspace was not built on the Pi), load average 0.02 at the start. Home directory, and so `target/` and the disk buckets, on ext4 on an NVMe drive (Realtek RTS5765DL, DRAM-less). An 8 GB swap partition was on and stayed unused (0 B) throughout. Drive temperature peaked at 49 °C, with no throttling and no errors. The full output is below, after the summary.
+
+Against the 16-core machine (the 2026-10-15 suite unless marked; the Pi's run includes B8's ingress changes, the 16-core suite does not):
+
+| Measure | Pi 5 | 16-core |
+| --- | --- | --- |
+| Empty call, 1 worker, p50 | 3.74 µs (260k/s) | 2.55 µs (384k/s) |
+| Instantiate to first reply, 1 worker, p50 | 79.8 µs | 83.2 µs |
+| Idle live instance, standard profile | 104 KiB resident | 58 KiB |
+| Idle live instance, dense profile (5,000) | 110 KiB resident | 63 KiB |
+| Passivated instance (100,000 on 1,000 Store slots) | 19.2 KiB resident | 19.3 KiB (2026-10-16) |
+| `pool_load`, 4 workers, pool of 16, 64 clients, empty / busy:20000 | 671k / 68k calls/s | 232k / 89k calls/s |
+| Epoch checks: tight loop, fib(35), sieve (on / off) | 1.50, 1.35, 1.01 | 1.00, 1.07, 1.23 |
+| Debug log record emitted | 814 ns | 519 ns |
+| Admin API, 1 client, 1 worker, p50 | 87.6 µs | 67.5 µs |
+| HTTP ingress, 32 connections | 62.8k requests/s | 85k (2026-10-16) |
+| HTTP handler, 32 connections | 23.9k requests/s | about 25k (2026-10-16) |
+| Call between two nodes, sequential, p50 | 84.6 µs | 105.8 µs |
+| Replicated write, one writer on the primary | 548/s, p50 1.76 ms | 361 to 365/s, p50 2.3 ms (2026-10-18) |
+
+- A call costs about 1.5 times the 16-core machine's on one worker; instantiation costs the same.
+- Epoch checks cost more on the Pi in loop-heavy code: a tight loop runs at 1.5 times its unchecked time, against no measurable cost on the 16-core machine. The sieve, which is memory-bound, pays almost nothing.
+- An idle live instance takes about 110 KiB resident on the Pi against 58 to 63 KiB, with the same page size and transparent huge pages set to `madvise` on both. The cause has not been looked into. A passivated instance costs the same on both.
+- The replicated write and the disk bucket (2,105 writes/s, p50 441 µs, against about 960/s) run faster than on the 16-core machine. They are bound by the drive's fsync, and the drives differ; they do not compare the CPUs.
+- Modbus on the Pi: 64 devices polled every millisecond store 7,767 updates/s (971k points/s) with a pool of 4 on 4 workers, 6,317 with a pool of 8 on 8 workers (more workers than cores).
+
+Instances per GB, dense profile (`baseline 1 N dense`; the 20,000 and 40,000 runs started at load average 1.86, just after the suite, so their latencies are provisional; the memory figures do not depend on it):
+
+| Instances | Instantiate p50 / p99 | Resident per instance | Process resident | Virtual |
+| --- | --- | --- | --- | --- |
+| 5,000 | 81.1 / 139 µs | 110 KiB | 563 MiB | 1,265 GiB |
+| 20,000 | 81.2 / 139 µs | 111 KiB | 2,204 MiB | 5,056 GiB |
+| 40,000 | 83.0 / 165 µs | 111 KiB | 4,392 MiB | 10,111 GiB |
+
+- About 9,400 idle live instances per GiB of RAM, steady from 5,000 to 40,000; the Pi held 40,000 in 4.4 GiB with no swapping. Passivated instances cost 19.2 KiB each, about 54,000 per GiB.
+- The dense profile reserved about 256 MiB of address space per slot, 10 TiB for 40,000, without trouble.
+- Not measured on the Pi: S14 and S15, more than 40,000 instances, and a guest with a larger heap than the chaos fixture.
+
+
+### Pi 5: baseline: call, cast, instantiate, idle memory (1 and 4 workers, dense)
+
+`target/release/examples/baseline 1 1000 standard` (1.92 s wall, 1.63 s user, 0.08 s system, 129108 KiB peak RSS):
+
+```text
+tokio workers: 1, memory profile: Standard
+component: 118 KiB, compiled in 167 ms
+call, empty call: p50 3.74 µs, p99 4.87 µs, p99.9 8.87 µs, max 39.76 µs; 260180 calls/s sequential
+call, 1 KiB echo: p50 5.68 µs, p99 7.17 µs, p99.9 11.98 µs, max 101.69 µs; 173011 calls/s sequential
+cast: 456539 casts/s handled (200000 casts, mailbox 1024, sender saw a full mailbox 1543 times)
+instantiate to first reply (1000 instances): p50 79.76 µs, p99 193.33 µs, mean 83.89 µs
+idle memory per instance: 104 KiB resident, 0 KiB virtual (process: 126 MiB resident, 8129 GiB virtual)
+```
+
+`target/release/examples/baseline 4 1000 standard` (2.16 s wall, 2.44 s user, 0.57 s system, 130968 KiB peak RSS):
+
+```text
+tokio workers: 4, memory profile: Standard
+component: 118 KiB, compiled in 171 ms
+call, empty call: p50 5.24 µs, p99 7.13 µs, p99.9 12.31 µs, max 92.76 µs; 204940 calls/s sequential
+call, 1 KiB echo: p50 7.20 µs, p99 9.18 µs, p99.9 15.94 µs, max 117.70 µs; 147079 calls/s sequential
+cast: 422226 casts/s handled (200000 casts, mailbox 1024, sender saw a full mailbox 453505 times)
+instantiate to first reply (1000 instances): p50 86.37 µs, p99 226.26 µs, mean 91.81 µs
+idle memory per instance: 101 KiB resident, 0 KiB virtual (process: 128 MiB resident, 8129 GiB virtual)
+```
+
+`target/release/examples/baseline 1 5000 dense` (2.66 s wall, 2.11 s user, 0.34 s system, 577580 KiB peak RSS):
+
+```text
+tokio workers: 1, memory profile: Dense
+component: 118 KiB, compiled in 217 ms
+call, empty call: p50 3.94 µs, p99 6.26 µs, p99.9 9.31 µs, max 56.52 µs; 245372 calls/s sequential
+call, 1 KiB echo: p50 6.55 µs, p99 8.30 µs, p99.9 12.98 µs, max 96.35 µs; 149359 calls/s sequential
+cast: 420466 casts/s handled (200000 casts, mailbox 1024, sender saw a full mailbox 1443 times)
+instantiate to first reply (5000 instances): p50 81.07 µs, p99 139.42 µs, mean 84.35 µs
+idle memory per instance: 110 KiB resident, 26 KiB virtual (process: 563 MiB resident, 1265 GiB virtual)
+```
+
+### Pi 5: pool_load: concurrent clients against a pool (1, 4, 16 workers)
+
+`target/release/examples/pool_load 1` (12.45 s wall, 12.28 s user, 0.05 s system, 38880 KiB peak RSS):
+
+```text
+tokio workers: 1; epoch tick 2000 µs; 1 s per row
+work        pool  clients  calls/s   mean µs  p50 µs  p99 µs  p99.9 µs
+empty          1       64    293653    217.0   218.0   295.0     377.4
+empty          4       64    252027    253.1   219.3   722.3     759.4
+empty         16       64    232419    274.9   164.8   938.4    1057.8
+empty         16        1    226725      4.3     4.2     6.1      11.9
+empty         16       16    228721     69.8    40.5   260.1     272.6
+empty         16      256    246634   1035.0  1007.1  3120.4    3326.5
+busy:20000     1       64     18221   3506.1  4099.8  4106.3    6070.0
+busy:20000     4       64     18021   3544.0  4142.7  6201.9    7908.2
+busy:20000    16       64     17815   3589.8  4255.7  8785.2    9815.1
+busy:20000    16        1     17537     56.9    55.9    64.7      70.9
+busy:20000    16       16     17528    911.8   158.7  2444.0    3397.6
+busy:20000    16      256     17959  14200.4  15171.5  26541.3   31187.4
+```
+
+`target/release/examples/pool_load 4` (12.62 s wall, 37.16 s user, 1.00 s system, 70944 KiB peak RSS):
+
+```text
+tokio workers: 4; epoch tick 2000 µs; 1 s per row
+work        pool  clients  calls/s   mean µs  p50 µs  p99 µs  p99.9 µs
+empty          1       64    290255    219.7   218.1   289.2     400.3
+empty          4       64    785214     80.7    65.0   289.2     383.6
+empty         16       64    671479     94.5    14.7   560.4     748.0
+empty         16        1    185933      5.3     5.3     8.7      16.0
+empty         16       16    658622     24.1     6.1   158.6     212.3
+empty         16      256    696692    364.8   166.9  1882.3    2680.5
+busy:20000     1       64     16496   3871.7  3765.3  4467.6    5583.0
+busy:20000     4       64     69295    921.2   873.8  2668.4    3907.3
+busy:20000    16       64     68387    932.9   500.1  4135.8    5659.0
+busy:20000    16        1     16937     59.0    58.4    72.0      89.9
+busy:20000    16       16     68328    234.0    62.2  1345.7    1739.2
+busy:20000    16      256     68848   3704.1  3212.1  12397.2   16015.5
+```
+
+`target/release/examples/pool_load 16` (12.59 s wall, 34.59 s user, 0.94 s system, 120652 KiB peak RSS):
+
+```text
+tokio workers: 16; epoch tick 2000 µs; 1 s per row
+work        pool  clients  calls/s   mean µs  p50 µs  p99 µs  p99.9 µs
+empty          1       64    291209    219.0   217.7   265.4     380.5
+empty          4       64    635352     99.9    41.9   591.6    1399.7
+empty         16       64    586311    108.4     6.3  1338.0    2078.8
+empty         16        1    171473      5.7     5.9    10.5      24.1
+empty         16       16    557683     28.4     6.1   238.1     748.9
+empty         16      256    668001    379.7    20.8  3661.7    5170.0
+busy:20000     1       64     16288   3922.3  3940.5  4495.3    5213.0
+busy:20000     4       64     64809    985.1   721.8  4302.3    6202.7
+busy:20000    16       64     68423    932.6   106.1  6295.2    8478.9
+busy:20000    16        1     17327     57.6    57.4    69.2      79.1
+busy:20000    16       16     63617    251.2    56.9  2731.1    3747.4
+busy:20000    16      256     70445   3615.2  2901.7  14415.6   18843.7
+```
+
+### Pi 5: epoch: epoch-check overhead
+
+`target/release/examples/epoch_cost` (31.85 s wall, 31.73 s user, 0.15 s system, 30004 KiB peak RSS):
+
+```text
+median of 7 runs; epoch tick 2 ms, yield per tick
+tight loop, 500M rounds: epoch off 835.2 ms, epoch on 1252.9 ms, ratio 1.500
+recursion, fib(35): epoch off 86.3 ms, epoch on 116.6 ms, ratio 1.351
+sieve, 16M: epoch off 830.9 ms, epoch on 839.3 ms, ratio 1.010
+```
+
+### Pi 5: log: guest log records
+
+`target/release/examples/log_cost` (0.66 s wall, 0.64 s user, 0.01 s system, 23480 KiB peak RSS):
+
+```text
+filtered (debug record, level info): 7 ns per record (median of 5 runs of 100000)
+emitted (debug record, level debug): 814 ns per record (median of 5 runs of 100000)
+```
+
+### Pi 5: admin: admin API latency (1 and 4 workers)
+
+`target/release/examples/admin_latency 1` (3.34 s wall, 1.92 s user, 1.37 s system, 31416 KiB peak RSS):
+
+```text
+tokio workers: 1; 20000 calls each
+in process (Node::call): p50 4.2 µs, p99 6.8 µs, p99.9 10.3 µs; 229645 calls/s
+admin API, 1 client: p50 87.6 µs, p99 166.6 µs, p99.9 177.9 µs; 11220 calls/s
+admin API, 16 clients: p50 1011.7 µs, p99 1319.8 µs, p99.9 1366.9 µs; 15911 calls/s
+```
+
+`target/release/examples/admin_latency 4` (2.84 s wall, 2.79 s user, 2.42 s system, 36508 KiB peak RSS):
+
+```text
+tokio workers: 4; 20000 calls each
+in process (Node::call): p50 6.1 µs, p99 11.1 µs, p99.9 19.5 µs; 166426 calls/s
+admin API, 1 client: p50 97.6 µs, p99 134.9 µs, p99.9 180.9 µs; 9914 calls/s
+admin API, 16 clients: p50 375.6 µs, p99 709.2 µs, p99.9 1279.0 µs; 41326 calls/s
+```
+
+### Pi 5: watch: keyvalue writes with watchers, memory and disk buckets
+
+`target/release/examples/watch_cost 4` (13.50 s wall, 47.05 s user, 2.67 s system, 228636 KiB peak RSS):
+
+```text
+4 worker threads, a Memory bucket; median of 2000 writes each
+write,    0 watchers on the key: 9.5 µs
+write,    1 watchers on the key: 11.8 µs
+write,  100 watchers on the key: 239.1 µs
+write, 1000 watchers on the key: 6071.2 µs
+write, 1000 watchers on another key: 8.9 µs
+write to notice handled: 40.9 µs (two plain calls: 13.1 µs; median of 1000)
+```
+
+`target/release/examples/watch_cost 4 disk` (16.51 s wall, 55.86 s user, 3.50 s system, 238716 KiB peak RSS):
+
+```text
+4 worker threads, a Disk bucket; median of 2000 writes each
+write,    0 watchers on the key: 66.6 µs
+write,    1 watchers on the key: 75.5 µs
+write,  100 watchers on the key: 348.1 µs
+write, 1000 watchers on the key: 6984.8 µs
+write, 1000 watchers on another key: 83.9 µs
+write to notice handled: 144.1 µs (two plain calls: 36.3 µs; median of 1000)
+```
+
+### Pi 5: publish: a publish to 1 to 1,000 group members
+
+`target/release/examples/publish_cost 4` (1.77 s wall, 4.21 s user, 0.24 s system, 178844 KiB peak RSS):
+
+```text
+4 worker threads; 200 publishes per size
+    1 members: publish call 13.3 µs (median), 67677 deliveries/s handled
+   10 members: publish call 17.7 µs (median), 393101 deliveries/s handled
+  100 members: publish call 140.0 µs (median), 653911 deliveries/s handled
+ 1000 members: publish call 4343.6 µs (median), 227059 deliveries/s handled
+```
+
+### Pi 5: ingress: HTTP ingress throughput: requests as calls to a pool, the ingress with a guest doing no CBOR, S15's bare shape, and an HTTP handler's instance per request (E6)
+
+`target/release/examples/ingress_throughput 4 4` (20.74 s wall, 29.66 s user, 26.37 s system, 52920 KiB peak RSS):
+
+```text
+ingress_throughput: 4 server workers, a pool of 4, 4 client workers
+1 connection: 18096 requests/s, p50 54 us, p99 68 us
+8 connections: 53536 requests/s
+32 connections: 62794 requests/s
+128 connections: 68848 requests/s
+```
+
+`target/release/examples/ingress_throughput 4 4 chaos` (20.25 s wall, 26.89 s user, 28.19 s system, 42560 KiB peak RSS):
+
+```text
+ingress_throughput: 4 server workers, a pool of 4, 4 client workers
+1 connection: 19349 requests/s, p50 51 us, p99 63 us
+8 connections: 55971 requests/s
+32 connections: 65889 requests/s
+128 connections: 70435 requests/s
+```
+
+`target/release/examples/ingress_throughput 4 4 s15` (20.24 s wall, 20.87 s user, 32.02 s system, 41676 KiB peak RSS):
+
+```text
+ingress_throughput: 4 server workers, S15's shape (bare hyper, 4 chaos instances), 4 client workers
+1 connection: 21260 requests/s, p50 46 us, p99 68 us
+8 connections: 62773 requests/s
+32 connections: 80978 requests/s
+128 connections: 87337 requests/s
+```
+
+`target/release/examples/ingress_throughput 4 4 handler` (20.56 s wall, 33.22 s user, 21.94 s system, 43304 KiB peak RSS):
+
+```text
+ingress_throughput: 4 server workers, an HTTP handler (an instance per request), 4 client workers
+1 connection: 3195 requests/s, p50 135 us, p99 222 us
+8 connections: 17583 requests/s
+32 connections: 23902 requests/s
+128 connections: 24129 requests/s
+```
+
+### Pi 5: batch: points per second between apps, one cast each or batched (F4)
+
+`target/release/examples/batch_cost 1` (14.58 s wall, 14.31 s user, 0.23 s system, 194952 KiB peak RSS):
+
+```text
+tokio workers: 1; 200000 points per source
+sources  sinks  batch  points/s     messages/s  time
+1        1      none   220907       220907      905.4 ms
+1        1      1      192330       192330      1039.9 ms
+1        1      10     621496       62150       321.8 ms
+1        1      100    808886       8089        247.3 ms
+1        1      1000   837955       838         238.7 ms
+4        4      none   218349       218349      3663.9 ms
+4        4      1      190950       190950      4189.6 ms
+4        4      10     623676       62368       1282.7 ms
+4        4      100    808673       8087        989.3 ms
+4        4      1000   836653       837         956.2 ms
+```
+
+`target/release/examples/batch_cost 4` (5.39 s wall, 14.70 s user, 0.21 s system, 196196 KiB peak RSS):
+
+```text
+tokio workers: 4; 200000 points per source
+sources  sinks  batch  points/s     messages/s  time
+1        1      none   306013       306013      653.6 ms
+1        1      1      307045       307045      651.4 ms
+1        1      10     1163476      116348      171.9 ms
+1        1      100    1397000      13970       143.2 ms
+1        1      1000   1396405      1396        143.2 ms
+4        4      none   850813       850813      940.3 ms
+4        4      1      705676       705676      1133.7 ms
+4        4      10     2456368      245637      325.7 ms
+4        4      100    3234432      32344       247.3 ms
+4        4      1000   3310779      3311        241.6 ms
+```
+
+### Pi 5: egress: outgoing HTTP from a guest through the pool
+
+`target/release/examples/egress_cost 1` (1.65 s wall, 1.41 s user, 0.23 s system, 36020 KiB peak RSS):
+
+```text
+tokio workers: 1, server 127.0.0.1:32799, egress pool: true
+native hyper, pooled, sequential: p50 23.5 µs, p99 32.8 µs, mean 24.1 µs; 41429 requests/s
+guest wasi:http, sequential: p50 94.0 µs, p99 130.9 µs, mean 95.9 µs; 10423 requests/s
+guest wasi:http, 16 instances at once: p50 1410.2 µs, p99 2805.0 µs, mean 1445.6 µs; 10969 requests/s
+```
+
+`target/release/examples/egress_cost 4` (1.25 s wall, 1.60 s user, 0.33 s system, 41912 KiB peak RSS):
+
+```text
+tokio workers: 4, server 127.0.0.1:37619, egress pool: true
+native hyper, pooled, sequential: p50 23.8 µs, p99 36.4 µs, mean 24.8 µs; 40262 requests/s
+guest wasi:http, sequential: p50 125.0 µs, p99 148.3 µs, mean 125.8 µs; 7945 requests/s
+guest wasi:http, 16 instances at once: p50 406.5 µs, p99 657.9 µs, mean 410.3 µs; 38523 requests/s
+```
+
+`target/release/examples/egress_cost 4 nopool` (1.64 s wall, 2.12 s user, 1.20 s system, 42132 KiB peak RSS):
+
+```text
+tokio workers: 4, server 127.0.0.1:37773, egress pool: false
+native hyper, pooled, sequential: p50 23.6 µs, p99 29.7 µs, mean 24.0 µs; 41472 requests/s
+guest wasi:http, sequential: p50 185.2 µs, p99 242.9 µs, mean 187.5 µs; 5330 requests/s
+guest wasi:http, 16 instances at once: p50 995.6 µs, p99 1519.5 µs, mean 1003.8 µs; 15842 requests/s
+```
+
+### Pi 5: cluster: calls, casts and payloads between two nodes over QUIC, and bare quinn's floor
+
+`target/release/examples/cluster_throughput 4` (44.02 s wall, 134.11 s user, 17.19 s system, 76548 KiB peak RSS):
+
+```text
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node
+one node: sequential calls 203204/s, p50 5.3 us, p99 6.6 us
+two nodes: sequential calls 11583/s, p50 84.6 us, p99 100.8 us
+16 callers: one node 737223 calls/s, two nodes 56095 calls/s
+64 callers: one node 797981 calls/s, two nodes 82879 calls/s
+one node: casts 1011099 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 268402 handled/s (348761 of 400000 handled, 51239 refused when sent)
+1 KiB bodies, 16 callers: one node 532639 calls/s (520 MiB/s each way), two nodes 42443 calls/s (41 MiB/s each way)
+64 KiB bodies, 16 callers: one node 13659 calls/s (854 MiB/s each way), two nodes 1708 calls/s (107 MiB/s each way)
+```
+
+`target/release/examples/quic_floor 4` (15.29 s wall, 9.87 s user, 8.10 s system, 22028 KiB peak RSS):
+
+```text
+quic_floor: bare quinn ping-pong over loopback, 64-byte frames, one in flight
+4 workers, two writes: 19698 round trips/s, p50 49.8 us, p99 58.1 us
+4 workers, one write: 19576 round trips/s, p50 50.0 us, p99 59.1 us
+current thread, one write: 32691 round trips/s, p50 30.1 us, p99 39.9 us
+```
+
+### Pi 5: replication: writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket (K2)
+
+`target/release/examples/replication_cost 4` (41.85 s wall, 22.29 s user, 8.86 s system, 124160 KiB peak RSS):
+
+```text
+replication_cost: 4 tokio workers for the three nodes, QUIC over loopback, redb on target/.tmpxpDIak
+disk bucket, one writer: 2105 writes/s, p50 441 us, p99 828 us
+replicated, one writer on the primary: 548 writes/s, p50 1764 us, p99 2529 us
+replicated, one writer on the standby: 485 writes/s, p50 2013 us, p99 2716 us
+disk bucket, 16 writers: 2011 writes/s
+replicated, 16 writers on the primary: 2643 writes/s
+disk bucket, 64 writers: 1967 writes/s
+replicated, 64 writers on the primary: 5647 writes/s
+replicated, alone, one writer: 1123 writes/s, p50 883 us, p99 971 us
+replicated, alone, 16 writers: 5188 writes/s
+```
+
+### Pi 5: passivation: wake cost, instances per Store slot, random calls
+
+`target/release/examples/passivation_cost 4 1000 100000` (18.75 s wall, 39.49 s user, 16.58 s system, 2039596 KiB peak RSS):
+
+```text
+passivation_cost: 4 workers, 1000 Store slots, 100000 instances, passivated after 20 ms idle
+runtime started: RSS 27 MiB, address space 8259015 MiB
+100000 instances started and passivated in 5.1 s; Stores held: 0
+all passivated: RSS 1897 MiB, address space 8260746 MiB
+per passivated instance: 19.2 KiB RSS, 17.7 KiB address space
+call that wakes its instance: p50 58 us, p90 83 us, p99 128 us, max 381 us (2000 calls)
+call to a live instance: p50 5 us, p90 8 us, p99 16 us, max 45 us (2000 calls)
+random calls, 64 callers: 24099 calls/s
+random call: p50 1225 us, p90 8105 us, p99 15168 us, max 52187 us (120495 calls)
+after random calls: RSS 1931 MiB, address space 8260810 MiB
+counts kept: 124495 of 124495 increments
+```
+
+`target/release/examples/passivation_cost 4 100 2000` (5.73 s wall, 13.12 s user, 6.45 s system, 78144 KiB peak RSS):
+
+```text
+passivation_cost: 4 workers, 100 Store slots, 2000 instances, passivated after 20 ms idle
+runtime started: RSS 27 MiB, address space 826247 MiB
+2000 instances started and passivated in 0.1 s; Stores held: 0
+all passivated: RSS 60 MiB, address space 826248 MiB
+per passivated instance: 16.9 KiB RSS, 0.5 KiB address space
+call that wakes its instance: p50 76 us, p90 87 us, p99 116 us, max 162 us (2000 calls)
+call to a live instance: p50 7 us, p90 7 us, p99 10 us, max 27 us (2000 calls)
+random calls, 64 callers: 36734 calls/s
+random call: p50 1737 us, p90 2024 us, p99 3024 us, max 13508 us (183672 calls)
+after random calls: RSS 72 MiB, address space 826248 MiB
+counts kept: 187672 of 187672 increments
+```
+
+`target/release/examples/passivation_cost 4 1000 1000 off` (5.35 s wall, 19.91 s user, 0.36 s system, 155472 KiB peak RSS):
+
+```text
+passivation_cost: 4 workers, 1000 Store slots, 1000 instances, no passivation
+runtime started: RSS 27 MiB, address space 8259014 MiB
+1000 instances started in 0.1 s; Stores held: 1000
+all idle live: RSS 129 MiB, address space 8259015 MiB
+per idle live instance: 104.7 KiB RSS, 1.0 KiB address space
+call to a live instance: p50 4 us, p90 4 us, p99 6 us, max 17 us (1000 calls)
+random calls, 64 callers: 248563 calls/s
+random call: p50 176 us, p90 600 us, p99 1357 us, max 8682 us (1242813 calls)
+after random calls: RSS 137 MiB, address space 8259015 MiB
+counts kept: 1244813 of 1244813 increments
+```
+
+### Pi 5: modbus: Modbus points through the scada pool
+
+`target/release/examples/modbus_load 16 100 10 4 4` (12.34 s wall, 8.57 s user, 0.52 s system, 31168 KiB peak RSS):
+
+```text
+16 devices x 100 registers every 10 ms, pool of 4, 4 workers: 1600 updates/s stored (1600 polls/s asked), 159997 points/s
+```
+
+`target/release/examples/modbus_load 64 125 1 4 4` (12.39 s wall, 38.27 s user, 2.52 s system, 36800 KiB peak RSS):
+
+```text
+64 devices x 125 registers every 1 ms, pool of 4, 4 workers: 7767 updates/s stored (64000 polls/s asked), 970875 points/s
+```
+
+`target/release/examples/modbus_load 64 125 1 8 8` (12.79 s wall, 33.82 s user, 2.17 s system, 49768 KiB peak RSS):
+
+```text
+64 devices x 125 registers every 1 ms, pool of 8, 8 workers: 6317 updates/s stored (64000 polls/s asked), 789609 points/s
+```
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels.
