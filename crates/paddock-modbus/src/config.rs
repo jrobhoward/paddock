@@ -51,6 +51,12 @@ pub struct DeviceConfig {
     /// read and write the device.
     #[serde(default)]
     pub deliver_to: Option<String>,
+    /// Poll only while this node runs singletons: on an HA pair, the
+    /// primary while its lease holds, so one node polls and a `cluster`
+    /// bucket carries the table to the other. The standby closes its
+    /// connection; guests' reads and writes still reach the device.
+    #[serde(default)]
+    pub primary_only: bool,
     /// Holding registers polled.
     #[serde(default)]
     pub holding: Vec<Range>,

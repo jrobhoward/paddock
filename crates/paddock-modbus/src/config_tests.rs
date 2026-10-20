@@ -28,6 +28,7 @@ fn Config____device_and_server____defaults_filled_in() {
     let pump = &config.devices["pump-1"];
     assert_eq!(pump.unit, 1);
     assert_eq!(pump.poll(), Duration::from_secs(1));
+    assert!(!pump.primary_only);
     assert_eq!(
         pump.holding,
         vec![Range {

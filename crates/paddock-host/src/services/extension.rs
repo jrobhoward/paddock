@@ -29,7 +29,9 @@
 //! port) does it from [`Extension::start`], which runs once the node's apps
 //! are up: it gets its node configuration (`[extensions."<package>"]`) and
 //! an [`ExtensionNode`] to send messages to apps, and stops its tasks when
-//! [`ExtensionNode::stopped`] completes.
+//! [`ExtensionNode::stopped`] completes. Work that only one node of an HA
+//! pair should do (polling a device whose values the pair replicates)
+//! checks [`ExtensionNode::runs_singletons`] first.
 
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
@@ -42,6 +44,7 @@ use wasmtime::component::{HasData, Linker};
 use super::ServiceCtx;
 use crate::apps::Apps;
 use crate::error::HostError;
+use crate::failover::RunUntil;
 use crate::message::{CallError, Envelope};
 use crate::state::InstanceState;
 
@@ -88,11 +91,13 @@ pub trait Extension: Send + Sync + 'static {
 }
 
 /// What an extension's node-level work reaches: its configuration, the
-/// node's apps, and a stop signal. Cheap to clone.
+/// node's apps, the node's failover lease, and a stop signal. Cheap to
+/// clone.
 #[derive(Debug, Clone)]
 pub struct ExtensionNode {
     config: serde_json::Value,
     apps: Apps,
+    lease: watch::Receiver<RunUntil>,
     stop: watch::Receiver<bool>,
 }
 
@@ -113,6 +118,16 @@ impl ExtensionNode {
     /// (`overloaded` for a full mailbox, `too-large`).
     pub fn cast(&self, app: &str, msg: Envelope) -> Result<(), CallError> {
         self.apps.app(app).ok_or(CallError::Noproc)?.cast(msg)
+    }
+
+    /// Whether singletons may run on this node now: always on a node
+    /// without failover, and on an HA pair's primary while its lease holds
+    /// (until its end less the margin, so the two nodes never both answer
+    /// yes). Not true on the standby, or while a node starts or steps down.
+    /// Read it each time; a lease can end without a change being sent.
+    #[must_use]
+    pub fn runs_singletons(&self) -> bool {
+        self.lease.borrow().allows(tokio::time::Instant::now())
     }
 
     /// Completes when the node stops; end the extension's tasks then.
@@ -152,6 +167,7 @@ impl Drop for StartedExtensions {
 pub(crate) fn start(
     extensions: &[Arc<dyn Extension>],
     apps: &Apps,
+    lease: &watch::Receiver<RunUntil>,
     configs: &BTreeMap<String, serde_json::Value>,
 ) -> Result<StartedExtensions, HostError> {
     if let Some(unknown) = configs
@@ -170,6 +186,7 @@ pub(crate) fn start(
                 .cloned()
                 .unwrap_or(serde_json::Value::Null),
             apps: apps.clone(),
+            lease: lease.clone(),
             stop: stopped.clone(),
         };
         ext.start(node)

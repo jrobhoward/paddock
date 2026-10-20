@@ -15,6 +15,7 @@
 //! timeout_ms = 1000
 //! full_every_ms = 60000         # an integrity scan; optional
 //! deliver_to = "scada"          # the app updates are cast to
+//! primary_only = false          # on an HA pair, poll on the primary only
 //! holding = [{ start = 0, count = 10 }]
 //! coils = [{ start = 0, count = 16 }]
 //!

@@ -8,6 +8,10 @@
 //! point. A failed delivery (the app is not running, or its mailbox is
 //! full) also makes the next poll send every point, so an app that starts
 //! late or drops an update catches up.
+//!
+//! With `primary_only`, a poll is skipped while the node does not run
+//! singletons (an HA pair's standby): the connection is closed, and the
+//! first poll after the node becomes primary sends every point.
 
 use std::time::{Duration, Instant};
 
@@ -97,6 +101,7 @@ pub(crate) fn spawn(name: String, config: DeviceConfig, node: ExtensionNode) -> 
         online: None,
         resend: false,
         last_full: Instant::now(),
+        paused: false,
     };
     tokio::spawn(device.run(queue));
     DeviceHandle { jobs }
@@ -114,6 +119,8 @@ struct Device {
     /// The next poll sends every point (a delivery failed).
     resend: bool,
     last_full: Instant,
+    /// Polls are skipped: `primary_only` on a node not running singletons.
+    paused: bool,
 }
 
 impl Device {
@@ -238,6 +245,9 @@ impl Device {
         let Some(app) = self.config.deliver_to.clone() else {
             return;
         };
+        if !self.may_poll() {
+            return;
+        }
         let scan = match self.scan().await {
             Ok(scan) => scan,
             Err(e) => {
@@ -264,6 +274,10 @@ impl Device {
                 return;
             }
         };
+        // The lease may have ended during the scan.
+        if !self.may_poll() {
+            return;
+        }
         let integrity = self
             .config
             .full_every_ms
@@ -289,6 +303,23 @@ impl Device {
             error: None,
         };
         self.resend = !self.deliver(&app, &update);
+    }
+
+    /// Whether to poll now: not with `primary_only` on a node that does not
+    /// run singletons. Pausing closes the connection and forgets the last
+    /// scan, so the poll that resumes sends every point.
+    fn may_poll(&mut self) -> bool {
+        let may = !self.config.primary_only || self.node.runs_singletons();
+        if may && self.paused {
+            tracing::info!(device = %self.name, "modbus polling resumed: this node is primary");
+        } else if !may && !self.paused {
+            tracing::info!(device = %self.name, "modbus polling paused: this node is not primary");
+            self.ctx = None;
+            self.last.clear();
+            self.online = None;
+        }
+        self.paused = !may;
+        may
     }
 
     /// Cast `update` to `app`; whether it was taken.

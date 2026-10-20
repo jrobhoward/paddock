@@ -12,7 +12,10 @@
 #            "wasi:config", "paddock-modbus:modbus"]
 #   buckets = ["points"]
 #
-# Its `rules` can be set per node in `[config.control]`.
+# Its `rules` can be set per node in `[config.control]`. Its buckets are
+# `replicated`: on an HA pair (`[failover] replication = true`) both nodes
+# hold the alarms and the event log, so a switchover or a failover keeps
+# them; a node without replication refuses the deploy.
 [app]
 name = "control"
 version = "2.0.0"
@@ -42,8 +45,8 @@ max_body = "1KiB"
 timeout_ms = 5000
 
 [appserver.capabilities."wasi:keyvalue".buckets]
-alarms = { durability = "disk" }
-events = { durability = "disk" }
+alarms = { durability = "replicated" }
+events = { durability = "replicated" }
 
 [appserver.capabilities."wasi:keyvalue".shared]
 points = "ro"

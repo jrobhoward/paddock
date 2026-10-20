@@ -488,7 +488,8 @@ impl Runtime {
         apps: &Apps,
         configs: &std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Result<services::StartedExtensions, HostError> {
-        services::extension::start(&self.inner.extensions, apps, configs)
+        let lease = self.inner.failover.run_until();
+        services::extension::start(&self.inner.extensions, apps, &lease, configs)
     }
 
     /// Override the log level of every instance of `app` from now on, or

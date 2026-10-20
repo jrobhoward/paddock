@@ -14,8 +14,9 @@
 # saw while the node answered (fake register pump-1/holding/0 counts up
 # every 100 ms), and the
 # pump-1-pressure alarm (raised and acknowledged before the cycle) as the
-# primary sees it after each step. Until replicated buckets (K2, K3),
-# moving pairs of instances (M1) and pair rollouts (U1), it shows where the
+# primary sees it after each step. The point table is a `cluster` bucket
+# polled by the primary alone, and control's buckets are `replicated`.
+# Until moving instances (M1) and pair rollouts (U1), it shows where the
 # cycle is not yet zero-downtime; X2 turns it into a pass or fail.
 #
 #   examples/scada/drill.sh                 # STEP_SECS=5 between steps
@@ -133,6 +134,8 @@ for n in 1 2 3; do
       echo "partner = $((3 - n))"
       echo "arbiter = \"witness\""
       echo "witness = 3"
+      # control's own buckets, replicated on the pair (K3).
+      echo "replication = true"
     fi
     echo "lease_ms = 2000"
     echo "margin_ms = 300"
@@ -141,15 +144,18 @@ for n in 1 2 3; do
       echo "address = \"127.0.0.1:$((HTTP_PORT + n - 1))\""
       # control's routes: from the standby to the primary, over the cluster.
       echo "standby = \"forward\""
+      # The point table, one copy on each node of the pair (K2), written
+      # by the primary's polls only.
       echo "[buckets.points]"
-      echo "durability = \"memory\""
-      # Before replicated buckets, each node polls the devices itself.
+      echo "durability = \"disk\""
+      echo "scope = \"cluster\""
       for d in 1 2; do
         echo "[extensions.\"paddock-modbus:modbus\".devices.pump-$d]"
         echo "address = \"127.0.0.1:$((DEVICE_PORT + d - 1))\""
         echo "poll_ms = 100"
         echo "timeout_ms = 500"
         echo "deliver_to = \"points\""
+        echo "primary_only = true"
         echo "holding = [{ start = 0, count = 4 }]"
       done
     fi

@@ -591,6 +591,17 @@ All notable changes are recorded here. The format follows
   `cluster` one) starts on a new primary only once that node's copy holds
   every committed write (`ReplicationStatus::ready`,
   `Runtime::replication_updates`), logging `singleton waiting` meanwhile.
+- Modbus devices polled by an HA pair's primary only: `primary_only = true`
+  in a device's node config skips polls while the node does not run
+  singletons (the standby, or out of lease), closes the standby's
+  connection, and sends every point on the first poll after a promotion.
+  `ExtensionNode::runs_singletons` for extensions.
+- The SCADA example (`examples/scada`) on the pair's replicated state: its
+  point table is a `cluster` bucket polled by the primary alone, and
+  `control`'s alarm and event buckets are `replicated`, so an
+  acknowledged alarm survives a switchover. `control` now needs a node with
+  `[failover] replication = true`. `tests/scada.rs` runs it on a pair and
+  a witness too.
 - `paddock failover` shows the replicated log (commit and last index, how
   far the standby trails, whether the primary commits alone) and whether
   the partner is recorded out of date (`FailoverInfo::replication`,

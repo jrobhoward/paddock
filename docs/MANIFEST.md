@@ -380,8 +380,11 @@ poll_ms = 1000                         # default 1000
 timeout_ms = 1000                      # connect and per request; default 1000
 full_every_ms = 60000                  # optional integrity scan: every point, changed or not
 deliver_to = "points"                  # the app each scan's changes are cast to
+primary_only = false                   # poll only while the node runs singletons (an HA pair's primary)
 holding = [{ start = 0, count = 10 }]  # also input, coils, discrete
 ```
+
+With `primary_only = true`, a device on an HA pair is polled by the primary alone, while its lease holds, and a `cluster` bucket carries the table to the standby. The standby closes its connection to the device; apps' reads and writes through the `client` interface still reach it from either node. The first poll after a node becomes primary sends every point. A node without `[failover]` always polls.
 
 ```toml
 [extensions."paddock-modbus:modbus".server]

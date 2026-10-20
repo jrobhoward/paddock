@@ -222,7 +222,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `examples/scada` is its demo and Phase 3's reference app (`points` pool,
   `hmi` HTTP pool, `control` singleton in two versions, `drill.sh`, the
   release drill on a pair and a witness); `crates/paddock/tests/scada.rs`
-  runs it on one node against a fake device, and
+  runs it on one node and on a pair and a witness against a fake device, and
   `crates/paddock-modbus/examples/fake_device.rs` serves fake devices to
   the drill.
 - `crates/paddock-host/src/metrics.rs`: app metrics (per app, lock-free

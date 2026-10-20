@@ -11,6 +11,17 @@
 #   deliver_to = "points"
 #   holding = [{ start = 0, count = 10 }]
 #
+# On an HA pair the table is one `cluster` bucket polled by the primary
+# alone, so the standby's copy comes from it and has the same revisions:
+#
+#   [buckets.points]
+#   durability = "disk"
+#   scope = "cluster"
+#
+#   [extensions."paddock-modbus:modbus".devices.pump-1]
+#   primary_only = true
+#   ...
+#
 # and in policy: grant = ["wasi:logging", "wasi:keyvalue"],
 # buckets = ["points"].
 [app]
