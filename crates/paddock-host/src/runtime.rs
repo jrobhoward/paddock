@@ -66,6 +66,9 @@ pub(crate) struct RuntimeInner {
     pub(crate) failover: crate::failover::Shared,
     /// Moved singletons' state, for their first instance's start.
     pub(crate) handovers: crate::handover::Pending,
+    /// A pair's version newer than this build, once replication applied
+    /// one ([`Runtime::formats_outrun`]).
+    pub(crate) formats_outrun: tokio::sync::watch::Sender<Option<u16>>,
     /// One permit per Store the pooling allocator has room for, held by
     /// each instance while it has a Store (not while passivated).
     pub(crate) slots: Arc<tokio::sync::Semaphore>,
@@ -247,6 +250,7 @@ impl Runtime {
             )),
             failover: crate::failover::Shared::default(),
             handovers: crate::handover::Pending::default(),
+            formats_outrun: tokio::sync::watch::channel(None).0,
             slots: Arc::new(tokio::sync::Semaphore::new(
                 usize::try_from(config.max_instances).unwrap_or(usize::MAX),
             )),

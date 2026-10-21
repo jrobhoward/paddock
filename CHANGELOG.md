@@ -614,7 +614,11 @@ All notable changes are recorded here. The format follows
   (`POST /v1/release/finalize`, `Runtime::finalize_formats`) raises the
   pair's version to the build's once the partner and the witness are
   connected at it, audited as `release_finalized`. A node refuses to start
-  a build older than the pair's version (`Runtime::check_formats`).
+  a build older than the pair's version (`Runtime::check_formats`). A
+  standby that applies a pair's version newer than its build, from the
+  log or a snapshot (rolled back while cut off from the raise), stops
+  replicating (`Runtime::formats_outrun`), and `paddock node` shuts down
+  with an error.
 - Singletons move with their state in a planned switchover (ROADMAP M1):
   on a pair with `[failover] replication = true`, a singleton in
   `snapshot` upgrade mode writes its snapshot to the replicated log

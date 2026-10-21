@@ -89,11 +89,30 @@ async fn serve(
     node.start_remote_admin().await?;
     #[cfg(unix)]
     reload_on_hangup(node.clone());
-    super::serve(node.clone(), shutdown_signal())
+    let outrun = std::sync::Arc::new(std::sync::OnceLock::new());
+    let stop = {
+        let (node, outrun) = (node.clone(), outrun.clone());
+        async move {
+            tokio::select! {
+                () = shutdown_signal() => {}
+                version = node.formats_outrun() => {
+                    let _ = outrun.set(version);
+                }
+            }
+        }
+    };
+    super::serve(node.clone(), stop)
         .await
         .context("admin API")?;
     tracing::info!("shutting down");
     node.shutdown().await;
+    if let Some(version) = outrun.get() {
+        anyhow::bail!(
+            "the pair was finalized at version {version}, and this build speaks up to version {}: \
+             run a build of that release or later",
+            paddock_host::transport::wire::VERSION
+        );
+    }
     Ok(())
 }
 

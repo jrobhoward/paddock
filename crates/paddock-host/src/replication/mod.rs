@@ -34,6 +34,7 @@ use self::core::{Config, Effect, Lead, Msg, Replica, Waiter, Write};
 pub(crate) use self::log::SPACE;
 use crate::error::HostError;
 use crate::failover::{FailoverConfig, Leadership, RunUntil, Standing};
+use crate::formats;
 use crate::runtime::{Runtime, RuntimeInner};
 use crate::services::keyvalue::storage::{KvStore, Op, Outcome};
 use crate::transport::{self, Frame};
@@ -347,7 +348,17 @@ impl Task {
             };
             let partner_heard = rt.liveness.beats_from(self.partner).iter().any(|b| b.live);
             let effects = blocking(|| self.step(&rt, inputs, tick, partner_heard));
-            self.carry_out(&rt, effects);
+            if self.carry_out(&rt, effects).is_some() {
+                // A pair's version newer than this build: stop, so this
+                // node neither acknowledges nor serves what it may not
+                // read. The partner commits without it (R13).
+                let status = ReplicationStatus {
+                    ready: false,
+                    ..status_of(&self.replica, &self.lead)
+                };
+                self.status.send_replace(status);
+                return;
+            }
             let status = status_of(&self.replica, &self.lead);
             self.status
                 .send_if_modified(|s| std::mem::replace(s, status) != status);
@@ -628,7 +639,11 @@ impl Task {
         }
     }
 
-    fn carry_out(&mut self, rt: &Arc<RuntimeInner>, effects: Vec<Effect>) {
+    /// Carry out `effects`; `Some(version)` if one applied a pair's version
+    /// newer than this build ([`crate::formats`]), after which replication
+    /// stops.
+    fn carry_out(&mut self, rt: &Arc<RuntimeInner>, effects: Vec<Effect>) -> Option<u16> {
+        let mut outrun = None;
         for effect in effects {
             match effect {
                 Effect::Send(msg) => {
@@ -664,11 +679,21 @@ impl Task {
                     changed,
                     revision,
                 } => {
+                    // A primary applies only what it wrote itself, never
+                    // newer than its build; a standby applies its partner's.
+                    if bucket == formats::BUCKET
+                        && !self.replica.is_primary()
+                        && changed.iter().any(|k| k == formats::KEY)
+                        && let Some(disk) = self.kv.disk()
+                    {
+                        outrun = outrun.or(rt.formats_applied(&disk));
+                    }
                     let key = (SPACE.to_string(), bucket);
                     self.kv.watches.notify(&key, &changed, revision);
                 }
             }
         }
+        outrun
     }
 }
 

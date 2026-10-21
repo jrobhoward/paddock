@@ -294,6 +294,22 @@ impl Node {
         })
     }
 
+    /// Resolves with the pair's version once replication has applied one
+    /// newer than this build (`paddock_host::Runtime::formats_outrun`): the
+    /// node was rolled back while cut off from a release's last step, and
+    /// should stop. Its next start is refused.
+    pub async fn formats_outrun(&self) -> u16 {
+        let mut outrun = self.rt.formats_outrun();
+        loop {
+            if let Some(version) = *outrun.borrow_and_update() {
+                return version;
+            }
+            if outrun.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+
     /// The last step of a release across the pair: raise the pair's
     /// version for what is kept to this build's, once the partner and the
     /// witness are connected at it. Neither node can then be rolled back

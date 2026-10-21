@@ -495,3 +495,85 @@ fn finalize_formats____every_node_at_this_version____raised_on_both_copies() {
     assert_eq!(again, Ok(Finalized::Already(wire::VERSION)));
     assert_eq!(kept, [Ok(wire::VERSION), Ok(wire::VERSION)]);
 }
+
+/// A standby on a build older than the pair's version (one cut off while
+/// a newer partner finalized, then rolled back; ROADMAP U1): once it
+/// applies the record, from the log or from a snapshot after an outage,
+/// its replication stops and says so, and the primary carries on
+/// committing without it.
+#[test]
+fn formats_outrun____standby_older_than_the_pair____its_replication_stops() {
+    for from_snapshot in [false, true] {
+        let (_root, dirs) = dirs();
+        let configure = |node, config: &mut RuntimeConfig| configure(&dirs)(node, config);
+        let (outrun, ready, written, applied) = simulate_with(65, 3, configure, |sim| async move {
+            sim.mesh.add_path(SERIAL);
+            sim.mesh.cut_path(1, 3, SERIAL);
+            sim.mesh.cut_path(2, 3, SERIAL);
+            let mut witness = WitnessConfig::new([1, 2], 1);
+            witness.lease = LEASE;
+            witness.margin = MARGIN;
+            sim.node(3).rt.serve_witness(witness).unwrap();
+            let _handles: Vec<_> = (1..=2)
+                .map(|node| {
+                    let mut cfg = failover(node);
+                    // Every entry is compacted at once: a partner back from
+                    // an outage catches up from a snapshot.
+                    if from_snapshot {
+                        cfg.replication_log_bytes = 0;
+                    }
+                    sim.node(node).rt.start_failover(cfg).unwrap()
+                })
+                .collect();
+            let p = primary(&sim).await;
+            let s = 3 - p;
+            let mut outrun = sim.node(s).rt.formats_outrun();
+            if from_snapshot {
+                isolate(&sim, s);
+                pass(4_000).await;
+            }
+
+            sim.node(p)
+                .rt
+                .record_formats(wire::VERSION + 1)
+                .await
+                .unwrap();
+            pass(1_000).await;
+            // Compacted past what the standby holds: only a snapshot
+            // brings it up to date.
+            let compacted = sim.node(p).rt.replication_status().unwrap().base
+                > sim.node(s).rt.replication_status().unwrap().last;
+            if from_snapshot {
+                heal(&sim);
+            }
+            for _ in 0..200 {
+                if outrun.borrow_and_update().is_some() {
+                    break;
+                }
+                pass(50).await;
+            }
+            pass(4_000).await;
+            let written = set(&sim.node(p).spawn_kv(BUCKET), "after", "v").await;
+            let status = sim.node(s).rt.replication_status().unwrap();
+            let applied = sim.node(p).rt.replication_status().unwrap().commit > status.commit;
+            (
+                *outrun.borrow(),
+                status.ready,
+                written,
+                applied && (compacted || !from_snapshot),
+            )
+        });
+
+        assert_eq!(
+            outrun,
+            Some(wire::VERSION + 1),
+            "from a snapshot: {from_snapshot}"
+        );
+        assert!(!ready, "from a snapshot: {from_snapshot}");
+        assert_eq!(written, "ok", "from a snapshot: {from_snapshot}");
+        assert!(
+            applied,
+            "the standby stopped applying (from a snapshot: {from_snapshot})"
+        );
+    }
+}

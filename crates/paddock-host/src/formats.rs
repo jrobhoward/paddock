@@ -10,7 +10,10 @@
 //! of the version recorded, so either node can be rolled back to the build
 //! before. A node reads it from its own copy, which needs no replication
 //! running, and refuses to start a build older than it
-//! ([`Runtime::check_formats`]).
+//! ([`Runtime::check_formats`]). A node rolled back while cut off from
+//! the raise passes that check and learns of it from its partner: its
+//! replication then stops ([`Runtime::formats_outrun`]), and the node
+//! should stop too.
 //!
 //! No kept format has changed since the version was introduced, so
 //! nothing reads it yet to choose a format: a release that changes one
@@ -21,16 +24,16 @@ use paddock_bundle::manifest::Durability;
 
 use crate::error::HostError;
 use crate::replication::SPACE;
-use crate::runtime::Runtime;
-use crate::services::keyvalue::storage::{BucketHandle, Op, Outcome};
+use crate::runtime::{Runtime, RuntimeInner};
+use crate::services::keyvalue::storage::{BucketHandle, Disk, Op, Outcome};
 use crate::transport::wire;
 
 /// The replicated bucket holding the version. Shared and app bucket names
 /// are valid names, which never start with `@`.
-const BUCKET: &str = "@release";
+pub(crate) const BUCKET: &str = "@release";
 
 /// Its key.
-const KEY: &str = "formats";
+pub(crate) const KEY: &str = "formats";
 
 /// The version of what was kept before the version was recorded: the
 /// formats of wire version 6, which version 7 did not change.
@@ -81,7 +84,53 @@ fn bucket() -> BucketHandle {
     }
 }
 
+fn decode(bytes: &[u8]) -> Result<u16, FinalizeRefused> {
+    wire::from_cbor(bytes).map_err(|e| FinalizeRefused::Store(format!("malformed record: {e}")))
+}
+
+impl RuntimeInner {
+    /// After replication applied a change to the record: if the version
+    /// on `disk` is newer than this build speaks, say so to
+    /// [`Runtime::formats_outrun`] and return it. Replication then stops.
+    pub(crate) fn formats_applied(&self, disk: &Disk) -> Option<u16> {
+        let key = (SPACE.to_string(), BUCKET.to_string());
+        let kept = match disk.run(&key, Op::Get(KEY.to_string()), None) {
+            Ok(applied) => match applied.outcome {
+                Outcome::Value(Some(bytes)) => decode(&bytes),
+                _ => return None,
+            },
+            Err(e) => Err(FinalizeRefused::Store(e)),
+        };
+        match kept {
+            Ok(version) if version > wire::VERSION => {
+                tracing::error!(
+                    formats = version,
+                    speaks = wire::VERSION,
+                    "the pair was finalized at a version newer than this build; replication stops"
+                );
+                self.formats_outrun.send_replace(Some(version));
+                Some(version)
+            }
+            Ok(_) => None,
+            Err(e) => {
+                tracing::warn!(error = %e, "the pair's version could not be read after a change");
+                None
+            }
+        }
+    }
+}
+
 impl Runtime {
+    /// `Some(version)` once replication has applied a pair's version newer
+    /// than this build speaks, from a partner finalized while this node was
+    /// cut off and then rolled back. Replication has stopped by then and
+    /// the partner commits without this node; the node should stop, and
+    /// its next start is refused ([`Runtime::check_formats`]).
+    #[must_use]
+    pub fn formats_outrun(&self) -> tokio::sync::watch::Receiver<Option<u16>> {
+        self.inner().formats_outrun.subscribe()
+    }
+
     /// The pair's version for what is kept, from this node's own copy:
     /// [`FIRST_FORMATS`] until [`Runtime::finalize_formats`] first raised
     /// it, and on a node without a data directory.
@@ -96,8 +145,7 @@ impl Runtime {
             return Ok(FIRST_FORMATS);
         }
         match kv.run(&bucket(), Op::Get(KEY.to_string())).await {
-            Ok(Outcome::Value(Some(bytes))) => wire::from_cbor(&bytes)
-                .map_err(|e| FinalizeRefused::Store(format!("malformed record: {e}"))),
+            Ok(Outcome::Value(Some(bytes))) => decode(&bytes),
             Ok(_) => Ok(FIRST_FORMATS),
             Err(e) => Err(FinalizeRefused::Store(e.to_string())),
         }
@@ -154,20 +202,35 @@ impl Runtime {
             .run_linearizable(&bucket(), Op::Get(KEY.to_string()))
             .await
         {
-            Ok(Outcome::Value(Some(bytes))) => wire::from_cbor(&bytes)
-                .map_err(|e| FinalizeRefused::Store(format!("malformed record: {e}")))?,
+            Ok(Outcome::Value(Some(bytes))) => decode(&bytes)?,
             Ok(_) => FIRST_FORMATS,
             Err(e) => return Err(FinalizeRefused::Store(e.to_string())),
         };
         if kept >= wire::VERSION {
             return Ok(Finalized::Already(kept));
         }
-        let bytes =
-            wire::to_cbor(&wire::VERSION).map_err(|e| FinalizeRefused::Store(e.to_string()))?;
-        kv.run(&bucket(), Op::Set(KEY.to_string(), bytes))
-            .await
-            .map_err(|e| FinalizeRefused::Store(e.to_string()))?;
+        self.record_formats(wire::VERSION).await?;
         Ok(Finalized::Raised(wire::VERSION))
+    }
+
+    /// Write `version` as the pair's version, through replication, without
+    /// [`Runtime::finalize_formats`]'s checks: for tests that play a
+    /// partner on a newer build.
+    ///
+    /// # Errors
+    ///
+    /// [`FinalizeRefused::Store`] if the write does not commit, or
+    /// replication does not run.
+    #[doc(hidden)]
+    pub async fn record_formats(&self, version: u16) -> Result<(), FinalizeRefused> {
+        let bytes = wire::to_cbor(&version).map_err(|e| FinalizeRefused::Store(e.to_string()))?;
+        self.inner()
+            .services
+            .keyvalue()
+            .run(&bucket(), Op::Set(KEY.to_string(), bytes))
+            .await
+            .map(|_| ())
+            .map_err(|e| FinalizeRefused::Store(e.to_string()))
     }
 
     /// The protocol version the connection to `node` agreed on, if this
