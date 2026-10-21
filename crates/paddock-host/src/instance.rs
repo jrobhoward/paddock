@@ -66,6 +66,12 @@ enum Op {
     Snapshot {
         reply: oneshot::Sender<Result<Vec<u8>, SnapshotError>>,
     },
+    /// Take the state to start the instance on another node: a snapshot,
+    /// after which the instance handles nothing more and exits `normal`
+    /// when it is stopped, without `terminate`.
+    MoveOut {
+        reply: oneshot::Sender<Result<Vec<u8>, SnapshotError>>,
+    },
     /// Send the services' current host events again.
     Announce,
 }
@@ -456,6 +462,26 @@ impl InstanceHandle {
         answer.await.unwrap_or(Err(SnapshotError::NotRunning))
     }
 
+    /// The instance's state for a move to another node, taken as
+    /// [`InstanceHandle::snapshot`] takes it; the instance then handles no
+    /// more messages, and a stop ends it at once, without `terminate`: a
+    /// graceful one with reason `normal`, so links do not carry it (the
+    /// instance lives on elsewhere), a kill with the kill's reason.
+    /// Messages left in its mailbox are dropped then.
+    ///
+    /// # Errors
+    ///
+    /// As for [`InstanceHandle::snapshot`]; the instance carries on only if
+    /// it was not running.
+    pub(crate) async fn move_out(&self) -> Result<Vec<u8>, SnapshotError> {
+        let (reply, answer) = oneshot::channel();
+        self.shared
+            .ops
+            .send(Box::new(Op::MoveOut { reply }))
+            .map_err(|_| SnapshotError::NotRunning)?;
+        answer.await.unwrap_or(Err(SnapshotError::NotRunning))
+    }
+
     /// Have the instance send its services' host events again, after an
     /// operator change such as a new log level. Ignored once it has exited.
     pub(crate) fn announce(&self) {
@@ -657,7 +683,7 @@ impl InstanceTask {
                 Op::Upgrade { reply, .. } => {
                     let _ = reply.send(Err(UpgradeError::NotRunning));
                 }
-                Op::Snapshot { reply } => {
+                Op::Snapshot { reply } | Op::MoveOut { reply } => {
                     let _ = reply.send(Err(SnapshotError::NotRunning));
                 }
                 Op::Announce => {}
@@ -765,7 +791,11 @@ impl InstanceTask {
         self.stop(&mut store, &instance, &spec, stop).await
     }
 
-    /// Instantiate and run `init` within the init timeout.
+    /// Instantiate and run `init` within the init timeout, or, for the
+    /// first instance of a singleton moved here with its state
+    /// ([`crate::handover`]), `load-snapshot` with the moved snapshot. A
+    /// refused or failed load ends the instance, and its supervisor's
+    /// restart runs `init`.
     async fn start(
         &mut self,
         store: &mut Store<InstanceState>,
@@ -779,11 +809,27 @@ impl InstanceTask {
         // Boxed, as are the other instantiations: their futures are large,
         // and the instance's task would otherwise keep room for them for
         // its whole life (passivated too).
+        let handover = store.data().ctx.rt.handovers.take(&spec.app);
+        let moved = handover.is_some();
+        if let Some(h) = &handover {
+            tracing::info!(
+                from_version = %h.version,
+                bytes = h.snapshot.len(),
+                "starting from a moved snapshot"
+            );
+        }
         let init = tokio::time::timeout(
             spec.init_timeout,
             Box::pin(async {
                 let instance = app.pre.instantiate_async(&mut *store).await?;
-                let result = instance.call_init(&mut *store, &spec.init_args).await?;
+                let result = match &handover {
+                    Some(h) => {
+                        instance
+                            .call_load_snapshot(&mut *store, &h.version, &h.snapshot)
+                            .await?
+                    }
+                    None => instance.call_init(&mut *store, &spec.init_args).await?,
+                };
                 wasmtime::Result::Ok((instance, result))
             }),
         );
@@ -796,6 +842,9 @@ impl InstanceTask {
                 Err(crashed("init_timeout"))
             }
             Ok(Ok(Err(err))) => Err(classify(&err, store.data())),
+            Ok(Ok(Ok((_, Err(msg))))) if moved => Err(ExitReason::Crashed(format!(
+                "handover: load-snapshot refused: {msg}"
+            ))),
             Ok(Ok(Ok((_, Err(msg))))) => Err(ExitReason::Crashed(format!("init failed: {msg}"))),
             Ok(Ok(Ok((instance, Ok(()))))) => Ok(instance),
         }
@@ -980,23 +1029,59 @@ impl InstanceTask {
                 exit
             }
             Op::Snapshot { reply } => {
-                store.data_mut().clock.start(spec.callback_deadline);
-                let saved =
-                    killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await;
-                let (result, exit) = match saved {
-                    Ok(Ok(bytes)) => (Ok(bytes), None),
-                    Ok(Err(err)) => {
-                        let reason = classify(&err, store.data());
-                        (Err(SnapshotError::Failed(reason.clone())), Some(reason))
-                    }
-                    Err(killed) => (Err(SnapshotError::Failed(killed.clone())), Some(killed)),
-                };
+                let (result, exit) = self.save_now(store, instance, spec).await;
                 let _ = reply.send(result);
                 exit
+            }
+            Op::MoveOut { reply } => {
+                let (result, exit) = self.save_now(store, instance, spec).await;
+                let moved = result.is_ok();
+                let _ = reply.send(result);
+                match exit {
+                    Some(reason) => Some(reason),
+                    None if moved => Some(self.frozen().await),
+                    None => None,
+                }
             }
             Op::Announce => {
                 self.announce(store);
                 None
+            }
+        }
+    }
+
+    /// `save-snapshot` now, for an operation: the snapshot, and the exit
+    /// reason if the instance cannot continue.
+    async fn save_now(
+        &mut self,
+        store: &mut Store<InstanceState>,
+        instance: &PaddockApp,
+        spec: &InstanceSpec,
+    ) -> (Result<Vec<u8>, SnapshotError>, Option<ExitReason>) {
+        store.data_mut().clock.start(spec.callback_deadline);
+        let saved = killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await;
+        match saved {
+            Ok(Ok(bytes)) => (Ok(bytes), None),
+            Ok(Err(err)) => {
+                let reason = classify(&err, store.data());
+                (Err(SnapshotError::Failed(reason.clone())), Some(reason))
+            }
+            Err(killed) => (Err(SnapshotError::Failed(killed.clone())), Some(killed)),
+        }
+    }
+
+    /// Moved out: handle nothing more, and end at the first stop without
+    /// `terminate`: `normal` for a graceful one, the kill's reason for a
+    /// kill.
+    async fn frozen(&mut self) -> ExitReason {
+        loop {
+            match self.control.borrow_and_update().clone() {
+                Control::Run => {}
+                Control::Shutdown(_) => return ExitReason::Normal,
+                Control::Kill(reason) => return reason,
+            }
+            if self.control.changed().await.is_err() {
+                return ExitReason::Killed;
             }
         }
     }
@@ -1198,6 +1283,10 @@ impl InstanceTask {
                 Some(op) = self.ops.recv() => match *op {
                     Op::Snapshot { reply } => {
                         let _ = reply.send(Ok(snapshot.to_vec()));
+                    }
+                    Op::MoveOut { reply } => {
+                        let _ = reply.send(Ok(snapshot.to_vec()));
+                        return Some(self.frozen().await);
                     }
                     op => {
                         self.held_op = Some(Box::new(op));

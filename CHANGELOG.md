@@ -591,6 +591,16 @@ All notable changes are recorded here. The format follows
   `cluster` one) starts on a new primary only once that node's copy holds
   every committed write (`ReplicationStatus::ready`,
   `Runtime::replication_updates`), logging `singleton waiting` meanwhile.
+- Singletons move with their state in a planned switchover (ROADMAP M1):
+  on a pair with `[failover] replication = true`, a singleton in
+  `snapshot` upgrade mode writes its snapshot to the replicated log
+  instead of running `terminate`, and the new primary's instance loads it
+  in place of `init` (under the upgrade's `from_versions` rule). Every
+  start of such a singleton takes the record first, so no state older than
+  the last stop is loaded. The moved instance gets a new pid; the old one
+  exits `normal`. `Apps::move_out`, `Apps::add_moved`,
+  `Runtime::put_handover`, `Runtime::take_handover`,
+  `Runtime::moves_state`, `paddock_host::Handover`, `HostError::Handover`.
 - Modbus devices polled by an HA pair's primary only: `primary_only = true`
   in a device's node config skips polls while the node does not run
   singletons (the standby, or out of lease), closes the standby's
@@ -611,6 +621,10 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- wasmtime 49.0.4 and rustls-webpki 0.103.16, for RUSTSEC-2026-0375 to
+  0379 and 0382 (among them wasi-http content lengths set by guests, a
+  Cranelift `br_table` miscompile on aarch64, and certificate checks
+  accepting distrusted intermediates).
 - A node that missed the members list a seed sent when it joined (lost
   with a connection replaced or cut as it was sent) never learned of the
   members it lacked, and when only the other node of such a pair dials

@@ -30,7 +30,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
-1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) on 2026-10-20. M1 is next.
+1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. Next: L1 (a switchover that does not wait out the lease), then U1.
 2. W1 (Phase 2's docs), now unblocked; H5 and E4b only for a user who needs them.
 
 ## Order
@@ -121,6 +121,7 @@ Docs known to be out of date, cleared by W1:
 - DESIGN.md's roadmap section repeats parts of this plan.
 - ARCHITECTURE.md does not describe the serial heartbeat path (F5): `crates/paddock/src/serial/` (tty layer, frames, relay) and `node/serial_path.rs` (one task per device, reopened on failure).
 - ARCHITECTURE.md describes replication for `cluster` buckets only: not apps' `replicated` buckets (K3, `<app>/<bucket>` in `@cluster`), `[failover] replication`, or the gate's wait for `ReplicationStatus::ready`. WRITING_APPS does not mention replicated buckets.
+- ARCHITECTURE.md does not describe moving a singleton (M1): `paddock-host`'s `handover.rs` (the `@handover` records in `@cluster`, `Pending` on the runtime), the instance's `MoveOut` operation and the gate's `hand_over` and `start`. WRITING_APPS does not say that a singleton in `snapshot` mode is moved with its state.
 - ARCHITECTURE.md does not describe HTTP handlers (E6): `paddock-host`'s `http/handler.rs` (an instance per request, the timers, the cut stream) and the node's `daemon/handlers.rs`.
 - DESIGN.md, `docs/REVIEW_HAPPLIANCE_OTP.md`, `docs/tla` and `spikes/s16` describe HAppliance, a private project, in detail (see W1).
 - DESIGN.md, WRITING_APPS.md and BASELINE.md cite finished roadmap items by id (A5, A6, E1, E1b, F2, F3, F6, H1 to H4, 0.5), and DESIGN.md, SECURITY.md and `docs/tla/VERIFICATION.md` cite stage 3's (Q1 to Q15, V2). Those ids are no longer in this file and the CHANGELOG does not use them; W1 replaces each with the feature's name.
@@ -134,16 +135,16 @@ Done on 2026-10-18: K1 and K2, replicated shared buckets (`scope = "cluster"`, `
 
 Decided 2026-10-16: the pair and its witness are the target topology, and general clusters of many nodes come later; replicated buckets replicate synchronously within the pair, using the failover epochs and leases, not Raft; blue-green upgrades, guest sockets, native-process plugins and moving instances are in scope; general placement, global names, more guest SDKs and fuel metering are parked.
 
-Order: X1 first, so the app drives the rest; K3 next, on K2's machinery; N1 alongside K, since it shares no code; M1 after K3; U1 after M1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
+Order: X1 first, so the app drives the rest; K3 next, on K2's machinery; N1 alongside K, since it shares no code; M1 after K3; L1 after M1; U1 after L1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
 
 ```
-X1 app ─► K3 app buckets ─► M1 move ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
+X1 app ─► K3 app buckets ─► M1 move ─► L1 fast hand-over ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
             N1 sockets (alongside K)              N2 native plugins (S19 spike first)
 ```
 
-- [ ] **X1 The SCADA reference app.** First step done on 2026-10-16 (`examples/scada`: `points`, `hmi` over HTTP with long polls, the `control` singleton with alarms, writes, an event log and two versions, `drill.sh` on three `paddock node` processes; its first report is in the README). Second step done on 2026-10-20: the point table in a `cluster` bucket polled by the primary only (Modbus `primary_only`), `control`'s buckets `replicated`; an acknowledged alarm now survives the switchover and the failover, but point updates stop for about 3 s at a switchover, where they did not before (README, "Second run"). Left, as M and U land: the drill's switchover and upgrades through M1 and U1 instead of single-node commands; a history of point values if the exit needs one. Its acceptance test is X2's.
-- [ ] **M1 Moving instances** (spike S17, then the feature). A running instance's snapshot carried to the other node and loaded there: a planned switchover hands a singleton over with its memory state instead of restarting it from `init`, and a node can be drained. To settle first: the new pid, what happens to links, monitors and names, and messages sent during the move.
-- [ ] **U1 Releases across the pair.** An upgrade of both nodes as one operation over the remote admin API: the standby first, a switchover (moving singletons with M1), then the other node, with gates between steps and an abort that rolls back what was done. Rules for the time two versions run at once: snapshot formats, wire versions, an app's messages. A planned switchover takes about the lease (2.7 s with a 2 s lease, X1's second run): the new primary is granted only after the old lease runs out, and meanwhile no singleton runs, no `cluster` write commits and no `primary_only` device is polled. A hand-over that releases the lease at the witness would shorten it; it changes R1 to R13's switchover, so the model first (`docs/tla/VERIFICATION.md`).
+- [ ] **X1 The SCADA reference app.** First step done on 2026-10-16 (`examples/scada`: `points`, `hmi` over HTTP with long polls, the `control` singleton with alarms, writes, an event log and two versions, `drill.sh` on three `paddock node` processes; its first report is in the README). Second step done on 2026-10-20: the point table in a `cluster` bucket polled by the primary only (Modbus `primary_only`), `control`'s buckets `replicated`; an acknowledged alarm now survives the switchover and the failover, but point updates stop for about 3 s at a switchover, where they did not before (README, "Second run"). Left, as L and U land: the drill's switchover and upgrades through M1 and U1 instead of single-node commands; a history of point values if the exit needs one. Its acceptance test is X2's.
+- [ ] **L1 A switchover without waiting out the lease.** A planned switchover takes about the lease (2.7 s with a 2 s lease, X1's second run): the new primary is granted only once the old lease has run out, and meanwhile no singleton runs, no `cluster` write commits and no `primary_only` device is polled. The old primary releasing its lease at the witness as it yields would let the witness grant the standby at once. It changes the switchover's rules (R1 to R13), so the TLA+ model first (`docs/tla/VERIFICATION.md`, layer 2's `Switchover`). Decided 2026-10-20 as its own item, before U1.
+- [ ] **U1 Releases across the pair.** An upgrade of both nodes as one operation over the remote admin API: the standby first, a switchover (moving singletons with M1), then the other node, with gates between steps and an abort that rolls back what was done. Rules for the time two versions run at once: snapshot formats, wire versions, an app's messages.
 - [ ] **U2 Blue-green upgrades.** Two versions of an app side by side, traffic moved in steps (HTTP routes and pool routing by weight), then the old version retired, or the new one dropped.
 - [ ] **N1 Guest sockets.** `wasi:sockets` under policy: the manifest's scope enforced (S4's separate bind and connect rules), the address guard of HTTP egress, connection caps per app; for apps that speak MQTT, OPC UA or a database protocol themselves. SECURITY.md's boundary.
 - [ ] **N2 Native-process plugins.** Spike S19 first (an Erlang-style port, the host spawning and supervising a process over stdio, against a native process joining as a node through a client library), then the chosen one, with rustbridge's native runner: supervised like an instance, its own limits, granted capabilities only.
@@ -157,7 +158,6 @@ The rustbridge work for Phase 3 is the guest adapter (`Plugin` → `paddock:runt
 
 Questions for later, each a spike with a time-box when scheduled.
 
-- **S17 Moving a running instance to another node** (scheduled as Phase 3's M1). The snapshot pair that upgrades use (`snapshot`, `load_snapshot`), carried over the cluster network and loaded on the other node. To settle: the new pid (pids name their node), what happens to links, monitors and registered names, and how messages sent during the move are handled. After D3; shares its mechanism with passivation (S11, E7).
 - **S18 Checking hot-standby instances follow the primary.** Compare the primary's and the standby's sequences of host calls (from probes), allowing for timestamps, to find a standby that has diverged. After D4.
 - **S19 Ports or nodes for external processes** (scheduled as Phase 3's N2). An Erlang-style port (the host spawns a process and talks over stdio, owned and supervised like an instance) against a native process joining as a cluster node through a client library. Relates to Phase 3's native-process plugins and rustbridge's native runner.
 - **ZFS.** A node's data directory on a dataset: snapshots for backups and for seeding a standby's buckets.
@@ -224,6 +224,7 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | Node layout | Everything a node writes under `data_dir`, admin socket and compiled components included (2026-10-10) |
 | Logging | stderr only; journald or the container runtime rotates (2026-10-10) |
 | Privileges | Unprivileged user; `CAP_NET_BIND_SERVICE` only, for ports below 1024 (2026-10-10) |
+| Moving a singleton | Its snapshot through the replicated log, taken by every start; a new pid; links, monitors, names and the mailbox not carried; the old instance exits `normal` (2026-10-20) |
 
 ## Spikes
 
@@ -245,7 +246,7 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | S14 | Storage in the guest versus host services | About 140 ns per host import; keyvalue reads 1.2 µs over native ([spikes/s14](../spikes/s14/README.md)) |
 | S15 | HTTP in the guest versus the host | Host HTTP plus an instance call keeps about 75% of native; an instance per request about 15% ([spikes/s15](../spikes/s15/README.md)) |
 | S16 | TLA+ model of failover | Done; now layer 1 of [docs/tla](tla/VERIFICATION.md) ([spikes/s16](../spikes/s16/README.md)) |
-| S17 | Moving a running instance to another node | Investigation |
+| S17 | Moving a running instance to another node | Settled without a spike program (M1, 2026-10-20): the snapshot through the replicated log, a new pid, nothing else carried (DESIGN.md, "Moving a singleton with its state") |
 | S18 | Hot-standby instances following the primary | Investigation |
 | S19 | Ports or nodes for external processes | Investigation |
 | S20 | TLA+ model of replication within the HA pair | Done (K1): rules R1 to R7; no committed write lost with one failure at a time, exhaustive to about 2.2 billion states, and each rule's absence gives a counterexample ([spikes/s20](../spikes/s20/README.md)) |

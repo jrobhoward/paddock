@@ -248,10 +248,13 @@ impl Node {
         let ingress = Ingress::open(&config, &apps, &stop).await?;
         let events = Events::new();
         let audit = Audit::new(store.audit_path(), events.clone());
-        let gate = config
-            .failover
-            .is_some()
-            .then(|| Arc::new(Gate::new(apps.clone(), config.cluster_buckets())));
+        let gate = config.failover.is_some().then(|| {
+            Arc::new(Gate::new(
+                rt.clone(),
+                apps.clone(),
+                config.cluster_buckets(),
+            ))
+        });
         let node = Self {
             rt,
             apps,

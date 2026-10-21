@@ -88,5 +88,9 @@ bucket polled by the primary alone and `control`'s buckets `replicated`:
   the switchover.
 - In steady steps the longest gap was 115 to 231 ms on either node, the
   standby's table trailing the primary's by about a poll.
+- Run again the same day with singletons moved with their state (ROADMAP
+  M1): at the switchover `control` handed its state over (263 bytes) and
+  started on node 2 from it, not from `init`; the gaps and failures were
+  as above (3,069 and 3,058 ms; 28 alarm requests failed on each node).
 
 X2 turns these into pass or fail criteria.

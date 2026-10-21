@@ -64,6 +64,8 @@ pub(crate) struct RuntimeInner {
     pub(crate) liveness: Liveness,
     pub(crate) membership: Membership,
     pub(crate) failover: crate::failover::Shared,
+    /// Moved singletons' state, for their first instance's start.
+    pub(crate) handovers: crate::handover::Pending,
     /// One permit per Store the pooling allocator has room for, held by
     /// each instance while it has a Store (not while passivated).
     pub(crate) slots: Arc<tokio::sync::Semaphore>,
@@ -244,6 +246,7 @@ impl Runtime {
                 config.role,
             )),
             failover: crate::failover::Shared::default(),
+            handovers: crate::handover::Pending::default(),
             slots: Arc::new(tokio::sync::Semaphore::new(
                 usize::try_from(config.max_instances).unwrap_or(usize::MAX),
             )),

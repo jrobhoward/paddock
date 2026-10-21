@@ -18,6 +18,14 @@
 //! singletons (a dependency stopped meanwhile) is tried again, with
 //! backoff, until it succeeds or the leadership changes.
 //!
+//! A singleton in `snapshot` upgrade mode, on a node that runs
+//! replication, moves with its state in a planned switchover
+//! (`paddock_host`'s `handover`): [`Gate::hand_over`] takes its snapshot
+//! and writes it to the replicated log, and every start of it takes the
+//! record first (deleting it, committed), loading it in place of `init`
+//! when there is one. Such a singleton also waits for replication before
+//! it starts, so the record read is current.
+//!
 //! Each start logs `singleton starting` before the app's `init` runs and
 //! `singleton started` or `cannot start singleton` after; each kill logs
 //! `singleton killed` once it is done, and each graceful stop for a planned
@@ -30,7 +38,7 @@ use std::sync::PoisonError;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use paddock_bundle::manifest::{Durability, PlacementMode};
+use paddock_bundle::manifest::{Durability, PlacementMode, UpgradeMode};
 use paddock_host::failover::{Leadership, Standing};
 use paddock_host::{
     AppDeployment, AppHandle, Apps, HostError, ReplicationStatus, Runtime, UpgradeError,
@@ -55,6 +63,7 @@ struct Held {
 /// The singletons of a node with `[failover]`.
 #[derive(Debug)]
 pub(super) struct Gate {
+    rt: Runtime,
     apps: Apps,
     /// One start, stop or change of leadership at a time.
     op: tokio::sync::Mutex<()>,
@@ -88,8 +97,9 @@ pub(super) fn role_name(standing: Standing) -> &'static str {
 
 impl Gate {
     /// The gate of a node whose `cluster` shared buckets are `cluster`.
-    pub(super) fn new(apps: Apps, cluster: BTreeSet<String>) -> Self {
+    pub(super) fn new(rt: Runtime, apps: Apps, cluster: BTreeSet<String>) -> Self {
         Self {
+            rt,
             apps,
             op: tokio::sync::Mutex::new(()),
             held: Mutex::default(),
@@ -101,7 +111,8 @@ impl Gate {
     }
 
     /// Whether `deployment` must wait for replication before it starts:
-    /// it opens a replicated bucket, and this node's copy may trail.
+    /// it opens a replicated bucket or moves with its state, and this
+    /// node's copy may trail.
     fn waits(&self, deployment: &AppDeployment) -> bool {
         let kv = &deployment.spec.services.keyvalue;
         let replicated = kv
@@ -109,7 +120,28 @@ impl Gate {
             .values()
             .any(|b| b.durability == Durability::Replicated)
             || kv.shared.keys().any(|b| self.cluster.contains(b));
-        replicated && !self.ready.load(Ordering::Relaxed)
+        (replicated || self.moves(deployment)) && !self.ready.load(Ordering::Relaxed)
+    }
+
+    /// Whether `deployment` moves with its state in a planned switchover:
+    /// `snapshot` upgrade mode, on a node that runs replication.
+    fn moves(&self, deployment: &AppDeployment) -> bool {
+        deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot && self.rt.moves_state()
+    }
+
+    /// Start `name`: from its handover record if it moves and one is
+    /// kept, which this deletes first.
+    async fn start(&self, name: &str, deployment: AppDeployment) -> Result<AppHandle, HostError> {
+        if !self.moves(&deployment) {
+            return self.apps.add(deployment).await;
+        }
+        match self.rt.take_handover(name).await? {
+            Some(handover) => {
+                tracing::info!(app = %name, from_version = %handover.version, "singleton moved in");
+                self.apps.add_moved(deployment, handover).await
+            }
+            None => self.apps.add(deployment).await,
+        }
     }
 
     fn held(&self) -> std::sync::MutexGuard<'_, Vec<Held>> {
@@ -165,7 +197,7 @@ impl Gate {
             return Ok(None);
         }
         tracing::info!(app = %name, "singleton starting: this node is primary");
-        let added = self.apps.add(deployment).await;
+        let added = self.start(name, deployment).await;
         if let Err(e) = &added {
             tracing::error!(app = %name, error = %e, "cannot start singleton");
             self.held().retain(|h| h.name != name);
@@ -189,6 +221,18 @@ impl Gate {
         }
         if self.apps.app(name).is_some() {
             self.apps.remove(name).await?;
+        }
+        if let Some(h) = self.held().iter().find(|h| h.name == name)
+            && self.moves(&h.current)
+        {
+            // A later deploy of the app starts afresh.
+            let rt = self.rt.clone();
+            let app = name.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = rt.take_handover(&app).await {
+                    tracing::warn!(%app, error = %e, "handover record of a removed app not deleted");
+                }
+            });
         }
         self.held().retain(|h| h.name != name);
         Ok(true)
@@ -291,7 +335,7 @@ impl Gate {
                 continue;
             }
             tracing::info!(app = %name, "singleton starting: this node is primary");
-            match self.apps.add(current).await {
+            match self.start(&name, current).await {
                 Ok(app) => {
                     app.set_previous(previous);
                     tracing::info!(app = %name, "singleton started: this node is primary");
@@ -338,15 +382,37 @@ impl Gate {
         }
     }
 
-    /// Stop the running singletons gracefully, in reverse deploy order, for
-    /// a planned switchover: each runs `terminate` while the lease still
-    /// holds. None starts again until the leadership allows it anew
-    /// ([`Gate::restore`] if the switchover is refused after all).
+    /// Stop the running singletons, in reverse deploy order, for a planned
+    /// switchover, while the lease still holds: one that moves with its
+    /// state writes its snapshot to the replicated log, the others run
+    /// `terminate`. None starts again until the leadership allows it anew
+    /// ([`Gate::restore`] if the switchover is refused after all, which
+    /// starts the moved ones from their records).
     pub(super) async fn hand_over(&self) {
         let _op = self.op.lock().await;
         self.may_run.store(false, Ordering::Relaxed);
-        let names: Vec<String> = self.held().iter().map(|h| h.name.clone()).collect();
-        for name in names.iter().rev() {
+        let held: Vec<(String, bool)> = self
+            .held()
+            .iter()
+            .map(|h| (h.name.clone(), self.moves(&h.current)))
+            .collect();
+        for (name, moves) in held.iter().rev() {
+            if *moves && let Some(handover) = self.apps.move_out(name).await {
+                let bytes = handover.snapshot.len();
+                match self.rt.put_handover(name, &handover).await {
+                    Ok(()) => tracing::info!(
+                        app = %name,
+                        bytes,
+                        "singleton stopped: planned switchover, state moved"
+                    ),
+                    Err(e) => tracing::warn!(
+                        app = %name,
+                        error = %e,
+                        "singleton stopped: planned switchover; state not moved, the next start runs init"
+                    ),
+                }
+                continue;
+            }
             if self.apps.take_out(name).await {
                 tracing::info!(app = %name, "singleton stopped: planned switchover");
             }

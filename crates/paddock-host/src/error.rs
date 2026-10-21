@@ -59,6 +59,11 @@ pub enum HostError {
     #[error("cannot preopen: {0}")]
     Preopen(String),
 
+    /// A singleton's handover record could not be read, written or
+    /// deleted ([`Runtime::take_handover`](crate::Runtime::take_handover)).
+    #[error("handover: {0}")]
+    Handover(String),
+
     /// A respawn named an instance id that is still alive.
     #[error("instance {0} is still running")]
     StillRunning(crate::Pid),

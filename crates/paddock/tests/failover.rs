@@ -902,6 +902,85 @@ async fn failover____singleton_with_replicated_bucket_primary_killed____new_prim
     }
 }
 
+/// The counter fixture as a singleton in `snapshot` upgrade mode: it
+/// moves with its count in a planned switchover (ROADMAP M1).
+fn moving_counter(signer: &minisign::KeyPair) -> Vec<u8> {
+    let mut manifest = common::counter_manifest(None);
+    manifest["placement"] = serde_json::json!({ "mode": "singleton" });
+    bundle(signer, "tally", "1.0.0", &common::counter(1), manifest, &[])
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn switchover____singleton_in_snapshot_mode____moves_with_its_state_once() {
+    let dir = tempfile::Builder::new()
+        .prefix("pfm")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let replicating = |n: u32, a: &str| {
+        format!(
+            "{}replication = true\n",
+            member(n, dir.path(), &peers, a, &a3)
+        )
+    };
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &replicating(1, &a1)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &replicating(2, &a2)).await;
+    for n in [&n1, &n2] {
+        n.client.deploy(moving_counter(&signer)).await.unwrap();
+    }
+    let runs = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move {
+            c.status("tally")
+                .await
+                .is_ok_and(|d| d.summary.status == "running")
+        }
+    };
+    let role = |c: &paddock::api::Client, r: &'static str| {
+        let c = c.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == r) }
+    };
+    until("node 1 runs the singleton", || runs(&n1.client)).await;
+    until("node 2 standby", || role(&n2.client, "standby")).await;
+    for _ in 0..3 {
+        call_text(&n1.client, "tally", "inc").await;
+    }
+
+    let mut handed = n1.client.switchover().await;
+    for _ in 0..20 {
+        if handed.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        handed = n1.client.switchover().await;
+    }
+    until("node 2 runs the singleton", || runs(&n2.client)).await;
+    let moved = call_text(&n2.client, "tally", "get").await;
+    call_text(&n2.client, "tally", "inc").await;
+    until("node 1 back as standby", || role(&n1.client, "standby")).await;
+    // A failover is no planned switchover: node 1 starts it from init,
+    // and node 2's start took the record, so no old state comes back.
+    n2.child.kill().await.unwrap();
+    until("node 1 runs the singleton", || runs(&n1.client)).await;
+    let after_failover = call_text(&n1.client, "tally", "get").await;
+    let log1 = std::fs::read_to_string(dir.path().join("node-1.log")).unwrap();
+    let log2 = std::fs::read_to_string(dir.path().join("node-2.log")).unwrap();
+
+    assert!(handed.is_ok(), "{handed:?}");
+    assert_eq!(moved, "1.0.0 count=3");
+    assert_eq!(after_failover, "1.0.0 count=0");
+    assert!(log1.contains("planned switchover, state moved"), "{log1}");
+    assert!(log2.contains("singleton moved in"), "{log2}");
+    for p in [&mut n1, &mut w] {
+        p.child.kill().await.unwrap();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gate____replicated_bucket_on_a_node_without_replication____deploy_refused() {
     let (_dir, mut n) = alone("paths").await;

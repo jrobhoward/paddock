@@ -620,3 +620,87 @@ async fn upgrade____supervisor_exits_mid_rollout____error_says_the_template_was_
     assert!(why.contains("2.0.0"), "{why}");
     apps.stop().await;
 }
+
+// --- moving to another node (handover) -----------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_out_and_add_moved____snapshot_mode____state_carried_new_pid_links_unharmed() {
+    let (rt, chaos) = shared();
+    let name = "moved-counter";
+    let v1 = json!({ "upgrade": snapshot_mode("^1") });
+    let apps = rt.start_apps(vec![deployment(name, 1, v1)]).await.unwrap();
+    let old = running(&apps.app(name).unwrap()).await;
+    incs(&old, 3).await;
+    let peer = rt.spawn(chaos, spec("")).unwrap();
+    ask(&peer, &format!("link:{}", pid_text(old.pid()))).await;
+    let there = rt.start_apps(Vec::new()).await.unwrap();
+
+    let handover = apps.move_out(name).await.unwrap();
+    let old_exit = old.wait().await;
+    let moved = there
+        .add_moved(
+            deployment(name, 2, json!({ "upgrade": snapshot_mode("^1") })),
+            handover.clone(),
+        )
+        .await
+        .unwrap();
+    let new = running(&moved).await;
+    let state = ask(&new, "get").await;
+
+    assert_eq!(handover.version, "1.0.0");
+    assert_eq!(old_exit, ExitReason::Normal);
+    assert!(apps.app(name).is_none());
+    assert!(peer.exit_reason().is_none());
+    assert_ne!(new.pid(), old.pid());
+    assert!(state.starts_with("2.0.0 count=3"), "{state}");
+    there.stop().await;
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_moved____version_does_not_accept_the_snapshot____starts_from_init() {
+    let (rt, _) = shared();
+    let name = "moved-refused";
+    let apps = rt
+        .start_apps(vec![deployment(
+            name,
+            1,
+            json!({ "upgrade": snapshot_mode("^1") }),
+        )])
+        .await
+        .unwrap();
+    incs(&running(&apps.app(name).unwrap()).await, 2).await;
+    let handover = apps.move_out(name).await.unwrap();
+    let there = rt.start_apps(Vec::new()).await.unwrap();
+
+    let moved = there
+        .add_moved(
+            deployment(name, 3, json!({ "upgrade": snapshot_mode("^2") })),
+            handover,
+        )
+        .await
+        .unwrap();
+    let state = ask(&running(&moved).await, "get").await;
+
+    assert!(state.starts_with("3.0.0 count=0"), "{state}");
+    there.stop().await;
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_out____restart_mode____none_and_the_app_keeps_running() {
+    let (rt, _) = shared();
+    let name = "moved-restart";
+    let apps = rt
+        .start_apps(vec![deployment(name, 1, json!({}))])
+        .await
+        .unwrap();
+    let instance = running(&apps.app(name).unwrap()).await;
+
+    let moved = apps.move_out(name).await;
+
+    assert!(moved.is_none());
+    assert!(instance.exit_reason().is_none());
+    assert!(apps.app(name).is_some());
+    apps.stop().await;
+}

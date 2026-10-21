@@ -27,6 +27,7 @@ mod delivery;
 mod deny;
 mod error;
 pub mod failover;
+mod handover;
 pub mod health;
 #[cfg(feature = "http")]
 pub mod http;
@@ -58,6 +59,7 @@ pub use config::{
     SharedBucket, SqlDatasource, SqlTls,
 };
 pub use error::HostError;
+pub use handover::Handover;
 pub use instance::{InstanceEvent, InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;
 pub use links::LinkInfo;

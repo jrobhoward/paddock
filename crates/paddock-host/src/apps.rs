@@ -10,6 +10,7 @@ use paddock_bundle::manifest::{AppManifest, Capability, Strategy, UpgradeMode};
 use tokio::sync::watch;
 
 use crate::error::HostError;
+use crate::handover::Handover;
 use crate::instance::InstanceHandle;
 use crate::message::{CallError, Envelope, ExitReason};
 use crate::pid::Pid;
@@ -405,6 +406,68 @@ impl Apps {
         true
     }
 
+    /// Take `name` out of the set with its state, for a singleton moving
+    /// to the other node of an HA pair (see [`Handover`]): its one
+    /// instance writes its snapshot and handles nothing more, then the app
+    /// stops, the instance exiting `normal` without `terminate`. `None`
+    /// if `name` is not in the set, is not in `snapshot` upgrade mode, has
+    /// other than one instance, or its `save-snapshot` fails; the app is
+    /// then still in the set, for [`Apps::take_out`].
+    pub async fn move_out(&self, name: &str) -> Option<Handover> {
+        let app = self.set().apps.get(name).cloned()?;
+        let deployment = app.deployment();
+        if deployment.manifest.spec.upgrade.mode != UpgradeMode::Snapshot {
+            return None;
+        }
+        let [instance] = app.instances().try_into().ok()?;
+        let snapshot = match instance.move_out().await {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                tracing::warn!(app = name, error = %e, "cannot move singleton's state");
+                return None;
+            }
+        };
+        end_app(&self.rt, &app, false).await;
+        let mut set = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        set.order.retain(|n| n != name);
+        set.apps.remove(name);
+        Some(Handover::new(
+            deployment.manifest.app.version.to_string(),
+            snapshot,
+        ))
+    }
+
+    /// [`Apps::add`], with the app's first instance loading `handover`'s
+    /// snapshot in place of `init` (a singleton moved here). A version
+    /// whose manifest does not accept the snapshot's (`upgrade.from_versions`,
+    /// or other than `snapshot` mode) starts from `init`, as does an
+    /// instance whose `load-snapshot` refuses it, on its supervisor's
+    /// restart.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Apps::add`].
+    pub async fn add_moved(
+        &self,
+        deployment: AppDeployment,
+        handover: Handover,
+    ) -> Result<AppHandle, HostError> {
+        let name = deployment.manifest.app.name.clone();
+        if accepts_snapshot(&deployment, &handover.version) {
+            self.rt.inner().handovers.put(&name, handover);
+        } else {
+            tracing::warn!(
+                app = %name,
+                from_version = %handover.version,
+                "moved snapshot not accepted by this version; starting from init"
+            );
+        }
+        let added = self.add(deployment).await;
+        // Not taken if no instance started.
+        self.rt.inner().handovers.take(&name);
+        added
+    }
+
     /// Stop an app and take it out of the set.
     ///
     /// # Errors
@@ -536,6 +599,24 @@ impl Apps {
             }
         }
     }
+}
+
+/// Whether `deployment` loads a snapshot written by `version`: in
+/// `snapshot` mode, and `version` its own or one its `from_versions`
+/// accepts.
+fn accepts_snapshot(deployment: &AppDeployment, version: &str) -> bool {
+    let manifest = &deployment.manifest;
+    let upgrade = &manifest.spec.upgrade;
+    if upgrade.mode != UpgradeMode::Snapshot {
+        return false;
+    }
+    if manifest.app.version.to_string() == version {
+        return true;
+    }
+    let Ok(version) = semver::Version::parse(version) else {
+        return false;
+    };
+    upgrade.from_versions.is_empty() || upgrade.from_versions.iter().any(|r| r.matches(&version))
 }
 
 /// How a rollback from `current` to `previous` moves instances: `snapshot`
