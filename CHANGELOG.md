@@ -597,6 +597,16 @@ All notable changes are recorded here. The format follows
   grants the standby at once (rule R14 in `docs/tla/VERIFICATION.md`).
   Wire protocol version 7, the only one spoken: the witness and both nodes
   are upgraded together.
+- A node speaks the previous wire protocol version as well as its own
+  (ROADMAP U1; DESIGN.md, "Mixed versions during a release"): version 6
+  and 7 today, so a pair, or a node and its witness, can run builds one
+  release apart. A frame newer than the version a connection agreed on is
+  refused before it is written (`SendError::Unsupported`,
+  `transport::wire::since`) instead of closing the connection at the
+  older node, and `Transport::version` says which version each peer
+  agreed. A witness on version 6 gets no lease release, so a switchover
+  then waits the lease out, logged as `the witness's version has no lease
+  release`.
 - Singletons move with their state in a planned switchover (ROADMAP M1):
   on a pair with `[failover] replication = true`, a singleton in
   `snapshot` upgrade mode writes its snapshot to the replicated log

@@ -256,8 +256,18 @@ pub trait Transport: Send + Sync + 'static {
     ///
     /// Why the packet was dropped: `node` cannot be reached now, or its
     /// link is congested ([`SendError::Busy`] for a cast, call or reply
-    /// past the message budget; [`SendError::Full`] past the frame cap).
+    /// past the message budget; [`SendError::Full`] past the frame cap), or
+    /// the frame is newer than the connection's version
+    /// ([`SendError::Unsupported`]).
     fn send(&self, node: u32, packet: Packet) -> Result<(), SendError>;
+
+    /// The protocol version the connection to `node` agreed on, if there
+    /// is one. A transport that does not negotiate writes this build's
+    /// [`wire::VERSION`], the default.
+    fn version(&self, node: u32) -> Option<u16> {
+        let _ = node;
+        Some(wire::VERSION)
+    }
 }
 
 /// Where a call's reply goes.
@@ -493,11 +503,11 @@ pub(crate) fn control(frame: &Frame) -> bool {
 
 /// What a caller or caster is told when its message was not sent: the rule
 /// for a full mailbox for a congested link (`overloaded`), `noconnection`
-/// otherwise.
+/// otherwise (a peer whose version cannot read the frame included).
 pub(crate) fn refused(why: SendError) -> CallError {
     match why {
         SendError::Busy | SendError::Full => CallError::Overloaded,
-        SendError::Unreachable => CallError::Noconnection,
+        SendError::Unreachable | SendError::Unsupported => CallError::Noconnection,
     }
 }
 

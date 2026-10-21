@@ -30,6 +30,9 @@ pub enum SendError {
     /// The link to the node holds as many frames as it may; the node has
     /// stopped reading.
     Full,
+    /// The connection to the node agreed on a protocol version older than
+    /// the frame (`wire::since`): a node one release older cannot read it.
+    Unsupported,
 }
 
 impl std::fmt::Display for SendError {
@@ -38,6 +41,7 @@ impl std::fmt::Display for SendError {
             Self::Unreachable => "unreachable",
             Self::Busy => "busy",
             Self::Full => "full",
+            Self::Unsupported => "unsupported by the peer's version",
         })
     }
 }

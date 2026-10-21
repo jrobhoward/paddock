@@ -3,14 +3,19 @@
 //!
 //! A connection starts with a [`Hello`] each way, carrying the versions the
 //! sender speaks; both use the highest version both speak ([`agree`]), or
-//! close the connection. Today there is one, [`VERSION`]. Every later frame
-//! on the connection is `[version, packet]` in CBOR, so a node can still
-//! tell which version a frame was written in. Message bodies and heartbeat
-//! payloads are CBOR byte strings.
+//! close the connection. A node speaks [`VERSION`] and the one before
+//! ([`MIN_VERSION`]), so the two nodes of a pair can run builds one release
+//! apart while a release goes across them (DESIGN.md, "Mixed versions
+//! during a release"). Every later frame on the connection is
+//! `[version, packet]` in CBOR, so a node can still tell which version a
+//! frame was written in, and no frame is written on a connection whose
+//! version is older than the frame ([`since`]). Message bodies and
+//! heartbeat payloads are CBOR byte strings.
 
 use serde::{Deserialize, Serialize};
 
-use super::Packet;
+use super::{Frame, Packet};
+use crate::failover::FailoverMsg;
 
 /// The protocol version this node writes. Version 2 acknowledges unlinks
 /// (`Unlink` carries an id, `UnlinkAck` answers it); version 3 stamps
@@ -25,11 +30,10 @@ use super::Packet;
 /// the witness (`Release`).
 pub const VERSION: u16 = 7;
 
-/// The oldest protocol version this node reads. A version 6 node cannot
-/// read `Release` (it closes the connection on a frame it cannot decode),
-/// and a node does not track which version each peer agreed, so version 6
-/// is not spoken.
-pub const MIN_VERSION: u16 = 7;
+/// The oldest protocol version this node speaks: the one before
+/// [`VERSION`]. A release raises [`VERSION`] by one at most, so a node and
+/// a peer one release older or newer agree on a version.
+pub const MIN_VERSION: u16 = VERSION - 1;
 
 /// The first message each side of a connection sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +67,54 @@ pub fn agree(mine: &Hello, theirs: &Hello) -> Option<u16> {
     let high = mine.max_version.min(theirs.max_version);
     let low = mine.min_version.max(theirs.min_version);
     (high >= low).then_some(high)
+}
+
+/// The protocol version that introduced `frame`'s kind. A field added to a
+/// kind later is not counted (version 6's `outdated` on `Granted` was one);
+/// from version 7 on, a field an older reader must act on comes with a
+/// kind of its own. Versions before [`MIN_VERSION`] are history only; the
+/// match has no catch-all, so a new kind cannot be added without a version.
+#[must_use]
+pub fn since(frame: &Frame) -> u16 {
+    match frame {
+        Frame::Heartbeat { .. }
+        | Frame::Join { .. }
+        | Frame::Members { .. }
+        | Frame::Leave
+        | Frame::Cast { .. }
+        | Frame::Call { .. }
+        | Frame::Reply { .. }
+        | Frame::Exit { .. }
+        | Frame::LinkExit { .. }
+        | Frame::Link { .. }
+        | Frame::Monitor { .. }
+        | Frame::Demonitor { .. }
+        | Frame::Down { .. } => 1,
+        Frame::Unlink { .. } | Frame::UnlinkAck { .. } => 2,
+        Frame::GroupSync { .. }
+        | Frame::GroupJoin { .. }
+        | Frame::GroupLeave { .. }
+        | Frame::GroupPublish { .. } => 4,
+        Frame::AppCall { .. } => 5,
+        Frame::Replication { .. } => 6,
+        Frame::Failover(msg) => match msg {
+            FailoverMsg::Renew { .. }
+            | FailoverMsg::Request { .. }
+            | FailoverMsg::LeaseOk { .. }
+            | FailoverMsg::Fenced { .. }
+            | FailoverMsg::Granted { .. }
+            | FailoverMsg::NotYet { .. }
+            | FailoverMsg::Refused { .. } => 1,
+            FailoverMsg::Record { .. } | FailoverMsg::Recorded { .. } => 6,
+            FailoverMsg::Release { .. } => 7,
+        },
+    }
+}
+
+/// Whether a peer on a connection at `version` can read `frame`.
+#[must_use]
+pub fn readable(version: u16, frame: &Frame) -> bool {
+    since(frame) <= version
 }
 
 /// Why bytes are not a frame.
@@ -101,8 +153,15 @@ pub fn from_cbor<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, WireEr
 ///
 /// # Errors
 ///
-/// As for [`to_cbor`].
+/// If the frame is newer than `version` ([`readable`]); otherwise as for
+/// [`to_cbor`].
 pub fn encode(version: u16, packet: &Packet) -> Result<Vec<u8>, WireError> {
+    if !readable(version, &packet.frame) {
+        return Err(WireError(format!(
+            "a version {} frame on a version {version} connection",
+            since(&packet.frame)
+        )));
+    }
     to_cbor(&(version, packet))
 }
 

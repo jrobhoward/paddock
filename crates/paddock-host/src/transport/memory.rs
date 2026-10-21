@@ -48,7 +48,7 @@ use tokio::time::Instant;
 
 use super::lane::{Class, Lane, Ticket};
 use super::liveness::HeartbeatPath;
-use super::{Frame, Packet, SendError, Transport};
+use super::{Frame, Packet, SendError, Transport, wire};
 use crate::error::HostError;
 use crate::runtime::{Runtime, RuntimeInner};
 
@@ -104,7 +104,18 @@ struct State {
     /// Each direction's message budget ([`Mesh::set_send_budget`]); none
     /// by default.
     send_budget: u64,
+    /// The newest protocol version each node speaks, where
+    /// [`Mesh::set_version`] made it older than this build's.
+    versions: HashMap<u32, u16>,
     rng: SplitMix64,
+}
+
+impl State {
+    /// The version `a` and `b` agree on: the older of the two they speak.
+    fn version(&self, a: u32, b: u32) -> u16 {
+        let speaks = |n| self.versions.get(&n).copied().unwrap_or(wire::VERSION);
+        speaks(a).min(speaks(b))
+    }
 }
 
 /// Which frame [`Mesh::lose_next`] drops.
@@ -137,6 +148,9 @@ impl Shared {
             || !state.nodes.get(&to).is_some_and(|rt| rt.strong_count() > 0)
         {
             return Err(SendError::Unreachable);
+        }
+        if !wire::readable(state.version(from, to), &packet.frame) {
+            return Err(SendError::Unsupported);
         }
         let faults = state
             .faults
@@ -181,7 +195,7 @@ impl Shared {
         let ticket = if super::control(&packet.frame) {
             None
         } else {
-            let bytes = super::wire::encode(super::wire::VERSION, &packet)
+            let bytes = wire::encode(wire::VERSION, &packet)
                 .map_or(0, |b| u64::try_from(b.len()).unwrap_or(u64::MAX));
             Some(queue.lane.admit(Class::of(&packet.frame), bytes)?)
         };
@@ -273,6 +287,10 @@ impl Transport for Port {
             .ok_or(SendError::Unreachable)?
             .send(self.node, node, packet)
     }
+
+    fn version(&self, node: u32) -> Option<u16> {
+        Some(self.shared.upgrade()?.state().version(self.node, node))
+    }
 }
 
 /// One node's side of an extra heartbeat path.
@@ -308,6 +326,7 @@ impl Mesh {
                     paths: BTreeSet::new(),
                     path_cut: HashSet::new(),
                     send_budget: u64::MAX,
+                    versions: HashMap::new(),
                     rng: SplitMix64(seed),
                 }),
                 healed: Notify::new(),
@@ -449,6 +468,17 @@ impl Mesh {
         let mut state = self.shared.state();
         state.send_budget = bytes;
         state.queues.clear();
+    }
+
+    /// Make `node` speak protocol versions up to `max` only (clamped to
+    /// those this build speaks), as a node of the previous release would:
+    /// a frame newer than the version a pair agrees on is refused as
+    /// [`SendError::Unsupported`].
+    pub fn set_version(&self, node: u32, max: u16) {
+        self.shared
+            .state()
+            .versions
+            .insert(node, max.clamp(wire::MIN_VERSION, wire::VERSION));
     }
 
     /// Faults on every pair without its own.

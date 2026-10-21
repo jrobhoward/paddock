@@ -15,9 +15,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use common::{ask, ask_until, fixture, pid_text, spec};
+use paddock_host::failover::FailoverMsg;
 use paddock_host::transport::quic::{
     NodeIdentity, PublicKey, QuicConfig, QuicTransport, generate_key,
 };
+use paddock_host::transport::{Frame, Packet, SendError, Transport, wire};
 use paddock_host::{InstanceHandle, LoadedApp, Runtime, RuntimeConfig};
 
 fn chaos() -> &'static [u8] {
@@ -91,6 +93,17 @@ struct Node {
 
 impl Node {
     fn start(node: u32, creation: u32, address: SocketAddr, identity: NodeIdentity) -> Self {
+        Self::start_speaking(node, creation, address, identity, wire::VERSION)
+    }
+
+    /// [`Node::start`], speaking protocol versions up to `max_version`.
+    fn start_speaking(
+        node: u32,
+        creation: u32,
+        address: SocketAddr,
+        identity: NodeIdentity,
+        max_version: u16,
+    ) -> Self {
         let rt = Runtime::new(RuntimeConfig {
             node,
             creation,
@@ -101,7 +114,7 @@ impl Node {
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let quic = QuicTransport::start(
+        let quic = QuicTransport::start_speaking(
             &rt,
             QuicConfig {
                 bind: address,
@@ -109,6 +122,7 @@ impl Node {
                 idle_timeout: Duration::from_secs(2),
                 send_buffer_bytes: paddock_host::transport::quic::SEND_BUFFER_BYTES,
             },
+            max_version,
         )
         .unwrap();
         let app = rt.load(chaos()).unwrap();
@@ -177,6 +191,51 @@ async fn join_seed____two_nodes____members_and_calls_both_ways() {
     assert_eq!(n1.quic.connected(), vec![2]);
     assert_eq!(there, "ok:over-quic");
     assert_eq!(back, "ok:and-back");
+    a.kill();
+    b.kill();
+    n1.quic.shutdown();
+    n2.quic.shutdown();
+}
+
+/// A node one release older (DESIGN.md, "Mixed versions during a
+/// release"): both sides agree on its version, calls go both ways, and a
+/// frame newer than that version is refused before it is written, rather
+/// than closing the connection at the older node.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn join_seed____peer_one_release_older____its_version_and_newer_frames_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Keys::new(dir.path(), &[1, 2]);
+    let peers = keys.peers("peers", &[(1, 1), (2, 2)]);
+    let older = wire::VERSION - 1;
+    let n1 = Node::start_speaking(1, 1, free_udp(), keys.identity(1, &peers), older);
+    let n2 = Node::start(2, 1, free_udp(), keys.identity(2, &peers));
+
+    n2.quic.join_seed(n1.address).await.unwrap();
+    until("membership", || {
+        n1.rt.members().len() == 2 && n2.rt.members().len() == 2
+    })
+    .await;
+    let a = n1.spawn();
+    let b = n2.spawn();
+    let there = ask(&a, &format!("call:{}:2000:echo:there", pid_text(b.pid()))).await;
+    let packet = |frame| Packet {
+        creation: 1,
+        to_creation: 1,
+        session: 0,
+        frame,
+    };
+    let refused = n2.quic.send(
+        1,
+        packet(Frame::Failover(FailoverMsg::Release { epoch: 1 })),
+    );
+    let back = ask(&b, &format!("call:{}:2000:echo:back", pid_text(a.pid()))).await;
+
+    assert_eq!(n1.quic.version(2), Some(older));
+    assert_eq!(n2.quic.version(1), Some(older));
+    assert_eq!(there, "ok:there");
+    assert_eq!(refused, Err(SendError::Unsupported));
+    assert_eq!(back, "ok:back");
+    assert_eq!(n2.quic.connected(), vec![1]);
     a.kill();
     b.kill();
     n1.quic.shutdown();

@@ -130,6 +130,9 @@ struct Inner {
     /// Seed addresses, redialed whenever their connection is lost.
     seeds: Mutex<Vec<SocketAddr>>,
     stop: watch::Sender<bool>,
+    /// The newest version this node's hello offers: [`wire::VERSION`], or
+    /// older in tests of a mixed pair ([`QuicTransport::start_speaking`]).
+    max_version: u16,
 }
 
 struct Peer {
@@ -244,6 +247,22 @@ impl QuicTransport {
     /// address that cannot be bound; [`HostError::Engine`] if `rt` already
     /// has a transport.
     pub fn start(rt: &Runtime, config: QuicConfig) -> Result<Self, HostError> {
+        Self::start_speaking(rt, config, wire::VERSION)
+    }
+
+    /// [`QuicTransport::start`], offering protocol versions up to
+    /// `max_version` only (clamped to those this build speaks), as a node
+    /// of the previous release would: for tests of a pair on two versions.
+    ///
+    /// # Errors
+    ///
+    /// As for [`QuicTransport::start`].
+    #[doc(hidden)]
+    pub fn start_speaking(
+        rt: &Runtime,
+        config: QuicConfig,
+        max_version: u16,
+    ) -> Result<Self, HostError> {
         let loaded = config.identity.load()?;
         let (server, client) = configs(&loaded, config.idle_timeout)?;
         let endpoint = Endpoint::server(server, config.bind)
@@ -261,6 +280,7 @@ impl QuicTransport {
             refused: Mutex::default(),
             seeds: Mutex::default(),
             stop: watch::channel(false).0,
+            max_version: max_version.clamp(wire::MIN_VERSION, wire::VERSION),
         });
         let transport = Self { inner };
         rt.set_transport(Arc::new(transport.clone()))?;
@@ -438,6 +458,15 @@ impl QuicTransport {
 }
 
 impl Transport for QuicTransport {
+    fn version(&self, node: u32) -> Option<u16> {
+        self.inner
+            .peers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&node)
+            .map(|peer| peer.version)
+    }
+
     fn send(&self, node: u32, packet: Packet) -> Result<(), SendError> {
         let peers = self
             .inner
@@ -445,6 +474,9 @@ impl Transport for QuicTransport {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let peer = peers.get(&node).ok_or(SendError::Unreachable)?;
+        if !wire::readable(peer.version, &packet.frame) {
+            return Err(SendError::Unsupported);
+        }
         let bytes = wire::encode(peer.version, &packet).map_err(|_| SendError::Unreachable)?;
         if control(&packet.frame) {
             return peer
@@ -537,7 +569,10 @@ async fn establish_within(
 /// Exchange hellos on a new connection, check the peer, keep the
 /// connection and start its streams. Returns the peer's node id.
 async fn establish(inner: &Arc<Inner>, conn: Connection, dialer: bool) -> Result<u32, String> {
-    let mine = Hello::new(inner.node, inner.creation);
+    let mine = Hello {
+        max_version: inner.max_version,
+        ..Hello::new(inner.node, inner.creation)
+    };
     let (mut control_tx, mut control_rx) = if dialer {
         conn.open_bi().await.map_err(|e| e.to_string())?
     } else {

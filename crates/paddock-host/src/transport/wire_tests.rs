@@ -139,3 +139,50 @@ fn agree____overlapping_and_disjoint_ranges____highest_common_or_none() {
     assert_eq!(agree(&mine, &too_new), None);
     assert_eq!(agree(&mine, &too_old), None);
 }
+
+#[test]
+fn agree____a_node_one_release_older____its_version() {
+    let mine = Hello::new(1, 1);
+    let older = Hello {
+        min_version: MIN_VERSION - 1,
+        max_version: VERSION - 1,
+        ..Hello::new(2, 1)
+    };
+
+    assert_eq!(MIN_VERSION, VERSION - 1);
+    assert_eq!(agree(&mine, &older), Some(VERSION - 1));
+}
+
+#[test]
+fn encode____frame_newer_than_the_connection____refused() {
+    let release = packet(Frame::Failover(FailoverMsg::Release { epoch: 2 }));
+    let record = packet(Frame::Failover(FailoverMsg::Record {
+        seq: 1,
+        epoch: 2,
+        outdated: false,
+    }));
+
+    let at_6 = encode(6, &release);
+    let at_7 = encode(7, &release);
+
+    assert!(!readable(6, &release.frame));
+    assert!(at_6.is_err());
+    assert_eq!(decode(7, &at_7.unwrap()).unwrap(), release);
+    assert!(readable(6, &record.frame));
+    assert_eq!(decode(6, &encode(6, &record).unwrap()).unwrap(), record);
+}
+
+#[test]
+fn since____every_kind____at_most_this_build_s_version() {
+    let frames = [
+        Frame::Leave,
+        Frame::Replication { body: vec![1] },
+        Frame::Failover(FailoverMsg::Release { epoch: 1 }),
+        Frame::Failover(FailoverMsg::Renew { seq: 1, epoch: 1 }),
+    ];
+
+    let versions: Vec<u16> = frames.iter().map(since).collect();
+
+    assert_eq!(versions, [1, 6, 7, 1]);
+    assert!(versions.iter().all(|&v| v <= VERSION));
+}

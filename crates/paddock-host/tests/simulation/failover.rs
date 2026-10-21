@@ -15,6 +15,7 @@ use paddock_host::failover::{
 };
 use paddock_host::transport::Frame;
 use paddock_host::transport::memory::Faults;
+use paddock_host::transport::wire;
 use paddock_host::{CallError, LifecycleState};
 use tokio::time::Instant;
 
@@ -777,6 +778,46 @@ fn switchover____healthy_pair____standby_takes_over_within_a_lease_old_primary_r
         (Standing::Standby, 2, false)
     );
     assert_eq!(overlap, None);
+}
+
+/// A planned switchover with the witness one release older (DESIGN.md,
+/// "Mixed versions during a release"): the old primary's release is a
+/// frame the witness cannot read, so it is not sent, and the witness waits
+/// the lease out as for a release lost; with a witness of this build it
+/// grants within a few beats (ROADMAP L1).
+#[test]
+fn switchover____witness_one_release_older____standby_waits_the_lease_out() {
+    let switch = |witness_version: u16| {
+        simulate(52, 3, move |sim| async move {
+            sim.mesh.set_version(3, witness_version);
+            let pair = start(&sim, witness());
+            pass(3000).await;
+
+            let asked = Instant::now();
+            let accepted = pair.handles[0].switchover().await;
+            pass(4000).await;
+
+            let took = pair.running_since(2).map(|t| t.duration_since(asked));
+            (accepted, took, pair.of(2), pair.overlap())
+        })
+    };
+
+    let (old_accepted, old_took, old_two, old_overlap) = switch(wire::VERSION - 1);
+    let (new_accepted, new_took, _, new_overlap) = switch(wire::VERSION);
+
+    assert_eq!((old_accepted, new_accepted), (Ok(()), Ok(())));
+    let (old_took, new_took) = (old_took.unwrap(), new_took.unwrap());
+    assert!(old_took >= LEASE, "older witness: {old_took:?}");
+    assert!(
+        old_took <= LEASE + MARGIN * 2 + HEARTBEAT * 4,
+        "{old_took:?}"
+    );
+    assert!(new_took < LEASE, "this build's witness: {new_took:?}");
+    assert_eq!(
+        (old_two.standing, old_two.epoch, old_two.may_run),
+        (Standing::Primary, 2, true)
+    );
+    assert_eq!((old_overlap, new_overlap), (None, None));
 }
 
 /// Beats the standby sent while still confirming are held by a stall and
