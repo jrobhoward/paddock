@@ -12,7 +12,10 @@ use std::time::Duration;
 
 use paddock_bundle::manifest::Durability;
 use paddock_host::failover::{Arbiter, FailoverConfig, FailoverHandle, Standing, WitnessConfig};
-use paddock_host::{InstanceHandle, Role, RuntimeConfig, SharedBucket};
+use paddock_host::transport::wire;
+use paddock_host::{
+    FIRST_FORMATS, FinalizeRefused, Finalized, InstanceHandle, Role, RuntimeConfig, SharedBucket,
+};
 
 use crate::common::{ask, body, text};
 use crate::harness::{Sim, SimNode, pass, simulate_with};
@@ -451,4 +454,44 @@ fn replicated____pair_without_replication____runs_none() {
     });
 
     assert_eq!(statuses, [None, None]);
+}
+
+/// The pair's version for what is kept (ROADMAP U1): refused while the
+/// witness is one release older, then raised on both copies once every
+/// node speaks this build's version, from either node; a second raise
+/// changes nothing.
+#[test]
+fn finalize_formats____every_node_at_this_version____raised_on_both_copies() {
+    let (_root, dirs) = dirs();
+    let (before, refused, raised, again, kept) =
+        simulate_with(64, 3, configure(&dirs), |sim| async move {
+            sim.mesh.set_version(3, wire::VERSION - 1);
+            let _handles = start(&sim);
+            let primary = primary(&sim).await;
+            let standby = 3 - primary;
+
+            let before = sim.node(primary).rt.formats_version().await;
+            let refused = sim.node(primary).rt.finalize_formats(&[standby, 3]).await;
+            sim.mesh.set_version(3, wire::VERSION);
+            let raised = sim.node(standby).rt.finalize_formats(&[primary, 3]).await;
+            let again = sim.node(primary).rt.finalize_formats(&[standby, 3]).await;
+            settled(&sim).await;
+            let mut kept = Vec::new();
+            for node in 1..=2 {
+                kept.push(sim.node(node).rt.formats_version().await);
+            }
+            (before, refused, raised, again, kept)
+        });
+
+    assert_eq!(before, Ok(FIRST_FORMATS));
+    assert_eq!(
+        refused,
+        Err(FinalizeRefused::Peer {
+            node: 3,
+            version: Some(wire::VERSION - 1)
+        })
+    );
+    assert_eq!(raised, Ok(Finalized::Raised(wire::VERSION)));
+    assert_eq!(again, Ok(Finalized::Already(wire::VERSION)));
+    assert_eq!(kept, [Ok(wire::VERSION), Ok(wire::VERSION)]);
 }

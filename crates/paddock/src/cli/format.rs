@@ -269,6 +269,25 @@ pub(crate) fn event(e: &paddock::api::Event) -> String {
 mod format_tests;
 
 /// `paddock failover`: the node's standing, one field per line.
+pub(crate) fn release(r: &paddock::api::ReleaseInfo) -> String {
+    let peers: Vec<String> = r
+        .peers
+        .iter()
+        .map(|(node, version)| format!("{node} at {version}"))
+        .collect();
+    format!(
+        "speaks:  versions {} to {}\nkeeps:   version {}'s formats\npeers:   {}",
+        r.min_version,
+        r.max_version,
+        r.formats,
+        if peers.is_empty() {
+            "none connected".to_string()
+        } else {
+            peers.join(", ")
+        }
+    )
+}
+
 pub(crate) fn failover(f: &paddock::api::FailoverInfo) -> String {
     let yes = |b: bool| if b { "yes" } else { "no" };
     let mut out = format!(

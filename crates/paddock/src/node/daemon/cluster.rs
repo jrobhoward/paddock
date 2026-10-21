@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
-use crate::api::{Done, FailoverInfo, MemberInfo, ReplicationInfo};
-use paddock_host::Role;
+use crate::api::{Done, FailoverInfo, MemberInfo, ReleaseInfo, ReplicationInfo};
 use paddock_host::failover::{Arbiter, FailoverConfig, SwitchoverRefused, WitnessConfig};
 use paddock_host::transport::quic::{NodeIdentity, QuicConfig, QuicTransport};
+use paddock_host::transport::wire;
+use paddock_host::{Finalized, Role};
 use serde_json::json;
 
 use super::Node;
@@ -263,6 +264,72 @@ impl Node {
         let mut generation = self.leadership.subscribe();
         let _ = tokio::time::timeout(wait, generation.wait_for(|g| *g > after)).await;
         self.failover()
+    }
+
+    /// The versions this node speaks and keeps, and each connected
+    /// member's.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Internal`] if the pair's version cannot be read.
+    pub async fn release(&self) -> Result<ReleaseInfo, NodeError> {
+        let formats = self
+            .rt
+            .formats_version()
+            .await
+            .map_err(|e| NodeError::Internal(e.to_string()))?;
+        let me = self.rt.node();
+        let peers = self
+            .rt
+            .members()
+            .into_iter()
+            .filter(|m| m.node != me)
+            .filter_map(|m| Some((m.node, self.rt.peer_version(m.node)?)))
+            .collect();
+        Ok(ReleaseInfo {
+            formats,
+            min_version: wire::MIN_VERSION,
+            max_version: wire::VERSION,
+            peers,
+        })
+    }
+
+    /// The last step of a release across the pair: raise the pair's
+    /// version for what is kept to this build's, once the partner and the
+    /// witness are connected at it. Neither node can then be rolled back
+    /// to a build before it.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::NotFound`] without `[failover]`; [`NodeError::Conflict`]
+    /// when it is refused (no replication, a node not at this version, a
+    /// record that does not commit).
+    pub async fn finalize_release(&self) -> Result<Done, NodeError> {
+        let Some(f) = &self.config.failover else {
+            return Err(NodeError::NotFound(
+                "this node has no [failover] in its config".into(),
+            ));
+        };
+        let peers: Vec<u32> = std::iter::once(f.partner).chain(f.witness).collect();
+        let done = self
+            .rt
+            .finalize_formats(&peers)
+            .await
+            .map_err(|e| NodeError::Conflict(format!("finalize refused: {e}")))?;
+        let message = match done {
+            Finalized::Raised(version) => {
+                self.audit
+                    .record("release_finalized", json!({ "formats": version }));
+                format!(
+                    "the pair now keeps version {version}'s formats; neither node starts a build older than version {version}"
+                )
+            }
+            Finalized::Already(version) => {
+                format!("the pair keeps version {version}'s formats already")
+            }
+            _ => "the pair's version is unchanged".into(),
+        };
+        Ok(Done { message })
     }
 
     /// A planned switchover (ROADMAP D10b): this primary stops its

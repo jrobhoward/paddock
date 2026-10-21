@@ -113,6 +113,17 @@ enum FailoverCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ReleaseCommand {
+    /// The last step of a release across an HA pair, once both nodes and
+    /// the witness run the new build: from then on the pair writes what it
+    /// keeps (the replicated log, the `@cluster` records) in this build's
+    /// formats, and neither node starts a build older than it, so neither
+    /// can be rolled back past it. Refused unless replication runs and the
+    /// partner and the witness are connected at this build's version.
+    Finalize,
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Run a node.
     #[cfg(feature = "node")]
@@ -225,6 +236,12 @@ enum Command {
         watch: bool,
         #[command(subcommand)]
         action: Option<FailoverCommand>,
+    },
+    /// Show the protocol versions this node speaks, the version each
+    /// connected member agreed on, and the pair's version for what is kept.
+    Release {
+        #[command(subcommand)]
+        action: Option<ReleaseCommand>,
     },
     /// Show an instance's state (through its save-snapshot; an instance that
     /// traps there restarts).
@@ -636,6 +653,10 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
             action: Some(FailoverCommand::Switchover),
             ..
         } => done(json, client.switchover().await),
+        Command::Release { action: None } => print(json, &client.release().await?, format::release),
+        Command::Release {
+            action: Some(ReleaseCommand::Finalize),
+        } => done(json, client.finalize_release().await),
         Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
         Command::Cast { message } => {
             let (target, content_type, body) = message.into_parts()?;

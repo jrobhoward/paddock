@@ -243,6 +243,9 @@ impl Node {
             extensions,
         )
         .map_err(internal)?;
+        rt.check_formats()
+            .await
+            .map_err(|e| NodeError::Invalid(format!("{}: {e}", config.data_dir.display())))?;
         let apps = rt.start_apps(Vec::new()).await.map_err(internal)?;
         let stop = tokio::sync::watch::channel(false).0;
         let ingress = Ingress::open(&config, &apps, &stop).await?;

@@ -607,6 +607,14 @@ All notable changes are recorded here. The format follows
   agreed. A witness on version 6 gets no lease release, so a switchover
   then waits the lease out, logged as `the witness's version has no lease
   release`.
+- The pair's version for what it keeps (ROADMAP U1): a record in the
+  replicated `@release` bucket, at 6 until raised. `paddock release`
+  (`GET /v1/release`) shows the versions the node speaks, each connected
+  member's and the pair's; `paddock release finalize`
+  (`POST /v1/release/finalize`, `Runtime::finalize_formats`) raises the
+  pair's version to the build's once the partner and the witness are
+  connected at it, audited as `release_finalized`. A node refuses to start
+  a build older than the pair's version (`Runtime::check_formats`).
 - Singletons move with their state in a planned switchover (ROADMAP M1):
   on a pair with `[failover] replication = true`, a singleton in
   `snapshot` upgrade mode writes its snapshot to the replicated log

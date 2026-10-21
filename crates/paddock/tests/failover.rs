@@ -17,6 +17,7 @@ use std::time::Duration;
 use common::{TestNode, bundle, fast, fixture};
 use paddock::api::FailoverInfo;
 use paddock_host::transport::quic::generate_key;
+use paddock_host::transport::wire;
 
 fn free_udp() -> String {
     std::net::UdpSocket::bind("127.0.0.1:0")
@@ -992,4 +993,73 @@ async fn gate____replicated_bucket_on_a_node_without_replication____deploy_refus
     let err = refused.unwrap_err().to_string();
     assert!(err.contains("does not replicate"), "{err}");
     n.shutdown().await;
+}
+
+/// The last step of a release across the pair (ROADMAP U1): `release`
+/// shows the versions each node speaks and keeps, `release finalize`
+/// raises the pair's version on both nodes, once, and is refused on the
+/// witness, which keeps nothing replicated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn release_finalize____replicating_pair____both_nodes_keep_this_version() {
+    let dir = tempfile::Builder::new()
+        .prefix("prf")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let replicating = |n: u32, a: &str| {
+        format!(
+            "{}replication = true\n",
+            member(n, dir.path(), &peers, a, &a3)
+        )
+    };
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &replicating(1, &a1)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &replicating(2, &a2)).await;
+    let connected = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move { c.release().await.is_ok_and(|r| r.peers.len() == 2) }
+    };
+    until("node 1 connected to both", || connected(&n1.client)).await;
+    until("node 2 connected to both", || connected(&n2.client)).await;
+    let before = n1.client.release().await.unwrap();
+
+    let mut finalized = n1.client.finalize_release().await;
+    for _ in 0..40 {
+        if finalized.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        finalized = n1.client.finalize_release().await;
+    }
+    let again = n2.client.finalize_release().await;
+    let on_witness = w.client.finalize_release().await;
+    let keeps = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move { c.release().await.is_ok_and(|r| r.formats == wire::VERSION) }
+    };
+    until("node 2 keeps this version", || keeps(&n2.client)).await;
+    let after = n1.client.release().await.unwrap();
+
+    assert_eq!(before.formats, paddock_host::FIRST_FORMATS);
+    assert_eq!(
+        (before.min_version, before.max_version),
+        (wire::MIN_VERSION, wire::VERSION)
+    );
+    assert_eq!(
+        before.peers,
+        std::collections::BTreeMap::from([(2, wire::VERSION), (3, wire::VERSION)])
+    );
+    let finalized = finalized.unwrap().message;
+    assert!(finalized.contains("now keeps"), "{finalized}");
+    let again = again.unwrap().message;
+    assert!(again.contains("already"), "{again}");
+    assert_eq!(common::kind(&on_witness.unwrap_err()), "not_found");
+    assert_eq!(after.formats, wire::VERSION);
+    for p in [&mut n1, &mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
 }

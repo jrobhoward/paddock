@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 
 use super::{
     ApiError, AppDetail, AppSummary, DeployResponse, Done, Event, FailoverInfo, InstanceInfo,
-    LogLine, MemberInfo, RolloutParams, StateResponse, Target, UpgradeResponse,
+    LogLine, MemberInfo, ReleaseInfo, RolloutParams, StateResponse, Target, UpgradeResponse,
 };
 
 /// How long a stream may go without a line, keepalives included, before
@@ -391,6 +391,28 @@ impl Client {
     ) -> Result<FailoverInfo, ClientError> {
         let path = format!("/v1/failover?after={after}&wait_ms={}", wait.as_millis());
         self.json(Method::GET, &path, None).await
+    }
+
+    /// The versions the node speaks and keeps, and each connected
+    /// member's.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`].
+    pub async fn release(&self) -> Result<ReleaseInfo, ClientError> {
+        self.json(Method::GET, "/v1/release", None).await
+    }
+
+    /// Raise the pair's version for what is kept to the node's build's,
+    /// the last step of a release.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; not found for a node without `[failover]`,
+    /// conflict when it is refused (no replication, the partner or the
+    /// witness not connected at the node's version).
+    pub async fn finalize_release(&self) -> Result<Done, ClientError> {
+        self.json(Method::POST, "/v1/release/finalize", None).await
     }
 
     /// A planned switchover: this primary stops its singletons gracefully

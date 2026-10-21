@@ -226,6 +226,22 @@ pub struct FailoverInfo {
     pub replication: Option<ReplicationInfo>,
 }
 
+/// The versions a node speaks and keeps, for a release across an HA pair
+/// (ROADMAP U1; DESIGN.md, "Mixed versions during a release").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseInfo {
+    /// The pair's version for what is kept (the replicated log, the
+    /// `@cluster` records), raised by `paddock release finalize`; this node
+    /// refuses to start a build older than it.
+    pub formats: u16,
+    /// The oldest protocol version this build speaks.
+    pub min_version: u16,
+    /// The newest protocol version this build speaks.
+    pub max_version: u16,
+    /// The version each connected member's connection agreed on, by node.
+    pub peers: BTreeMap<u32, u16>,
+}
+
 /// A node's replicated log (`cluster` buckets, ROADMAP K2): one log for
 /// every such bucket.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
