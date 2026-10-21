@@ -247,3 +247,93 @@ async fn Witness____resumed_with_the_record____resume_keeps_it_and_the_partner_i
     );
     assert_eq!(partner, Some(FailoverMsg::Refused { epoch: 2 }));
 }
+
+/// A request from node 2 that confirmed node 1's lease just now, as a
+/// standby that hears its partner yield asks.
+fn fresh_request(seq: u64) -> FailoverMsg {
+    FailoverMsg::Request {
+        seq,
+        resume: false,
+        epoch: 1,
+        confirmed_ago_ms: 0,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn Witness____primary_released_its_lease____partner_granted_at_once() {
+    tokio::time::advance(Duration::from_secs(10)).await;
+    let mut witness = Witness::start(config(None));
+    answer(&mut witness, 1, FailoverMsg::Renew { seq: 1, epoch: 1 });
+
+    let before = answer(&mut witness, 2, fresh_request(5));
+    let released = answer(&mut witness, 1, FailoverMsg::Release { epoch: 1 });
+    let after = answer(&mut witness, 2, fresh_request(6));
+
+    assert_eq!(before, Some(FailoverMsg::NotYet { wait_ms: 3_501 }));
+    assert_eq!(released, None);
+    assert_eq!(
+        after,
+        Some(FailoverMsg::Granted {
+            seq: 6,
+            epoch: 2,
+            outdated: false
+        })
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn Witness____release_from_the_partner_or_a_stale_epoch____ignored() {
+    tokio::time::advance(Duration::from_secs(10)).await;
+    let mut witness = Witness::start(config(Some((3, 1))));
+
+    answer(&mut witness, 2, FailoverMsg::Release { epoch: 3 });
+    answer(&mut witness, 1, FailoverMsg::Release { epoch: 2 });
+    let asked = answer(
+        &mut witness,
+        2,
+        FailoverMsg::Request {
+            seq: 5,
+            resume: false,
+            epoch: 3,
+            confirmed_ago_ms: 0,
+        },
+    );
+
+    assert!(!witness.released);
+    assert!(
+        matches!(asked, Some(FailoverMsg::NotYet { .. })),
+        "{asked:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn Witness____released_then_resumed____the_grant_clears_the_release() {
+    tokio::time::advance(Duration::from_secs(10)).await;
+    let mut witness = Witness::start(config(None));
+    answer(&mut witness, 1, FailoverMsg::Release { epoch: 1 });
+
+    let resumed = answer(
+        &mut witness,
+        1,
+        FailoverMsg::Request {
+            seq: 7,
+            resume: true,
+            epoch: 1,
+            confirmed_ago_ms: 5_000,
+        },
+    );
+    let partner = answer(&mut witness, 2, fresh_request(8));
+
+    assert_eq!(
+        resumed,
+        Some(FailoverMsg::Granted {
+            seq: 7,
+            epoch: 1,
+            outdated: false
+        })
+    );
+    assert!(
+        matches!(partner, Some(FailoverMsg::NotYet { .. })),
+        "{partner:?}"
+    );
+}

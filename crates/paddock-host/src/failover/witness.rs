@@ -33,6 +33,11 @@ pub(super) struct Witness {
     pub(super) outdated: bool,
     /// The last renewal the witness granted each node.
     pub(super) renewed: HashMap<u32, Instant>,
+    /// `promoted` stepped down at `epoch` in a planned switchover and gave
+    /// up its lease (`Release`, ROADMAP L1): its partner's request need not
+    /// wait the lease out. Cleared by every grant; kept in memory only, so
+    /// a restarted witness waits as before.
+    pub(super) released: bool,
     /// A change decided and being kept on disk.
     keeping: bool,
 }
@@ -104,6 +109,7 @@ impl Witness {
             promoted: state.promoted,
             outdated: state.outdated,
             renewed,
+            released: false,
             keeping: false,
         }
     }
@@ -149,13 +155,17 @@ impl Witness {
                     return answer(FailoverMsg::Refused { epoch: self.epoch });
                 }
                 // The partner's lease is gone by the witness's record of
-                // renewals and by the requester's last confirmation (R3).
+                // renewals and by the requester's last confirmation (R3),
+                // or at once if the partner released it (R14).
                 let confirmed = now
                     .checked_sub(Duration::from_millis(confirmed_ago_ms))
                     .unwrap_or(now);
                 let mut gone_at = confirmed + hold;
                 if let Some(renewed) = self.renewed.get(&partner) {
                     gone_at = gone_at.max(*renewed + hold);
+                }
+                if self.released && !resume && partner == self.promoted {
+                    gone_at = now;
                 }
                 if now < gone_at {
                     let wait = gone_at.duration_since(now);
@@ -181,6 +191,15 @@ impl Witness {
                         outdated: false,
                     }
                 }))
+            }
+            FailoverMsg::Release { epoch } => {
+                // Only the node promoted at the witness's epoch (R14). In
+                // order behind its renewals and before any later request of
+                // its own, on the one connection between them.
+                if epoch == self.epoch && from == self.promoted {
+                    self.released = true;
+                }
+                None
             }
             FailoverMsg::Record {
                 seq,
@@ -209,6 +228,7 @@ impl Witness {
     /// Apply `grant`, now kept on disk, and return the answer to send.
     pub(super) fn apply(&mut self, grant: Grant) -> FailoverMsg {
         self.keeping = false;
+        self.released = false;
         self.epoch = grant.epoch;
         self.promoted = grant.promoted;
         self.outdated = grant.outdated;

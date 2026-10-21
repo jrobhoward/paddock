@@ -15,7 +15,7 @@ The method follows HAppliance's (`HAppliance/docs/tla/VERIFICATION.md`): layered
 
 Layer 2 keeps every time as an age or a countdown, capped where larger values change nothing, so its state space is finite. It runs in rounds: each tick has phases (faults, delivery of every frame due in a fixed link order, one node's turn and then the other's, either node first), and in its turn a node may beat, step, both in either order, or neither. A frame sent in one round arrives in the next unless its link holds or loses it. The rounds keep the interleavings that change the outcome (which node acts first, beat before or after step, skipped beats) and drop those that only reorder independent deliveries within a tick; the Rust simulation (`crates/paddock-host/tests/simulation/failover.rs`) runs on real interleavings and covers what rounds drop.
 
-Layer 2 has four design switches, so that each fix or change can be checked on its own:
+Layer 2 has six design switches, so that each fix or change can be checked on its own:
 
 | Switch | `FALSE` (the code before the fix) | `TRUE` (the code now) |
 | --- | --- | --- |
@@ -23,6 +23,8 @@ Layer 2 has four design switches, so that each fix or change can be checked on i
 | `ConfirmOnSend` | the standby refreshes its "last confirmed" time on each step that hears its partner | the time is when its beats stop confirming, recorded before any request leaves |
 | `PersistEpoch` | a restarted node comes back at epoch 0 | it keeps its epoch |
 | `ForgetRenewals` | the witness's renewal record survives its crashes | a restarted witness counts the node it promoted as renewed at the restart, and has no record of the other |
+| `FastHandover` | a yielding primary only steps down, and the witness waits its lease out | it also sends `release`, and the witness grants its partner at once (L1, R14) |
+| `ReleaseClears` | a grant leaves the witness's record of a release | every grant clears it (only `FALSE` to show it must) |
 
 ## Results
 
@@ -141,6 +143,27 @@ V2's exhaustive two-fault runs had `Lease = 3`, at which no lease was positive (
 
 The two configurations that failed were run again without operator confirmations, so that the known path could not hide another. Both passed, and the switchover configurations' simulations (2026-10-15, above) already ran at `Lease = 4`. Exhaustive two-fault runs at `Lease = 4` (days each) have not been run.
 
+### Releasing the lease in a switchover (L1, 2026-10-20)
+
+With `FastHandover = TRUE` and `ReleaseClears = TRUE`, as in the code since L1; every other switch as in the code, `Lease = 4`, `Margin = 1`, `MaxEpoch = 3`. The variable `sinceSwitch` (ticks since the switchover) serves `NoFastHandover`: the other node runs the singleton within `Hold` ticks of a switchover. Threadripper 1950X; logs in `~/tla-runs/l1-2026-10-20`.
+
+| Config | Faults | Invariant | Distinct states | Depth | Time | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| `L2_Switchover_Slow` | none; `FastHandover = FALSE` | `NoFastHandover` | 6,476,861 | | 1 min (4 workers) | holds: before L1 no handover came within `Hold` |
+| `L2_Switchover_Fast_Reach` | none | `NoFastHandover` | 407,950 (stopped) | | 9 s | violated, as it must be: B runs 3 ticks after the switchover (`Hold` = 5) |
+| `L2_Switchover_Fast_NoClear` | as `L2_Switchover_Crashes`; `ReleaseClears = FALSE` | `AtMostOneRunning` | simulation | | 3 s | violated, as it must be: a release kept past B's grant lets A be granted at once while B runs |
+| `L2_Switchover_Fast_NoSerial1` | as `L2_NoSerial1` | `AtMostOneRunning`, `AtMostOnePrimaryPerEpoch` | 321,465,461 | 355 | 55 min (4 workers) | pass |
+| `L2_Switchover_Fast_Crashes1` | as `L2_Crashes_Fixed1` | `AtMostOneRunning`, `AtMostOnePrimaryPerEpoch` | 2,092,443,367 | 425 | 4 h 8 min (8 workers, beside the others) | pass |
+
+Random simulation, 30 minutes each (traces up to 400 steps, `-deadlock`, 2 workers each, beside the exhaustive run), no violation:
+
+| Config | Faults | States checked | Traces |
+| --- | --- | --- | --- |
+| `L2_Switchover_Fast_Crashes` | up to two crashes, witness crashes or lost links, and one switchover | 159,086,820 | 284,803 |
+| `L2_Switchover_Fast_Links` | up to three LAN, serial or WAN faults, held or lost, and one switchover | 162,070,734 | 266,524 |
+
+The model's links deliver in order (A4), which is what lets the witness take a release without a number: a release reaches it behind the sender's renewals and ahead of any later request of the sender's, and a grant, a resume included, clears it. The transport keeps frames between two nodes in order on their one connection, and a connection replaced loses its frames rather than reordering them. `L2_Switchover_Fast_Links_holds1` (one held or lost link, exhaustive) was not run.
+
 ## Bugs found
 
 ### 1. A standby's confirmation time could precede its last confirming beat (L2)
@@ -206,6 +229,7 @@ From layer 2:
 | R10 | The witness's epoch and last promotion survive its crashes; its renewal record does not (`ForgetRenewals`) | Kept on disk and synced before a grant is answered | The epoch and promoted node (and R13's record): `data_dir/witness-state`, synced before a grant or a change to the record is answered (`serve_witness_kept`). The renewal record is not kept: a restarted witness counts its promoted node as renewed at the restart (`witness::Witness::start`), which is never earlier than the true record |
 | R11 | Every frame a witness answers was sent at most `Delay` before (on an up link) | Over one lease, clock drift plus the time to stop a singleton once its lease ends stays below twice the margin. Message delay is not part of it: a lease runs from when its renewal, echoed stamp or granted request was sent (requests are numbered, and `Granted` names the one it answers), and the witness counts from when it received, so a delay only makes it wait longer | Deployment: margin 500 ms by default, a 1 s budget; stopping takes an epoch tick of guest code (2 ms by default) and a host call in flight (A8), and clock drift over a 3 s lease is microseconds |
 | R12 | `Switchover`: only a primary with a lease that hears a confirming standby yields; it stops its singleton and steps down at once, and asks to resume only `Lease + Hold` later; a standby that hears a yield and no primary asks at once and does not stand down; the witness is unchanged | A primary hands over only with a witness arbiter, not overridden, and a live path showing its partner a confirming standby; it stops its singletons gracefully before stepping down, which is within its lease; its `Down` carries `yielding` in the beat's flags and retries no sooner than two leases and a margin; a standby hearing `Down` and yielding with no primary on any path asks and does not stand down | `node::Node::switchover`, `node::Primary::switchover`, `node::Standby::step`, `gate::Gate::hand_over` |
+| R14 | `FastHandover` (ROADMAP L1): a primary yielding in `Switchover` sends `release` at its epoch to the witness, in the same step as it steps down; the witness records it only from the node it last promoted at its epoch, grants that node's partner a request without waiting for the lease (not a resume), clears the record with every grant (`ReleaseClears`), and forgets it when it crashes; frames on a link arrive in order (A4) | `Release` is sent only after the step down is published (singletons, lease-bound instances and `primary_only` devices have stopped), on the one connection to the witness, behind the node's renewals and ahead of any later request; the witness takes it only from its promoted node at its epoch, keeps it in memory only, and clears it in `apply` with every grant; a request from that node's partner, not a resume, is granted at once while it stands (the out-of-date record, R13, still refuses) | `node::run`, `witness::Witness::handle`, `witness::Witness::apply` |
 
 From spike S20 (replication within the pair, `spikes/s20`), for replicated buckets:
 

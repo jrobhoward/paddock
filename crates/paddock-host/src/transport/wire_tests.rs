@@ -53,6 +53,7 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
             seq: 5,
             outdated: false,
         }),
+        Frame::Failover(FailoverMsg::Release { epoch: 8 }),
         Frame::Cast {
             from: Some(pid(1)),
             sender: Some(crate::acl::Stamp {

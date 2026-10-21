@@ -92,5 +92,10 @@ bucket polled by the primary alone and `control`'s buckets `replicated`:
   M1): at the switchover `control` handed its state over (263 bytes) and
   started on node 2 from it, not from `init`; the gaps and failures were
   as above (3,069 and 3,058 ms; 28 alarm requests failed on each node).
+- With the lease released at the witness in a switchover (ROADMAP L1),
+  run the same night: the switchover's longest point gap fell to 572 ms
+  on node 1 and 571 ms on node 2, and 6 and 5 alarm requests failed,
+  against about 3 s and 28. The failover (the primary killed) is
+  unchanged at 3.6 s: it still waits the node timeout and the lease.
 
 X2 turns these into pass or fail criteria.

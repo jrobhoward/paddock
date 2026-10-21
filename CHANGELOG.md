@@ -591,6 +591,12 @@ All notable changes are recorded here. The format follows
   `cluster` one) starts on a new primary only once that node's copy holds
   every committed write (`ReplicationStatus::ready`,
   `Runtime::replication_updates`), logging `singleton waiting` meanwhile.
+- A planned switchover hands over in a few heartbeats instead of about a
+  lease (ROADMAP L1): the old primary releases its lease at the witness
+  once it has stepped down (`FailoverMsg::Release`), and the witness
+  grants the standby at once (rule R14 in `docs/tla/VERIFICATION.md`).
+  Wire protocol version 7, the only one spoken: the witness and both nodes
+  are upgraded together.
 - Singletons move with their state in a planned switchover (ROADMAP M1):
   on a pair with `[failover] replication = true`, a singleton in
   `snapshot` upgrade mode writes its snapshot to the replicated log

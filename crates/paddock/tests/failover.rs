@@ -426,9 +426,11 @@ async fn switchover____on_the_primary____standby_runs_the_singleton_old_primary_
     assert_eq!(common::kind(&on_standby.unwrap_err()), "conflict");
     assert!(still_runs, "a refused switchover stops nothing");
     assert!(handed.is_ok(), "{handed:?}");
-    // lease + 2 margins + beats = 1 s + 0.4 s + a few 100 ms beats; a
+    // Node 1 releases its lease at the witness (R14), so node 2 is granted
+    // within a few 100 ms beats, under the 1.2 s lease and margin the
+    // witness would otherwise wait (about 200 ms on 2026-10-20); a
     // takeover after a crash also waits the 1 s node timeout.
-    assert!(took < Duration::from_millis(2_500), "{took:?}");
+    assert!(took < Duration::from_millis(800), "{took:?}");
     assert_eq!((n1_now.epoch, n1_now.may_run), (2, false));
     assert!(
         log.contains("singleton stopped: planned switchover"),

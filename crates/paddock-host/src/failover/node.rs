@@ -877,6 +877,9 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        // A planned switchover's `Release`, sent once the step down is
+        // published (R14).
+        let mut release = None;
         let now = Instant::now();
         // Wake when the lease runs out, so singletons stop on time (R6).
         let lease_end = node.state.lease_end().filter(|t| *t > now);
@@ -890,7 +893,12 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
             () = confirm.notified() => node.confirm(),
             Some(ask) = switchovers.recv() => {
                 let Some(rt) = node.ctx.rt.upgrade() else { return };
-                let _ = ask.reply.send(node.switchover(&*rt, Instant::now(), ask.check_only));
+                let epoch = node.state.epoch();
+                let done = node.switchover(&*rt, Instant::now(), ask.check_only);
+                if done.is_ok() && !ask.check_only {
+                    release = Some(epoch);
+                }
+                let _ = ask.reply.send(done);
             }
             Some(ask) = records.recv() => {
                 let Some(rt) = node.ctx.rt.upgrade() else { return };
@@ -908,6 +916,9 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
             return;
         };
         node.publish(&rt, Instant::now());
+        if let (Some(epoch), Arbiter::Witness(witness)) = (release, node.ctx.cfg.arbiter) {
+            rt.send(witness, FailoverMsg::Release { epoch });
+        }
     }
 }
 

@@ -20,14 +20,16 @@ use super::Packet;
 /// calls an app on another node by name (`AppCall`, for requests a
 /// standby's ingress forwards); version 6 replicates buckets between an HA
 /// pair (`Replication`) and carries the witness's record of a partner out
-/// of date (`Record`, `Recorded`, and `Granted`'s `outdated`).
-pub const VERSION: u16 = 6;
+/// of date (`Record`, `Recorded`, and `Granted`'s `outdated`); version 7
+/// lets a primary yielding in a planned switchover release its lease at
+/// the witness (`Release`).
+pub const VERSION: u16 = 7;
 
-/// The oldest protocol version this node reads. A version 5 node cannot
-/// read `Replication`, `Record` or a `Granted` with `outdated`, and a node
-/// does not track which version each peer agreed, so version 5 is not
-/// spoken.
-pub const MIN_VERSION: u16 = 6;
+/// The oldest protocol version this node reads. A version 6 node cannot
+/// read `Release` (it closes the connection on a frame it cannot decode),
+/// and a node does not track which version each peer agreed, so version 6
+/// is not spoken.
+pub const MIN_VERSION: u16 = 7;
 
 /// The first message each side of a connection sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,6 +304,9 @@ pub(crate) mod failover {
             seq: u64,
             outdated: bool,
         },
+        Release {
+            epoch: u64,
+        },
     }
 
     pub(crate) fn serialize<S: Serializer>(m: &FailoverMsg, s: S) -> Result<S::Ok, S::Error> {
@@ -341,6 +346,7 @@ pub(crate) mod failover {
                 outdated,
             },
             FailoverMsg::Recorded { seq, outdated } => Wire::Recorded { seq, outdated },
+            FailoverMsg::Release { epoch } => Wire::Release { epoch },
         };
         wire.serialize(s)
     }
@@ -382,6 +388,7 @@ pub(crate) mod failover {
                 outdated,
             },
             Wire::Recorded { seq, outdated } => FailoverMsg::Recorded { seq, outdated },
+            Wire::Release { epoch } => FailoverMsg::Release { epoch },
         })
     }
 }

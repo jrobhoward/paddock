@@ -298,6 +298,14 @@ pub enum FailoverMsg {
         /// The record now.
         outdated: bool,
     },
+    /// The sender, the node promoted at `epoch`, has stepped down for a
+    /// planned switchover and given up its lease: its partner may be
+    /// granted without waiting the lease out (ROADMAP L1). No answer; lost,
+    /// the witness waits as before.
+    Release {
+        /// The sender's epoch.
+        epoch: u64,
+    },
 }
 
 /// A node's failover, once started: its leadership, and an operator's
