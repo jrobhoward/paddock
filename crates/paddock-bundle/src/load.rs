@@ -206,6 +206,19 @@ impl VerifiedBundle {
         })
     }
 
+    /// The app name and version a bundle's manifest names, read without
+    /// verifying its signature or contents: for planning a rollout only,
+    /// before a node opens and verifies it.
+    ///
+    /// # Errors
+    ///
+    /// The [`BundleError`] of a file that is not a bundle.
+    pub fn unverified_identity(path: impl AsRef<Path>) -> Result<(String, String), BundleError> {
+        let loader = BundleLoader::open(path)?;
+        let rb = loader.manifest();
+        Ok((rb.plugin.name.clone(), rb.plugin.version.clone()))
+    }
+
     /// Write the `priv/` files under `dir`, creating directories as needed.
     ///
     /// # Errors

@@ -5,4 +5,5 @@ pub(crate) mod bundle;
 pub(crate) mod cluster;
 pub(crate) mod contacts;
 pub(crate) mod format;
+pub(crate) mod release;
 pub(crate) mod shell;

@@ -1063,3 +1063,183 @@ async fn release_finalize____replicating_pair____both_nodes_keep_this_version() 
         p.child.kill().await.unwrap();
     }
 }
+
+/// The counter fixture as a singleton in `snapshot` upgrade mode at
+/// `version`, built from fixture `build`, accepting snapshots from `from`.
+fn counter_singleton(
+    signer: &minisign::KeyPair,
+    version: &str,
+    build: u8,
+    from: Option<&str>,
+) -> Vec<u8> {
+    let mut manifest = common::counter_manifest(from);
+    manifest["placement"] = serde_json::json!({ "mode": "singleton" });
+    bundle(
+        signer,
+        "tally",
+        version,
+        &common::counter(build),
+        manifest,
+        &[],
+    )
+}
+
+/// `paddock release <action> ... --pair <pair> --json`, and its report.
+async fn release(args: &[&str], pair: &Path) -> (bool, serde_json::Value) {
+    let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+        .arg("--json")
+        .arg("release")
+        .args(args)
+        .arg("--pair")
+        .arg(pair)
+        .output()
+        .await
+        .unwrap();
+    let report = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "{e}: {}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    (out.status.success(), report)
+}
+
+/// A release across the pair (ROADMAP U1): `release upgrade` moves the
+/// standby, then the primary in place, keeping the singleton's state;
+/// `release rollback` returns both; a version whose `load-snapshot` fails
+/// is refused on the primary, and the standby already upgraded is rolled
+/// back, so both nodes end where they started.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn release_upgrade____singleton_on_a_pair____standby_then_primary_and_aborted_when_refused() {
+    let dir = tempfile::Builder::new()
+        .prefix("pru")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let replicating = |n: u32, a: &str| {
+        format!(
+            "{}replication = true\n",
+            member(n, dir.path(), &peers, a, &a3)
+        )
+    };
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &replicating(1, &a1)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &replicating(2, &a2)).await;
+    for n in [&n1, &n2] {
+        n.client
+            .deploy(counter_singleton(&signer, "1.0.0", 1, None))
+            .await
+            .unwrap();
+    }
+    let runs = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move {
+            c.status("tally")
+                .await
+                .is_ok_and(|d| d.summary.status == "running")
+        }
+    };
+    let role = |c: &paddock::api::Client, r: &'static str| {
+        let c = c.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == r) }
+    };
+    until("node 1 runs the singleton", || runs(&n1.client)).await;
+    until("node 2 standby", || role(&n2.client, "standby")).await;
+    for _ in 0..3 {
+        call_text(&n1.client, "tally", "inc").await;
+    }
+    let pair = dir.path().join("pair.toml");
+    std::fs::write(
+        &pair,
+        format!(
+            "[[node]]\nid = 1\nsocket = {:?}\n\n[[node]]\nid = 2\nsocket = {:?}\n",
+            dir.path().join("n1.sock"),
+            dir.path().join("n2.sock")
+        ),
+    )
+    .unwrap();
+    let v2 = dir.path().join("v2.rbp");
+    std::fs::write(&v2, counter_singleton(&signer, "2.0.0", 2, Some("^1"))).unwrap();
+    let v3 = dir.path().join("v3.rbp");
+    std::fs::write(&v3, counter_singleton(&signer, "3.0.0", 3, Some("^1"))).unwrap();
+    let versions = || async {
+        let mut out = Vec::new();
+        for n in [&n1, &n2] {
+            let d = n.client.status("tally").await.unwrap();
+            out.push((d.summary.version, d.summary.status));
+        }
+        out
+    };
+
+    let (up_ok, up) = release(&["upgrade", "tally", v2.to_str().unwrap()], &pair).await;
+    let upgraded = versions().await;
+    let kept = call_text(&n1.client, "tally", "get").await;
+    let (again_ok, again) = release(&["upgrade", "tally", v2.to_str().unwrap()], &pair).await;
+    let (back_ok, back) = release(&["rollback", "tally"], &pair).await;
+    let rolled_back = versions().await;
+    let (bad_ok, bad) = release(&["upgrade", "tally", v3.to_str().unwrap()], &pair).await;
+    let after_bad = versions().await;
+
+    assert!(up_ok, "{up}");
+    let steps: Vec<&str> = up["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .collect();
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert!(
+        steps[0].starts_with("node 2 (standby): upgraded tally 1.0.0 -> 2.0.0"),
+        "{steps:?}"
+    );
+    assert!(
+        steps[1].starts_with("node 1 (primary): upgraded tally 1.0.0 -> 2.0.0 (snapshot)"),
+        "{steps:?}"
+    );
+    assert_eq!(
+        upgraded,
+        [
+            ("2.0.0".to_string(), "running".to_string()),
+            ("2.0.0".to_string(), "standby".to_string())
+        ]
+    );
+    assert_eq!(kept, "2.0.0 count=3 history=");
+    assert!(
+        again_ok && again["steps"].as_array().unwrap().is_empty(),
+        "{again}"
+    );
+    assert!(back_ok, "{back}");
+    assert_eq!(back["to"], "1.0.0");
+    assert_eq!(
+        rolled_back.iter().map(|v| v.0.as_str()).collect::<Vec<_>>(),
+        ["1.0.0", "1.0.0"]
+    );
+    assert!(!bad_ok, "{bad}");
+    assert_eq!(bad["outcome"], "aborted", "{bad}");
+    let reason = bad["reason"].as_str().unwrap();
+    assert!(
+        reason.starts_with("node 1 (primary): upgrade refused"),
+        "{reason}"
+    );
+    let bad_steps = bad["steps"].as_array().unwrap();
+    assert_eq!(bad_steps.len(), 2, "{bad}");
+    assert!(
+        bad_steps[1]
+            .as_str()
+            .unwrap()
+            .starts_with("node 2: rolled back tally 3.0.0 -> 1.0.0"),
+        "{bad}"
+    );
+    assert_eq!(
+        after_bad.iter().map(|v| v.0.as_str()).collect::<Vec<_>>(),
+        ["1.0.0", "1.0.0"]
+    );
+    for p in [&mut n1, &mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
+}

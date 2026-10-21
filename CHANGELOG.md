@@ -619,6 +619,15 @@ All notable changes are recorded here. The format follows
   log or a snapshot (rolled back while cut off from the raise), stops
   replicating (`Runtime::formats_outrun`), and `paddock node` shuts down
   with an error.
+- `paddock release upgrade <app> <bundle> --pair <file>` and `paddock
+  release rollback <app> --pair <file>` (ROADMAP U1): an app's release
+  across an HA pair, driven over each node's admin socket or remote admin
+  API as a pair file lists them. The standby first, then the primary in
+  place, with a gate after each step; a refused step or failed gate rolls
+  back what the run changed (`--no-abort` leaves it), and a run stopped by
+  a node out of reach continues when run again.
+  `VerifiedBundle::unverified_identity` reads a bundle's name and version
+  without verifying it.
 - Singletons move with their state in a planned switchover (ROADMAP M1):
   on a pair with `[failover] replication = true`, a singleton in
   `snapshot` upgrade mode writes its snapshot to the replicated log

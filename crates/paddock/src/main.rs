@@ -121,6 +121,44 @@ enum ReleaseCommand {
     /// can be rolled back past it. Refused unless replication runs and the
     /// partner and the witness are connected at this build's version.
     Finalize,
+    /// Upgrade an app on both nodes of an HA pair: the standby, then the
+    /// primary, each in place (running instances move by snapshot and are
+    /// reverted if the new version cannot load it), with a gate after each
+    /// that waits for the app to run at the new version. A failed step or
+    /// gate rolls back what the run changed. Run again after a stop (a node
+    /// out of reach, roles changed) to continue where it stopped.
+    Upgrade {
+        /// App name.
+        app: String,
+        /// The new version's `.rbp` file.
+        bundle: PathBuf,
+        /// The pair file: each node's id and admin socket, or remote admin
+        /// address and public key (with --key for the operator's key).
+        #[arg(long)]
+        pair: PathBuf,
+        #[command(flatten)]
+        rollout: Rollout,
+        /// Leave what was changed as it is when a step or gate fails.
+        #[arg(long)]
+        no_abort: bool,
+        /// How long each gate waits, in seconds.
+        #[arg(long, default_value_t = 60)]
+        timeout_s: u64,
+    },
+    /// Roll an app back on both nodes of an HA pair to the version before:
+    /// the standby, then the primary, as for an upgrade.
+    Rollback {
+        /// App name.
+        app: String,
+        /// The pair file, as for `release upgrade`.
+        #[arg(long)]
+        pair: PathBuf,
+        #[command(flatten)]
+        rollout: Rollout,
+        /// How long each gate waits, in seconds.
+        #[arg(long, default_value_t = 60)]
+        timeout_s: u64,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -352,9 +390,95 @@ fn main() -> anyhow::Result<()> {
         .build()
         .context("cannot start the async runtime")?
         .block_on(async {
+            if let Command::Release {
+                action: Some(action @ (ReleaseCommand::Upgrade { .. } | ReleaseCommand::Rollback { .. })),
+            } = &args.command
+            {
+                return release_pair(&args, action).await;
+            }
             let client = client(&args)?;
             run(&client, args.json, args.command).await
         })
+}
+
+/// `paddock release upgrade` and `release rollback`, across the nodes of a
+/// pair file.
+async fn release_pair(args: &Cli, action: &ReleaseCommand) -> anyhow::Result<()> {
+    use cli::release::{self, Member, Options, PairFile};
+
+    let (pair, rollout, timeout_s, abort) = match action {
+        ReleaseCommand::Upgrade {
+            pair,
+            rollout,
+            timeout_s,
+            no_abort,
+            ..
+        } => (pair, rollout, *timeout_s, !*no_abort),
+        ReleaseCommand::Rollback {
+            pair,
+            rollout,
+            timeout_s,
+            ..
+        } => (pair, rollout, *timeout_s, false),
+        ReleaseCommand::Finalize => unreachable!("sent to one node"),
+    };
+    let file = PairFile::read(pair)?;
+    let member = |i: usize| -> anyhow::Result<Member> {
+        let n = &file.node[i];
+        Ok(Member {
+            id: n.id,
+            client: pair_client(args, n)?,
+        })
+    };
+    let members = [member(0)?, member(1)?];
+    let opts = Options {
+        params: rollout.params(),
+        abort,
+        timeout: Duration::from_secs(timeout_s),
+    };
+    let report = match action {
+        ReleaseCommand::Upgrade { app, bundle, .. } => {
+            let (name, version) = paddock_bundle::VerifiedBundle::unverified_identity(bundle)
+                .with_context(|| format!("cannot read {}", bundle.display()))?;
+            if name != *app {
+                anyhow::bail!("{} is a bundle of {name}, not {app}", bundle.display());
+            }
+            let bytes = read(bundle).await?;
+            release::upgrade(&members, app, &bytes, &version, &opts).await
+        }
+        ReleaseCommand::Rollback { app, .. } => release::rollback(&members, app, &opts).await,
+        ReleaseCommand::Finalize => unreachable!("sent to one node"),
+    };
+    print(args.json, &report, release::Report::text)?;
+    if !report.ok() {
+        anyhow::bail!("release {}", report.outcome);
+    }
+    Ok(())
+}
+
+/// The admin client for a node of a pair file.
+fn pair_client(args: &Cli, n: &cli::release::PairNode) -> anyhow::Result<Client> {
+    if let Some(socket) = &n.socket {
+        return Ok(Client::new(socket));
+    }
+    let (Some(address), Some(node_key)) = (&n.address, &n.key) else {
+        anyhow::bail!("node {}: no socket and no address", n.id);
+    };
+    #[cfg(feature = "tls")]
+    {
+        let key = args.key.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "node {}: a remote node needs the operator's key (--key)",
+                n.id
+            )
+        })?;
+        remote_client(address, node_key, key)
+    }
+    #[cfg(not(feature = "tls"))]
+    {
+        let _ = args;
+        remote_client(address, node_key, std::path::Path::new(""))
+    }
 }
 
 /// The admin API client the options ask for: the socket, or the remote
@@ -657,6 +781,7 @@ async fn run_runtime(client: &Client, json: bool, command: Command) -> anyhow::R
         Command::Release {
             action: Some(ReleaseCommand::Finalize),
         } => done(json, client.finalize_release().await),
+        Command::Release { action: Some(_) } => unreachable!("run across the pair file"),
         Command::State { pid } => print(json, &client.state(&pid).await?, format::state),
         Command::Cast { message } => {
             let (target, content_type, body) = message.into_parts()?;
