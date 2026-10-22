@@ -306,10 +306,12 @@ impl Watch {
     }
 
     /// Lines until one has `role`; that one.
-    async fn until_role(&mut self, role: &str) -> serde_json::Value {
+    /// The next line with `role` and `may_run`. A promoted node's first
+    /// `primary` line can come before its lease lets it run singletons.
+    async fn until_standing(&mut self, role: &str, may_run: bool) -> serde_json::Value {
         loop {
             let line = self.next().await;
-            if line["role"] == role {
+            if line["role"] == role && line["may_run"] == may_run {
                 return line;
             }
         }
@@ -342,7 +344,7 @@ async fn failover_watch____promotion_node_loss_and_return____a_line_each() {
 
     let first = watch.next().await;
     n1.child.kill().await.unwrap();
-    let promoted = watch.until_role("primary").await;
+    let promoted = watch.until_standing("primary", true).await;
     n2.child.kill().await.unwrap();
     let lost = watch.next().await;
     n2 = Process::start(dir.path(), 2, &pk, &member(2, dir.path(), &peers, &a2, &a3)).await;
@@ -350,7 +352,6 @@ async fn failover_watch____promotion_node_loss_and_return____a_line_each() {
 
     assert_eq!(first["role"], "standby");
     assert_eq!(first["may_run"], false);
-    assert_eq!(promoted["may_run"], true);
     assert!(promoted["epoch"].as_u64().unwrap() >= 2, "{promoted}");
     assert_eq!(
         lost,
