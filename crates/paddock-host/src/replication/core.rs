@@ -219,8 +219,22 @@ struct Primary {
     /// waits for the resend timer instead of resending at once, so a
     /// standby that cannot match never spins the pair.
     last_nack: Option<u64>,
-    /// Entries wait for the resend timer.
+    /// Entries wait for the resend timer, or an ack that moves `matched`.
     held: bool,
+}
+
+impl Primary {
+    /// The first entry the partner is not known to hold: past the last
+    /// ack; with none yet in this epoch, where the last nack put `next`,
+    /// or this epoch's no-op. A resend starts here, and the window counts
+    /// from here.
+    fn unacked(&self) -> u64 {
+        if self.matched > 0 {
+            self.matched + 1
+        } else {
+            self.last_nack.unwrap_or(self.noop)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -433,10 +447,12 @@ impl Replica {
         let commit = self.log.commit();
         let epoch = self.epoch;
         if let Role::Primary(p) = &mut self.role {
-            // `Retransmit` (R6).
+            // `Retransmit` (R6), from the first entry not known to be held,
+            // not from the start of the log.
             if now.duration_since(p.progress_at) >= self.cfg.resend_after {
-                if p.next > p.matched + 1 {
-                    p.next = p.matched + 1;
+                let from = p.unacked();
+                if p.next > from {
+                    p.next = from;
                 }
                 if let Some(s) = &mut p.sending {
                     s.sent_at = None;
@@ -671,7 +687,10 @@ impl Replica {
             if matched > p.matched {
                 p.progress_at = now;
                 p.acked_at = Some(now);
+                // The partner matches again: the nacks of appends that
+                // were in flight behind a gap no longer hold the next.
                 p.last_nack = None;
+                p.held = false;
             }
             p.matched = p.matched.max(matched);
             p.next = p.next.max(p.matched + 1);
@@ -819,7 +838,7 @@ impl Replica {
             }
             return Ok(());
         }
-        while !p.held && p.next <= last && p.next <= p.matched + self.cfg.window {
+        while !p.held && p.next <= last && p.next < p.unacked() + self.cfg.window {
             let prev = p.next - 1;
             let entries = self
                 .log

@@ -15,10 +15,11 @@ clap = { workspace = true }
 paddock = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+rstest = { workspace = true }
 tempfile = { workspace = true }

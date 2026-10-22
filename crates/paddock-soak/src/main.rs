@@ -10,6 +10,10 @@
 //!   pair, written through both nodes by the ledger example; after each
 //!   heal both copies must agree and hold every acknowledged write
 //!   (ROADMAP K2).
+//! - `scada`: the failover cluster running the SCADA example against fake
+//!   Modbus devices, probed over HTTP on both nodes; between fault
+//!   episodes, releases of `control` across the pair and planned
+//!   switchovers, which must not interrupt the point table (ROADMAP X2).
 //! - `cluster`: three member nodes behind the same proxies, their instances
 //!   linking and monitoring each other at random under link and node
 //!   faults; after each heal every link and monitor must be listed on both

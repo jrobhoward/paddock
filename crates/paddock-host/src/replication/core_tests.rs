@@ -255,6 +255,27 @@ async fn append____lost____resent_after_the_timeout() {
     assert_eq!(pair.replies, [(7, Ok(Outcome::Done))]);
 }
 
+/// The standby missed an entry, so each append in flight behind it is
+/// refused at the same place; once the resent entries are acknowledged,
+/// the next write is sent at once, not after the resend timeout (found by
+/// the SCADA drill: a rejoining standby stalled the primary's writes for
+/// about the timeout).
+#[tokio::test(start_paused = true)]
+async fn append____refused_twice_then_acknowledged____next_write_sent_at_once() {
+    let mut pair = Pair::running();
+    pair.write(A, vec![set(7, "a", "1")]);
+    pair.drop_all();
+    pair.write(A, vec![set(8, "b", "2")]);
+    pair.write(A, vec![set(9, "c", "3")]);
+    pair.pump();
+
+    pair.write(A, vec![set(10, "d", "4")]);
+    pair.pump();
+
+    let answered: Vec<Waiter> = pair.replies.iter().map(|r| r.0).collect();
+    assert_eq!(answered, [7, 8, 9, 10]);
+}
+
 #[tokio::test(start_paused = true)]
 async fn primary____steps_down____waiting_writes_answered_unknown() {
     let mut pair = Pair::running();
@@ -459,4 +480,54 @@ async fn steady_writes____standby_back_but_always_a_write_behind____sync_again_a
         "back in sync with a write in flight"
     );
     assert_eq!(pair.records[A], [(1, true), (1, false)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_primary____first_append_dropped____resent_from_its_noop() {
+    let mut pair = Pair::running();
+    for waiter in 0..20 {
+        pair.write(A, vec![set(waiter, "k", "v")]);
+        pair.pump();
+    }
+    let noop = pair.nodes[B].log().last() + 1;
+    pair.lead(B, lead(Standing::Primary, 2, true));
+    pair.pump();
+    pair.lead(A, lead(Standing::Standby, 2, false));
+
+    tokio::time::advance(Duration::from_millis(600)).await;
+    pair.tick(B, true);
+    let resent: Vec<u64> = pair.inbox[A]
+        .iter()
+        .filter_map(|m| match m {
+            Msg::Append { prev, entries, .. } if !entries.is_empty() => Some(*prev + 1),
+            _ => None,
+        })
+        .collect();
+    pair.pump();
+
+    assert_eq!(resent, [noop]);
+    assert!(pair.nodes[B].read_ready());
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_primary____log_longer_than_the_window____noop_sent_at_once() {
+    let cfg = Config {
+        window: 4,
+        ..config()
+    };
+    let mut pair = Pair::new(cfg);
+    pair.lead(B, lead(Standing::Standby, 1, false));
+    pair.lead(A, lead(Standing::Primary, 1, true));
+    pair.pump();
+    for waiter in 0..10 {
+        pair.write(A, vec![set(waiter, "k", "v")]);
+        pair.pump();
+    }
+
+    pair.lead(A, lead(Standing::Standby, 2, false));
+    pair.lead(B, lead(Standing::Primary, 2, true));
+    pair.pump();
+
+    assert!(pair.nodes[B].read_ready());
+    assert_eq!(pair.nodes[A].log().last(), pair.nodes[B].log().last());
 }

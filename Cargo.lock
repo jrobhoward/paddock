@@ -2071,6 +2071,7 @@ dependencies = [
  "anyhow",
  "clap",
  "paddock",
+ "rstest",
  "serde",
  "serde_json",
  "tempfile",

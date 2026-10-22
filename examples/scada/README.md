@@ -116,8 +116,42 @@ the upgrades and the rollback run by `paddock release` across the pair
   requests failed 24 times, until it held the lease. The rerun after node
   2 came back upgraded node 2 alone, now the standby, and was done.
 - When node 2 rejoined, the point table stopped for about 570 ms on both
-  nodes, starting about 450 ms after the connection came back and before
-  the release ran. Not explained yet.
+  nodes, before the release ran: the primary held its replication sends
+  for the 500 ms resend timer after the standby caught up (CHANGELOG,
+  Fixed). With the fix, a standby killed and restarted on the same setup
+  left a longest gap of 115 ms on the primary at its return (685 ms
+  before). Killing the standby still stops the table for about 1.1 s, the
+  wait before the primary commits without it.
 - The acknowledged alarm stayed `acked` after every step.
 
-X2 turns these into pass or fail criteria.
+## Under faults: `paddock-soak scada`
+
+`paddock-soak scada` (`scripts/soak.sh --only scada`, ROADMAP X2) runs
+the same apps on the failover soak's pair and witness, behind proxies
+that cut, hold and drop the links, with nodes killed and stopped, and
+between episodes of faults releases `control` across the pair and
+switches over. Its pass rule: on planned steps no failed point read, no
+point gap of 1 s or more, and failed `control` requests only within a
+switchover's hand-over (1 s); after every heal one node runs `control`,
+the acknowledged alarm is `acked`, and the release converges. Under
+faults it records failed requests and gaps without judging them.
+
+On 2026-10-22 (same machine, idle), an hour with seed 2026 passed: 136
+windows, 79 of them planned, and 58 heals, with one node running
+`control` after each and no overlap.
+
+- The 45 switchovers left point gaps of 505 to 813 ms (627 ms on
+  average, taking the longer node of each), and `control`'s requests
+  failed for at most 713 ms.
+- The 34 releases failed no request; their longest point gap was 102 to
+  204 ms.
+- The primary lost in the middle of a release (ten times) stopped the
+  surviving node's point table for about 3.5 to 3.8 s and failed about 25
+  of its alarm requests, until it held the lease, as in X1's third run.
+- Under faults, 23,158 of 119,781 requests failed, and the longest point
+  gap was 31 s.
+
+The first hour, the day before, failed on switchovers: the hand-over grew
+from about 400 ms to past 1 s over the hour, with the replicated log.
+A new primary sent nothing while its log was longer than its send window
+and then resent the whole log (CHANGELOG, Fixed).

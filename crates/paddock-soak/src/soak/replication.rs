@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::events::{EventLog, What};
-use super::failover::{Args, Cluster, Setup};
+use super::failover::{Args, Cluster, Setup, SetupApp};
 use super::node::ADMIN_TIMEOUT;
 use super::rng::Rng;
 
@@ -98,13 +98,17 @@ fn problems(ledger: &Ledger, keys: [&BTreeSet<String>; 2]) -> Vec<String> {
 /// Run, and return whether the run passed.
 pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
     let events = Arc::new(EventLog::create(&args.dir.join("events.jsonl"))?);
+    let bucket = "[buckets.ledger]\ndurability = \"disk\"\nscope = \"cluster\"\n".to_string();
     let setup = Setup {
-        app: APP,
-        manifest: std::fs::read_to_string(args.root.join("examples/ledger/paddock.toml"))?,
-        wasm: args
-            .root
-            .join("target/wasm32-wasip2/release/example_ledger.wasm"),
-        pair_config: "[buckets.ledger]\ndurability = \"disk\"\nscope = \"cluster\"\n".into(),
+        apps: vec![SetupApp {
+            name: APP,
+            manifest: std::fs::read_to_string(args.root.join("examples/ledger/paddock.toml"))?,
+            wasm: args
+                .root
+                .join("target/wasm32-wasip2/release/example_ledger.wasm"),
+        }],
+        pair_config: [bucket.clone(), bucket],
+        failover_config: String::new(),
         policy: Some("[apps.ledger]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"ledger\"]\n".into()),
     };
     let deadline = Instant::now() + Duration::from_secs_f64(args.minutes * 60.0);

@@ -406,11 +406,13 @@ Send(n) ==
        /\ UNCHANGED <<foVars, netVars, witVars, dataVars, mode, match, acked, writes, faults,
                       switchovers>>
 
-\* No ack within its timeout: send again from the first index not acked.
-\* Without it, an Append or snapshot lost with the LAN is never resent.
+\* No ack within its timeout: send again from an index not yet acked, the
+\* first or a later one (a new primary with nothing acked resends from its
+\* no-op, not from 1; a nack moves it back further). Without it, an Append
+\* or snapshot lost with the LAN is never resent.
 Retransmit(n) ==
     /\ Leads(n) /\ next[n] > match[n] + 1
-    /\ next' = [next EXCEPT ![n] = match[n] + 1]
+    /\ \E i \in match[n] + 1 .. next[n] - 1 : next' = [next EXCEPT ![n] = i]
     /\ UNCHANGED <<foVars, netVars, witVars, dataVars, mode, match, q, acked, writes,
                    faults, switchovers>>
 

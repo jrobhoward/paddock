@@ -257,7 +257,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   acknowledged write, `cluster` three member nodes
   behind the same proxies whose `paddock-fixture-chaos` instances link and
   monitor each other at random, checked after each heal for agreement
-  between every node's `ps` links and monitors, `chaos` the chaos example on
+  between every node's `ps` links and monitors, `scada` the failover
+  cluster running `examples/scada` against fake devices with HTTP probes, between
+  fault episodes releasing `control` across the pair and switching over
+  (Phase 3's exit, ROADMAP X2), `chaos` the chaos example on
   one node, and `check` reads a failover run's events and node logs for
   any moment when both nodes ran the singleton. It reads the gate's
   `singleton starting`, `singleton killed` and `singleton stopped` log

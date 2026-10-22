@@ -117,18 +117,26 @@ impl Drop for SerialLine {
 /// The serial line's speed.
 const BAUD: u32 = 115_200;
 
-/// What the cluster runs: the app deployed to the pair, and what the
+/// What the cluster runs: the apps deployed to the pair, and what the
 /// pair's node configs and policy add.
 #[derive(Debug)]
 pub(crate) struct Setup {
-    /// The app's name, and its manifest and component.
-    pub app: &'static str,
+    /// The apps, deployed in this order.
+    pub apps: Vec<SetupApp>,
+    /// Added to node 1's and node 2's config, before its `[cluster]` table.
+    pub pair_config: [String; 2],
+    /// Added to each pair node's `[failover]` table.
+    pub failover_config: String,
+    /// The pair's operator policy, if the apps need grants.
+    pub policy: Option<String>,
+}
+
+/// An app of a [`Setup`]: its name, manifest and component.
+#[derive(Debug)]
+pub(crate) struct SetupApp {
+    pub name: &'static str,
     pub manifest: String,
     pub wasm: PathBuf,
-    /// Added to each pair node's config, before its `[cluster]` table.
-    pub pair_config: String,
-    /// The pair's operator policy, if the app needs grants.
-    pub policy: Option<String>,
 }
 
 /// The counter example as a singleton.
@@ -136,12 +144,15 @@ fn singleton(args: &Args) -> anyhow::Result<Setup> {
     let manifest = std::fs::read_to_string(args.root.join("examples/counter/paddock.toml"))?
         + "\n[appserver.placement]\nmode = \"singleton\"\n";
     Ok(Setup {
-        app: APP,
-        manifest,
-        wasm: args
-            .root
-            .join("target/wasm32-wasip2/release/example_counter.wasm"),
-        pair_config: String::new(),
+        apps: vec![SetupApp {
+            name: APP,
+            manifest,
+            wasm: args
+                .root
+                .join("target/wasm32-wasip2/release/example_counter.wasm"),
+        }],
+        pair_config: [String::new(), String::new()],
+        failover_config: String::new(),
         policy: None,
     })
 }
@@ -153,12 +164,12 @@ pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
     let mut rng = Rng::new(args.seed);
     let outcome = {
         let mut cluster = Cluster::start(args, &singleton(args)?, events.clone()).await?;
-        let mut ok = cluster.settle().await;
+        let mut ok = cluster.settle(APP).await;
         while Instant::now() < deadline {
             let left = deadline.saturating_duration_since(Instant::now());
             cluster.episode(&mut rng, args.episode.min(left)).await?;
             cluster.heal().await?;
-            ok &= cluster.settle().await;
+            ok &= cluster.settle(APP).await;
         }
         ok
         // Dropping the cluster kills every node, recorded.
@@ -221,7 +232,13 @@ impl Cluster {
         }
         std::fs::write(dir.join("peers.toml"), peers_file)?;
 
-        let (app, signer) = bundle(&args.paddock, dir, setup.app, &setup.manifest, &setup.wasm)?;
+        let mut bundles = Vec::new();
+        let mut signer = String::new();
+        for app in &setup.apps {
+            let (bytes, key) = bundle(&args.paddock, dir, app.name, &app.manifest, &app.wasm)?;
+            bundles.push(bytes);
+            signer = key;
+        }
         if let Some(policy) = &setup.policy {
             std::fs::write(dir.join("policy.toml"), policy)?;
         }
@@ -259,7 +276,7 @@ impl Cluster {
                 if setup.policy.is_some() {
                     let _ = writeln!(extra, "policy = {:?}", dir.join("policy.toml"));
                 }
-                extra += &setup.pair_config;
+                extra += &setup.pair_config[i];
                 config = config.replacen("[cluster]\n", &format!("{extra}[cluster]\n"), 1);
             }
             if n == 3 {
@@ -271,6 +288,7 @@ impl Cluster {
                     advertised[2],
                     3 - n
                 );
+                config += &setup.failover_config;
                 if let Some(line) = &serial {
                     let _ = writeln!(
                         config,
@@ -291,9 +309,11 @@ impl Cluster {
             nodes[i].spawn().await?;
         }
         for node in &nodes[..2] {
-            tokio::time::timeout(ADMIN_TIMEOUT, node.client().deploy(app.clone()))
-                .await
-                .map_err(|_| anyhow::anyhow!("deploy to node {} timed out", node.n))??;
+            for app in &bundles {
+                tokio::time::timeout(ADMIN_TIMEOUT, node.client().deploy(app.clone()))
+                    .await
+                    .map_err(|_| anyhow::anyhow!("deploy to node {} timed out", node.n))??;
+            }
         }
         events.record(
             0,
@@ -317,7 +337,7 @@ impl Cluster {
         }
     }
 
-    fn node(&mut self, n: u32) -> &mut Node {
+    pub(crate) fn node(&mut self, n: u32) -> &mut Node {
         &mut self.nodes[usize::try_from(n - 1).unwrap_or(0)]
     }
 
@@ -460,14 +480,14 @@ impl Cluster {
     }
 
     /// Wait for the pair to settle, then record which nodes run the
-    /// singleton; true if exactly one does.
-    async fn settle(&mut self) -> bool {
+    /// singleton `app`; true if exactly one does.
+    pub(crate) async fn settle(&mut self, app: &str) -> bool {
         tokio::time::sleep(self.timings.settle()).await;
         let mut runners = Vec::new();
         for _ in 0..30 {
             runners.clear();
             for node in &self.nodes[..2] {
-                let status = tokio::time::timeout(ADMIN_TIMEOUT, node.client().status(APP)).await;
+                let status = tokio::time::timeout(ADMIN_TIMEOUT, node.client().status(app)).await;
                 if matches!(status, Ok(Ok(d)) if d.summary.status == "running") {
                     runners.push(node.n);
                 }

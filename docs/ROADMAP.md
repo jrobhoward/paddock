@@ -22,7 +22,7 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | --- | --- | --- |
 | 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Met on 2026-10-18 (G2, the Pi's baselines) |
 | 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | Met: the rest on 2026-10-15, the serial line criterion on 2026-10-16 (F5) |
-| 3: application server | One real workload runs a full release cycle with zero downtime | See "Phase 3" |
+| 3: application server | One real workload runs a full release cycle with zero downtime | Met on 2026-10-22 (X2); N1, N2 and the docs pass left (see "Phase 3") |
 
 The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
@@ -30,7 +30,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
-1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. Next: X2; N1 and N2's spike whenever there is room.
+1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `paddock-soak scada` under faults passed. Next: the docs pass for Phase 3; N1 and N2's spike whenever there is room.
 2. W1 (Phase 2's docs), now unblocked; H5 and E4b only for a user who needs them.
 
 ## Order
@@ -139,6 +139,8 @@ Done on 2026-10-18: K1 and K2, replicated shared buckets (`scope = "cluster"`, `
 
 Done on 2026-10-21: X1, the SCADA reference app (`examples/scada`): `points`, `hmi` and the `control` singleton in two versions on the pair's replicated state, and `drill.sh`, a release cycle through `paddock release` (with `--standby-only`, to lose the primary between a release's steps) and a planned switchover; its runs are in its README.
 
+Done on 2026-10-22: X2, Phase 3's exit. `paddock-soak scada` runs X1's apps on the failover soak's pair and witness, with link cuts, holds and drops, kills and stops between releases of `control` across the pair, planned switchovers and a primary lost in the middle of a release. On planned steps it fails no point read, leaves no point gap of 1 s, and fails `control`'s requests only within a switchover's hand-over (1 s). After every heal one node runs `control`, the acknowledged alarm is still acknowledged, and the release converges. Under faults it records failures and gaps without judging them. An hour on an idle machine (seed 2026) passed: 45 switchovers with point gaps of 813 ms at most, 34 releases with no failed request, 58 heals, no overlap (examples/scada/README.md). The first hour failed on switchovers: the hand-over grew with the replicated log and passed 1 s, because a new primary counted its send window from a match it did not yet have (CHANGELOG, Fixed; S20's `Retransmit` widened to match, Design1 and Eager1 rerun). The stall X1's third run found when a standby rejoins is fixed too (2026-10-21). X1's history of point values was dropped: the exit did not need it.
+
 Decided 2026-10-16: the pair and its witness are the target topology, and general clusters of many nodes come later; replicated buckets replicate synchronously within the pair, using the failover epochs and leases, not Raft; blue-green upgrades, guest sockets, native-process plugins and moving instances are in scope; general placement, global names, more guest SDKs and fuel metering are parked.
 
 Order: X1 first, so the app drives the rest; K3 next, on K2's machinery; N1 alongside K, since it shares no code; M1 after K3; L1 after M1; U1 after L1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
@@ -150,7 +152,7 @@ X1 app ─► K3 app buckets ─► M1 move ─► L1 fast hand-over ─► U1 p
 
 - [ ] **N1 Guest sockets.** `wasi:sockets` under policy: the manifest's scope enforced (S4's separate bind and connect rules), the address guard of HTTP egress, connection caps per app; for apps that speak MQTT, OPC UA or a database protocol themselves. SECURITY.md's boundary.
 - [ ] **N2 Native-process plugins.** Spike S19 first (an Erlang-style port, the host spawning and supervising a process over stdio, against a native process joining as a node through a client library), then the chosen one, with rustbridge's native runner: supervised like an instance, its own limits, granted capabilities only.
-- [ ] **X2 Exit.** First, the stall X1's third run found (`examples/scada/README.md`): when the standby rejoins, the point table stops for about 570 ms on both nodes. X1 left a history of point values, if the exit needs one. Then X1's drill passes: the release cycle with zero downtime on the pair and the witness, under the soak's faults for an hour, with the HMI's error rate and point update gaps recorded. Then a docs pass for Phase 3, as W1 for Phase 2.
+- [ ] **W2 Phase 3's docs.** A docs pass for Phase 3, as W1 for Phase 2.
 
 Parked from Phase 3 (2026-10-16): placement across many nodes (labels, spread, `all-nodes`); opt-in global names (Raft); more guest SDKs; fuel metering.
 

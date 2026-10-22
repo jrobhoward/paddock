@@ -628,6 +628,17 @@ All notable changes are recorded here. The format follows
   a node out of reach continues when run again.
   `VerifiedBundle::unverified_identity` reads a bundle's name and version
   without verifying it.
+- `paddock-soak scada` (`scripts/soak.sh`, kind `scada`; ROADMAP X2): the
+  failover soak's witness and pair under the same faults, running the
+  SCADA example against two fake Modbus devices with HTTP probes on both
+  nodes, and between fault episodes a release of `control` across the
+  pair (every other upgrade with the primary lost between its steps) and a
+  planned switchover. A planned step fails the run if it fails a point
+  read, leaves a point gap of 1 s or more, or fails a request to
+  `control` outside a switchover's hand-over (1 s); a heal fails it if
+  other than one node runs `control`, the acknowledged alarm is lost, or
+  the release does not converge. `scripts/soak.sh` now builds `paddock`
+  with `modbus`.
 - `paddock release upgrade --standby-only` and `release rollback
   --standby-only` change the standby and pause (outcome `paused`) before
   the primary's step, for a run without the flag to finish. The SCADA
@@ -678,6 +689,24 @@ All notable changes are recorded here. The format follows
   `paddock_replication_partner_lag_entries`, `paddock_replication_alone`.
 
 ### Fixed
+
+- A standby back from an outage stalled the primary's replicated writes
+  for about the resend timeout (500 ms): each append in flight behind the
+  gap was refused at the same place, the second refusal held the primary's
+  sending until the timer, and the acknowledgment of the resent entries
+  did not release it. An acknowledgment that moves the partner's match
+  now does (found by the SCADA drill: the point table stopped for about
+  570 ms on both nodes when a standby rejoined).
+
+- A planned switchover's hand-over grew with the replicated log: from
+  about 0.4 s to 0.8 s over an hour of SCADA point writes, past 1 s for the
+  point table. A new primary counted its send window (4,096 entries) from
+  the partner's last acknowledgment, none yet in its epoch, so once the log
+  was longer than the window it sent nothing until the resend timeout
+  (500 ms), and then resent its whole log from the first entry, a window
+  per round trip. It now resends, and counts the window, from its own no-op
+  or from where the standby's last refusal put it (found by `paddock-soak
+  scada`).
 
 - `paddock release upgrade` rolled back the node it had just upgraded when
   that node's role changed during the step's gate (the standby promoted

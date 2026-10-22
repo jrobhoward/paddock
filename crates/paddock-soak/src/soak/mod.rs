@@ -9,6 +9,7 @@ pub(crate) mod node;
 pub(crate) mod proxy;
 pub(crate) mod replication;
 pub(crate) mod rng;
+pub(crate) mod scada;
 pub(crate) mod time;
 
 use std::path::PathBuf;
@@ -73,6 +74,29 @@ enum Command {
         /// As for `failover`.
         #[arg(long)]
         serial: Option<String>,
+    },
+    /// A witness and a pair as for `failover`, running the SCADA example
+    /// against two fake Modbus devices, with HTTP probes on both nodes;
+    /// alternates episodes of faults with releases of `control` across the
+    /// pair and planned switchovers. Fails when a planned step fails a
+    /// point read, leaves a point gap of 1 s or more, or fails a request to
+    /// `control` outside a switchover's hand-over (1 s); or when, after a
+    /// heal, other than one node runs `control`, the acknowledged alarm is
+    /// lost, or the release does not converge.
+    Scada {
+        #[command(flatten)]
+        run: Run,
+        /// Length of each episode of faults before everything is healed.
+        #[arg(long, default_value_t = 60)]
+        episode_s: u64,
+        #[arg(long, default_value_t = 200)]
+        heartbeat_ms: u64,
+        #[arg(long, default_value_t = 1000)]
+        node_timeout_ms: u64,
+        #[arg(long, default_value_t = 2000)]
+        lease_ms: u64,
+        #[arg(long, default_value_t = 300)]
+        margin_ms: u64,
     },
     /// Three member nodes behind UDP proxies, their instances linking and
     /// monitoring each other at random, under link and node faults; fails
@@ -196,6 +220,32 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
                     .as_deref()
                     .map(failover::SerialSpec::parse)
                     .transpose()?,
+            })
+            .await
+        }
+        Command::Scada {
+            run,
+            episode_s,
+            heartbeat_ms,
+            node_timeout_ms,
+            lease_ms,
+            margin_ms,
+        } => {
+            let (dir, root, paddock, seed, minutes) = prepare(run)?;
+            scada::run(&failover::Args {
+                dir,
+                root,
+                paddock,
+                seed,
+                minutes,
+                episode: Duration::from_secs(episode_s),
+                timings: failover::Timings {
+                    heartbeat_ms,
+                    node_timeout_ms,
+                    lease_ms,
+                    margin_ms,
+                },
+                serial: None,
             })
             .await
         }
