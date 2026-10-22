@@ -241,6 +241,11 @@ enum Command {
 }
 
 impl SupervisorHandle {
+    /// Whether `other` is a handle to this supervisor.
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.shared, &other.shared)
+    }
+
     /// The supervisor's name.
     #[must_use]
     pub fn name(&self) -> &str {

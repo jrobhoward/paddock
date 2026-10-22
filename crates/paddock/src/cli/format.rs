@@ -147,6 +147,12 @@ pub fn detail(d: &AppDetail) -> String {
         "previous:  {}",
         s.previous.as_deref().unwrap_or("-")
     ));
+    if let Some(new) = &s.new_version {
+        out.push(format!(
+            "new:       {new} with {}% of traffic (blue-green)",
+            s.new_traffic.unwrap_or(0)
+        ));
+    }
     out.push(format!("restarts:  {}", d.restarts));
     out.push(format!(
         "signer:    {}",
@@ -208,6 +214,12 @@ pub fn upgrade(u: &UpgradeResponse) -> String {
     );
     if let Some(max) = u.pauses_us.iter().max() {
         out.push_str(&format!(", longest pause {max} µs"));
+    }
+    if let Some(t) = u.traffic {
+        out.push_str(&format!(
+            "; both run, {} with {t}% of traffic (`paddock traffic` changes it, --promote retires {}, --drop stops {})",
+            u.to, u.from, u.to
+        ));
     }
     if !u.approved.is_empty() {
         out.push_str(&format!("\napproved: {}", u.approved.join(", ")));

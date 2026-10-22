@@ -1,7 +1,11 @@
 //! Instance pools: one app's instances under its root supervisor, and how a
-//! message picks one (`instances.routing`).
+//! message picks one (`instances.routing`). During a blue-green upgrade
+//! (DESIGN.md, "Blue-green upgrades") the pool holds a second side, the new
+//! version's instances under a root supervisor of their own, and a weight:
+//! the percentage of messages that go to the new side.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{PoisonError, RwLock};
 
 use paddock_bundle::manifest::Routing;
 
@@ -9,13 +13,23 @@ use crate::instance::InstanceHandle;
 use crate::message::Envelope;
 use crate::supervisor::SupervisorHandle;
 
-/// An app's running instances, as its root supervisor reports them.
+/// An app's running instances, as its root supervisors report them.
 #[derive(Debug)]
 pub(crate) struct Pool {
     app: String,
     routing: Routing,
-    supervisor: SupervisorHandle,
+    sides: RwLock<Sides>,
     next: AtomicUsize,
+    /// Turns between the sides for messages without a key.
+    next_side: AtomicUsize,
+}
+
+#[derive(Debug, Clone)]
+struct Sides {
+    current: SupervisorHandle,
+    new: Option<SupervisorHandle>,
+    /// The new side's share of messages, 0 to 100.
+    percent: u8,
 }
 
 impl Pool {
@@ -23,15 +37,74 @@ impl Pool {
         Self {
             app,
             routing,
-            supervisor,
+            sides: RwLock::new(Sides {
+                current: supervisor,
+                new: None,
+                percent: 0,
+            }),
             next: AtomicUsize::new(0),
+            next_side: AtomicUsize::new(0),
         }
     }
 
-    /// The app's running instances, in child order. Positions stay put
-    /// across restarts, so hash routing is stable while the pool size is.
+    fn sides(&self) -> Sides {
+        self.sides
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn sides_mut(&self) -> std::sync::RwLockWriteGuard<'_, Sides> {
+        self.sides.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Add the new side, at no traffic.
+    pub(crate) fn add_new(&self, supervisor: SupervisorHandle) {
+        let mut sides = self.sides_mut();
+        sides.new = Some(supervisor);
+        sides.percent = 0;
+    }
+
+    /// Set the new side's share of messages (at most 100).
+    pub(crate) fn set_percent(&self, percent: u8) {
+        self.sides_mut().percent = percent.min(100);
+    }
+
+    /// The new side's share of messages, if there is a new side.
+    pub(crate) fn percent(&self) -> Option<u8> {
+        let sides = self.sides();
+        sides.new.map(|_| sides.percent)
+    }
+
+    /// Take the new side out of the pool; its supervisor, if there was one.
+    pub(crate) fn remove_new(&self) -> Option<SupervisorHandle> {
+        let mut sides = self.sides_mut();
+        sides.percent = 0;
+        sides.new.take()
+    }
+
+    /// Make the new side the current one; the old current side's
+    /// supervisor, if there was a new side.
+    pub(crate) fn promote(&self) -> Option<SupervisorHandle> {
+        let mut sides = self.sides_mut();
+        let new = sides.new.take()?;
+        sides.percent = 0;
+        Some(std::mem::replace(&mut sides.current, new))
+    }
+
+    /// The app's running instances: the current side's in child order (so
+    /// hash routing is stable while the pool size is), then the new side's.
     pub(crate) fn members(&self) -> Vec<InstanceHandle> {
-        self.supervisor
+        let sides = self.sides();
+        let mut out = self.members_of(&sides.current);
+        if let Some(new) = &sides.new {
+            out.extend(self.members_of(new));
+        }
+        out
+    }
+
+    fn members_of(&self, supervisor: &SupervisorHandle) -> Vec<InstanceHandle> {
+        supervisor
             .children()
             .iter()
             .filter(|c| c.app.as_deref() == Some(self.app.as_str()))
@@ -58,15 +131,35 @@ impl Pool {
     }
 
     /// The member `key` hashes to among those `accept` accepts (the next in
-    /// turn without a key). Counts and picks over the supervisor's children
-    /// in place, cloning only the handle picked: this runs on every message
-    /// to the app.
+    /// turn without a key), on the side the weight gives it, or the other
+    /// side if that one has none.
     fn pick_among(
         &self,
         key: Option<&[u8]>,
         accept: impl Fn(&InstanceHandle) -> bool,
     ) -> Option<InstanceHandle> {
-        self.supervisor.with_children(|children| {
+        let sides = self.sides();
+        let Some(new) = &sides.new else {
+            return self.pick_on(&sides.current, key, &accept);
+        };
+        let (first, second) = if to_new(key, sides.percent, &self.next_side) {
+            (new, &sides.current)
+        } else {
+            (&sides.current, new)
+        };
+        self.pick_on(first, key, &accept)
+            .or_else(|| self.pick_on(second, key, &accept))
+    }
+
+    /// Counts and picks over the supervisor's children in place, cloning
+    /// only the handle picked: this runs on every message to the app.
+    fn pick_on(
+        &self,
+        supervisor: &SupervisorHandle,
+        key: Option<&[u8]>,
+        accept: impl Fn(&InstanceHandle) -> bool,
+    ) -> Option<InstanceHandle> {
+        supervisor.with_children(|children| {
             let members = children
                 .iter()
                 .filter(|c| c.app.as_deref() == Some(self.app.as_str()))
@@ -75,6 +168,25 @@ impl Pool {
             let index = pick_index(members.clone().count(), key, &self.next)?;
             members.into_iter().nth(index).cloned()
         })
+    }
+}
+
+/// Whether a message goes to the new side at `percent`: by its key's hash
+/// (the high bits, not the low ones [`pick_index`] uses, so the side does
+/// not skew which member it gets), otherwise by turns, `percent` of every
+/// hundred spread evenly over them.
+pub(crate) fn to_new(key: Option<&[u8]>, percent: u8, next: &AtomicUsize) -> bool {
+    let p = u64::from(percent);
+    match percent {
+        0 => false,
+        100.. => true,
+        _ => match key {
+            Some(key) => (fnv1a(key) >> 32) % 100 < p,
+            None => {
+                let n = u64::try_from(next.fetch_add(1, Ordering::Relaxed) % 100).unwrap_or(0);
+                (n + 1) * p / 100 > n * p / 100
+            }
+        },
     }
 }
 

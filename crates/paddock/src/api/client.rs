@@ -393,6 +393,35 @@ impl Client {
         self.json(Method::GET, &path, None).await
     }
 
+    /// Change a blue-green upgrade under way: give the new version
+    /// `percent` of the app's traffic, or with `promote` retire the old
+    /// version, or with `drop` stop the new one. Exactly one of the three.
+    ///
+    /// # Errors
+    ///
+    /// Any [`ClientError`]; invalid when no new version runs beside the app.
+    pub async fn traffic(
+        &self,
+        app: &str,
+        percent: Option<u8>,
+        promote: bool,
+        drop: bool,
+        params: &RolloutParams,
+    ) -> Result<UpgradeResponse, ClientError> {
+        let change = match (percent, promote, drop) {
+            (Some(p), _, _) => format!("percent={p}"),
+            (None, true, _) => "promote=true".to_string(),
+            _ => "drop=true".to_string(),
+        };
+        let rest = params.query();
+        let path = if rest.is_empty() {
+            format!("/v1/apps/{app}/traffic?{change}")
+        } else {
+            format!("/v1/apps/{app}/traffic{rest}&{change}")
+        };
+        self.json(Method::POST, &path, None).await
+    }
+
     /// The versions the node speaks and keeps, and each connected
     /// member's.
     ///

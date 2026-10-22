@@ -362,7 +362,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             ("limits.outbound_connections".into(), Phase::Later),
             ("capabilities.wasi:sockets".into(), Phase::Phase3),
             ("capabilities.paddock:admin".into(), Phase::Later),
-            ("upgrade.mode".into(), Phase::Later),
             ("placement.mode".into(), Phase::Phase3),
             ("placement.required_labels".into(), Phase::Phase3),
             ("placement.spread".into(), Phase::Phase3),

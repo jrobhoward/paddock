@@ -216,3 +216,63 @@ fn walk____plain_map____answers_itself_without_the_value_tree() {
 
     assert_eq!(walked, Ok(Some(b"pump-1".to_vec())));
 }
+
+#[test]
+fn to_new____no_key____the_share_asked_of_every_hundred() {
+    let next = AtomicUsize::new(0);
+
+    let at = |percent| (0..1000).filter(|_| to_new(None, percent, &next)).count();
+
+    assert_eq!([at(0), at(10), at(50), at(100)], [0, 100, 500, 1000]);
+}
+
+#[test]
+fn to_new____no_key____turns_spread_not_in_a_burst() {
+    let next = AtomicUsize::new(0);
+
+    let half: Vec<bool> = (0..6).map(|_| to_new(None, 50, &next)).collect();
+    let tenth = (0..10).filter(|_| to_new(None, 10, &next)).count();
+
+    assert_eq!(half, [false, true, false, true, false, true]);
+    assert_eq!(tenth, 1);
+}
+
+#[test]
+fn to_new____key____same_side_every_time_and_moves_once_as_the_weight_rises() {
+    let next = AtomicUsize::new(0);
+    let keys: Vec<String> = (0..2000).map(|i| format!("key-{i}")).collect();
+
+    let at = |percent| -> Vec<bool> {
+        keys.iter()
+            .map(|k| to_new(Some(k.as_bytes()), percent, &next))
+            .collect()
+    };
+    let (ten, ten_again, fifty) = (at(10), at(10), at(50));
+
+    assert_eq!(ten, ten_again);
+    assert!(
+        ten.iter().zip(&fifty).all(|(t, f)| !t || *f),
+        "a key on the new side stays"
+    );
+    let share = |v: &[bool]| v.iter().filter(|b| **b).count();
+    assert!((150..250).contains(&share(&ten)), "{}", share(&ten));
+    assert!((900..1100).contains(&share(&fifty)), "{}", share(&fifty));
+}
+
+#[test]
+fn to_new____keys_on_the_new_side____spread_over_its_members() {
+    let next = AtomicUsize::new(0);
+
+    let mut per_member = [0usize; 4];
+    for i in 0..4000 {
+        let key = format!("key-{i}");
+        if to_new(Some(key.as_bytes()), 10, &next) {
+            per_member[pick_index(4, Some(key.as_bytes()), &next).unwrap()] += 1;
+        }
+    }
+
+    assert!(
+        per_member.iter().all(|&n| (60..140).contains(&n)),
+        "{per_member:?}"
+    );
+}

@@ -54,7 +54,9 @@ mod table;
 pub mod transport;
 mod upgrade;
 
-pub use apps::{AppDeployment, AppHandle, AppStatus, Apps, UpgradeOptions, UpgradeReport};
+pub use apps::{
+    AppDeployment, AppHandle, AppStatus, Apps, NewSideInfo, UpgradeOptions, UpgradeReport,
+};
 pub use config::{
     Egress, HostObjectRequest, HostObjects, MemoryProfile, RuntimeConfig, SecretSource,
     SharedBucket, SqlDatasource, SqlTls,
@@ -82,7 +84,7 @@ pub use supervisor::{
     Backoff, Child, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
 };
 pub use transport::membership::{Member, Role};
-pub use upgrade::{UpgradeError, validate_upgrade};
+pub use upgrade::{UpgradeError, validate_blue_green, validate_upgrade};
 /// The wasmtime this crate links against, for extensions' bindings
 /// ([`services::extension`]).
 pub use wasmtime;

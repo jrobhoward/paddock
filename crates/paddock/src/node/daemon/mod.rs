@@ -1,6 +1,7 @@
 //! The node: a runtime, its apps, the deploy store and the operations the
 //! admin API exposes.
 
+mod blue_green;
 mod cluster;
 mod connections;
 mod deploy;
@@ -10,6 +11,8 @@ mod queries;
 #[cfg(feature = "tls")]
 mod remote;
 mod upgrade;
+
+pub use blue_green::Traffic;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -89,6 +92,8 @@ struct NodeState {
     desired: State,
     info: HashMap<String, DeployInfo>,
     previous_info: HashMap<String, DeployInfo>,
+    /// Blue-green upgrades' new versions, until promoted or dropped.
+    new_info: HashMap<String, DeployInfo>,
     /// Apps that should run but could not be restored, with why.
     restore_errors: HashMap<String, String>,
 }

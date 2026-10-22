@@ -27,7 +27,7 @@ pub use config::{
     FailoverBinding, HttpBinding, ListenerBinding, LogFormat, MemoryProfile, MetricsBinding,
     NodeConfig, SecretBinding, SerialBinding, TlsBinding, WitnessBinding,
 };
-pub use daemon::Node;
+pub use daemon::{Node, Traffic};
 pub use error::NodeError;
 pub use logring::{LogRing, RingLayer};
 pub use run::{builtin_extensions, run};

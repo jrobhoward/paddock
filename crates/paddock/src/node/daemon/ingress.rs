@@ -32,6 +32,23 @@ pub(super) struct Ingress {
 }
 
 /// An app's routes, kept to put back after a failed upgrade.
+/// Whether two versions of an app have the same HTTP routes, as both run
+/// at once in a blue-green upgrade.
+pub(super) fn same_routes(
+    a: &paddock_bundle::manifest::AppManifest,
+    b: &paddock_bundle::manifest::AppManifest,
+) -> bool {
+    #[cfg(feature = "http")]
+    {
+        HttpRoute::from_manifest(a) == HttpRoute::from_manifest(b)
+    }
+    #[cfg(not(feature = "http"))]
+    {
+        let _ = (a, b);
+        true
+    }
+}
+
 pub(super) struct SavedRoutes(#[cfg(feature = "http")] Option<Vec<HttpRoute>>);
 
 impl Ingress {

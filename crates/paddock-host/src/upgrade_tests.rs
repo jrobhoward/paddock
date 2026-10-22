@@ -111,16 +111,20 @@ fn validate_upgrade____same_version_or_other_app_or_world____invalid() {
 }
 
 #[test]
-fn validate_upgrade____blue_green____invalid() {
+fn validate_blue_green____mode_names_and_children____checked() {
+    let blue_green = json!({ "upgrade": { "mode": "blue-green" } });
     let old = manifest("c", "1.0.0", W, json!({}));
-    let new = manifest(
-        "c",
-        "2.0.0",
-        W,
-        json!({ "upgrade": { "mode": "blue-green" } }),
-    );
+    let new = manifest("c", "2.0.0", W, blue_green.clone());
+    let snapshot = manifest("c", "2.0.0", W, json!({}));
+    let mut named = blue_green.clone();
+    named["registered_names"] = json!(["orders"]);
+    let named = manifest("c", "2.0.0", W, named);
 
-    let result = validate_upgrade(&old, &new, false);
+    let ok = validate_blue_green(&old, &new, false);
+    let not_mode = validate_blue_green(&old, &snapshot, false);
+    let names = validate_blue_green(&old, &named, false);
 
-    assert!(matches!(result, Err(UpgradeError::Invalid(_))));
+    assert_eq!(ok, Ok(Vec::new()));
+    assert!(matches!(not_mode, Err(UpgradeError::Invalid(w)) if w.contains("not in blue-green")));
+    assert!(matches!(names, Err(UpgradeError::Invalid(w)) if w.contains("registers names")));
 }

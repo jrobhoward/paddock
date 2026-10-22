@@ -704,3 +704,188 @@ async fn move_out____restart_mode____none_and_the_app_keeps_running() {
     assert!(apps.app(name).is_some());
     apps.stop().await;
 }
+
+fn blue_green(count: u32) -> serde_json::Value {
+    json!({ "instances": { "count": count }, "upgrade": { "mode": "blue-green" } })
+}
+
+/// The versions `n` calls to the app by name reach, counted.
+async fn versions_of(app: &paddock_host::AppHandle, n: usize) -> (usize, usize) {
+    let (mut one, mut two) = (0, 0);
+    for _ in 0..n {
+        let reply = common::body(&app.call(text("get"), LONG).await.unwrap());
+        if reply.starts_with("1.0.0") {
+            one += 1;
+        } else if reply.starts_with("2.0.0") {
+            two += 1;
+        }
+    }
+    (one, two)
+}
+
+/// A blue-green upgrade (ROADMAP U2): the new version starts beside the
+/// old at no traffic, calls by name follow the weight, and promoting it
+/// stops the old side and makes it current; other upgrades wait.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blue_green____weight_then_promote____calls_follow_and_old_side_stops() {
+    let (rt, _) = shared();
+    let name = "bg-promote";
+    let apps = rt
+        .start_apps(vec![deployment(
+            name,
+            1,
+            json!({ "instances": { "count": 2 } }),
+        )])
+        .await
+        .unwrap();
+    let app = apps.app(name).unwrap();
+    let old_pids: Vec<_> = app.instances().iter().map(InstanceHandle::pid).collect();
+
+    apps.start_new(name, deployment(name, 2, blue_green(2)), false)
+        .await
+        .unwrap();
+    let at_zero = versions_of(&app, 20).await;
+    let busy = apps
+        .upgrade(
+            name,
+            deployment(name, 2, json!({})),
+            &UpgradeOptions::default(),
+        )
+        .await;
+    apps.set_traffic(name, 50).unwrap();
+    let at_half = versions_of(&app, 20).await;
+    let during = app.new_side().unwrap();
+    let report = apps.promote(name, Duration::from_secs(1)).await.unwrap();
+    let after = versions_of(&app, 20).await;
+
+    assert_eq!(at_zero, (20, 0));
+    assert!(matches!(busy, Err(UpgradeError::InProgress(_))), "{busy:?}");
+    assert_eq!(at_half, (10, 10));
+    assert_eq!(
+        (during.version.to_string(), during.percent),
+        ("2.0.0".into(), 50)
+    );
+    assert_eq!(report.mode, UpgradeMode::BlueGreen);
+    assert_eq!(after, (0, 20));
+    assert_eq!(app.version().to_string(), "2.0.0");
+    assert_eq!(app.previous_version().unwrap().to_string(), "1.0.0");
+    assert!(app.new_side().is_none());
+    assert_eq!(app.instances().len(), 2);
+    assert!(
+        old_pids.iter().all(|p| rt.lookup(*p).is_none()),
+        "the old side stopped"
+    );
+    apps.stop().await;
+}
+
+/// Dropping the new side returns every call to the old version, which kept
+/// running throughout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blue_green____dropped____old_version_serves_alone() {
+    let (rt, _) = shared();
+    let name = "bg-drop";
+    let apps = rt
+        .start_apps(vec![deployment(
+            name,
+            1,
+            json!({ "instances": { "count": 2 } }),
+        )])
+        .await
+        .unwrap();
+    let app = apps.app(name).unwrap();
+    let survivor = app.instances()[0].clone();
+    incs(&survivor, 3).await;
+    apps.start_new(name, deployment(name, 2, blue_green(1)), false)
+        .await
+        .unwrap();
+    apps.set_traffic(name, 100).unwrap();
+    let at_full = versions_of(&app, 10).await;
+
+    let dropped = apps.drop_new(name, Duration::from_secs(1)).await.unwrap();
+    let after = versions_of(&app, 10).await;
+
+    assert_eq!(at_full, (0, 10));
+    assert_eq!(dropped.to_string(), "2.0.0");
+    assert_eq!(after, (10, 0));
+    assert_eq!(app.version().to_string(), "1.0.0");
+    assert_eq!(ask(&survivor, "get").await, "1.0.0 count=3");
+    assert!(app.new_side().is_none());
+    apps.stop().await;
+}
+
+/// The new side's root supervisor gives up: its traffic returns to the old
+/// version, which keeps running, and the failure is reported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blue_green____new_side_gives_up____traffic_back_to_the_old() {
+    let (rt, _) = shared();
+    let name = "bg-fails";
+    let apps = rt
+        .start_apps(vec![deployment(
+            name,
+            1,
+            json!({ "instances": { "count": 1 } }),
+        )])
+        .await
+        .unwrap();
+    let app = apps.app(name).unwrap();
+    let mut fragile = blue_green(1);
+    fragile["supervision"] = json!({ "intensity": 0 });
+    apps.start_new(name, deployment(name, 2, fragile), false)
+        .await
+        .unwrap();
+    apps.set_traffic(name, 100).unwrap();
+    let new_instance = app
+        .instances()
+        .into_iter()
+        .find(|h| h.version() == "2.0.0")
+        .unwrap();
+
+    new_instance.kill();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while app.new_side().is_some() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the new side is still there"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let after = versions_of(&app, 10).await;
+
+    assert_eq!(after, (10, 0));
+    assert!(app.new_side_failure().is_some());
+    assert_eq!(app.status(), paddock_host::AppStatus::Running);
+    assert!(apps.drop_new(name, Duration::ZERO).await.is_err());
+    apps.stop().await;
+}
+
+/// Refused: a manifest not in blue-green mode, and one with registered
+/// names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_new____not_blue_green_or_names____refused_and_nothing_started() {
+    let (rt, _) = shared();
+    let name = "bg-refused";
+    let apps = rt
+        .start_apps(vec![deployment(
+            name,
+            1,
+            json!({ "instances": { "count": 1 } }),
+        )])
+        .await
+        .unwrap();
+    let app = apps.app(name).unwrap();
+    let mut named = blue_green(1);
+    named["registered_names"] = json!(["bg-refused-name"]);
+
+    let plain = apps
+        .start_new(name, deployment(name, 2, json!({})), false)
+        .await;
+    let names = apps
+        .start_new(name, deployment(name, 2, named), false)
+        .await;
+
+    assert!(matches!(plain, Err(UpgradeError::Invalid(_))), "{plain:?}");
+    assert!(matches!(names, Err(UpgradeError::Invalid(_))), "{names:?}");
+    assert_eq!(app.instances().len(), 1);
+    assert!(app.new_side().is_none());
+    apps.stop().await;
+}

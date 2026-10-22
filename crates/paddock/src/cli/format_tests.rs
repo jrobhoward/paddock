@@ -12,6 +12,8 @@ fn summary(name: &str, status: &str) -> AppSummary {
         reason: None,
         instances: 2,
         previous: None,
+        new_version: None,
+        new_traffic: None,
     }
 }
 
@@ -72,6 +74,7 @@ fn upgrade____snapshot____reports_longest_pause() {
         instances: vec!["0.1.1".into(), "0.2.1".into()],
         pauses_us: vec![300, 900],
         approved: vec![],
+        traffic: None,
     };
 
     assert_eq!(

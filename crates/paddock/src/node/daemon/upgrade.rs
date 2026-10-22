@@ -38,7 +38,10 @@ pub(super) fn upgrade_response(report: &UpgradeReport) -> UpgradeResponse {
     UpgradeResponse {
         from: report.from.to_string(),
         to: report.to.to_string(),
-        mode: format!("{:?}", report.mode).to_lowercase(),
+        mode: match report.mode {
+            UpgradeMode::BlueGreen => "blue-green".into(),
+            other => format!("{other:?}").to_lowercase(),
+        },
         instances: report
             .instances
             .iter()
@@ -54,6 +57,7 @@ pub(super) fn upgrade_response(report: &UpgradeReport) -> UpgradeResponse {
             .iter()
             .map(|c| c.key().to_string())
             .collect(),
+        traffic: None,
     }
 }
 
@@ -133,6 +137,27 @@ impl Node {
             .map_err(internal)?;
         self.store.keep_upload(upload, name, &version)?;
         let info = built.info.clone();
+        if let Runnable::App(deployment) = &built.run
+            && deployment.manifest.spec.upgrade.mode == UpgradeMode::BlueGreen
+            && !params.restart
+        {
+            let result = self
+                .upgrade_blue_green(name, deployment.clone(), info, params)
+                .await;
+            if result.is_err()
+                && current.previous.as_deref() != Some(version.as_str())
+                && self
+                    .st()
+                    .desired
+                    .apps
+                    .get(name)
+                    .and_then(|a| a.new_side.as_ref())
+                    .is_none_or(|n| n.version != version)
+            {
+                self.store.remove_version(name, &version);
+            }
+            return result;
+        }
         let result = match built.run {
             Runnable::Connection(build) => self
                 .upgrade_connections(name, build, params)
@@ -223,6 +248,7 @@ impl Node {
             instances: Vec::new(),
             pauses_us: Vec::new(),
             approved,
+            traffic: None,
         })
     }
 
@@ -237,6 +263,7 @@ impl Node {
             instances: Vec::new(),
             pauses_us: Vec::new(),
             approved: Vec::new(),
+            traffic: None,
         })
     }
 
@@ -260,6 +287,24 @@ impl Node {
             if let Some(previous) = st.previous_info.get(name) {
                 check_names(&st, name, &previous.names)?;
             }
+        }
+        let new_side = self
+            .st()
+            .desired
+            .apps
+            .get(name)
+            .is_some_and(|a| a.new_side.is_some());
+        if new_side {
+            // Rolling back a blue-green upgrade under way drops its new
+            // version; the current one never stopped.
+            let result = self.drop_new_side(name, params).await;
+            if let Ok(r) = &result {
+                self.audit.record(
+                    "rollback",
+                    json!({ "app": name, "from": r.from, "to": r.to, "mode": r.mode }),
+                );
+            }
+            return result;
         }
         let result = match self
             .rollback_connections(name)

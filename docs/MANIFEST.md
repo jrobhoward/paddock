@@ -202,11 +202,11 @@ A node built without the extension links deny stubs for the package, as for any 
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `mode` | `"restart"` | `"restart"` stops the old version gracefully and starts the new one from `init`. `"snapshot"` carries state through `save-snapshot` and `load-snapshot`, keeping pid, names, links and queued messages, and reverts if the new version refuses. `"blue-green"` is *not enforced*. |
+| `mode` | `"restart"` | `"restart"` stops the old version gracefully and starts the new one from `init`. `"snapshot"` carries state through `save-snapshot` and `load-snapshot`, keeping pid, names, links and queued messages, and reverts if the new version refuses. `"blue-green"` starts the new version beside the old and moves traffic to it in steps (`paddock upgrade --steps`, `paddock traffic`), then stops the old one; for an app whose root supervisor runs only its own instances, without `registered_names`, not a singleton, with the same HTTP routes in both versions. No state moves between the versions. |
 | `snapshot_version` | none | The snapshot format this release writes. Required in `snapshot` mode. |
 | `from_versions` | `[]` (any) | Semver requirements for the versions this release can upgrade from. An upgrade from any other version is refused. |
 
-An upgrade that adds capabilities needs `paddock upgrade --approve`. `--batch`, `--observe-ms` and `--max-restarts` control how a pool rolls out, and the rollout stops and reverts once restarts pass the threshold.
+An upgrade that adds capabilities needs `paddock upgrade --approve`. `--batch`, `--observe-ms` and `--max-restarts` control how a pool rolls out, and the rollout stops and reverts once restarts pass the threshold. In `blue-green` mode, `--steps 10,50,100` gives the new version's share of traffic at each step (100 by default), each watched for `--observe-ms` with the new version's restarts counted against `--max-restarts`; a failed step stops the new version. Steps that end below 100 leave both running: `paddock traffic <app> <percent>` moves the share, `--promote` stops the old version (after up to `--drain-ms` for its mailboxes to empty) and `--drop` the new one, as `paddock rollback` does. A node that restarts meanwhile starts both at the same share.
 
 ### `observability`
 

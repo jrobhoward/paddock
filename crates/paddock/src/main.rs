@@ -64,6 +64,16 @@ struct Rollout {
     /// starts the other version from init, and in-memory state is lost.
     #[arg(long)]
     restart: bool,
+    /// For an app in blue-green upgrade mode: the new version's share of
+    /// traffic at each step, in percent, such as 10,50,100 (default 100).
+    /// Ending below 100 leaves both versions running for `paddock
+    /// traffic`; 0 only starts the new version.
+    #[arg(long, value_delimiter = ',', value_parser = clap::value_parser!(u8).range(0..=100))]
+    steps: Option<Vec<u8>>,
+    /// For a blue-green upgrade: how long the side that stops may take to
+    /// empty its mailboxes, in milliseconds (default 10000).
+    #[arg(long)]
+    drain_ms: Option<u64>,
 }
 
 impl Rollout {
@@ -74,6 +84,8 @@ impl Rollout {
             observe_ms: self.observe_ms,
             max_restarts: self.max_restarts,
             restart: self.restart,
+            steps: self.steps.clone(),
+            drain_ms: self.drain_ms,
         }
     }
 }
@@ -225,12 +237,34 @@ enum Command {
         #[command(flatten)]
         rollout: Rollout,
     },
-    /// Return an app to its previous version.
+    /// Return an app to its previous version. During a blue-green upgrade,
+    /// stop the new version instead.
     Rollback {
         /// App name.
         app: String,
         #[command(flatten)]
         rollout: Rollout,
+    },
+    /// Change a blue-green upgrade under way: give the new version a share
+    /// of the app's traffic, retire the old version, or stop the new one.
+    #[command(group(clap::ArgGroup::new("change").required(true).args(["percent", "promote", "drop"])))]
+    Traffic {
+        /// App name.
+        app: String,
+        /// The new version's share of traffic, 0 to 100.
+        #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
+        percent: Option<u8>,
+        /// Retire the old version: it drains and stops, and the new one
+        /// becomes current.
+        #[arg(long)]
+        promote: bool,
+        /// Stop the new version; the old one serves alone.
+        #[arg(long)]
+        drop: bool,
+        /// How long the side that stops may take to empty its mailboxes,
+        /// in milliseconds (default 10000).
+        #[arg(long)]
+        drain_ms: Option<u64>,
     },
     /// Stop an app (it stays deployed).
     Stop {
@@ -685,6 +719,7 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
         | Command::Status { .. }
         | Command::Upgrade { .. }
         | Command::Rollback { .. }
+        | Command::Traffic { .. }
         | Command::Stop { .. }
         | Command::Start { .. }
         | Command::Remove { .. }
@@ -727,6 +762,22 @@ async fn run_apps(client: &Client, json: bool, command: Command) -> anyhow::Resu
             &client.rollback(&app, &rollout.params()).await?,
             format::upgrade,
         ),
+        Command::Traffic {
+            app,
+            percent,
+            promote,
+            drop,
+            drain_ms,
+        } => {
+            let params = RolloutParams {
+                drain_ms,
+                ..RolloutParams::default()
+            };
+            let r = client
+                .traffic(&app, percent, promote, drop, &params)
+                .await?;
+            print(json, &r, format::upgrade)
+        }
         Command::Stop { app } => done(json, client.stop(&app).await),
         Command::Start { app } => done(json, client.start(&app).await),
         Command::Remove { app } => done(json, client.remove(&app).await),

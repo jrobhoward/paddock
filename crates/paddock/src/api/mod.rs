@@ -59,6 +59,13 @@ pub struct AppSummary {
     /// The version a rollback returns to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<String>,
+    /// In a blue-green upgrade: the new version running beside this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_version: Option<String>,
+    /// In a blue-green upgrade: the new version's share of traffic, in
+    /// percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_traffic: Option<u8>,
 }
 
 /// One app in detail, as `GET /v1/apps/{app}` returns it.
@@ -293,6 +300,10 @@ pub struct UpgradeResponse {
     pub pauses_us: Vec<u64>,
     /// Capabilities approved for the new version.
     pub approved: Vec<String>,
+    /// In a blue-green upgrade that leaves both versions running: the new
+    /// version's share of traffic, in percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traffic: Option<u8>,
 }
 
 /// Rollout settings for upgrade and rollback.
@@ -311,6 +322,15 @@ pub struct RolloutParams {
     /// lost.
     #[serde(default)]
     pub restart: bool,
+    /// For an app in `blue-green` upgrade mode: the new version's share of
+    /// traffic at each step, in percent (`[100]` by default). Ending below
+    /// 100 leaves both versions running; `[0]` only starts the new one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<u8>>,
+    /// For a blue-green upgrade: how long the side that stops may take to
+    /// empty its mailboxes, in milliseconds (10 000 by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drain_ms: Option<u64>,
 }
 
 impl RolloutParams {
@@ -332,6 +352,13 @@ impl RolloutParams {
         }
         if self.restart {
             parts.push("restart=true".to_string());
+        }
+        if let Some(steps) = &self.steps {
+            let steps: Vec<String> = steps.iter().map(u8::to_string).collect();
+            parts.push(format!("steps={}", steps.join(",")));
+        }
+        if let Some(d) = self.drain_ms {
+            parts.push(format!("drain_ms={d}"));
         }
         if parts.is_empty() {
             String::new()

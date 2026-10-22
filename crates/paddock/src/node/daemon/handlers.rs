@@ -103,6 +103,7 @@ impl Node {
         app.previous = Some(std::mem::replace(&mut app.current, build));
         Ok(UpgradeResponse {
             approved: approved.iter().map(|c| c.key().to_string()).collect(),
+            traffic: None,
             ..response
         })
     }
@@ -138,5 +139,6 @@ fn new_requests(from: &HandlerBuild, to: &HandlerBuild) -> UpgradeResponse {
         instances: Vec::new(),
         pauses_us: Vec::new(),
         approved: Vec::new(),
+        traffic: None,
     }
 }

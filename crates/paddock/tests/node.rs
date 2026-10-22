@@ -1126,3 +1126,194 @@ async fn egress____inside_and_outside_the_node_ceiling____fetches_or_refused() {
     assert_eq!(other, "err:denied");
     n.shutdown().await;
 }
+
+/// The counter in `blue-green` upgrade mode, two instances.
+fn blue_green_counter(n: &TestNode, version: &str, build: u8) -> Vec<u8> {
+    let mut manifest = fast(json!({ "instances": { "count": 2 } }));
+    manifest["upgrade"] = json!({ "mode": "blue-green" });
+    bundle(&n.key, "bg", version, &counter(build), manifest, &[])
+}
+
+/// Of `n` calls to the app by name, how many reached 1.0.0 and 2.0.0.
+async fn versions_reached(node: &TestNode, n: usize) -> (usize, usize) {
+    let (mut one, mut two) = (0, 0);
+    for _ in 0..n {
+        let reply = call(node, "bg", "get").await;
+        one += usize::from(reply.starts_with("1.0.0"));
+        two += usize::from(reply.starts_with("2.0.0"));
+    }
+    (one, two)
+}
+
+/// A blue-green upgrade through the node (ROADMAP U2): started at no
+/// traffic (`steps=0`), moved by hand, kept across a restart at the same
+/// weight, then promoted; a second one dropped by rollback.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blue_green____start_move_restart_promote_and_drop____traffic_follows_and_is_kept() {
+    let mut n = TestNode::start("").await;
+    n.client
+        .deploy(blue_green_counter(&n, "1.0.0", 1))
+        .await
+        .unwrap();
+    let only_start = RolloutParams {
+        steps: Some(vec![0]),
+        ..RolloutParams::default()
+    };
+
+    let started = n
+        .client
+        .upgrade("bg", blue_green_counter(&n, "2.0.0", 2), &only_start)
+        .await
+        .unwrap();
+    let at_zero = versions_reached(&n, 10).await;
+    n.client
+        .traffic("bg", Some(50), false, false, &RolloutParams::default())
+        .await
+        .unwrap();
+    let at_half = versions_reached(&n, 10).await;
+    n.restart().await;
+    let restored = n.client.status("bg").await.unwrap().summary;
+    let after_restart = versions_reached(&n, 10).await;
+    let promoted = n
+        .client
+        .traffic("bg", None, true, false, &RolloutParams::default())
+        .await
+        .unwrap();
+    let after_promote = versions_reached(&n, 10).await;
+    let promoted_status = n.client.status("bg").await.unwrap().summary;
+    n.client
+        .upgrade("bg", blue_green_counter(&n, "3.0.0", 2), &only_start)
+        .await
+        .unwrap();
+    let dropped = n
+        .client
+        .rollback("bg", &RolloutParams::default())
+        .await
+        .unwrap();
+    let after_drop = n.client.status("bg").await.unwrap().summary;
+
+    assert_eq!(
+        (started.mode.as_str(), started.traffic),
+        ("blue-green", Some(0))
+    );
+    assert_eq!(at_zero, (10, 0));
+    assert_eq!(at_half, (5, 5));
+    assert_eq!(
+        (restored.new_version.as_deref(), restored.new_traffic),
+        (Some("2.0.0"), Some(50))
+    );
+    assert_eq!(after_restart, (5, 5));
+    assert_eq!(
+        (promoted.from.as_str(), promoted.to.as_str()),
+        ("1.0.0", "2.0.0")
+    );
+    assert_eq!(after_promote, (0, 10));
+    assert_eq!(
+        (
+            promoted_status.version.as_str(),
+            promoted_status.previous.as_deref(),
+            promoted_status.new_version
+        ),
+        ("2.0.0", Some("1.0.0"), None)
+    );
+    assert_eq!(
+        (dropped.from.as_str(), dropped.to.as_str()),
+        ("3.0.0", "2.0.0")
+    );
+    assert_eq!(
+        (after_drop.version.as_str(), after_drop.new_version),
+        ("2.0.0", None)
+    );
+    let bundles = n.dir.path().join("data/bundles/bg");
+    assert!(bundles.join("2.0.0.rbp").exists() && bundles.join("1.0.0.rbp").exists());
+    assert!(!bundles.join("3.0.0.rbp").exists());
+}
+
+/// `steps` that end at 100 move the traffic and promote the new version in
+/// one upgrade.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blue_green____steps_to_full____promoted_in_one_upgrade() {
+    let n = TestNode::start("").await;
+    n.client
+        .deploy(blue_green_counter(&n, "1.0.0", 1))
+        .await
+        .unwrap();
+
+    let up = n
+        .client
+        .upgrade(
+            "bg",
+            blue_green_counter(&n, "2.0.0", 2),
+            &RolloutParams {
+                steps: Some(vec![10, 50, 100]),
+                observe_ms: Some(50),
+                ..RolloutParams::default()
+            },
+        )
+        .await
+        .unwrap();
+    let after = versions_reached(&n, 10).await;
+
+    assert_eq!(
+        (up.from.as_str(), up.to.as_str(), up.traffic),
+        ("1.0.0", "2.0.0", None)
+    );
+    assert_eq!(after, (0, 10));
+}
+
+/// A new version that gives up during a step's watch is dropped: the
+/// upgrade is refused, the old version serves alone, and nothing of the new
+/// one is kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blue_green____new_version_gives_up_mid_step____dropped_and_refused() {
+    let n = TestNode::start("").await;
+    n.client
+        .deploy(blue_green_counter(&n, "1.0.0", 1))
+        .await
+        .unwrap();
+    let mut fragile =
+        fast(json!({ "instances": { "count": 2 }, "supervision": { "intensity": 0 } }));
+    fragile["upgrade"] = json!({ "mode": "blue-green" });
+    let v2 = bundle(&n.key, "bg", "2.0.0", &counter(2), fragile, &[]);
+    let client = n.client.clone();
+    let upgrade = tokio::spawn(async move {
+        client
+            .upgrade(
+                "bg",
+                v2,
+                &RolloutParams {
+                    steps: Some(vec![50, 100]),
+                    observe_ms: Some(1_500),
+                    ..RolloutParams::default()
+                },
+            )
+            .await
+    });
+    let mut victim = None;
+    for _ in 0..200 {
+        let detail = n.client.status("bg").await.unwrap();
+        victim = detail
+            .instance_list
+            .iter()
+            .find(|i| i.version == "2.0.0")
+            .map(|i| i.pid.clone());
+        if victim.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    n.client.kill(&victim.unwrap()).await.unwrap();
+    let refused = upgrade.await.unwrap().unwrap_err();
+    let after = versions_reached(&n, 10).await;
+    let status = n.client.status("bg").await.unwrap().summary;
+
+    assert_eq!(kind(&refused), "refused", "{refused}");
+    assert!(refused.to_string().contains("gave up at 50%"), "{refused}");
+    assert_eq!(after, (10, 0));
+    assert_eq!(
+        (status.version.as_str(), status.new_version),
+        ("1.0.0", None)
+    );
+    assert!(!n.dir.path().join("data/bundles/bg/2.0.0.rbp").exists());
+}

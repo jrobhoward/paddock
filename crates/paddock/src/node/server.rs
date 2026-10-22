@@ -309,7 +309,44 @@ fn rollout(q: &[(String, String)]) -> Result<RolloutParams, NodeError> {
         observe_ms: param(q, "observe_ms")?,
         max_restarts: param(q, "max_restarts")?,
         restart: param::<bool>(q, "restart")?.unwrap_or(false),
+        steps: match q.iter().find(|(k, _)| k == "steps") {
+            None => None,
+            Some((_, v)) => Some(steps(v)?),
+        },
+        drain_ms: param(q, "drain_ms")?,
     })
+}
+
+/// `?percent=N`, `?promote=true` or `?drop=true`, with the rollout
+/// settings (`drain_ms`).
+fn traffic(q: &[(String, String)]) -> Result<(crate::node::Traffic, RolloutParams), NodeError> {
+    use crate::node::Traffic;
+    let percent = param::<u8>(q, "percent")?;
+    let promote = param::<bool>(q, "promote")?.unwrap_or(false);
+    let drop = param::<bool>(q, "drop")?.unwrap_or(false);
+    let change = match (percent, promote, drop) {
+        (Some(p), false, false) if p <= 100 => Traffic::Percent(p),
+        (None, true, false) => Traffic::Promote,
+        (None, false, true) => Traffic::Drop,
+        _ => {
+            return Err(NodeError::Invalid(
+                "give one of percent=0..100, promote=true or drop=true".into(),
+            ));
+        }
+    };
+    Ok((change, rollout(q)?))
+}
+
+/// `steps=10,50,100`: percentages, each at most 100.
+fn steps(text: &str) -> Result<Vec<u8>, NodeError> {
+    text.split(',')
+        .map(|s| match s.trim().parse::<u8>() {
+            Ok(p) if p <= 100 => Ok(p),
+            _ => Err(NodeError::Invalid(format!(
+                "steps={text}: each step is a percentage from 0 to 100"
+            ))),
+        })
+        .collect()
 }
 
 async fn body(req: Request<Incoming>) -> Result<(String, Vec<u8>), NodeError> {
@@ -344,6 +381,10 @@ pub(crate) async fn handle(node: &Node, req: Request<Incoming>) -> Reply {
             Err(e) => error(&e),
         },
         (&Method::POST, ["v1", "apps", app, "upgrade"]) => upgrade(node, app, &q, req).await,
+        (&Method::POST, ["v1", "apps", app, "traffic"]) => match traffic(&q) {
+            Ok((change, p)) => respond(node.traffic(app, change, &p).await),
+            Err(e) => error(&e),
+        },
         (
             &Method::POST,
             [

@@ -144,6 +144,20 @@ impl Node {
             }
             self.st().previous_info.insert(name.to_string(), prev.info);
         }
+        if let Some(new) = &app.new_side
+            && let Err(e) = self.restore_new_side(name, new).await
+        {
+            // The current version runs; only the upgrade under way is lost.
+            tracing::warn!(app = %name, version = %new.version, error = %e, "blue-green upgrade not restored; its new version is dropped");
+            self.audit.record(
+                "restore_failed",
+                json!({ "app": name, "version": new.version, "reason": e.to_string() }),
+            );
+            if let Some(entry) = self.st().desired.apps.get_mut(name) {
+                entry.new_side = None;
+            }
+            self.save_desired()?;
+        }
         self.st().restore_errors.remove(name);
         Ok(())
     }
@@ -502,6 +516,7 @@ impl Node {
             current: version,
             previous: None,
             running: true,
+            new_side: None,
         };
         {
             let mut st = self.st();

@@ -57,9 +57,9 @@ fn keys(caps: &[Capability]) -> String {
 /// # Errors
 ///
 /// [`UpgradeError::Invalid`] for a different app name, the same version, a
-/// different WIT world, an old version outside the new manifest's
-/// `upgrade.from_versions`, or `blue-green` mode;
-/// [`UpgradeError::NeedsApproval`] for new capabilities without `approve`.
+/// different WIT world, or an old version outside the new manifest's
+/// `upgrade.from_versions`; [`UpgradeError::NeedsApproval`] for new
+/// capabilities without `approve`.
 pub fn validate_upgrade(
     old: &AppManifest,
     new: &AppManifest,
@@ -88,9 +88,6 @@ pub fn validate_upgrade(
             new.app.name, new.app.version, old.app.version
         ));
     }
-    if new.spec.upgrade.mode == UpgradeMode::BlueGreen {
-        return invalid("blue-green upgrades are not supported in Phase 1".into());
-    }
     let before: BTreeSet<Capability> = old.spec.capabilities.declared().into_iter().collect();
     let added: Vec<Capability> = new
         .spec
@@ -103,6 +100,49 @@ pub fn validate_upgrade(
         return Err(UpgradeError::NeedsApproval(added));
     }
     Ok(added)
+}
+
+/// Check that `new` may run beside `old` in a blue-green upgrade (DESIGN.md,
+/// "Blue-green upgrades"): as [`validate_upgrade`], with `new` in
+/// `blue-green` mode, and neither version registering names or running
+/// other apps' children under its root supervisor.
+///
+/// # Errors
+///
+/// As for [`validate_upgrade`], and [`UpgradeError::Invalid`] for the
+/// rules above.
+pub fn validate_blue_green(
+    old: &AppManifest,
+    new: &AppManifest,
+    approve: bool,
+) -> Result<Vec<Capability>, UpgradeError> {
+    let invalid = |why: String| Err(UpgradeError::Invalid(why));
+    if new.spec.upgrade.mode != UpgradeMode::BlueGreen {
+        return invalid(format!(
+            "{} {} is not in blue-green upgrade mode",
+            new.app.name, new.app.version
+        ));
+    }
+    for m in [old, new] {
+        if !m.spec.registered_names.is_empty() {
+            return invalid(format!(
+                "{} {} registers names, which both versions would hold at once",
+                m.app.name, m.app.version
+            ));
+        }
+        if m.spec
+            .supervision
+            .children
+            .iter()
+            .any(|c| c.app != m.app.name)
+        {
+            return invalid(format!(
+                "{} {} supervises other apps' instances",
+                m.app.name, m.app.version
+            ));
+        }
+    }
+    validate_upgrade(old, new, approve)
 }
 
 #[cfg(test)]

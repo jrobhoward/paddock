@@ -131,6 +131,7 @@ impl Node {
             instances: Vec::new(),
             pauses_us: Vec::new(),
             approved: approved.iter().map(|c| c.key().to_string()).collect(),
+            traffic: None,
         })
     }
 
@@ -160,6 +161,7 @@ impl Node {
             instances: Vec::new(),
             pauses_us: Vec::new(),
             approved: Vec::new(),
+            traffic: None,
         }))
     }
 }

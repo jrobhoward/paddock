@@ -37,6 +37,16 @@ pub(crate) struct AppState {
     #[serde(default)]
     pub(crate) previous: Option<String>,
     pub(crate) running: bool,
+    /// The new version running beside `current` in a blue-green upgrade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) new_side: Option<NewSideState>,
+}
+
+/// A blue-green upgrade's new version and its share of traffic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NewSideState {
+    pub(crate) version: String,
+    pub(crate) percent: u8,
 }
 
 /// The on-disk store.
@@ -215,7 +225,10 @@ impl Store {
             };
             for version in versions.flatten() {
                 let v = version.file_name().to_string_lossy().into_owned();
-                if v != kept.current && kept.previous.as_deref() != Some(v.as_str()) {
+                if v != kept.current
+                    && kept.previous.as_deref() != Some(v.as_str())
+                    && kept.new_side.as_ref().is_none_or(|n| n.version != v)
+                {
                     let _ = std::fs::remove_dir_all(version.path());
                 }
             }

@@ -10,7 +10,7 @@ use std::fmt;
 use serde::Serialize;
 
 use crate::manifest::AppSpec;
-use crate::manifest::lifecycle::{Kind, UpgradeMode};
+use crate::manifest::lifecycle::Kind;
 use crate::manifest::sections::{NameScope, PlacementMode};
 
 /// When a field starts being enforced.
@@ -105,11 +105,6 @@ impl AppSpec {
             !self.config.secrets.is_empty(),
             "config.secrets",
             Phase::Phase2,
-        );
-        out.add_if(
-            self.upgrade.mode == UpgradeMode::BlueGreen,
-            "upgrade.mode",
-            Phase::Later,
         );
         if let Some(p) = &self.placement {
             out.add_if(

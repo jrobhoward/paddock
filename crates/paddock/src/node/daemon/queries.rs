@@ -104,6 +104,8 @@ impl Node {
             reason,
             instances: handle.map_or(connections.unwrap_or(0), |h| h.instances().len()),
             previous: app.previous.clone(),
+            new_version: app.new_side.as_ref().map(|n| n.version.clone()),
+            new_traffic: app.new_side.as_ref().map(|n| n.percent),
         }
     }
 
@@ -177,7 +179,7 @@ impl Node {
             restarts: handle
                 .as_ref()
                 .and_then(AppHandle::supervisor)
-                .map_or(0, paddock_host::SupervisorHandle::restart_count),
+                .map_or(0, |s| s.restart_count()),
             instance_list: handle
                 .map(|h| {
                     h.instances()

@@ -21,7 +21,7 @@ use crate::spec::InstanceSpec;
 use crate::supervisor::{
     Backoff, ChildHandle, ChildSpec, ChildStart, SupervisorHandle, SupervisorSpec,
 };
-use crate::upgrade::{UpgradeError, validate_upgrade};
+use crate::upgrade::{UpgradeError, validate_blue_green, validate_upgrade};
 
 /// An app ready to run: its verified manifest, compiled component, and the
 /// spec its instances run with.
@@ -87,12 +87,40 @@ pub struct AppHandle {
 #[derive(Debug)]
 struct AppShared {
     name: String,
-    supervisor: Option<SupervisorHandle>,
+    /// The current version's root supervisor; replaced when a blue-green
+    /// upgrade promotes the new side.
+    supervisor: Mutex<Option<SupervisorHandle>>,
     pool: Option<Arc<Pool>>,
     status: watch::Sender<AppStatus>,
     stopping: AtomicBool,
     versions: Mutex<Versions>,
     upgrading: AtomicBool,
+    /// The new version running beside the current one in a blue-green
+    /// upgrade.
+    new_side: Mutex<Option<NewSide>>,
+    /// Why the last new side ended without being promoted or dropped.
+    new_failed: Mutex<Option<String>>,
+}
+
+/// The new version of a blue-green upgrade and its instances.
+#[derive(Debug, Clone)]
+struct NewSide {
+    deployment: AppDeployment,
+    supervisor: SupervisorHandle,
+    approved: Vec<Capability>,
+}
+
+/// The new side of a blue-green upgrade, as [`AppHandle::new_side`]
+/// reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct NewSideInfo {
+    /// Its version.
+    pub version: semver::Version,
+    /// Its share of the app's messages, 0 to 100.
+    pub percent: u8,
+    /// Restarts by its root supervisor since it started.
+    pub restarts: u64,
 }
 
 #[derive(Debug)]
@@ -218,10 +246,69 @@ impl AppHandle {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The app's root supervisor; `None` if it never started.
+    /// The app's root supervisor (the current version's); `None` if it
+    /// never started.
     #[must_use]
-    pub fn supervisor(&self) -> Option<&SupervisorHandle> {
-        self.shared.supervisor.as_ref()
+    pub fn supervisor(&self) -> Option<SupervisorHandle> {
+        self.shared
+            .supervisor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The new version running beside the current one, in a blue-green
+    /// upgrade.
+    #[must_use]
+    pub fn new_side(&self) -> Option<NewSideInfo> {
+        let side = self.side()?;
+        Some(NewSideInfo {
+            version: side.deployment.manifest.app.version.clone(),
+            percent: self
+                .shared
+                .pool
+                .as_ref()
+                .and_then(|p| p.percent())
+                .unwrap_or(0),
+            restarts: side.supervisor.restart_count(),
+        })
+    }
+
+    /// The new side's deployment, in a blue-green upgrade.
+    #[must_use]
+    pub fn new_deployment(&self) -> Option<AppDeployment> {
+        self.side().map(|s| s.deployment)
+    }
+
+    /// Why the last new side of a blue-green upgrade ended by itself (its
+    /// root supervisor gave up), if one did.
+    #[must_use]
+    pub fn new_side_failure(&self) -> Option<String> {
+        self.shared
+            .new_failed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn side(&self) -> Option<NewSide> {
+        self.shared
+            .new_side
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set_side(&self, side: Option<NewSide>) {
+        *self
+            .shared
+            .new_side
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = side;
+    }
+
+    fn is_current(&self, supervisor: &SupervisorHandle) -> bool {
+        self.supervisor().is_some_and(|s| s.same(supervisor))
     }
 
     /// The app's running instances, in pool order.
@@ -534,6 +621,12 @@ impl Apps {
         let app = self
             .app(name)
             .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
+        if new.manifest.spec.upgrade.mode == UpgradeMode::BlueGreen && !options.restart {
+            return Err(UpgradeError::Invalid(format!(
+                "{name} {} upgrades blue-green: start it beside the running version",
+                new.manifest.app.version
+            )));
+        }
         let old = app.versions().current.clone();
         let approved = validate_upgrade(&old.manifest, &new.manifest, options.approve)?;
         let mode = if options.restart {
@@ -584,6 +677,170 @@ impl Apps {
         let back = std::mem::replace(&mut versions.current, previous);
         versions.previous = Some(back);
         Ok(report)
+    }
+
+    /// Start `new` beside the running version of app `name`, for a
+    /// blue-green upgrade (DESIGN.md, "Blue-green upgrades"): its own root
+    /// supervisor and instances, in the app's pool at no traffic. Other
+    /// upgrades of the app are refused until it is promoted or dropped.
+    /// Returns the capabilities approved for it.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`validate_blue_green`]; [`UpgradeError::UnknownApp`],
+    /// [`UpgradeError::InProgress`], [`UpgradeError::Invalid`] for an app
+    /// that is not running; [`UpgradeError::Instantiate`] if the new
+    /// version's instances do not start.
+    pub async fn start_new(
+        &self,
+        name: &str,
+        new: AppDeployment,
+        approve: bool,
+    ) -> Result<Vec<Capability>, UpgradeError> {
+        let app = self
+            .app(name)
+            .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
+        let pool = app
+            .shared
+            .pool
+            .clone()
+            .filter(|_| app.status() == AppStatus::Running)
+            .ok_or_else(|| UpgradeError::Invalid(format!("{name} is not running")))?;
+        let old = app.versions().current.clone();
+        let approved = validate_blue_green(&old.manifest, &new.manifest, approve)?;
+        if app
+            .shared
+            .upgrading
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Err(UpgradeError::InProgress(name.into()));
+        }
+        let started = start_side(&self.rt, &new).await;
+        let supervisor = match started {
+            Ok(s) => s,
+            Err(why) => {
+                app.shared.upgrading.store(false, Ordering::Release);
+                return Err(UpgradeError::Instantiate(why));
+            }
+        };
+        *app.shared
+            .new_failed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+        app.set_side(Some(NewSide {
+            deployment: new.clone(),
+            supervisor: supervisor.clone(),
+            approved: approved.clone(),
+        }));
+        pool.add_new(supervisor.clone());
+        tokio::spawn(watch_side(app.clone(), supervisor));
+        tracing::info!(app = %name, from = %old.manifest.app.version, to = %new.manifest.app.version, "new version started beside the old");
+        Ok(approved)
+    }
+
+    /// Give the new side of app `name`'s blue-green upgrade `percent` of
+    /// its messages (at most 100).
+    ///
+    /// # Errors
+    ///
+    /// [`UpgradeError::UnknownApp`]; [`UpgradeError::Invalid`] if no new
+    /// side runs.
+    pub fn set_traffic(&self, name: &str, percent: u8) -> Result<(), UpgradeError> {
+        let (app, pool, _) = self.with_new_side(name)?;
+        pool.set_percent(percent);
+        tracing::info!(app = %app.name(), percent = percent.min(100), "traffic to the new version");
+        Ok(())
+    }
+
+    /// Finish app `name`'s blue-green upgrade: every message to the new
+    /// side, the old side's instances given up to `drain` to empty their
+    /// mailboxes, then stopped; the new version becomes current and the old
+    /// one previous.
+    ///
+    /// # Errors
+    ///
+    /// [`UpgradeError::UnknownApp`]; [`UpgradeError::Invalid`] if no new
+    /// side runs.
+    pub async fn promote(
+        &self,
+        name: &str,
+        drain: Duration,
+    ) -> Result<UpgradeReport, UpgradeError> {
+        let (app, pool, side) = self.with_new_side(name)?;
+        pool.set_percent(100);
+        let old_supervisor = app.supervisor();
+        if let Some(old) = &old_supervisor {
+            drain_side(old, drain).await;
+        }
+        let from = {
+            let mut versions = app.versions();
+            let from = versions.current.manifest.app.version.clone();
+            versions.previous = Some(std::mem::replace(
+                &mut versions.current,
+                side.deployment.clone(),
+            ));
+            from
+        };
+        *app.shared
+            .supervisor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(side.supervisor.clone());
+        pool.promote();
+        app.set_side(None);
+        if let Some(old) = old_supervisor {
+            old.shutdown();
+            old.wait().await;
+        }
+        app.shared.upgrading.store(false, Ordering::Release);
+        let to = side.deployment.manifest.app.version.clone();
+        tracing::info!(app = %name, %from, %to, "blue-green upgrade promoted");
+        Ok(UpgradeReport {
+            from,
+            to,
+            mode: UpgradeMode::BlueGreen,
+            instances: app.instances().iter().map(InstanceHandle::pid).collect(),
+            pauses: Vec::new(),
+            approved: side.approved,
+        })
+    }
+
+    /// End app `name`'s blue-green upgrade without it: no messages to the
+    /// new side, its instances given up to `drain` to empty their
+    /// mailboxes, then stopped. Returns the new side's version.
+    ///
+    /// # Errors
+    ///
+    /// [`UpgradeError::UnknownApp`]; [`UpgradeError::Invalid`] if no new
+    /// side runs.
+    pub async fn drop_new(
+        &self,
+        name: &str,
+        drain: Duration,
+    ) -> Result<semver::Version, UpgradeError> {
+        let (app, pool, side) = self.with_new_side(name)?;
+        pool.set_percent(0);
+        drain_side(&side.supervisor, drain).await;
+        // Out of the side first, so its watcher takes the stop as meant.
+        app.set_side(None);
+        pool.remove_new();
+        side.supervisor.shutdown();
+        side.supervisor.wait().await;
+        app.shared.upgrading.store(false, Ordering::Release);
+        let version = side.deployment.manifest.app.version.clone();
+        tracing::info!(app = %name, %version, "blue-green upgrade dropped");
+        Ok(version)
+    }
+
+    fn with_new_side(&self, name: &str) -> Result<(AppHandle, Arc<Pool>, NewSide), UpgradeError> {
+        let app = self
+            .app(name)
+            .ok_or_else(|| UpgradeError::UnknownApp(name.into()))?;
+        let no_side =
+            || UpgradeError::Invalid(format!("{name} has no new version running beside it"));
+        let side = app.side().ok_or_else(no_side)?;
+        let pool = app.shared.pool.clone().ok_or_else(no_side)?;
+        Ok((app, pool, side))
     }
 
     /// Stop every app, in reverse start order, waiting for each root
@@ -645,7 +902,8 @@ async fn stop_app(rt: &Runtime, app: &AppHandle) {
 /// and none restarted.
 async fn end_app(rt: &Runtime, app: &AppHandle, kill: bool) {
     app.shared.stopping.store(true, Ordering::Relaxed);
-    if let Some(supervisor) = &app.shared.supervisor {
+    let new = app.side().map(|s| s.supervisor);
+    for supervisor in app.supervisor().into_iter().chain(new) {
         if kill {
             supervisor.kill();
         } else {
@@ -706,7 +964,7 @@ fn failed(deployment: &AppDeployment, why: String) -> AppHandle {
     AppHandle {
         shared: Arc::new(AppShared {
             name: name.clone(),
-            supervisor: None,
+            supervisor: Mutex::new(None),
             pool: None,
             status: watch::channel(AppStatus::Failed(ExitReason::Crashed(why))).0,
             stopping: AtomicBool::new(false),
@@ -715,6 +973,8 @@ fn failed(deployment: &AppDeployment, why: String) -> AppHandle {
                 previous: None,
             }),
             upgrading: AtomicBool::new(false),
+            new_side: Mutex::new(None),
+            new_failed: Mutex::new(None),
         }),
     }
 }
@@ -745,7 +1005,7 @@ async fn start_app(rt: &Runtime, deployment: &AppDeployment, spec: SupervisorSpe
     let handle = AppHandle {
         shared: Arc::new(AppShared {
             name: name.clone(),
-            supervisor: Some(supervisor.clone()),
+            supervisor: Mutex::new(Some(supervisor.clone())),
             pool: Some(pool.clone()),
             status,
             stopping: AtomicBool::new(false),
@@ -754,6 +1014,8 @@ async fn start_app(rt: &Runtime, deployment: &AppDeployment, spec: SupervisorSpe
                 previous: None,
             }),
             upgrading: AtomicBool::new(false),
+            new_side: Mutex::new(None),
+            new_failed: Mutex::new(None),
         }),
     };
     match wait_started(&supervisor, budget).await {
@@ -769,18 +1031,76 @@ async fn start_app(rt: &Runtime, deployment: &AppDeployment, spec: SupervisorSpe
             return handle;
         }
     }
-    let watcher = handle.clone();
-    tokio::spawn(async move {
-        let reason = supervisor.wait().await;
-        if !watcher.shared.stopping.load(Ordering::Relaxed) {
-            tracing::error!(app = %watcher.shared.name, %reason, "app failed");
-            watcher
-                .shared
-                .status
-                .send_replace(AppStatus::Failed(reason));
-        }
-    });
+    tokio::spawn(watch_side(handle.clone(), supervisor));
     handle
+}
+
+/// Follow one of `app`'s root supervisors until it ends: the current
+/// version's failing fails the app; the new side's failing (in a blue-green
+/// upgrade) takes it out of the pool, and the old version carries on. A
+/// supervisor that is neither any more was stopped on purpose.
+async fn watch_side(app: AppHandle, supervisor: SupervisorHandle) {
+    let reason = supervisor.wait().await;
+    if app.shared.stopping.load(Ordering::Relaxed) {
+        return;
+    }
+    if app.is_current(&supervisor) {
+        tracing::error!(app = %app.shared.name, %reason, "app failed");
+        app.shared.status.send_replace(AppStatus::Failed(reason));
+        return;
+    }
+    let is_new = app.side().is_some_and(|s| s.supervisor.same(&supervisor));
+    if is_new {
+        tracing::error!(app = %app.shared.name, %reason, "new version failed; its traffic returns to the old");
+        if let Some(pool) = &app.shared.pool {
+            pool.remove_new();
+        }
+        app.set_side(None);
+        *app.shared
+            .new_failed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(reason.to_string());
+        app.shared.upgrading.store(false, Ordering::Release);
+    }
+}
+
+/// Start the root supervisor and instances of `deployment` for the new side
+/// of a blue-green upgrade, and wait until they run.
+async fn start_side(rt: &Runtime, deployment: &AppDeployment) -> Result<SupervisorHandle, String> {
+    let spec = root_spec(deployment, &HashMap::new())?;
+    let pooled = spec.strategy == Strategy::SimpleOneForOne;
+    let budget = start_budget(&spec);
+    let supervisor = rt.start_supervisor(spec).map_err(|e| e.to_string())?;
+    if pooled {
+        for _ in 0..deployment.manifest.spec.instances.initial() {
+            if let Err(e) = supervisor.start_child().await {
+                supervisor.shutdown();
+                return Err(e.to_string());
+            }
+        }
+    }
+    if let Err(reason) = wait_started(&supervisor, budget).await {
+        supervisor.shutdown();
+        return Err(reason.to_string());
+    }
+    Ok(supervisor)
+}
+
+/// Wait up to `drain` for the instances under `supervisor` to empty their
+/// mailboxes, once no message to the app by name goes to them.
+async fn drain_side(supervisor: &SupervisorHandle, drain: Duration) {
+    let deadline = Instant::now() + drain;
+    loop {
+        let queued: usize = supervisor
+            .children()
+            .iter()
+            .filter_map(|c| c.instance().map(InstanceHandle::queued))
+            .sum();
+        if queued == 0 || Instant::now() >= deadline {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// Clears an app's in-progress flag when an upgrade ends, however it ends.
@@ -819,8 +1139,7 @@ async fn rollout(
     let supervisor = app
         .supervisor()
         .filter(|_| app.status() == AppStatus::Running)
-        .ok_or_else(|| UpgradeError::Invalid(format!("{name} is not running")))?
-        .clone();
+        .ok_or_else(|| UpgradeError::Invalid(format!("{name} is not running")))?;
     if app
         .shared
         .upgrading

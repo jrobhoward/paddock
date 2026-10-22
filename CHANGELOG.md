@@ -628,6 +628,22 @@ All notable changes are recorded here. The format follows
   a node out of reach continues when run again.
   `VerifiedBundle::unverified_identity` reads a bundle's name and version
   without verifying it.
+- Blue-green upgrades (ROADMAP U2): an app whose new manifest says
+  `upgrade.mode = "blue-green"` runs the new version beside the old under
+  a root supervisor of its own, and the app's pool sends the new version a
+  share of the messages to the app by name (calls, casts, HTTP routes,
+  forwarded requests); hash routing keeps each key on one side. `paddock
+  upgrade --steps 10,50,100` moves the share step by step, watched with
+  `--observe-ms` and `--max-restarts`, and stops the old version at 100
+  (after `--drain-ms` for its mailboxes); a failed step, or a new version
+  that gives up, stops the new one. `paddock traffic <app> <percent>`,
+  `--promote` and `--drop` (`POST /v1/apps/{app}/traffic`) change an
+  upgrade left below 100, `paddock rollback` drops it, `paddock status`
+  shows it, and a node that restarts starts both versions at the same
+  share. `Apps::start_new`, `set_traffic`, `promote`, `drop_new` and
+  `AppHandle::new_side`; `AppHandle::supervisor` now returns an owned
+  handle. Refused for singletons, apps with `registered_names` or other
+  apps' children, and versions whose HTTP routes differ.
 - Singletons move with their state in a planned switchover (ROADMAP M1):
   on a pair with `[failover] replication = true`, a singleton in
   `snapshot` upgrade mode writes its snapshot to the replicated log
