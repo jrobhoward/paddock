@@ -68,6 +68,58 @@ fn plan____no_running_primary_or_standby_catching_up____blocked() {
 }
 
 #[test]
+fn halt____node_out_of_reach_or_refusing____stop_or_fail() {
+    let lost = ClientError::Http("connection reset".into());
+    let unreachable = ClientError::Connect {
+        path: "/tmp/n1.sock".into(),
+        source: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+    };
+    let refused = ClientError::Decode("not an upgrade report".into());
+
+    let halts = [
+        halt(1, "primary", "upgrade", &lost),
+        halt(1, "primary", "upgrade", &unreachable),
+        halt(1, "primary", "upgrade", &refused),
+    ];
+
+    assert!(
+        matches!(&halts[0], Halt::Stop(w) if w.starts_with("node 1 (primary): upgrade not answered"))
+    );
+    assert!(matches!(&halts[1], Halt::Stop(_)), "{halts:?}");
+    assert!(
+        matches!(&halts[2], Halt::Fail(w) if w.starts_with("node 1 (primary): upgrade refused"))
+    );
+}
+
+#[test]
+fn pause____standby_only____the_primary_step_only() {
+    let views = [
+        node(1, "primary", "1.0.0", None),
+        node(2, "standby", "1.0.0", None),
+    ];
+    let opts = |standby_only| Options {
+        params: RolloutParams::default(),
+        abort: true,
+        timeout: Duration::from_secs(1),
+        standby_only,
+    };
+
+    let paused = [
+        pause(&views, 2, &opts(true)),
+        pause(&views, 1, &opts(true)),
+        pause(&views, 1, &opts(false)),
+    ];
+
+    assert_eq!(paused[0], None);
+    assert!(
+        paused[1]
+            .as_deref()
+            .is_some_and(|w| w.starts_with("node 1, the primary"))
+    );
+    assert_eq!(paused[2], None);
+}
+
+#[test]
 fn rollback_target____same_version_or_half_way____the_previous() {
     let both = [
         node(1, "primary", "2.0.0", Some("1.0.0")),

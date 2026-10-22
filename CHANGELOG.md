@@ -628,6 +628,11 @@ All notable changes are recorded here. The format follows
   a node out of reach continues when run again.
   `VerifiedBundle::unverified_identity` reads a bundle's name and version
   without verifying it.
+- `paddock release upgrade --standby-only` and `release rollback
+  --standby-only` change the standby and pause (outcome `paused`) before
+  the primary's step, for a run without the flag to finish. The SCADA
+  drill (`examples/scada/drill.sh`) runs its upgrades and rollback through
+  `paddock release`, and loses the primary between a release's two steps.
 - Blue-green upgrades (ROADMAP U2): an app whose new manifest says
   `upgrade.mode = "blue-green"` runs the new version beside the old under
   a root supervisor of its own, and the app's pool sends the new version a
@@ -673,6 +678,11 @@ All notable changes are recorded here. The format follows
   `paddock_replication_partner_lag_entries`, `paddock_replication_alone`.
 
 ### Fixed
+
+- `paddock release upgrade` rolled back the node it had just upgraded when
+  that node's role changed during the step's gate (the standby promoted
+  because the primary was lost), or when the node changed did not answer;
+  both now stop the run, and the next run continues from the new roles.
 
 - wasmtime 49.0.4 and rustls-webpki 0.103.16, for RUSTSEC-2026-0375 to
   0379 and 0382 (among them wasi-http content lengths set by guests, a

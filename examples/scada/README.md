@@ -42,11 +42,13 @@ a pair as three `paddock node` processes, with the timings of
 deploys the apps to both nodes, raises and acknowledges an alarm, and then
 runs a release cycle, `STEP_SECS` (5) apart:
 
-1. `control` upgraded to version 2 on the standby, then on the primary;
+1. `control` released at version 2 across the pair (`paddock release
+   upgrade --pair pair.toml`: the standby, then the primary in place);
 2. a planned switchover;
-3. a rollback on both nodes;
-4. an upgrade of the standby, then the primary killed before its turn,
-   restarted, and upgraded.
+3. a release rollback across the pair;
+4. a release of the standby alone (`--standby-only`), then the primary
+   killed before its step, restarted as the standby, and the release run
+   again to finish.
 
 A probe per node reads the point table and the alarms ten times a second.
 The report gives, per step and node, the failed requests out of those made
@@ -97,5 +99,25 @@ bucket polled by the primary alone and `control`'s buckets `replicated`:
   on node 1 and 571 ms on node 2, and 6 and 5 alarm requests failed,
   against about 3 s and 28. The failover (the primary killed) is
   unchanged at 3.6 s: it still waits the node timeout and the lease.
+
+## Third run: the cycle through `paddock release`
+
+On 2026-10-21 (same machine, load average about 1.4 from other work), with
+the upgrades and the rollback run by `paddock release` across the pair
+(ROADMAP U1) instead of a command per node:
+
+- Each release did the standby (a bundle swap of the held singleton),
+  then the primary in place by snapshot, and failed no requests; the
+  longest point gap in those steps was 116 to 232 ms.
+- The switchover: 684 ms on node 1 and 572 ms on node 2, 6 alarm requests
+  failed on each, as in the second run's last pass.
+- The primary killed after the standby's step: node 2's probes failed
+  throughout, and node 1's point table stopped for 3,776 ms and its alarm
+  requests failed 24 times, until it held the lease. The rerun after node
+  2 came back upgraded node 2 alone, now the standby, and was done.
+- When node 2 rejoined, the point table stopped for about 570 ms on both
+  nodes, starting about 450 ms after the connection came back and before
+  the release ran. Not explained yet.
+- The acknowledged alarm stayed `acked` after every step.
 
 X2 turns these into pass or fail criteria.

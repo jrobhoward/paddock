@@ -9,12 +9,14 @@
 //! in place and reverts them if the new version cannot load their
 //! snapshot. After each step a gate waits for the app to run at the new
 //! version on the node changed. An upgrade whose step or gate fails rolls
-//! back what the run changed, newest first, unless asked not to.
+//! back what the run changed, newest first, unless asked not to; a node
+//! lost or a role changed during a step stops the run instead, since the
+//! next run continues from the new roles.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use paddock::api::{Client, RolloutParams};
+use paddock::api::{Client, ClientError, RolloutParams};
 use serde::{Deserialize, Serialize};
 
 /// The pair file: how to reach each node's admin API.
@@ -175,6 +177,29 @@ pub(crate) struct Options {
     pub(crate) abort: bool,
     /// How long a gate waits.
     pub(crate) timeout: Duration,
+    /// Change the standby only, and leave the primary for the next run.
+    pub(crate) standby_only: bool,
+}
+
+/// Why a step or a gate ended a run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Halt {
+    /// Nothing failed, but the pair changed under the run (a node out of
+    /// reach, roles changed): run again to continue.
+    Stop(String),
+    /// The change failed.
+    Fail(String),
+}
+
+/// A step's error from a node: out of reach (the change may or may not
+/// have been made, and the next run sees which), or refused.
+fn halt(id: u32, role: &str, what: &str, e: &ClientError) -> Halt {
+    match e {
+        ClientError::Connect { .. } | ClientError::RemoteConnect { .. } | ClientError::Http(_) => {
+            Halt::Stop(format!("node {id} ({role}): {what} not answered: {e}"))
+        }
+        _ => Halt::Fail(format!("node {id} ({role}): {what} refused: {e}")),
+    }
 }
 
 /// What a release did.
@@ -184,7 +209,8 @@ pub(crate) struct Report {
     pub(crate) to: String,
     /// Each step, as done.
     pub(crate) steps: Vec<String>,
-    /// `done`, `stopped` (rerun to continue) or `aborted` (rolled back).
+    /// `done`, `paused` (the standby only, as asked), `stopped` (rerun to
+    /// continue) or `aborted` (rolled back).
     pub(crate) outcome: String,
     /// Why it stopped or was aborted.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,7 +219,7 @@ pub(crate) struct Report {
 
 impl Report {
     pub(crate) fn ok(&self) -> bool {
-        self.outcome == "done"
+        self.outcome == "done" || self.outcome == "paused"
     }
 
     /// The report for people, a line per step.
@@ -251,17 +277,20 @@ async fn gate(
     version: &str,
     role: &str,
     timeout: Duration,
-) -> Result<(), String> {
+) -> Result<(), Halt> {
     let m = member(members, id);
     let start = Instant::now();
     let mut last = String::new();
     while start.elapsed() < timeout {
         match view(m, app).await {
             Ok(v) if v.status == "failed" => {
-                return Err(format!("node {id}: {app} {} failed", v.version));
+                return Err(Halt::Fail(format!("node {id}: {app} {} failed", v.version)));
             }
             Ok(v) if v.role != role => {
-                return Err(format!("node {id} became {} during the release", v.role));
+                return Err(Halt::Stop(format!(
+                    "node {id} became {} during the release",
+                    v.role
+                )));
             }
             Ok(v)
                 if v.version == version
@@ -274,10 +303,18 @@ async fn gate(
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    Err(format!(
+    Err(Halt::Fail(format!(
         "node {id}: {app} not running at {version} after {}s ({last})",
         timeout.as_secs()
-    ))
+    )))
+}
+
+/// With `--standby-only`, the run pauses before the primary's step.
+fn pause(views: &[View; 2], id: u32, opts: &Options) -> Option<String> {
+    let primary = views.iter().any(|v| v.id == id && v.role == "primary");
+    (opts.standby_only && primary).then(|| {
+        format!("node {id}, the primary, is left as it is (--standby-only): run again without it to finish")
+    })
 }
 
 /// Upgrade `app` on both nodes to the bundle `bytes`, of version `target`.
@@ -311,6 +348,11 @@ pub(crate) async fn upgrade(
         if changed.contains(&id) {
             break format!("node {id} is not at {target} after its upgrade");
         }
+        if let Some(why) = pause(&views, id, opts) {
+            report.outcome = "paused".into();
+            report.reason = Some(why);
+            return report;
+        }
         let role = views
             .iter()
             .find(|v| v.id == id)
@@ -328,10 +370,15 @@ pub(crate) async fn upgrade(
                     r.from, r.to, r.mode
                 ));
             }
-            Err(e) => break format!("node {id} ({role}): upgrade refused: {e}"),
+            Err(e) => match halt(id, &role, "upgrade", &e) {
+                Halt::Stop(why) => return stopped(report, why),
+                Halt::Fail(why) => break why,
+            },
         }
-        if let Err(e) = gate(members, id, app, target, &role, opts.timeout).await {
-            break e;
+        match gate(members, id, app, target, &role, opts.timeout).await {
+            Ok(()) => {}
+            Err(Halt::Stop(why)) => return stopped(report, why),
+            Err(Halt::Fail(why)) => break why,
         }
     };
     if !opts.abort || changed.is_empty() {
@@ -390,6 +437,11 @@ pub(crate) async fn rollback(members: &[Member; 2], app: &str, opts: &Options) -
             }
             Step::Change(id) => id,
         };
+        if let Some(why) = pause(&views, id, opts) {
+            report.outcome = "paused".into();
+            report.reason = Some(why);
+            return report;
+        }
         let role = views
             .iter()
             .find(|v| v.id == id)
@@ -403,10 +455,15 @@ pub(crate) async fn rollback(members: &[Member; 2], app: &str, opts: &Options) -
                     r.from, r.to, r.mode
                 ));
             }
-            Err(e) => return stopped(report, format!("node {id} ({role}): rollback refused: {e}")),
+            Err(e) => {
+                let (Halt::Stop(why) | Halt::Fail(why)) = halt(id, &role, "rollback", &e);
+                return stopped(report, why);
+            }
         }
-        if let Err(e) = gate(members, id, app, &target, &role, opts.timeout).await {
-            return stopped(report, e);
+        if let Err(Halt::Stop(why) | Halt::Fail(why)) =
+            gate(members, id, app, &target, &role, opts.timeout).await
+        {
+            return stopped(report, why);
         }
     }
 }

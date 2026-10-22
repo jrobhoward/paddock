@@ -4,10 +4,11 @@
 # devices, taken through a release cycle while a probe per node asks the
 # HMI for the point table and the alarms ten times a second:
 #
-#   deploy; upgrade control to v2 on the standby, then the primary; a
-#   planned switchover; a rollback on both nodes; an upgrade of the
-#   standby, then the primary lost (kill -9) before its turn, and brought
-#   back and upgraded.
+#   deploy; a release of control v2 across the pair (`paddock release
+#   upgrade`: the standby, then the primary in place); a planned
+#   switchover; a release rollback; a release of the standby alone
+#   (`--standby-only`), then the primary lost (kill -9) before its step,
+#   brought back as standby, and the release run again to finish.
 #
 # It reports, for each step and node, the failed point and alarm requests
 # out of those made, and the longest time between point updates the probe
@@ -16,8 +17,7 @@
 # pump-1-pressure alarm (raised and acknowledged before the cycle) as the
 # primary sees it after each step. The point table is a `cluster` bucket
 # polled by the primary alone, and control's buckets are `replicated`.
-# Until moving instances (M1) and pair rollouts (U1), it shows where the
-# cycle is not yet zero-downtime; X2 turns it into a pass or fail.
+# X2 turns the report into a pass or fail.
 #
 #   examples/scada/drill.sh                 # STEP_SECS=5 between steps
 #   DRILL_DIR=/tmp/drill examples/scada/drill.sh
@@ -88,6 +88,9 @@ until_ok() {
   done
 }
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }
+# The primary $1's partner has every replicated write.
+caught_up() { p "$1" --json failover | grep -q '"partner_outdated": false'; }
+release() { "$PADDOCK" release "$@" --pair "$DRILL_DIR/pair.toml"; }
 
 # Keys, signer, policy and the three nodes' configs.
 [ -f signer.key ] || "$PADDOCK" keygen signer --no-password >/dev/null
@@ -161,6 +164,16 @@ for n in 1 2 3; do
     fi
   } > "node-$n.toml"
 done
+
+cat > pair.toml <<TOML
+[[node]]
+id = 1
+socket = "$(sock 1)"
+
+[[node]]
+id = 2
+socket = "$(sock 2)"
+TOML
 
 bundle() {
   "$PADDOCK" bundle "$ROOT/examples/scada/$1" "$2" --key signer.key --out "$3" >/dev/null
@@ -237,35 +250,30 @@ write 200
 until_ok 10 active
 curl -sf -X POST "$(url 2)/scada/alarms/pump-1-pressure/ack" >/dev/null
 settle
-mark "upgrade standby (2) to v2"
-p 2 upgrade control control-v2.rbp
-settle
-mark "upgrade primary (1) to v2"
-p 1 upgrade control control-v2.rbp
+mark "release v2 across the pair"
+release upgrade control control-v2.rbp
 settle
 mark "switchover 1 -> 2"
 p 1 failover switchover >/dev/null
 until_ok 30 role 2 primary
 until_ok 30 role 1 standby
 settle
-mark "rollback standby (1)"
-p 1 rollback control
+mark "release rollback across the pair"
+release rollback control
 settle
-mark "rollback primary (2)"
-p 2 rollback control
+mark "release v2, the standby (1) only"
+release upgrade control control-v2.rbp --standby-only
 settle
-mark "upgrade standby (1) to v2"
-p 1 upgrade control control-v2.rbp
-settle
-mark "primary (2) lost before its upgrade"
+mark "primary (2) lost before its step"
 kill -9 "${NODE_PIDS[2]}"
 { wait "${NODE_PIDS[2]}"; } 2>/dev/null || true
 until_ok 60 role 1 primary
 settle
-mark "node 2 back as standby, upgraded"
+mark "node 2 back as standby; release again"
 start_node 2
 until_ok 60 role 2 standby
-p 2 upgrade control control-v2.rbp
+until_ok 60 caught_up 1
+release upgrade control control-v2.rbp
 settle
 mark "end"
 

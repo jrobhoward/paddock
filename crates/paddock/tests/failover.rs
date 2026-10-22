@@ -1244,3 +1244,107 @@ async fn release_upgrade____singleton_on_a_pair____standby_then_primary_and_abor
         p.child.kill().await.unwrap();
     }
 }
+
+/// A release across the pair whose primary is lost between its steps
+/// (ROADMAP U1, X1): `--standby-only` upgrades the standby and pauses; the
+/// primary is killed, the standby takes over at the new version, and a
+/// second run, once the old primary is back as standby, upgrades it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn release_upgrade____primary_lost_between_steps____rerun_finishes_on_the_new_roles() {
+    let dir = tempfile::Builder::new()
+        .prefix("prl")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let peers = keys(dir.path());
+    let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+    let pk = signer.pk.to_base64();
+    let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
+    let replicating = |n: u32, a: &str| {
+        format!(
+            "{}replication = true\n",
+            member(n, dir.path(), &peers, a, &a3)
+        )
+    };
+    let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let mut n1 = Process::start(dir.path(), 1, &pk, &replicating(1, &a1)).await;
+    let mut n2 = Process::start(dir.path(), 2, &pk, &replicating(2, &a2)).await;
+    for n in [&n1, &n2] {
+        n.client
+            .deploy(counter_singleton(&signer, "1.0.0", 1, None))
+            .await
+            .unwrap();
+    }
+    let runs = |c: &paddock::api::Client| {
+        let c = c.clone();
+        async move {
+            c.status("tally")
+                .await
+                .is_ok_and(|d| d.summary.status == "running")
+        }
+    };
+    let role = |c: &paddock::api::Client, r: &'static str| {
+        let c = c.clone();
+        async move { c.failover().await.is_ok_and(|f| f.role == r) }
+    };
+    until("node 1 runs the singleton", || runs(&n1.client)).await;
+    until("node 2 standby", || role(&n2.client, "standby")).await;
+    let pair = dir.path().join("pair.toml");
+    std::fs::write(
+        &pair,
+        format!(
+            "[[node]]\nid = 1\nsocket = {:?}\n\n[[node]]\nid = 2\nsocket = {:?}\n",
+            dir.path().join("n1.sock"),
+            dir.path().join("n2.sock")
+        ),
+    )
+    .unwrap();
+    let v2 = dir.path().join("v2.rbp");
+    std::fs::write(&v2, counter_singleton(&signer, "2.0.0", 2, Some("^1"))).unwrap();
+    let upgrade = ["upgrade", "tally", v2.to_str().unwrap()];
+
+    let (paused_ok, paused) = release(&[&upgrade[..], &["--standby-only"]].concat(), &pair).await;
+    n1.child.kill().await.unwrap();
+    until("node 2 runs the singleton", || runs(&n2.client)).await;
+    let (lost_ok, lost) = release(&upgrade, &pair).await;
+    n1 = Process::start(dir.path(), 1, &pk, &replicating(1, &a1)).await;
+    until("node 1 back as standby", || role(&n1.client, "standby")).await;
+    until("node 1 caught up", || {
+        let c = n2.client.clone();
+        async move { c.failover().await.is_ok_and(|f| !f.partner_outdated) }
+    })
+    .await;
+    let (rest_ok, rest) = release(&upgrade, &pair).await;
+    let versions = [
+        n1.client.status("tally").await.unwrap().summary.version,
+        n2.client.status("tally").await.unwrap().summary.version,
+    ];
+
+    assert!(paused_ok, "{paused}");
+    assert_eq!(paused["outcome"], "paused", "{paused}");
+    let steps = paused["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 1, "{paused}");
+    assert!(
+        steps[0]
+            .as_str()
+            .unwrap()
+            .starts_with("node 2 (standby): upgraded tally 1.0.0 -> 2.0.0"),
+        "{paused}"
+    );
+    assert!(!lost_ok, "{lost}");
+    assert_eq!(lost["outcome"], "stopped", "{lost}");
+    assert!(rest_ok, "{rest}");
+    let steps = rest["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 1, "{rest}");
+    assert!(
+        steps[0]
+            .as_str()
+            .unwrap()
+            .starts_with("node 1 (standby): upgraded tally 1.0.0 -> 2.0.0"),
+        "{rest}"
+    );
+    assert_eq!(versions, ["2.0.0", "2.0.0"]);
+    for p in [&mut n1, &mut n2, &mut w] {
+        p.child.kill().await.unwrap();
+    }
+}

@@ -153,6 +153,10 @@ enum ReleaseCommand {
         /// Leave what was changed as it is when a step or gate fails.
         #[arg(long)]
         no_abort: bool,
+        /// Upgrade the standby only, and leave the primary for a run
+        /// without this flag.
+        #[arg(long)]
+        standby_only: bool,
         /// How long each gate waits, in seconds.
         #[arg(long, default_value_t = 60)]
         timeout_s: u64,
@@ -167,6 +171,10 @@ enum ReleaseCommand {
         pair: PathBuf,
         #[command(flatten)]
         rollout: Rollout,
+        /// Roll back the standby only, and leave the primary for a run
+        /// without this flag.
+        #[arg(long)]
+        standby_only: bool,
         /// How long each gate waits, in seconds.
         #[arg(long, default_value_t = 60)]
         timeout_s: u64,
@@ -440,20 +448,22 @@ fn main() -> anyhow::Result<()> {
 async fn release_pair(args: &Cli, action: &ReleaseCommand) -> anyhow::Result<()> {
     use cli::release::{self, Member, Options, PairFile};
 
-    let (pair, rollout, timeout_s, abort) = match action {
+    let (pair, rollout, timeout_s, abort, standby_only) = match action {
         ReleaseCommand::Upgrade {
             pair,
             rollout,
             timeout_s,
             no_abort,
+            standby_only,
             ..
-        } => (pair, rollout, *timeout_s, !*no_abort),
+        } => (pair, rollout, *timeout_s, !*no_abort, *standby_only),
         ReleaseCommand::Rollback {
             pair,
             rollout,
             timeout_s,
+            standby_only,
             ..
-        } => (pair, rollout, *timeout_s, false),
+        } => (pair, rollout, *timeout_s, false, *standby_only),
         ReleaseCommand::Finalize => unreachable!("sent to one node"),
     };
     let file = PairFile::read(pair)?;
@@ -469,6 +479,7 @@ async fn release_pair(args: &Cli, action: &ReleaseCommand) -> anyhow::Result<()>
         params: rollout.params(),
         abort,
         timeout: Duration::from_secs(timeout_s),
+        standby_only,
     };
     let report = match action {
         ReleaseCommand::Upgrade { app, bundle, .. } => {
