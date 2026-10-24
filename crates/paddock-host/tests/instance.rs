@@ -290,6 +290,40 @@ async fn call____no_reply_in_time____timeout_and_instance_keeps_running() {
     instance.kill();
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn call____no_reply_in_time_on_one_thread____timeout() {
+    let (rt, app) = shared();
+    let instance = rt.spawn(app, spec("")).unwrap();
+    let started = Instant::now();
+
+    let result = instance
+        .call(text("noreply"), Duration::from_millis(100))
+        .await;
+
+    assert_eq!(result, Err(CallError::Timeout));
+    assert!(started.elapsed() >= Duration::from_millis(100));
+    instance.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn call____instance_busy_in_a_callback____timeout_on_time() {
+    let (rt, app) = shared();
+    let instance = rt.spawn(app, spec("")).unwrap();
+    instance.call(text("echo:up"), LONG).await.unwrap();
+    instance.cast(text("spin")).unwrap();
+    let started = Instant::now();
+
+    let result = instance
+        .call(text("echo:x"), Duration::from_millis(100))
+        .await;
+
+    let took = started.elapsed();
+    assert_eq!(result, Err(CallError::Timeout));
+    assert!(took >= Duration::from_millis(100), "{took:?}");
+    assert!(took < Duration::from_millis(500), "{took:?}");
+    instance.kill();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn respawn____after_exit____same_id_next_incarnation_fresh_state() {
     let (rt, app) = shared();

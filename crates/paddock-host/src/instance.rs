@@ -402,7 +402,19 @@ impl InstanceHandle {
                 }
             }
         };
-        tokio::time::timeout(timeout, waiting)
+        // Most replies arrive before the caller next runs: yield once and
+        // arm the timer only if this one has not. A timer per call (the
+        // wheel's insert and removal) cost about 8% of an empty call
+        // (`call_split`, ROADMAP B12). The deadline is from the start, so a
+        // timeout still fires on time.
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut waiting = std::pin::pin!(waiting);
+        tokio::select! {
+            biased;
+            done = &mut waiting => return done,
+            () = tokio::task::yield_now() => {}
+        }
+        tokio::time::timeout_at(deadline, waiting)
             .await
             .unwrap_or(Err(CallError::Timeout))
     }

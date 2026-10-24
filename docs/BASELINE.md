@@ -1543,6 +1543,28 @@ loaded, send_after 10 ms: lateness p50 1012 us, p99 1588 us, max 2398 us
 loaded, send_after 50 ms: lateness p50 1038 us, p99 1628 us, max 3531 us
 ```
 
+## 2026-10-24: no timer per call (B12)
+
+Raspberry Pi 5 (as above), idle (load average under 0.3 before each set); commit 1a7fd5c plus `call_split` and three builds of `InstanceHandle::send_call`: `tokio::time::timeout` around every call (before), the change (yield once, then `timeout_at` the same deadline), and no timeout at all (the ceiling, not shippable). Each set alternates the builds; `call_split N paddock`, 200,000 sequential empty calls, five rounds; `pool_load 4`, three rounds. Logs on the Pi under `~/pi-runs/b12-timer-2026-10-24/`.
+
+| Empty call, sequential | Before | Yield, then arm | No timer |
+| --- | --- | --- | --- |
+| 1 worker | 3.55 to 3.67 µs | 3.25 to 3.35 µs | 3.28 to 3.40 µs |
+| 4 workers | 4.33 to 4.63 µs | 4.01 to 4.19 µs | 3.97 to 4.20 µs |
+| 4 workers, on-CPU summed over threads | 5.56 to 5.89 µs | 5.17 to 5.36 µs | 5.14 to 5.37 µs |
+
+| `pool_load 4`, empty calls | Before, calls/s | After, calls/s | Before, p99.9 | After, p99.9 |
+| --- | --- | --- | --- | --- |
+| Pool 1, 64 clients | 263k to 298k | 310k to 326k | 344 to 396 µs | 325 to 393 µs |
+| Pool 4, 64 clients | 800k to 813k | 841k to 865k | 357 to 367 µs | 374 to 395 µs |
+| Pool 16, 64 clients | 662k to 670k | 726k to 761k | 1.35 to 1.39 ms | 0.69 to 0.72 ms |
+| Pool 16, 256 clients | 708k to 717k | 739k to 766k | 2.41 to 2.54 ms | 2.45 to 3.46 ms |
+
+- The change takes about 8% off an empty call, on 1 and on 4 workers: what removing the timer altogether takes. A reply that arrives before the caller runs again (nearly every one here) never touches the timer wheel.
+- Under concurrency, empty calls per second rise 5 to 12%; calls doing guest work (`busy:20000`) are unchanged within noise, their time being the guest's.
+- p99.9 at 256 clients was higher after in two of three rounds (3.46 and 3.18 ms against at most 2.54 ms), and `busy:20000` with 16 clients likewise (2.50 and 3.06 ms against at most 1.77 ms); p99 did not move. Not explained; worth longer runs before reading anything into it.
+- Timeouts still fire on time: the deadline is taken before the yield. Tests: a call to an instance that never replies, on one thread, and a call to an instance busy in a callback, which times out within 100 to 500 ms of a 100 ms timeout (`crates/paddock-host/tests/instance.rs`).
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.

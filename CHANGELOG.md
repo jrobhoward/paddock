@@ -20,12 +20,18 @@ All notable changes are recorded here. The format follows
   (compile time by component size, and cached loads); and
   `scripts/beam_baseline.escript`, the same shapes on Erlang/OTP for
   reference (`bench.sh beam`).
+- `call_split` (`paddock-host` example, `bench.sh call_split`): where an
+  empty call's time goes, as wall time, on-CPU time, context switches and
+  time inside the callback, against a bare tokio request and reply.
 - The chaos fixture's `timed`, `lateness`, `clock` and `ballast` commands,
   for those benchmarks; its snapshot carries the ballast after a marker,
   and reads snapshots without one as before.
 
 ### Changed
 
+- A call no longer arms a timer when its reply arrives before the caller
+  next runs: `InstanceHandle::call` yields once first, then waits on a
+  timer at the same deadline. About 8% off an empty call (ROADMAP B12).
 - The minimum Rust version is 1.99.0 (was 1.96.0), so dependencies resolve
   to current releases; the lock files of the workspace, fuzz and spikes are
   updated within semver.
