@@ -278,6 +278,8 @@ fn NodeConfig____failover____read_with_defaults() {
     );
 }
 
+// The serial line is Unix only; elsewhere a binding is refused (below).
+#[cfg(unix)]
 #[test]
 fn NodeConfig____failover_serial____read_with_default_baud() {
     let config = NodeConfig::from_toml_str(&format!(
@@ -295,6 +297,7 @@ fn NodeConfig____failover_serial____read_with_default_baud() {
     );
 }
 
+#[cfg(unix)]
 #[rstest::rstest]
 #[case::zero_baud(
     "serial = { device = \"/dev/ttyUSB0\", baud = 0 }",
@@ -308,6 +311,18 @@ fn NodeConfig____failover_serial_invalid____refused(#[case] line: &str, #[case] 
 
     let err = result.unwrap_err().to_string();
     assert!(err.contains(says), "{err}");
+}
+
+#[cfg(not(unix))]
+#[test]
+fn NodeConfig____failover_serial_not_unix____refused() {
+    let result = NodeConfig::from_toml_str(&format!(
+        "{CLUSTERED}[failover]\npartner = 2\narbiter = \"paths\"\n\
+         serial = {{ device = \"COM3\" }}\n"
+    ));
+
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("failover.serial needs a Unix node"), "{err}");
 }
 
 const PAIRED: &str = "[failover]\npartner = 2\narbiter = \"paths\"\n";
