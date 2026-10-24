@@ -20,6 +20,10 @@ use serde::{Deserialize, Serialize};
 /// The protocol version this crate speaks.
 pub const VERSION: u16 = 1;
 
+/// The environment variable naming the directory of the bundle's `priv/`
+/// files, set when the bundle has any: a native app reads them there.
+pub const PRIV_ENV: &str = "PADDOCK_PRIV";
+
 /// The largest frame either side accepts: a 16 MiB message, with room for
 /// the frame around it.
 pub const MAX_FRAME: usize = 17 << 20;

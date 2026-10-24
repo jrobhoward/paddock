@@ -194,7 +194,8 @@ enum Command {
     Bundle {
         /// The app's paddock.toml.
         manifest: PathBuf,
-        /// The component (`.wasm`, built for wasm32-wasip2).
+        /// The component (`.wasm`, built for wasm32-wasip2), or for a
+        /// native-process app its program for this machine's platform.
         component: PathBuf,
         /// Minisign secret key (password from PADDOCK_KEY_PASSWORD, or a prompt).
         #[arg(long)]

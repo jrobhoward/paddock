@@ -129,7 +129,14 @@ pub fn main() -> ExitCode {
     match args.program {
         Program::Library(path) => library::serve(path),
         Program::Executable(path) => {
-            let err = std::process::Command::new(&path).env_clear().exec();
+            // The environment is the node's choice, already narrowed to
+            // what the app may know.
+            let mut cmd = std::process::Command::new(&path);
+            cmd.env_clear();
+            if let Some(dir) = std::env::var_os(crate::protocol::PRIV_ENV) {
+                cmd.env(crate::protocol::PRIV_ENV, dir);
+            }
+            let err = cmd.exec();
             eprintln!("paddock-runner: {}: {err}", path.display());
             ExitCode::from(2)
         }

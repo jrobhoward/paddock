@@ -724,6 +724,10 @@ All notable changes are recorded here. The format follows
   sockets, signals only to itself, non-dumpable) before loading or
   executing the program. `paddock-fixture-native` and
   `paddock-fixture-plugin` are its test apps.
+- `paddock bundle` packs a native-process app: its program (a rustbridge
+  `.so` or an executable) as the release variant for the machine's
+  platform. A native app finds its bundle's `priv/` files in the
+  directory `PADDOCK_PRIV` names.
 - Node config `[native]`: `runner`, `cgroup` (a delegated cgroup v2
   directory), `pids_max`, `ping_interval_ms`, `ping_timeout_ms` and
   `landlock_optional`. `examples/systemd/paddock.service` installs

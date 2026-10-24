@@ -174,3 +174,20 @@ fn bundle____key_readable_by_others____refused() {
     assert!(error.contains("chmod 600"), "{error}");
     assert!(!setup.path("out.rbp").exists());
 }
+
+#[test]
+fn bundle____native_process_app____program_as_this_platforms_variant() {
+    let s = Setup::new(
+        "[app]\nname = \"vendor\"\nversion = \"1.0.0\"\n\n[appserver]\nkind = \"native-process\"\n\n[appserver.native]\nprogram = \"executable\"\n",
+        &[],
+    );
+    std::fs::write(s.path("app.wasm"), b"\x7fELF not a component").unwrap();
+
+    let out = s.bundle(None, false).unwrap();
+
+    let bundle =
+        paddock_bundle::VerifiedBundle::open(&out.path, std::slice::from_ref(&out.public_key))
+            .unwrap();
+    assert!(out.imports.is_empty());
+    assert_eq!(bundle.component, b"\x7fELF not a component");
+}

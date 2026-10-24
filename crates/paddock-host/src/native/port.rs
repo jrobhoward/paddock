@@ -6,7 +6,8 @@
 //! stderr becomes log lines, as a component's does. Between fork and exec
 //! the child gets the parent-death signal (`SIGKILL`), no core dumps, and
 //! its memory limit: the cgroup it starts in, or `RLIMIT_DATA` without
-//! one. It runs in a process group of its own, with an empty environment.
+//! one. It runs in a process group of its own, with an environment of
+//! `PADDOCK_PRIV` alone (the bundle's `priv/` files, when it has any).
 
 use std::ffi::CString;
 use std::os::unix::process::ExitStatusExt;
@@ -87,8 +88,15 @@ impl Port {
         if config.landlock_optional {
             cmd.args(["--landlock", "best-effort"]);
         }
-        cmd.env_clear()
-            .stdin(Stdio::piped())
+        cmd.env_clear();
+        if let Some(p) = spec
+            .preopens
+            .iter()
+            .find(|p| p.guest == crate::spec::PRIV_PATH)
+        {
+            cmd.env(protocol::PRIV_ENV, &p.host);
+        }
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)

@@ -285,3 +285,26 @@ async fn cgroup____allocates_over_memory_max____memory_limit_and_cgroup_removed(
     assert_eq!(reason, ExitReason::Crashed("memory_limit".into()));
     assert!(!dir.exists(), "{} left behind", dir.display());
 }
+
+#[tokio::test]
+async fn executable____priv_files____readable_at_paddock_priv() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("table.csv"), b"a,b\n").unwrap();
+    let spec = InstanceSpec {
+        preopens: vec![paddock_host::Preopen {
+            host: dir.path().to_path_buf(),
+            guest: paddock_host::PRIV_PATH.into(),
+            writable: false,
+        }],
+        ..spec("")
+    };
+    let instance = rt.spawn(&app, spec).unwrap();
+
+    let found = ask(&instance, "priv table.csv").await;
+    let missing = ask(&instance, "priv nothing.csv").await;
+
+    assert_eq!(found, "ok");
+    assert!(missing.starts_with("err:"), "{missing}");
+}

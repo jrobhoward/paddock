@@ -17,6 +17,7 @@
 //! | `panic`, `abort`, `spin` | never |
 //! | `alloc MIB` | `ok` once allocated and touched |
 //! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID` | `ok` or `err:` and the OS error |
+//! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
 //!
 //! Init arguments `fail` make `init` fail.
 
@@ -124,6 +125,10 @@ impl Fixture {
             "write" => outcome(std::fs::write(rest, b"x")),
             "connect" => outcome(std::net::TcpStream::connect(rest)),
             "exec" => outcome(std::process::Command::new("/bin/true").status()),
+            "priv" => match std::env::var(paddock_native::protocol::PRIV_ENV) {
+                Ok(dir) => outcome(std::fs::read(std::path::Path::new(&dir).join(rest))),
+                Err(_) => "err:no priv".into(),
+            },
             "kill" => {
                 let target: i32 = rest.parse().unwrap_or(0);
                 // SAFETY: `kill` takes no pointers; any pid and signal 0

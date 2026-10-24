@@ -59,7 +59,8 @@ struct AuthorManifest {
 pub struct BundleRequest<'a> {
     /// The `paddock.toml`.
     pub manifest: &'a Path,
-    /// The component.
+    /// The component, or for a `native-process` app its program (a
+    /// rustbridge `.so` or an executable) for this machine's platform.
     pub component: &'a Path,
     /// The minisign secret key.
     pub key: &'a Path,
@@ -82,7 +83,7 @@ pub struct Bundled {
     pub version: String,
     /// The signer's public key.
     pub public_key: String,
-    /// The component's imports.
+    /// The component's imports; none for a native program.
     pub imports: Vec<String>,
     /// Files added under `priv/`.
     pub priv_files: usize,
@@ -167,8 +168,14 @@ pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
 
     let component = std::fs::read(req.component)
         .with_context(|| format!("cannot read {}", req.component.display()))?;
-    let imports = paddock_bundle::component_imports(&component)?;
-    if !req.skip_import_check {
+    let native = spec.kind == paddock_bundle::manifest::Kind::NativeProcess;
+    // A native program imports nothing; it asks the node over its pipe.
+    let imports = if native {
+        Vec::new()
+    } else {
+        paddock_bundle::component_imports(&component)?
+    };
+    if !req.skip_import_check && !native {
         paddock_bundle::effective_grant(&imports, &spec, &paddock_bundle::Granted::default())?;
     }
 
@@ -178,13 +185,20 @@ pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
     manifest.plugin.license = app.license;
     manifest.plugin.repository = app.repository;
     let (public_key, secret_key) = load_key(req.key)?;
-    let mut builder = BundleBuilder::new(manifest)
-        .add_component(
+    let builder = if native {
+        // The release variant for this machine's platform: a node runs the
+        // variant for its own.
+        let platform = Platform::current()
+            .ok_or_else(|| anyhow::anyhow!("native-process bundles are built on Linux or macOS"))?;
+        BundleBuilder::new(manifest).add_library(platform, req.component)?
+    } else {
+        BundleBuilder::new(manifest).add_component(
             Platform::Wasm32Wasip2,
             req.component,
             paddock_bundle::component_world(&component)?,
         )?
-        .with_extension(paddock_bundle::manifest::SECTION, appserver);
+    };
+    let mut builder = builder.with_extension(paddock_bundle::manifest::SECTION, appserver);
     let mut priv_files = 0;
     if let Some(dir) = req.priv_dir {
         for (relative, bytes) in read_tree(dir)? {
