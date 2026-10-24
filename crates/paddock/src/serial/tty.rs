@@ -51,9 +51,11 @@ impl Tty {
     }
 
     fn from_fd(fd: OwnedFd) -> io::Result<Self> {
-        Ok(Self {
-            fd: AsyncFd::new(fd)?,
-        })
+        // SAFETY: the `AsyncFd` owns `fd`, an open descriptor that stays open
+        // and the same until the `AsyncFd` drops it; `OwnedFd::as_raw_fd`
+        // always returns that descriptor.
+        let fd = unsafe { AsyncFd::register(fd) }?;
+        Ok(Self { fd })
     }
 
     /// Read what is available into `buf`, waiting until something is; 0

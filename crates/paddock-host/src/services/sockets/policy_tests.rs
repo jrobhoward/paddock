@@ -118,7 +118,7 @@ fn allows____udp_receive____from_connect_peers_or_with_listen() {
 }
 
 #[test]
-fn name_lookup____only_with_connect_rules() {
+fn name_lookup____with_and_without_connect_rules____only_with_them() {
     let none = Policy::new(&scope(&[("0.0.0.0/0", None)], &[], true));
     let some = Policy::new(&scope(&[], &[("10.0.0.0/8", None)], false));
 

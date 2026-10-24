@@ -729,6 +729,11 @@ All notable changes are recorded here. The format follows
   because the primary was lost), or when the node changed did not answer;
   both now stop the run, and the next run continues from the new roles.
 
+- tokio 1.54.1 and ctutils 0.4.5, for RUSTSEC-2026-0386 (`AsyncFd`'s safe
+  constructors accepted any descriptor; the serial heartbeat path's tty
+  now registers its owned descriptor through `AsyncFd::register`) and
+  RUSTSEC-2026-0385; clipboard-win 5.4.3, as 5.4.1 was yanked.
+
 - wasmtime 49.0.4 and rustls-webpki 0.103.16, for RUSTSEC-2026-0375 to
   0379 and 0382 (among them wasi-http content lengths set by guests, a
   Cranelift `br_table` miscompile on aarch64, and certificate checks
