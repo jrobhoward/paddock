@@ -118,6 +118,30 @@ async fn call____guest_sleeps_past_deadline____host_time_so_not_killed() {
     sleeper.kill();
 }
 
+#[rstest]
+#[case::waiting_in_a_host_call("sleep:10000")]
+#[case::running_guest_code("spin")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kill____during_a_callback____caller_sees_killed_at_once(#[case] command: &str) {
+    let (rt, app) = shared();
+    let instance = rt.spawn(app, spec("")).unwrap();
+    instance.call(text("echo:up"), LONG).await.unwrap();
+    let call = tokio::spawn({
+        let instance = instance.clone();
+        let command = command.to_string();
+        async move { instance.call(text(&command), LONG).await }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let started = Instant::now();
+
+    instance.kill();
+    let result = call.await.unwrap();
+
+    let took = started.elapsed();
+    assert_eq!(result, Err(CallError::Exited(ExitReason::Killed)));
+    assert!(took < Duration::from_millis(100), "{took:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn call____allocates_past_memory_max____crashes_with_memory_limit() {
     let (rt, app) = shared();

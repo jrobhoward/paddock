@@ -281,7 +281,7 @@ impl InstanceTask {
     async fn native_hello(&mut self, port: &mut Port, timeout: Duration) -> Result<(), ExitReason> {
         let hello = tokio::time::timeout(timeout, port.recv());
         let crashed = |why: String| Err(ExitReason::Crashed(why));
-        match super::killable(&mut self.control, hello).await? {
+        match super::killable(&self.kill, &self.control, None, hello).await? {
             Err(_elapsed) => {
                 port.kill();
                 crashed("init_timeout".into())
@@ -346,7 +346,9 @@ impl InstanceTask {
             match next {
                 Some(Incoming::Frame(FromApp::Request { id, request })) => {
                     let asked = Instant::now();
-                    match super::killable(&mut self.control, answer(state, request)).await {
+                    match super::killable(&self.kill, &self.control, None, answer(state, request))
+                        .await
+                    {
                         Ok(Ok(answer)) => port.send(&ToApp::Answer { id, answer }),
                         Ok(Err(why)) => {
                             port.kill();

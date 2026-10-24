@@ -472,7 +472,7 @@ An extension that works on its own schedule, such as a protocol stack polling de
 
 Linking happens once per engine, so a host call is a direct call on the service's state, with no dynamic dispatch. A registry in `services/mod.rs` lists the services; adding one is a module plus a line in each registry, with no change to the process core or orchestration. Every service follows these rules:
 - An ungranted capability fails softly, as an `access-denied` error value where the interface has one, never a trap.
-- Time spent in a host function is host time and does not count against the callback deadline. The Store's call hook times every host import, `wasi:io` waits included (a sleep, a stream read, an HTTP response), so services do not time themselves.
+- Time a callback spends waiting does not count against the callback deadline: waiting in a host function (another instance's reply, a sleep, a stream read, an HTTP response, a disk write on the blocking pool) and waiting for a worker after an epoch yield. The callback clock times the instance task's polls of the callback (`PollTime::time`), so services do not time themselves; what a host function does without waiting (a memory-bucket transaction, a read from redb's page cache) counts with the guest's time. Until 2026-10-24 a Store call hook timed every host import instead, which cost about 5% of an empty call (BASELINE.md).
 - Named resources (buckets, datasources) are declared in the manifest and bound in node configuration.
 - Usage is limited per app (rate limits, quotas, connection caps), and each operation is a probe point.
 

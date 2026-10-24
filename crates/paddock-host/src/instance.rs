@@ -21,11 +21,13 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::task::Poll;
 use std::time::Duration;
 
+use atomic_waker::AtomicWaker;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tracing::Instrument;
-use wasmtime::{CallHook, Store, Trap, UpdateDeadline};
+use wasmtime::{Store, Trap, UpdateDeadline};
 
 use crate::acl::Acl;
 use crate::bindings::{CallResult, PaddockApp};
@@ -40,7 +42,7 @@ use crate::pid::Pid;
 use crate::probe;
 use crate::runtime::{LoadedApp, RuntimeInner};
 use crate::spec::InstanceSpec;
-use crate::state::{InstanceState, ProcessContext};
+use crate::state::{InstanceState, PollTime, ProcessContext};
 use crate::upgrade::UpgradeError;
 
 /// Something waiting in a mailbox.
@@ -160,6 +162,7 @@ struct Shared {
     version: std::sync::Mutex<String>,
     mailbox: mpsc::Sender<Message>,
     control: watch::Sender<Control>,
+    kill: Arc<KillSignal>,
     state: watch::Receiver<LifecycleState>,
     exit: watch::Receiver<Option<ExitReason>>,
     message_max_bytes: AtomicU64,
@@ -525,13 +528,17 @@ impl InstanceHandle {
     /// Stop now with `reason`, without `terminate`. The first stop reason
     /// wins.
     fn stop_now(&self, reason: ExitReason) {
-        self.shared.control.send_if_modified(|c| {
+        let first = self.shared.control.send_if_modified(|c| {
             let first = !matches!(c, Control::Kill(_));
             if first {
                 *c = Control::Kill(reason);
             }
             first
         });
+        if first {
+            self.shared.kill.killed.store(true, Ordering::Release);
+            self.shared.kill.waker.wake();
+        }
     }
 
     /// Whether linked exits arrive as `info.exit` instead of stopping this
@@ -591,6 +598,7 @@ pub(crate) struct InstanceTask {
     self_mailbox: mpsc::WeakSender<Message>,
     dropped: Arc<AtomicU64>,
     control: watch::Receiver<Control>,
+    kill: Arc<KillSignal>,
     state: watch::Sender<LifecycleState>,
     exit: watch::Sender<Option<ExitReason>>,
     /// The app's host counters.
@@ -635,6 +643,7 @@ pub(crate) fn prepare(
     let (state_tx, state_rx) = watch::channel(LifecycleState::Starting);
     let (exit_tx, exit_rx) = watch::channel(None);
     let dropped = Arc::new(AtomicU64::new(0));
+    let kill = Arc::new(KillSignal::default());
     let (signals_tx, signals_rx) = mpsc::unbounded_channel();
     let (ops_tx, ops_rx) = mpsc::unbounded_channel();
     let self_mailbox = mailbox_tx.downgrade();
@@ -645,6 +654,7 @@ pub(crate) fn prepare(
             version: std::sync::Mutex::new(spec.version.clone()),
             mailbox: mailbox_tx,
             control: control_tx,
+            kill: kill.clone(),
             state: state_rx,
             exit: exit_rx,
             message_max_bytes: AtomicU64::new(spec.message_max_bytes),
@@ -667,6 +677,7 @@ pub(crate) fn prepare(
         self_mailbox,
         dropped,
         control: control_rx,
+        kill,
         state: state_tx,
         exit: exit_tx,
         held: None,
@@ -831,7 +842,7 @@ impl InstanceTask {
         if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
             return Err(stop);
         }
-        store.data_mut().clock.start(spec.init_timeout);
+        let polls = store.data_mut().clock.start(spec.init_timeout);
         // Boxed, as are the other instantiations: their futures are large,
         // and the instance's task would otherwise keep room for them for
         // its whole life (passivated too).
@@ -860,7 +871,7 @@ impl InstanceTask {
             }),
         );
         let crashed = |why: &str| ExitReason::Crashed(why.to_string());
-        match killable(&mut self.control, init).await {
+        match killable(&self.kill, &self.control, Some(&polls), init).await {
             Err(reason) => Err(reason),
             Ok(Err(_elapsed)) => Err(crashed("init_timeout")),
             Ok(Ok(Err(err))) if store.data().clock.timed_out => {
@@ -904,7 +915,7 @@ impl InstanceTask {
                 };
             }
 
-            store.data_mut().clock.start(spec.callback_deadline);
+            let polls = store.data_mut().clock.start(spec.callback_deadline);
             let kind = match &message {
                 Message::Call { .. } => "call",
                 Message::Cast(_) => "cast",
@@ -918,7 +929,7 @@ impl InstanceTask {
                     store.data_mut().await_reply(call_ref, reply);
                     let msg = msg.into();
                     let call = instance.call_handle_call(&mut *store, call_ref, &msg);
-                    match killable(&mut self.control, call).await? {
+                    match killable(&self.kill, &self.control, Some(&polls), call).await? {
                         Ok(CallResult::Reply(envelope)) => {
                             // Already answered with `process.reply`, or the
                             // caller timed out: the reply is dropped.
@@ -935,7 +946,7 @@ impl InstanceTask {
                 Message::Cast(msg) => {
                     let msg = msg.into();
                     let cast = instance.call_handle_cast(&mut *store, &msg);
-                    killable(&mut self.control, cast).await?
+                    killable(&self.kill, &self.control, Some(&polls), cast).await?
                 }
                 Message::Info(info) => {
                     if let Info::Timer { reference, .. } = &info {
@@ -943,7 +954,7 @@ impl InstanceTask {
                     }
                     let info = info.into();
                     let handle = instance.call_handle_info(&mut *store, &info);
-                    killable(&mut self.control, handle).await?
+                    killable(&self.kill, &self.control, Some(&polls), handle).await?
                 }
             };
             let guest = store.data().clock.guest_time();
@@ -1096,8 +1107,14 @@ impl InstanceTask {
         instance: &PaddockApp,
         spec: &InstanceSpec,
     ) -> (Result<Vec<u8>, SnapshotError>, Option<ExitReason>) {
-        store.data_mut().clock.start(spec.callback_deadline);
-        let saved = killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await;
+        let polls = store.data_mut().clock.start(spec.callback_deadline);
+        let saved = killable(
+            &self.kill,
+            &self.control,
+            Some(&polls),
+            instance.call_save_snapshot(&mut *store),
+        )
+        .await;
         match saved {
             Ok(Ok(bytes)) => (Ok(bytes), None),
             Ok(Err(err)) => {
@@ -1160,8 +1177,14 @@ impl InstanceTask {
             }
         };
         self.set_state(LifecycleState::Upgrading);
-        store.data_mut().clock.start(spec.callback_deadline);
-        let saved = killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await;
+        let polls = store.data_mut().clock.start(spec.callback_deadline);
+        let saved = killable(
+            &self.kill,
+            &self.control,
+            Some(&polls),
+            instance.call_save_snapshot(&mut *store),
+        )
+        .await;
         let snapshot = match saved {
             Err(killed) => return Err(UpgradeError::SaveFailed(killed)),
             Ok(Err(err)) => return Err(UpgradeError::SaveFailed(classify(&err, store.data()))),
@@ -1177,7 +1200,7 @@ impl InstanceTask {
         };
         store.data_mut().hand_over(&mut state);
         let mut fresh = new_store(store.engine(), state);
-        fresh.data_mut().clock.start(next.init_timeout);
+        let polls = fresh.data_mut().clock.start(next.init_timeout);
         let load = tokio::time::timeout(
             next.init_timeout,
             Box::pin(async {
@@ -1198,7 +1221,7 @@ impl InstanceTask {
                 }
             }),
         );
-        let outcome = match killable(&mut self.control, load).await {
+        let outcome = match killable(&self.kill, &self.control, Some(&polls), load).await {
             Err(killed) => Err(UpgradeError::SaveFailed(killed)),
             Ok(Err(_elapsed)) => Err(UpgradeError::LoadFailed("timed out".into())),
             Ok(Ok(result)) => result,
@@ -1274,7 +1297,7 @@ impl InstanceTask {
             }
             rt.slot_wanted.notify_one();
             let waited = tokio::time::timeout(SLOT_ASK_AGAIN.min(deadline - now), &mut acquire);
-            match killable(&mut self.control, waited).await {
+            match killable(&self.kill, &self.control, None, waited).await {
                 Err(killed) => return Err(NoSlot::Killed(killed)),
                 Ok(Ok(Ok(slot))) => return Ok(slot),
                 // The semaphore is never closed.
@@ -1292,8 +1315,15 @@ impl InstanceTask {
         instance: &PaddockApp,
         spec: &InstanceSpec,
     ) -> Result<Vec<u8>, ExitReason> {
-        store.data_mut().clock.start(spec.callback_deadline);
-        match killable(&mut self.control, instance.call_save_snapshot(&mut *store)).await? {
+        let polls = store.data_mut().clock.start(spec.callback_deadline);
+        match killable(
+            &self.kill,
+            &self.control,
+            Some(&polls),
+            instance.call_save_snapshot(&mut *store),
+        )
+        .await?
+        {
             Ok(bytes) => Ok(bytes),
             Err(err) => Err(classify(&err, store.data())),
         }
@@ -1360,7 +1390,7 @@ impl InstanceTask {
         if let Some(stop) = self.await_lease(store.data().lease.clone()).await {
             return Err(stop);
         }
-        store.data_mut().clock.start(spec.init_timeout);
+        let polls = store.data_mut().clock.start(spec.init_timeout);
         let load = tokio::time::timeout(
             spec.init_timeout,
             Box::pin(async {
@@ -1372,7 +1402,7 @@ impl InstanceTask {
             }),
         );
         let crashed = |why: &str| ExitReason::Crashed(why.to_string());
-        let instance = match killable(&mut self.control, load).await? {
+        let instance = match killable(&self.kill, &self.control, Some(&polls), load).await? {
             Err(_elapsed) => return Err(crashed("wake_timeout")),
             Ok(Err(_)) if store.data().clock.timed_out => return Err(crashed("wake_timeout")),
             Ok(Err(err)) => return Err(classify(&err, store.data())),
@@ -1438,13 +1468,13 @@ impl InstanceTask {
             tracing::info!(%reason, "singleton out of lease: terminate skipped");
             return ExitReason::Killed;
         }
-        store.data_mut().clock.start(spec.shutdown_timeout);
+        let polls = store.data_mut().clock.start(spec.shutdown_timeout);
         let wit_reason = (&reason).into();
         let terminate = tokio::time::timeout(
             spec.shutdown_timeout,
             instance.call_terminate(&mut *store, &wit_reason),
         );
-        match killable(&mut self.control, terminate).await {
+        match killable(&self.kill, &self.control, Some(&polls), terminate).await {
             Err(killed) => killed,
             Ok(Err(_elapsed)) => ExitReason::Killed,
             Ok(Ok(Err(_))) if store.data().clock.timed_out => ExitReason::Killed,
@@ -1466,14 +1496,6 @@ impl InstanceTask {
 pub(crate) fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Store<InstanceState> {
     let mut store = Store::new(engine, state);
     store.limiter(|s| &mut s.limiter);
-    store.call_hook(|mut ctx, hook| {
-        match hook {
-            CallHook::CallingHost => ctx.data_mut().clock.enter_host(),
-            CallHook::ReturningFromHost => ctx.data_mut().clock.leave_host(),
-            CallHook::CallingWasm | CallHook::ReturningFromWasm => {}
-        }
-        Ok(())
-    });
     store.epoch_deadline_callback(|mut ctx| {
         if ctx.data_mut().clock.expired() {
             Ok(UpdateDeadline::Interrupt)
@@ -1492,23 +1514,43 @@ pub(crate) fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Stor
 }
 
 /// Run `fut` unless the instance is killed first; `Err` carries the kill's
-/// exit reason, and `fut` was dropped.
+/// exit reason, and `fut` was dropped. With `polls`, the time spent polling
+/// `fut` is the callback's guest time: here rather than in a future of its
+/// own, which would move the large callback future once more.
 async fn killable<F: Future>(
-    control: &mut watch::Receiver<Control>,
+    kill: &KillSignal,
+    control: &watch::Receiver<Control>,
+    polls: Option<&PollTime>,
     fut: F,
 ) -> Result<F::Output, ExitReason> {
-    tokio::select! {
-        biased;
-        killed = control.wait_for(|c| matches!(c, Control::Kill(_))) => Err(match killed {
-            Ok(c) => match &*c {
+    let mut fut = std::pin::pin!(fut);
+    std::future::poll_fn(|cx| {
+        // Registered before the check, so a kill between the two still
+        // wakes this task, as one while `fut` waits in a host call does.
+        kill.waker.register(cx.waker());
+        if kill.killed.load(Ordering::Acquire) {
+            return Poll::Ready(Err(match &*control.borrow() {
                 Control::Kill(reason) => reason.clone(),
                 _ => ExitReason::Killed,
-            },
-            // Every handle is gone; treat that as a kill.
-            Err(_) => ExitReason::Killed,
-        }),
-        out = fut => Ok(out),
-    }
+            }));
+        }
+        match polls {
+            Some(polls) => polls.poll(fut.as_mut(), cx),
+            None => fut.as_mut().poll(cx),
+        }
+        .map(Ok)
+    })
+    .await
+}
+
+/// Set once with the first kill, after the control channel says
+/// `Control::Kill`, and woken: what [`killable`] checks on each poll. A
+/// `watch` future per callback cost about 10% of an empty call
+/// (`call_split`, ROADMAP B12).
+#[derive(Debug, Default)]
+struct KillSignal {
+    killed: AtomicBool,
+    waker: AtomicWaker,
 }
 
 /// Map a failed guest call to an exit reason.

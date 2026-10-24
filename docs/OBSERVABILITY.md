@@ -72,7 +72,7 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `paddock_memory_bytes` | gauge | | Linear memory of live instances. |
 | `paddock_mailbox_depth` | gauge | | Messages waiting in live instances' mailboxes. |
 | `paddock_callbacks_total` | counter | `kind` (`call`, `cast`, `info`) | Callbacks run. |
-| `paddock_callback_guest_seconds` | histogram | | Guest execution time per callback (10 µs to 1 s buckets). |
+| `paddock_callback_guest_seconds` | histogram | | Guest execution time per callback: guest code and host work that did not wait (10 µs to 1 s buckets). |
 | `paddock_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox. |
 | `paddock_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
 | `paddock_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no Store, state in a snapshot. |
@@ -103,7 +103,7 @@ An instance is identified by its pid's whole `id` (and `incarnation` where shown
 | `call__done` | call id, target id, outcome (`ok`, `timeout`, `noproc`, `overloaded`, `too-large`, `access-denied`, `exited`, `noconnection`) |
 | `cast` | sender id, target id, body bytes, outcome |
 | `callback__start` | instance id, kind (`call`, `cast`, `info`) |
-| `callback__done` | instance id, kind, guest execution in nanoseconds (host time excluded), succeeded |
+| `callback__done` | instance id, kind, guest execution in nanoseconds (time spent waiting excluded), succeeded |
 | `instance__exit` | instance id, incarnation, exit reason |
 | `supervisor__restart` | new instance id, incarnation, child id |
 | `upgrade__start` | app, target version |

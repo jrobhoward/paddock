@@ -28,6 +28,7 @@ probes = ["dep:anyprobe"]
 
 [dependencies]
 anyprobe = { workspace = true, optional = true }
+atomic-waker = { workspace = true }
 bytes = { workspace = true }
 ciborium = { workspace = true }
 ciborium-ll = { workspace = true }
@@ -55,7 +56,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "process"] }
 tracing = { workspace = true }
-wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator", "call-hook"] }
+wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator"] }
 wasmtime-wasi = { workspace = true, features = ["p2"] }
 wasmtime-wasi-http = { workspace = true, optional = true }
 hyper-rustls = { workspace = true, optional = true }

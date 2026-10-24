@@ -315,26 +315,72 @@ impl ResourceLimiter for Limiter {
 
 /// Guest execution time of the current callback.
 ///
-/// The deadline counts guest execution only: time inside host imports is
-/// subtracted, so an instance waiting on another, on a timer or on I/O is
-/// not runaway code (spike S1). The Store's call hook marks each entry into
-/// and return from a host import ([`new_store`](crate::instance::new_store)).
+/// The time the instance's task spends polling the callback
+/// ([`PollTime::poll`], from `killable`): guest code, and host functions until they
+/// wait. Waiting does not count, so an instance waiting on another, on a
+/// timer, on I/O or for a worker after an epoch yield is not runaway code
+/// (spike S1). Timing polls rather than each host call leaves wasmtime's
+/// call hook off, which cost about 5% of an empty call (ROADMAP B12).
 #[derive(Debug)]
 pub(crate) struct CallbackClock {
-    started: Instant,
-    host_time: Duration,
-    /// When the guest called the host import running now.
-    in_host: Option<Instant>,
+    polls: Arc<PollTime>,
     limit: Duration,
     pub(crate) timed_out: bool,
+}
+
+/// Shared between the Store's data, read by the epoch callback during a
+/// poll, and the task that polls.
+#[derive(Debug)]
+pub(crate) struct PollTime {
+    /// Origin of `since`.
+    base: Instant,
+    /// Guest time of the callback's finished polls, in nanoseconds.
+    done: AtomicU64,
+    /// When the poll running now started, nanoseconds after `base`, or
+    /// `NOT_POLLING`.
+    since: AtomicU64,
+}
+
+const NOT_POLLING: u64 = u64::MAX;
+
+impl PollTime {
+    fn now(&self) -> u64 {
+        u64::try_from(self.base.elapsed().as_nanos()).unwrap_or(NOT_POLLING - 1)
+    }
+
+    /// Poll `fut`, counting the time as guest time.
+    pub(crate) fn poll<F: Future>(
+        &self,
+        fut: std::pin::Pin<&mut F>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<F::Output> {
+        let started = self.now();
+        self.since.store(started, Ordering::Relaxed);
+        let out = fut.poll(cx);
+        let spent = self.now().saturating_sub(started);
+        self.since.store(NOT_POLLING, Ordering::Relaxed);
+        self.done.fetch_add(spent, Ordering::Relaxed);
+        out
+    }
+
+    fn total(&self) -> Duration {
+        let mut ns = self.done.load(Ordering::Relaxed);
+        let since = self.since.load(Ordering::Relaxed);
+        if since != NOT_POLLING {
+            ns += self.now().saturating_sub(since);
+        }
+        Duration::from_nanos(ns)
+    }
 }
 
 impl Default for CallbackClock {
     fn default() -> Self {
         Self {
-            started: Instant::now(),
-            host_time: Duration::ZERO,
-            in_host: None,
+            polls: Arc::new(PollTime {
+                base: Instant::now(),
+                done: AtomicU64::new(0),
+                since: AtomicU64::new(NOT_POLLING),
+            }),
             limit: Duration::MAX,
             timed_out: false,
         }
@@ -342,39 +388,26 @@ impl Default for CallbackClock {
 }
 
 impl CallbackClock {
-    /// Start timing a callback allowed `limit` of guest execution.
-    pub(crate) fn start(&mut self, limit: Duration) {
-        self.started = Instant::now();
-        self.host_time = Duration::ZERO;
+    /// Start timing a callback allowed `limit` of guest execution; its
+    /// future is polled through [`PollTime::poll`] of what this returns.
+    pub(crate) fn start(&mut self, limit: Duration) -> Arc<PollTime> {
+        self.polls.done.store(0, Ordering::Relaxed);
         self.limit = limit;
+        self.polls.clone()
     }
 
     /// Whether the callback has used up its guest execution time; records a
     /// timeout if so.
     pub(crate) fn expired(&mut self) -> bool {
-        let running = self.started.elapsed().saturating_sub(self.host_time);
-        if running > self.limit {
+        if self.polls.total() > self.limit {
             self.timed_out = true;
         }
         self.timed_out
     }
 
-    /// Guest execution time of the current callback so far: wall time
-    /// minus time spent in host imports.
+    /// Guest execution time of the current callback so far.
     pub(crate) fn guest_time(&self) -> Duration {
-        self.started.elapsed().saturating_sub(self.host_time)
-    }
-
-    /// The guest called a host import.
-    pub(crate) fn enter_host(&mut self) {
-        self.in_host = Some(Instant::now());
-    }
-
-    /// The host import returned to the guest: its time is host time.
-    pub(crate) fn leave_host(&mut self) {
-        if let Some(entered) = self.in_host.take() {
-            self.host_time += entered.elapsed();
-        }
+        self.polls.total()
     }
 }
 

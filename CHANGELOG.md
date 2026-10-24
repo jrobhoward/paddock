@@ -32,6 +32,17 @@ All notable changes are recorded here. The format follows
 - A call no longer arms a timer when its reply arrives before the caller
   next runs: `InstanceHandle::call` yields once first, then waits on a
   timer at the same deadline. About 8% off an empty call (ROADMAP B12).
+- A kill reaches an instance's task through a flag and a waker set once,
+  instead of a `watch` future built for every callback: about 8% off an
+  empty call on one worker (ROADMAP B12). New dependency: `atomic-waker`
+  (Apache-2.0 OR MIT), already in the graph through h2.
+- The callback deadline and `paddock_callback_guest_seconds` count the time
+  an instance's task spends running a callback, guest code and host work
+  that does not wait, where they counted wall time less time inside host
+  functions. Waiting for a worker after a preemption no longer counts; a
+  host function's work before it waits now does. No Store call hook (and
+  no wasmtime `call-hook` feature): 1.5 to 3% off an empty call (ROADMAP
+  B12).
 - The minimum Rust version is 1.99.0 (was 1.96.0), so dependencies resolve
   to current releases; the lock files of the workspace, fuzz and spikes are
   updated within semver.

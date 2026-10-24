@@ -1562,8 +1562,41 @@ Raspberry Pi 5 (as above), idle (load average under 0.3 before each set); commit
 
 - The change takes about 8% off an empty call, on 1 and on 4 workers: what removing the timer altogether takes. A reply that arrives before the caller runs again (nearly every one here) never touches the timer wheel.
 - Under concurrency, empty calls per second rise 5 to 12%; calls doing guest work (`busy:20000`) are unchanged within noise, their time being the guest's.
-- p99.9 at 256 clients was higher after in two of three rounds (3.46 and 3.18 ms against at most 2.54 ms), and `busy:20000` with 16 clients likewise (2.50 and 3.06 ms against at most 1.77 ms); p99 did not move. Not explained; worth longer runs before reading anything into it.
+- p99.9 at 256 clients was higher after in two of three rounds (3.46 and 3.18 ms against at most 2.54 ms), and `busy:20000` with 16 clients likewise (2.50 and 3.06 ms against at most 1.77 ms); p99 did not move. Not the change: the next section's runs show those two rows moving between the two levels from run to run of the same build.
 - Timeouts still fire on time: the deadline is taken before the yield. Tests: a call to an instance that never replies, on one thread, and a call to an instance busy in a callback, which times out within 100 to 500 ms of a 100 ms timeout (`crates/paddock-host/tests/instance.rs`).
+
+## 2026-10-24: a cheaper killable() (B12)
+
+Raspberry Pi 5, idle (load average under 0.3 before each set); the previous section's tree plus three builds of `killable()`: a `watch::wait_for` future against the control channel per callback, selected against the callback (before; item 1's code), the change (a kill flag and an `AtomicWaker` on the instance, set and woken by the first kill; `killable()` registers the waker, checks the flag and polls the callback), and no kill check at all (the ceiling, not shippable). Same method as above. Logs on the Pi under `~/pi-runs/b12-kill-2026-10-24/`.
+
+| Empty call, sequential | Before | After | No kill check |
+| --- | --- | --- | --- |
+| 1 worker | 3.33 to 3.41 µs | 3.04 to 3.18 µs | 3.03 to 3.19 µs |
+| 4 workers | 3.99 to 4.13 µs | 3.85 to 4.04 µs | 3.79 to 3.92 µs |
+
+| `pool_load 4`, empty calls | Before, calls/s | After, calls/s |
+| --- | --- | --- |
+| Pool 1, 64 clients | 309k to 321k | 333k to 340k |
+| Pool 4, 64 clients | 850k to 870k | 885k to 895k |
+| Pool 16, 64 clients | 717k to 738k | 764k to 782k |
+| Pool 16, 256 clients | 768k to 776k | 769k to 788k |
+
+- About 8% off an empty call on 1 worker, all of what dropping the check takes; 2 to 3% on 4 workers. Calls doing guest work are unchanged.
+- In the first three rounds of `pool_load`, p99.9 was higher after in every round for `busy:20000` on a pool of 16 with 16 clients (2.83 to 3.12 ms against 1.66 to 1.78 ms) and for empty calls with 256 clients (3.29 to 3.54 ms against 2.29 to 2.61 ms). Six more rounds, alternated: the same before and after (busy 1.65 to 1.79 ms against 1.71 to 1.77 ms; empty 2.34 to 2.48 ms against 2.28 to 2.48 ms). Those rows move between two levels from run to run of one build; neither change moves them. Why they move was not looked into.
+- A kill still interrupts a guest waiting in a host call: a new test kills an instance blocked in a 10 s `wasi:clocks` sleep and one spinning in guest code, and expects `killed` within 100 ms; with the wake removed, the first case fails (the caller saw `timeout` after 10 s). R11 and A8 (docs/tla/VERIFICATION.md) are unchanged: `crates/paddock/tests/failover.rs`, the simulation tests and a 30-minute `scripts/soak.sh --only failover` (link faults, SIGKILL and SIGSTOP) passed.
+
+## 2026-10-24: the call hook off the hot path (B12)
+
+Raspberry Pi 5, idle (load average under 0.3 before each set); the previous section's tree (item 2) plus builds of the callback clock: the Store call hook timing every host call (before), the task's polls of the callback timed in a future of their own (`polls`), the same timing inside `killable`'s poll (`inline`, the change), and no hook and no timing (the ceiling: the deadline then counts host time, not shippable). Same method as above; six rounds; logs on the Pi under `~/pi-runs/b12-hook-2026-10-24/`.
+
+| Empty call, sequential, six rounds | Before | Polls | Inline | No hook, no timing |
+| --- | --- | --- | --- | --- |
+| 1 worker | 3.05 to 3.27 µs (median 3.18) | 3.12 to 3.16 (3.13) | 3.11 to 3.14 (3.13) | 2.93 to 3.11 (3.04) |
+| 4 workers | 3.96 to 4.15 µs (median 4.01) | 3.79 to 4.04 (3.90) | 3.86 to 4.07 (3.93) | 3.70 to 3.83 (3.77) |
+
+- About 1.5% off an empty call on 1 worker and 2 to 3% on 4. Removing the hook with no timing at all takes 4.5 to 6%: the timing's two clock reads per poll (37 ns each on the Pi, `timer_cost`) and its atomics cost the rest. Timing inside `killable` rather than in a future of its own made no difference.
+- `pool_load 4` (three rounds, `polls` against before): within run-to-run noise in every row.
+- What the deadline counts changed (MANIFEST.md `callback_deadline_ms`): time waiting for a worker after an epoch yield no longer counts, so a callback on a loaded node is not killed for others' work; a host function's work before it waits (a memory-bucket transaction, a read from redb's cache) now counts. The existing tests hold: a guest sleeping 800 ms past a 300 ms deadline is not killed, a spinning one is killed at it.
 
 ## Not measured yet
 

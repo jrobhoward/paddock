@@ -127,7 +127,7 @@ The app's root supervisor, with OTP semantics.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `memory_max` | `"64MiB"` | Most linear memory per instance. Growing past it crashes the instance with `memory_limit`. At most 4 GiB, and at most 128 MiB on a node with the `dense` memory profile. |
-| `callback_deadline_ms` | `5000` | Most guest CPU time per callback. Past it, the instance is killed with reason `timeout`. Time spent waiting in host calls does not count. |
+| `callback_deadline_ms` | `5000` | Most guest CPU time per callback. Past it, the instance is killed with reason `timeout`. Time spent waiting does not count: in host calls, or for a worker after a preemption. Host work that does not wait (a memory-bucket write, for one) counts. |
 | `mailbox_max` | `10000` | Most queued messages per instance. When full, casts are dropped (and counted under `DROPPED` in `paddock ps`), and calls fail at once with `overloaded`. |
 | `message_max_bytes` | `"1MiB"` | Largest body accepted; larger ones fail with `too-large`. |
 | `table_max` | engine default | Most table elements per instance. |

@@ -14,7 +14,7 @@ Two words have more than one meaning:
 - **Manifest:** the app's declaration of what it needs: capabilities, limits, instances, placement, upgrade mode, routes. [MANIFEST.md](MANIFEST.md).
 - **Component:** a WebAssembly component (WASI 0.2) exporting the `paddock:runtime/app` world, or the `paddock:connection` or `wasi:http/proxy` world for listeners and HTTP handlers.
 - **Guest:** code running inside a component instance, as opposed to the host. "Guest time" is time spent running that code.
-- **Host:** `paddock-host`, the runtime that runs guests and implements their imports. "Host time" is time spent in a host function a guest called; it does not count against the callback deadline.
+- **Host:** `paddock-host`, the runtime that runs guests and implements their imports. "Host time" is time a callback spends waiting in a host function a guest called; it does not count against the callback deadline. Work a host function does without waiting counts with the guest's time.
 - **Instance:** one running copy of an app, with its own pid, mailbox, memory and state; Erlang's process. A component instance runs in a wasmtime Store; a native instance is an OS process.
 - **Native-process app:** an app shipped as a native program (a rustbridge plugin or an executable on `paddock-native`'s app API) rather than a component. Each instance is a process started through `paddock-runner`, which sandboxes itself first. No snapshots, so no passivation or snapshot upgrades. [ARCHITECTURE.md](ARCHITECTURE.md), "Native-process apps".
 - **Pid:** an instance's address, written `node.serial.incarnation@creation`. The serial stays across restarts; the incarnation grows by one on each restart. [OBSERVABILITY.md](OBSERVABILITY.md).
@@ -64,7 +64,7 @@ Two words have more than one meaning:
 - **Linear memory:** a guest's heap: one byte array it can grow but never shrink. `ps` shows its size, which is the instance's high-water mark.
 - **Epoch tick:** the moment the host's epoch ticker (an OS thread, `paddock-epoch`) advances wasmtime's epoch counter, every `epoch_tick_ms` (2 ms by default; 10 ms before 2026-10-07). Compiled guest code checks the counter at every function entry and loop back edge (the epoch check). At each tick, a running guest yields its tokio worker so other instances run, and a guest past its callback deadline traps. The tick bounds how long a busy instance holds a worker. Measured cost: [BASELINE.md](BASELINE.md), "Epoch interruption".
 - **Epoch check:** the load, compare and branch that wasmtime compiles into guest code for epoch interruption.
-- **Call hook:** wasmtime's hook on every entry to and return from a host function. Paddock uses it to stop the callback clock during host time.
+- **Call hook:** wasmtime's hook on every entry to and return from a host function. Paddock does not install one: the callback clock times the task's polls of a callback instead (2026-10-24; the hook cost about 5% of an empty call).
 - **Compiled-code cache:** compiled components kept on disk (`compiled/` under the data directory), so a restarted node deserializes them instead of compiling again. Read only if the file and its directory belong to the node's user and neither is writable by group or others.
 - **Deny stub:** a function that stands in for an import the operator did not grant and returns `access-denied`, so a component with an ungranted import still links.
 
