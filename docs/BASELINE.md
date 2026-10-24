@@ -1598,6 +1598,24 @@ Raspberry Pi 5, idle (load average under 0.3 before each set); the previous sect
 - `pool_load 4` (three rounds, `polls` against before): within run-to-run noise in every row.
 - What the deadline counts changed (MANIFEST.md `callback_deadline_ms`): time waiting for a worker after an epoch yield no longer counts, so a callback on a loaded node is not killed for others' work; a host function's work before it waits (a memory-bucket transaction, a read from redb's cache) now counts. The existing tests hold: a guest sleeping 800 ms past a 300 ms deadline is not killed, a spinning one is killed at it.
 
+## 2026-10-24: a slot for the current call's reply (B12)
+
+Raspberry Pi 5, idle; the previous section's tree (items 2 and 3) against the change: the caller of the call being handled kept in a slot in the Store's data, moved to the pending-reply map only when `handle-call` returns `noreply`, where every call was inserted into and removed from the map (SipHash, and a `retain` over it). `call_split` six rounds, `pool_load 4` three, alternated; both builds carry `call_split`'s counting allocator, idle unless asked. Logs on the Pi under `~/pi-runs/b12-slot-2026-10-24/`.
+
+| Measure | Before | After |
+| --- | --- | --- |
+| `call_split`, one instance, 1 worker | 2.99 to 3.14 µs | 3.08 to 3.17 µs |
+| `call_split`, one instance, 4 workers | 3.72 to 3.91 µs | 3.73 to 3.89 µs |
+| `pool_load`, pool 1, 64 clients | 332k to 340k calls/s | 355k to 363k |
+| `pool_load`, pool 4, 64 clients | 898k to 911k | 924k to 940k |
+| `pool_load`, pool 16, 1 client | 200k to 212k | 221k to 228k |
+| `pool_load`, pool 16, 64 clients | 769k to 793k | 816k to 818k |
+| `pool_load`, pool 16, 256 clients | 807k to 826k | 833k to 852k |
+
+- Every `pool_load` row is better after, in every round (3 to 8%; p99 a little lower too). Sequential calls to one instance show no gain, the 1-worker range a little higher: its map stays in cache, and a difference of that size is within what a change of code layout does between builds. Not looked into further.
+- An empty call makes 6 heap allocations of 195 bytes in all, against 2 for the bare tokio round trip (`call_split 1 allocs`, 16-core machine): the caller's envelope (content type and body), the reply channel, and the reply's content type and body lifted out of guest memory. The map made none (its capacity is kept). Fewer would take a change to `Envelope`, which owns its content type.
+- B12 in all, comparing the first section's "before" with this one's "after" (different sessions on the same idle Pi, so read the figures loosely): an empty call 3.55 to 3.67 µs to 3.08 to 3.17 µs on 1 worker (about 14%) and 4.33 to 4.63 µs to 3.73 to 3.89 µs on 4 (about 14%); `pool_load 4` empty calls 800k to 813k to 924k to 940k on a pool of 4 and 662k to 670k to 816k to 818k on a pool of 16. A gen_server call on the Pi is 2.44 µs (OTP 27): 1.5 times before, 1.3 times after on 1 worker.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.

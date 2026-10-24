@@ -933,13 +933,16 @@ impl InstanceTask {
                         Ok(CallResult::Reply(envelope)) => {
                             // Already answered with `process.reply`, or the
                             // caller timed out: the reply is dropped.
-                            if let Some(waiting) = store.data_mut().pending.remove(&call_ref) {
+                            if let Some(waiting) = store.data_mut().take_reply(call_ref) {
                                 let _ = waiting.send(envelope.into());
                             }
                             Ok(())
                         }
                         // The caller stays pending until `process.reply`.
-                        Ok(CallResult::Noreply) => store.data().check_pending(),
+                        Ok(CallResult::Noreply) => {
+                            store.data_mut().defer_reply();
+                            store.data().check_pending()
+                        }
                         Err(err) => Err(err),
                     }
                 }

@@ -138,7 +138,7 @@ impl process::Host for InstanceState {
 
     async fn reply(&mut self, to: types::CallRef, msg: types::Envelope) -> Result<()> {
         // An unknown reference is a duplicate reply, or the caller gave up.
-        if let Some(waiting) = self.pending.remove(&to) {
+        if let Some(waiting) = self.take_reply(to) {
             let _ = waiting.send(msg.into());
         }
         Ok(())

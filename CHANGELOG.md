@@ -43,6 +43,10 @@ All notable changes are recorded here. The format follows
   host function's work before it waits now does. No Store call hook (and
   no wasmtime `call-hook` feature): 1.5 to 3% off an empty call (ROADMAP
   B12).
+- The caller of the call an instance is handling waits in a slot; the
+  pending-reply map holds only callers left waiting by `noreply`. 3 to 8%
+  more empty calls per second across a pool (ROADMAP B12).
+- `call_split allocs` counts heap allocations per call.
 - The minimum Rust version is 1.99.0 (was 1.96.0), so dependencies resolve
   to current releases; the lock files of the workspace, fuzz and spikes are
   updated within semver.

@@ -14,23 +14,66 @@
 //! ```
 //!
 //! `paddock` skips the bare tokio run, for a profile of Paddock's calls
-//! alone (`perf record`).
+//! alone (`perf record`). `allocs` also counts heap allocations per call
+//! (all threads), through a counting global allocator that is idle
+//! otherwise.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use paddock_host::{Envelope, InstanceSpec, Runtime, RuntimeConfig};
 use tokio::sync::{mpsc, oneshot};
 
 const CALLS: usize = 200_000;
+
+/// The system allocator, counting allocations and their bytes while
+/// `COUNTING`.
+struct Counting;
+
+static COUNTING: AtomicBool = AtomicBool::new(false);
+static ALLOCS: AtomicU64 = AtomicU64::new(0);
+static BYTES: AtomicU64 = AtomicU64::new(0);
+
+// SAFETY: forwards to `System`, adding only counters.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if COUNTING.load(Ordering::Relaxed) {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+            BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        }
+        // SAFETY: the caller's contract, passed on.
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: the caller's contract, passed on.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if COUNTING.load(Ordering::Relaxed) {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+            BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
+        }
+        // SAFETY: the caller's contract, passed on.
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
 const LONG: Duration = Duration::from_secs(10);
 
 fn main() {
     let workers: usize = std::env::args()
         .nth(1)
         .map_or(1, |a| a.parse().expect("workers"));
-    let bare = std::env::args().nth(2).as_deref() != Some("paddock");
+    let flags: Vec<String> = std::env::args().skip(2).collect();
+    let bare = !flags.iter().any(|f| f == "paddock");
+    COUNTING.store(flags.iter().any(|f| f == "allocs"), Ordering::Relaxed);
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/fixtures/wasm32-wasip2/release/paddock_fixture_chaos.wasm"
@@ -45,8 +88,9 @@ fn main() {
         .unwrap();
 }
 
-/// (on-CPU ns summed over threads, voluntary switches, involuntary switches)
-fn usage() -> (u64, u64, u64) {
+/// On-CPU ns summed over threads, voluntary and involuntary switches,
+/// allocations and their bytes.
+fn usage() -> [u64; 5] {
     let (mut cpu, mut vol, mut invol) = (0, 0, 0);
     for t in std::fs::read_dir("/proc/self/task").unwrap() {
         let dir = t.unwrap().path();
@@ -67,7 +111,13 @@ fn usage() -> (u64, u64, u64) {
             }
         }
     }
-    (cpu, vol, invol)
+    [
+        cpu,
+        vol,
+        invol,
+        ALLOCS.load(Ordering::Relaxed),
+        BYTES.load(Ordering::Relaxed),
+    ]
 }
 
 fn guest_sum(rt: &Runtime) -> (f64, f64) {
@@ -85,15 +135,24 @@ fn guest_sum(rt: &Runtime) -> (f64, f64) {
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn report(label: &str, wall: Duration, before: (u64, u64, u64), after: (u64, u64, u64)) {
+fn report(label: &str, wall: Duration, before: [u64; 5], after: [u64; 5]) {
     let per = |x: f64| x / CALLS as f64;
-    println!(
+    let d = |i: usize| (after[i] - before[i]) as f64;
+    print!(
         "{label}: wall {:.2} µs/call, on-CPU {:.2} µs/call (all threads), switches/call {:.2} voluntary, {:.3} involuntary",
         per(wall.as_secs_f64() * 1e6),
-        per((after.0 - before.0) as f64 / 1e3),
-        per((after.1 - before.1) as f64),
-        per((after.2 - before.2) as f64),
+        per(d(0) / 1e3),
+        per(d(1)),
+        per(d(2)),
     );
+    if COUNTING.load(Ordering::Relaxed) {
+        print!(
+            "; {:.2} allocations/call, {:.0} bytes/call",
+            per(d(3)),
+            per(d(4))
+        );
+    }
+    println!();
 }
 
 async fn run(workers: usize, bare: bool, component: Vec<u8>) {

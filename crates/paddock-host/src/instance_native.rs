@@ -502,15 +502,18 @@ impl InstanceTask {
                     Ok(FromApp::Reply(Some(env))) => {
                         // Already answered with `reply`, or the caller gave
                         // up: dropped.
-                        if let Some(waiting) = state.pending.remove(&call_ref) {
+                        if let Some(waiting) = state.take_reply(call_ref) {
                             let _ = waiting.send(convert::host_envelope(env));
                         }
                         Ok(())
                     }
-                    Ok(FromApp::Reply(None)) => state.check_pending().map_err(|e| {
-                        port.kill();
-                        ExitReason::Crashed(e.to_string())
-                    }),
+                    Ok(FromApp::Reply(None)) => {
+                        state.defer_reply();
+                        state.check_pending().map_err(|e| {
+                            port.kill();
+                            ExitReason::Crashed(e.to_string())
+                        })
+                    }
                     Ok(other) => Err(broke(
                         port,
                         format!("expected reply, got {}", frame_name(&other)),

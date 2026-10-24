@@ -57,9 +57,12 @@ pub struct InstanceState {
     pub(crate) clock: CallbackClock,
     pub(crate) ctx: ProcessContext,
     pub(crate) registered_names: Vec<String>,
-    /// Callers waiting on a reply, by call reference. An entry is added
-    /// before `handle-call` runs, so `process.reply` works during the
-    /// callback as well as after a `noreply`.
+    /// The caller of the call being handled, by call reference: set before
+    /// `handle-call` runs, so `process.reply` works during the callback, and
+    /// moved to `pending` if it returns `noreply`. Most calls never touch the
+    /// map (ROADMAP B12).
+    current: Option<(u64, oneshot::Sender<Envelope>)>,
+    /// Callers waiting on a reply after a `noreply`, by call reference.
     pub(crate) pending: HashMap<u64, oneshot::Sender<Envelope>>,
     pub(crate) timers: Timers,
     /// Most host objects this instance may hold.
@@ -127,6 +130,7 @@ impl InstanceState {
             clock: CallbackClock::default(),
             ctx,
             registered_names: spec.registered_names.clone(),
+            current: None,
             pending: HashMap::new(),
             timers: Timers::default(),
             host_objects,
@@ -189,6 +193,7 @@ impl InstanceState {
     /// Move what belongs to the instance rather than to one Store (callers
     /// awaiting deferred replies, pending timers) into `to`.
     pub(crate) fn hand_over(&mut self, to: &mut Self) {
+        to.current = self.current.take();
         to.pending = std::mem::take(&mut self.pending);
         to.timers = std::mem::take(&mut self.timers);
     }
@@ -199,14 +204,35 @@ impl InstanceState {
     /// guest could not name.
     pub(crate) fn passivable(&mut self) -> bool {
         self.pending.retain(|_, waiting| !waiting.is_closed());
-        self.pending.is_empty() && self.table.is_empty()
+        self.current.is_none() && self.pending.is_empty() && self.table.is_empty()
     }
 
-    /// Remember a caller until its reply is sent. Callers that gave up (timed
-    /// out) are pruned so an app that never answers does not leak them.
+    /// Remember the caller of the call about to be handled until its reply
+    /// is sent.
     pub(crate) fn await_reply(&mut self, call_ref: u64, reply: oneshot::Sender<Envelope>) {
-        self.pending.retain(|_, waiting| !waiting.is_closed());
-        self.pending.insert(call_ref, reply);
+        self.current = Some((call_ref, reply));
+    }
+
+    /// The caller waiting on `call_ref`'s reply, if it has not been answered
+    /// yet.
+    pub(crate) fn take_reply(&mut self, call_ref: u64) -> Option<oneshot::Sender<Envelope>> {
+        match self.current.take() {
+            Some((r, waiting)) if r == call_ref => Some(waiting),
+            other => {
+                self.current = other;
+                self.pending.remove(&call_ref)
+            }
+        }
+    }
+
+    /// `handle-call` returned `noreply`: its caller, if not answered yet,
+    /// waits in `pending`. Callers that gave up (timed out) are pruned so an
+    /// app that never answers does not leak them.
+    pub(crate) fn defer_reply(&mut self) {
+        if let Some((call_ref, waiting)) = self.current.take() {
+            self.pending.retain(|_, waiting| !waiting.is_closed());
+            self.pending.insert(call_ref, waiting);
+        }
     }
 
     /// After `handle-call` returned `noreply`: an error if the instance now
