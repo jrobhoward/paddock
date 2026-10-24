@@ -1,6 +1,6 @@
 [package]
 name = "paddock-native"
-version = "0.0.0"
+version.workspace = true
 description = "Native-process apps for Paddock: the frame protocol, the app API and paddock-runner"
 edition.workspace = true
 rust-version.workspace = true

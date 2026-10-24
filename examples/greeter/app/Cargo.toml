@@ -1,6 +1,6 @@
 [package]
 name = "example-greeter-app"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: an app that calls the greeter extension"
 edition.workspace = true
 rust-version.workspace = true

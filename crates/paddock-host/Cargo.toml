@@ -1,6 +1,6 @@
 [package]
 name = "paddock-host"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock host runtime: engine, instances, mailboxes and the callback loop"
 edition.workspace = true
 rust-version.workspace = true

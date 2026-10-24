@@ -1,6 +1,6 @@
 [package]
 name = "example-line-server"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: a connection handler speaking a line protocol, handing work to the counter app"
 edition.workspace = true
 rust-version.workspace = true

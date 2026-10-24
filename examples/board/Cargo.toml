@@ -1,6 +1,6 @@
 [package]
 name = "example-board"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: a counter on a shared bulletin board (a disk bucket), served over HTTP, that survives crashes"
 edition.workspace = true
 rust-version.workspace = true

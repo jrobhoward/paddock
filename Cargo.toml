@@ -39,6 +39,7 @@ members = [
 exclude = ["spikes", "fuzz"]
 
 [workspace.package]
+version = "0.3.0"
 edition = "2024"
 # wasmtime 49 declares rust-version 1.96.0, so that is the floor.
 rust-version = "1.96.0"
@@ -197,7 +198,3 @@ opt-level = 3
 
 [profile.dev.package.wasmparser]
 opt-level = 3
-
-# TEMPORARY, do not commit: the local rustbridge checkout, until its zip 9 change is pushed.
-[patch."https://github.com/jrobhoward/rustbridge"]
-rustbridge-bundle = { path = "../rustbridge/crates/rustbridge-bundle" }

@@ -1,6 +1,6 @@
 [package]
 name = "paddock-fixture-plugin"
-version = "0.0.0"
+version.workspace = true
 description = "Test fixture: a rustbridge plugin run as a native-process app"
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "paddock-sdk-macros"
-version = "0.0.0"
+version.workspace = true
 description = "Derive macros for paddock-sdk"
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "example-greeter-service"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: a host service (extension) built against paddock-host alone"
 edition.workspace = true
 rust-version.workspace = true

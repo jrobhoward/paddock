@@ -1,6 +1,6 @@
 [package]
 name = "example-tally"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: a tally kept in Postgres through paddock:sql, served over HTTP"
 edition.workspace = true
 rust-version.workspace = true

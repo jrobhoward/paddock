@@ -1,6 +1,6 @@
 [package]
 name = "paddock-soak"
-version = "0.0.0"
+version.workspace = true
 description = "Long-running fault injection for Paddock: failover between node processes behind UDP proxies, and a chaos app on a node (scripts/soak.sh)"
 edition.workspace = true
 rust-version.workspace = true

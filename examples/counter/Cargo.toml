@@ -1,6 +1,6 @@
 [package]
 name = "example-counter"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: a stateful counter in three versions, for snapshot upgrades"
 edition.workspace = true
 rust-version.workspace = true

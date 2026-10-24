@@ -1,6 +1,6 @@
 [package]
 name = "example-scada-points"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: a pool that keeps Modbus point updates in a shared bucket"
 edition.workspace = true
 rust-version.workspace = true

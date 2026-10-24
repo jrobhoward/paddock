@@ -1,6 +1,6 @@
 [package]
 name = "example-scada-hmi"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: the point table over HTTP, with long polls"
 edition.workspace = true
 rust-version.workspace = true

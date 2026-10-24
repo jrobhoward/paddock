@@ -1,6 +1,6 @@
 [package]
 name = "paddock-modbus"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock extension: Modbus TCP polling and serving, delivering point updates to apps"
 edition.workspace = true
 rust-version.workspace = true

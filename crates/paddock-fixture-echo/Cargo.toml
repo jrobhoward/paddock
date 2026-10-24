@@ -1,6 +1,6 @@
 [package]
 name = "paddock-fixture-echo"
-version = "0.0.0"
+version.workspace = true
 description = "Test fixture: the smallest app that implements the paddock:runtime app world"
 edition.workspace = true
 rust-version.workspace = true

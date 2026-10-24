@@ -1,6 +1,6 @@
 [package]
 name = "example-scada-control"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: SCADA alarms, operator writes and an event log, as a singleton"
 edition.workspace = true
 rust-version.workspace = true

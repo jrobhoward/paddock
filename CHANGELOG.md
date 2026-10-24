@@ -4,7 +4,19 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [Unreleased]
+
+## [0.3.0] - 2026-10-23
+
+The first tagged version: a research release, not feature complete, with
+unstable APIs and formats.
+
+### Changed
+
+- Every workspace crate takes its version, 0.3.0, from the workspace.
+- `README.md` states that Paddock is a research project without support.
+- rustbridge comes from its `experiment/wasm` branch on GitHub again, with
+  zip 9; the fuzz workspace's lock file moves from zip 8.6 to 9.0.5.
 
 ### Added
 
@@ -1106,3 +1118,6 @@ All notable changes are recorded here. The format follows
 - `examples/scada`'s `hmi` is an HTTP app instead of a line protocol on a
   listener, and `points` no longer registers `points-api`, answers
   queries or writes to devices (`control` does).
+
+[Unreleased]: https://github.com/jrobhoward/paddock/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jrobhoward/paddock/releases/tag/v0.3.0

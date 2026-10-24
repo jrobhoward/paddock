@@ -1,6 +1,6 @@
 [package]
 name = "paddock-bundle"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock bundles: the app manifest model, signature and checksum checks, import inspection, effective grants"
 edition.workspace = true
 rust-version.workspace = true

@@ -2,6 +2,12 @@
 
 [![CI](https://github.com/jrobhoward/paddock/actions/workflows/ci.yml/badge.svg)](https://github.com/jrobhoward/paddock/actions/workflows/ci.yml)
 
+> **A personal research project, not production software.** The APIs, wire
+> formats and bundle format change without notice, and there are no releases
+> or compatibility guarantees. Issues, suggestions and feedback are welcome,
+> but there is no support, and the project may stop at any time. Use it at
+> your own risk.
+
 Paddock is a clustered application server for sandboxed WebAssembly
 components, with Erlang/OTP-style semantics:
 

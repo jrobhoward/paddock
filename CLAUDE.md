@@ -535,7 +535,7 @@ line to ROADMAP.md's "Doc debt" instead of rewriting it then:
 | `docs/OPERATIONS.md` | Paths under `data_dir`, environment variables, signals, backups, running as a service | Update with every path, variable or signal change |
 | `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
-| `CHANGELOG.md` | What changed, under `Unreleased` until the first release | Keep a Changelog format; one line per change |
+| `CHANGELOG.md` | What changed: `Unreleased`, then a section per tagged version | Keep a Changelog format; one line per change |
 | `CLAUDE.md` | Conventions and constraints a contributor needs before editing | Rules, not narrative |
 
 ## Writing style for `README.md`, `docs/**/*.md` and rustdoc

@@ -1,6 +1,6 @@
 [package]
 name = "paddock-sdk"
-version = "0.0.0"
+version.workspace = true
 description = "Write Paddock apps in Rust: the App trait, process context, typed envelopes and snapshots"
 edition.workspace = true
 rust-version.workspace = true

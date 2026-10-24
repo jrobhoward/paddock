@@ -1,6 +1,6 @@
 [package]
 name = "example-chaos"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: an app that fails on purpose, for the Phase 1 failure tests"
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "example-ledger"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: entries in a shared bucket, replicated on an HA pair when the node scopes it to the cluster"
 edition.workspace = true
 rust-version.workspace = true

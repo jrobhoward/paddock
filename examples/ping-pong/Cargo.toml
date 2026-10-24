@@ -1,6 +1,6 @@
 [package]
 name = "example-ping-pong"
-version = "0.0.0"
+version.workspace = true
 description = "Paddock example: two apps calling each other with typed CBOR messages"
 edition.workspace = true
 rust-version.workspace = true

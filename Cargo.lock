@@ -953,7 +953,7 @@ checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 
 [[package]]
 name = "example-board"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "example-chaos"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -971,7 +971,7 @@ dependencies = [
 
 [[package]]
 name = "example-counter"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "example-greeter-app"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "wit-bindgen 0.62.0",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "example-greeter-node"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "example-greeter-service",
@@ -1003,7 +1003,7 @@ dependencies = [
 
 [[package]]
 name = "example-greeter-service"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-host",
  "serde_json",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "example-http-counter"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde_json",
@@ -1019,21 +1019,21 @@ dependencies = [
 
 [[package]]
 name = "example-ledger"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
 ]
 
 [[package]]
 name = "example-line-server"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
 ]
 
 [[package]]
 name = "example-ping-pong"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "example-scada-control"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -1052,7 +1052,7 @@ dependencies = [
 
 [[package]]
 name = "example-scada-hmi"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "example-scada-points"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -1068,7 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "example-tally"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde_json",
@@ -1983,7 +1983,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "paddock"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "paddock-bundle"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "minisign",
  "proptest",
@@ -2041,35 +2041,35 @@ dependencies = [
 
 [[package]]
 name = "paddock-fixture-chaos"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "wit-bindgen 0.62.0",
 ]
 
 [[package]]
 name = "paddock-fixture-conn"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "wit-bindgen 0.62.0",
 ]
 
 [[package]]
 name = "paddock-fixture-counter"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "wit-bindgen 0.62.0",
 ]
 
 [[package]]
 name = "paddock-fixture-echo"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "wit-bindgen 0.62.0",
 ]
 
 [[package]]
 name = "paddock-fixture-http"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "wasip2",
  "wit-bindgen 0.62.0",
@@ -2077,21 +2077,21 @@ dependencies = [
 
 [[package]]
 name = "paddock-fixture-native"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-native",
 ]
 
 [[package]]
 name = "paddock-fixture-net"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
 ]
 
 [[package]]
 name = "paddock-fixture-plugin"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "rustbridge",
  "serde",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "paddock-fixture-sdk"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "paddock-sdk",
  "serde",
@@ -2107,14 +2107,14 @@ dependencies = [
 
 [[package]]
 name = "paddock-fixture-services"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "wit-bindgen 0.62.0",
 ]
 
 [[package]]
 name = "paddock-host"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "anyprobe",
  "base64 0.23.1",
@@ -2160,7 +2160,7 @@ dependencies = [
 
 [[package]]
 name = "paddock-modbus"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "ciborium",
  "paddock-bundle",
@@ -2174,7 +2174,7 @@ dependencies = [
 
 [[package]]
 name = "paddock-native"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "ciborium",
  "landlock",
@@ -2189,7 +2189,7 @@ dependencies = [
 
 [[package]]
 name = "paddock-sdk"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "ciborium",
  "paddock-sdk-macros",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "paddock-sdk-macros"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "paddock-soak"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2728,7 +2728,7 @@ dependencies = [
 [[package]]
 name = "rustbridge"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "async-trait",
  "rustbridge-core",
@@ -2743,6 +2743,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-bundle"
 version = "1.0.1"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "hex",
  "minisign",
@@ -2756,7 +2757,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-consumer"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "libloading",
  "rustbridge-bundle",
@@ -2771,7 +2772,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-core"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "async-trait",
  "serde",
@@ -2782,7 +2783,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-ffi"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "dashmap",
  "once_cell",
@@ -2801,7 +2802,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-logging"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "once_cell",
  "parking_lot",
@@ -2813,7 +2814,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-macros"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -2824,7 +2825,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-runtime"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "parking_lot",
  "rustbridge-core",
@@ -2836,7 +2837,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-transport"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#7fc5f1fd22b97dd2249ac16de1754a2b6a701386"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
 dependencies = [
  "rustbridge-core",
  "serde",

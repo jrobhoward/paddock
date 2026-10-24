@@ -1,6 +1,6 @@
 [package]
 name = "paddock-fixture-chaos"
-version = "0.0.0"
+version.workspace = true
 description = "Test fixture: an app that traps, spins, allocates or fails on request"
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "paddock-fixture-counter"
-version = "0.0.0"
+version.workspace = true
 description = "Test fixture: a stateful counter in three versions, for upgrade tests"
 edition.workspace = true
 rust-version.workspace = true
