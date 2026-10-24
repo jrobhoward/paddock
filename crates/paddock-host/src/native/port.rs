@@ -8,8 +8,14 @@
 //! its memory limit: the cgroup it starts in, or `RLIMIT_DATA` without
 //! one. It runs in a process group of its own, with an environment of
 //! `PADDOCK_PRIV` alone (the bundle's `priv/` files, when it has any).
+//!
+//! Native apps run on Linux only (`paddock-runner` is Linux only); elsewhere
+//! [`Port::spawn`] refuses, and what only it uses is dead code.
+
+#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 
 use std::ffi::CString;
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -68,6 +74,7 @@ impl Port {
     ///
     /// Why the process could not start: no runner, or a cgroup that could
     /// not be made.
+    #[cfg(target_os = "linux")]
     pub(crate) fn spawn(
         config: &NativeConfig,
         program: &NativeCode,
@@ -208,6 +215,22 @@ impl Port {
         })
     }
 
+    /// Native apps run on Linux only.
+    ///
+    /// # Errors
+    ///
+    /// Always.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn spawn(
+        _config: &NativeConfig,
+        _program: &NativeCode,
+        _spec: &InstanceSpec,
+        _name: &str,
+        _output: CapturedOutput,
+    ) -> Result<Self, String> {
+        Err("native apps run on Linux only".into())
+    }
+
     /// Queue a frame for the app; dropped once stdin is closed.
     pub(crate) fn send(&self, frame: &ToApp) {
         if let Some(frames) = &self.frames {
@@ -244,8 +267,12 @@ impl Port {
         if self.cgroup.as_deref().is_some_and(cgroup::oom_killed) {
             return ExitReason::Crashed("memory_limit".into());
         }
+        #[cfg(unix)]
+        let signal = |s: &std::process::ExitStatus| s.signal();
+        #[cfg(not(unix))]
+        let signal = |_: &std::process::ExitStatus| None::<i32>;
         ExitReason::Crashed(match status {
-            Some(s) => match (s.code(), s.signal()) {
+            Some(s) => match (s.code(), signal(&s)) {
                 (Some(code), _) => format!("exited with status {code}"),
                 (_, Some(signal)) => format!("killed by signal {signal}"),
                 _ => "exited".into(),

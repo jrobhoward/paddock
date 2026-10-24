@@ -12,8 +12,7 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    TestNode, bundle, call, counter, counter_manifest, fast, fixture, kind, native_bundle,
-    native_fixtures, services_manifest,
+    TestNode, bundle, call, counter, counter_manifest, fast, fixture, kind, services_manifest,
 };
 use paddock::api::RolloutParams;
 use serde_json::json;
@@ -1401,8 +1400,12 @@ async fn blue_green____new_version_gives_up_mid_step____dropped_and_refused() {
     assert!(!n.dir.path().join("data/bundles/bg/2.0.0.rbp").exists());
 }
 
+// Native apps run on Linux only (`paddock-runner`).
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn native____executable_deployed____answers_and_network_refused() {
+    use common::{native_bundle, native_fixtures};
+
     let (runner, program) = native_fixtures();
     let program = std::fs::read(program).unwrap();
     let n = TestNode::start(&format!("[native]\nrunner = {runner:?}\n")).await;

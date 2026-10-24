@@ -12,6 +12,14 @@ All notable changes are recorded here. The format follows
   to current releases; the lock files of the workspace, fuzz and spikes are
   updated within semver.
 
+### Fixed
+
+- The workspace builds on macOS and Windows again: the native-app code,
+  `paddock-runner` and the native test fixture, the serial pty, the
+  native program's file mode and the admin client compiled Unix- or
+  Linux-only APIs there. Native apps stay Linux only; elsewhere a deploy's
+  instances fail to start with a message saying so.
+
 ## [0.3.0] - 2026-10-23
 
 The first tagged version: a research release, not feature complete, with

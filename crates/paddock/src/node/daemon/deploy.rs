@@ -676,9 +676,10 @@ fn load_handler(
 
 /// Write a native program to `path`, readable and executable by the node's
 /// user only, replacing any file there in one step (a running instance
-/// keeps the file it started).
+/// keeps the file it started). The mode is Unix only, as native apps are.
 fn write_program(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
     let dir = path
         .parent()
@@ -686,11 +687,11 @@ fn write_program(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = path.with_extension("native.tmp");
     let _ = std::fs::remove_file(&tmp);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o500)
-        .open(&tmp)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o500);
+    let mut file = options.open(&tmp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);

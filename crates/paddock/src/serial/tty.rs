@@ -124,7 +124,13 @@ pub fn pty() -> io::Result<(Tty, PathBuf)> {
     use std::os::unix::ffi::OsStringExt;
 
     use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
-    let fd = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)?;
+    let flags = OpenptFlags::RDWR | OpenptFlags::NOCTTY;
+    // macOS's `posix_openpt` takes no `O_CLOEXEC`; it is set just after.
+    #[cfg(target_os = "linux")]
+    let flags = flags | OpenptFlags::CLOEXEC;
+    let fd = openpt(flags)?;
+    #[cfg(not(target_os = "linux"))]
+    rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
     grantpt(&fd)?;
     unlockpt(&fd)?;
     let name = ptsname(&fd, Vec::new())?;

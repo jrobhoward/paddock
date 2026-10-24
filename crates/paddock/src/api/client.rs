@@ -650,7 +650,8 @@ impl Client {
 }
 
 /// One HTTP/1.1 request over `stream`, and its response with the body
-/// unread.
+/// unread. Used by the Unix socket and TLS transports.
+#[cfg(any(unix, feature = "tls"))]
 async fn exchange<S>(
     stream: S,
     method: Method,
