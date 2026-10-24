@@ -545,6 +545,10 @@ All notable changes are recorded here. The format follows
   `paddock-modbus`'s `fake_device` example serves fake devices to it.
 - `spikes/s20`: a TLA+ model of replication within the HA pair (ROADMAP
   K1), with the commit, read and catch-up rules K2 implements.
+- `spikes/s19`: native-process plugins as ports (ROADMAP N2): a runner
+  that loads a rustbridge plugin and serves it over stdin and stdout, a
+  plugin that misbehaves on request, and the node's side measuring calls,
+  failures, Landlock and cgroup limits.
 - The witness keeps a record that the primary's partner is out of date,
   for replicated buckets (ROADMAP K2, R13 in `docs/tla/VERIFICATION.md`):
   set and cleared by the primary at its epoch (`FailoverMsg::Record`),

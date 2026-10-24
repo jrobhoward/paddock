@@ -30,7 +30,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
-1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `paddock-soak scada` under faults passed. N1, guest sockets, on 2026-10-23. Next: the docs pass for Phase 3; N2's spike whenever there is room.
+1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `paddock-soak scada` under faults passed. N1, guest sockets, on 2026-10-23. S19, N2's spike, the same day: a port. Next: N2's implementation and the docs pass for Phase 3.
 2. W1 (Phase 2's docs), now unblocked; H5 and E4b only for a user who needs them.
 
 ## Order
@@ -150,10 +150,10 @@ Order: X1 first, so the app drives the rest; K3 next, on K2's machinery; N1 alon
 
 ```
 X1 app ─► K3 app buckets ─► M1 move ─► L1 fast hand-over ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
-            N1 sockets (alongside K)              N2 native plugins (S19 spike first)
+            N1 sockets (alongside K)              N2 native plugins (ports, S19)
 ```
 
-- [ ] **N2 Native-process plugins.** Spike S19 first (an Erlang-style port, the host spawning and supervising a process over stdio, against a native process joining as a node through a client library), then the chosen one, with rustbridge's native runner: supervised like an instance, its own limits, granted capabilities only.
+- [ ] **N2 Native-process plugins.** Spike S19 (done 2026-10-23, [spikes/s19](../spikes/s19/README.md)) chose a port over a node: `kind = "native-process"` runs a bundle's native library through a runner the node spawns, one process per instance, with a pid, links, monitors and supervision like an instance, and the callbacks and the plugin's requests to the node as frames over stdin and stdout (rustbridge's `Server` trait on the plugin side). Limits: a deadline per call then a kill, a ping deadline, `memory_max` as cgroup `memory.max` with a delegated cgroup (else `RLIMIT_AS`), `pids.max`, no core dumps, non-dumpable, `no_new_privs`, the parent-death signal. Sandbox: Landlock set by the runner before the plugin loads (read the bundle and system libraries, no execution, preopens as rules). Two choices left for N2: network for a plugin with `wasi:sockets` rules (Landlock has TCP ports only, no addresses: allow the `connect` rules' ports or refuse at deploy), and signals on kernels before 6.12 (no Landlock scopes: a seccomp filter, or require 6.12). Linux first.
 - [ ] **W2 Phase 3's docs.** A docs pass for Phase 3, as W1 for Phase 2.
 
 Parked from Phase 3 (2026-10-16): placement across many nodes (labels, spread, `all-nodes`); opt-in global names (Raft); more guest SDKs; fuel metering.
@@ -165,7 +165,6 @@ The rustbridge work for Phase 3 is the guest adapter (`Plugin` → `paddock:runt
 Questions for later, each a spike with a time-box when scheduled.
 
 - **S18 Checking hot-standby instances follow the primary.** Compare the primary's and the standby's sequences of host calls (from probes), allowing for timestamps, to find a standby that has diverged. After D4.
-- **S19 Ports or nodes for external processes** (scheduled as Phase 3's N2). An Erlang-style port (the host spawns a process and talks over stdio, owned and supervised like an instance) against a native process joining as a cluster node through a client library. Relates to Phase 3's native-process plugins and rustbridge's native runner.
 - **ZFS.** A node's data directory on a dataset: snapshots for backups and for seeding a standby's buckets.
 - **Jails and containers.** Running native plugins (S19) in FreeBSD jails as HAppliance does, or the node itself in a rootless container.
 - **S9 Debugging guests** (parked). wasmtime 49 offers a native debugger (`Config::debug_info` with `debug-builtins`: GDB and LLDB on JIT code, pausing the whole node, for development nodes) and an experimental guest debug API (`Config::guest_debug`: breakpoints and stepping per Store, which could park one instance behind a Debug Adapter Protocol endpoint while the others run; needs the guest's DWARF, an Engine of its own, and time parked counted as host time). The spike would check whether `guest_debug` works in wasmtime 49, measure the slowdown, and try one DAP session from VS Code. Time-box 2 days; if the API is not ready, document the native route.
@@ -254,5 +253,5 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | S16 | TLA+ model of failover | Done; now layer 1 of [docs/tla](tla/VERIFICATION.md) ([spikes/s16](../spikes/s16/README.md)) |
 | S17 | Moving a running instance to another node | Settled without a spike program (M1, 2026-10-20): the snapshot through the replicated log, a new pid, nothing else carried (DESIGN.md, "Moving a singleton with its state") |
 | S18 | Hot-standby instances following the primary | Investigation |
-| S19 | Ports or nodes for external processes | Investigation |
+| S19 | Ports or nodes for external processes | A port: only a process the node spawns can be limited and stopped, and a cluster member's stamps are trusted; about 37 µs a call, 1.9 ms to start, 3.8 MiB; Landlock and a cgroup limit it ([spikes/s19](../spikes/s19/README.md)) |
 | S20 | TLA+ model of replication within the HA pair | Done (K1): rules R1 to R7; no committed write lost with one failure at a time, exhaustive to about 2.2 billion states, and each rule's absence gives a counterexample ([spikes/s20](../spikes/s20/README.md)) |

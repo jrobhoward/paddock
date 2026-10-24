@@ -1,0 +1,12 @@
+[package]
+name = "s19-plugin"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rustbridge = { path = "../../../../rustbridge/crates/rustbridge" }
+serde = { version = "1", features = ["derive"] }
