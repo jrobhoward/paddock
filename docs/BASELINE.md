@@ -1131,7 +1131,7 @@ The loaded rows run the same load on both: 64 clients calling 16 instances or ge
 - **Idle, 4 workers:** a native tokio sleep is 1.18 to 1.21 ms late at p50 and 1.26 to 1.35 ms at p99, whatever the delay (1, 10 or 50 ms). `send-after`, handled in the guest's `handle-info`, is 1.09 to 1.12 ms late at p50 and about 2 ms at p99. A guest's `wasi:clocks` sleep, timed by the caller (so including one call), is 1.54 to 1.58 ms late at p50 and 1.8 to 1.9 ms at p99.
 - **Loaded:** native sleeps reach 3.2 to 4.5 ms at p99; `send-after` 4.9 to 5.0 ms (max 7.2 ms); guest sleeps 4.6 to 5.4 ms. The lateness does not grow with the delay.
 - **A monotonic clock read** costs 169 ns in a guest against 25 ns natively: it is a host call (`wasi:clocks`), where the native read is a vDSO call.
-- **Not measured:** wall-clock (`wasi:clocks/wall-clock`) reads, and timers on the Pi.
+- **Not measured:** wall-clock (`wasi:clocks/wall-clock`) reads. The Pi's figures are in the next section.
 
 ### Restarts and upgrades
 
@@ -1357,10 +1357,196 @@ loaded, send_after 10 ms: lateness p50 742 us, p99 1308 us, max 1467 us
 loaded, send_after 50 ms: lateness p50 757 us, p99 1339 us, max 1446 us
 ```
 
+## 2026-10-24: what running in Wasm costs, on the Pi
+
+Raspberry Pi 5 Model B Rev 1.1 (Cortex-A76), 4 cores, 8 GiB, Ubuntu 26.04, Linux 7.0.0-1020-raspi; rustc 1.99.1; commit 1a7fd5c; Erlang/OTP 27 (erts 15.2.7.4, Ubuntu's `erlang-base`) for the reference. `scripts/bench.sh timer restart heap compile`, load average 0.25 at the start, then `scripts/bench.sh beam` once OTP was installed, load average 0.26. Both ran at nice 10 on an otherwise idle machine. The 8 GB swap partition was on and stayed unused (0 B). Drive temperature peaked at 45 °C and the CPU at 58 °C, with no throttling and no errors. The full output is below, after the reading. `baseline` was not run again: the Paddock figures in the BEAM table are from the 2026-10-18 Pi run (commit 7d7095d).
+
+### Against Erlang/OTP, on the Pi
+
+| Measure | Paddock, 1 worker | Paddock, 4 workers | BEAM, 1 scheduler | BEAM, 4 schedulers |
+| --- | --- | --- | --- | --- |
+| Empty call p50 | 3.74 µs | 5.24 µs | 2.44 µs | 2.44 µs |
+| 1 KiB echo call p50 | 5.68 µs | 7.20 µs | 2.63 µs | 2.56 µs |
+| Casts handled per second | 457,000 | 422,000 | 3,429,000 | 3,518,000 |
+| Start to first reply p50 | 80 µs | 86 µs | 7.5 µs | 7.2 µs |
+| Idle memory per instance or process | 104 KiB | 101 KiB | 2.7 KiB | 2.7 KiB |
+| Timer lateness p50 / p99, idle | | 0.98 to 1.16 / 2.0 to 2.1 ms | 0.42 to 0.46 / 1.02 ms | 0.48 to 0.65 / 1.05 ms |
+| Timer lateness p50 / p99, loaded | | 2.6 to 2.9 / 6.2 to 7.2 ms | 0.94 to 1.6 / 2.1 to 2.4 ms | 1.0 / 1.6 to 1.8 ms |
+
+- **Calls** cost 1.5 times a gen_server call on one thread and 2.1 times on four, as on the 16-core machine (1.4 and 2.3).
+- **Casts** handled per second are an eighth of BEAM's, against a sixth to a fifth on the 16-core machine. BEAM's cast rate on 4 schedulers holds up on the Pi (3.5M/s), where on the 16-core machine it halved.
+- **Starting an instance** costs 11 times a gen_server start (17 on the 16-core machine; BEAM's start is slower on the Pi, Paddock's is not). An idle instance holds 39 times a process's memory, against 22: the Pi's unexplained 104 to 110 KiB per instance.
+- **Timers:** idle, the same as on the 16-core machine; loaded, `send-after` reaches 6.2 to 7.2 ms at p99 against 4.9 to 5.0 ms, on four cores fully taken by the load.
+
+### Timers, clocks, restarts, heap and compiling, Pi against the 16-core machine
+
+| Measure | Pi 5 | 16-core (2026-10-24) |
+| --- | --- | --- |
+| Monotonic clock read, guest / native | 240 / 36.7 ns | 169 / 25 ns |
+| Native tokio sleep lateness p50, idle | 1.12 to 1.34 ms | 1.18 to 1.21 ms |
+| `send-after` lateness p50 / p99, idle | 0.98 to 1.16 / 2.0 to 2.1 ms | 1.09 to 1.12 / about 2 ms |
+| `send-after` lateness p50 / p99, loaded | 2.6 to 2.9 / 6.2 to 7.2 ms | 1.9 to 2.1 / 4.9 to 5.0 ms |
+| Native tokio sleep lateness p99, loaded | 2.7 to 3.5 ms | 3.2 to 4.5 ms |
+| Kill to the restarted instance's first reply, 1 worker, p50 | 79.2 µs | 66.5 µs |
+| Crash (trap) to first reply, 1 worker, p50 | 150 µs | 116 µs |
+| Upgrade pause, no state / 64 KiB / 1 MiB / 16 MiB, p50 | 57 µs / 136 µs / 1.94 ms / 28.6 ms | 48 µs / 104 µs / 0.92 ms / 21.0 ms |
+| Snapshot taken, 16 MiB of state, p50 | 7.3 ms | 3.6 ms |
+| Growing the heap by 1 / 16 / 64 MiB (native) | 0.43 / 6.7 / 24.7 ms (0.48 / 5.2 / 20.3) | 0.56 / 5.7 / 23.4 ms (0.54 / 6.2 / 22.5) |
+| Idle instance resident, after exit | 0.12 MiB, 0 to 0.05 MiB | 0.10 MiB, 0 to 0.06 MiB |
+| Instantiate on a reused slot | 92 to 99 µs | 47 to 78 µs |
+| Wake with 1 / 16 / 64 MiB of state | 1.39 / 15.7 / 65.6 ms | 1.21 / 14.9 / 59.7 ms |
+| Compile: echo, chaos, SDK, SDK debug | 26 / 201 / 647 / 1,157 ms | 22 / 180 / 570 / 1,057 ms |
+| Load from the compiled-code cache | 0.46 to 1.64 ms | 0.32 to 0.96 ms |
+| Cache file, echo / chaos / SDK | 264 / 613 / 1,429 KiB | 60 / 453 / 1,453 KiB |
+
+- **Timers** are as late on the Pi as on the 16-core machine when idle: the tokio timer's grain, not the CPU, sets them. Under load they are later at p99, by the instance's wait for a worker on four busy cores.
+- **A guest's clock read** costs 6.5 times a native one, the same ratio as on the 16-core machine.
+- **Restarts** cost about 1.2 to 1.3 times the 16-core machine's.
+- **Upgrades** with 1 MiB of state pause the instance twice as long as on the 16-core machine, and 1.4 times as long at 16 MiB; taking the snapshot alone costs twice as long. Waking a passivated instance costs about 1 ms per MiB, close to the 16-core machine's 0.9. An upgrade copies out of the old Store as well as into the new one, where a wake only copies in; why the Pi pays more for the upgrade's share was not looked into.
+- **The heap** behaves as on the 16-core machine: growing it costs about a native allocation (1.2 to 1.3 times at 16 and 64 MiB), and the memory is returned on exit. An idle instance is 0.12 MiB resident, the same excess as the 2026-10-18 run found.
+- **Compiling** takes 1.1 to 1.2 times as long as on the 16-core machine (one thread each). The cache files for small components are larger on aarch64 (264 KiB for the 17 KiB echo fixture, against 60 KiB); not looked into.
+
+### Pi 5, 2026-10-24 run: timer: send-after and guest sleep lateness against a native tokio sleep, idle and loaded; clock reads
+
+`target/release/examples/timer_cost 4` (11.94 s wall, 31.91 s user, 0.11 s system, 39680 KiB peak RSS):
+
+```text
+tokio workers: 4; 100 timers at once, 10 rounds per delay; lateness in µs
+monotonic clock read: native 36.7 ns, guest 240.0 ns (one run of 1000000 reads)
+                                    delay      p50      p99      max
+idle, native tokio sleep              1 ms     1117     1163     1167
+idle, guest send-after                1 ms      984     1968     2039
+idle, guest wasi:clocks sleep         1 ms     1511     1790     1818
+idle, native tokio sleep             10 ms     1130     1180     1184
+idle, guest send-after               10 ms     1116     1977     2115
+idle, guest wasi:clocks sleep        10 ms     1583     1904     1981
+idle, native tokio sleep             50 ms     1342     1448     1452
+idle, guest send-after               50 ms     1156     2108     2184
+idle, guest wasi:clocks sleep        50 ms     1679     2047     2094
+loaded, native tokio sleep            1 ms     1837     3542     3724
+loaded, guest send-after              1 ms     2810     7196     8449
+loaded, guest wasi:clocks sleep       1 ms     4424     6453     8163
+loaded, native tokio sleep           10 ms     1435     2704     2970
+loaded, guest send-after             10 ms     2630     6177     7325
+loaded, guest wasi:clocks sleep      10 ms     3724     5506     5998
+loaded, native tokio sleep           50 ms     1837     3481     4011
+loaded, guest send-after             50 ms     2887     7074     8484
+loaded, guest wasi:clocks sleep      50 ms     2983     5216     5245
+```
+
+### Pi 5, 2026-10-24 run: restart: crash and kill to the restarted instance's first reply; upgrades by state size
+
+`target/release/examples/restart_cost 1` (2.27 s wall, 1.33 s user, 0.93 s system, 107928 KiB peak RSS):
+
+```text
+tokio workers: 1; 500 restarts each, 50 upgrades per size
+a crash (trap in handle-cast) to the restarted instance's first reply: p50 149.6 µs, p99 230.0 µs, max 485.7 µs
+a kill to the restarted instance's first reply: p50 79.2 µs, p99 98.0 µs, max 110.5 µs
+     0 KiB state: snapshot taken: p50 3.2 µs, p99 9.9 µs, max 9.9 µs
+     0 KiB state: upgrade, instance paused: p50 56.7 µs, p99 126.2 µs, max 126.2 µs
+     0 KiB state: upgrade to first reply: p50 70.0 µs, p99 144.2 µs, max 144.2 µs
+    64 KiB state: snapshot taken: p50 9.9 µs, p99 50.1 µs, max 50.1 µs
+    64 KiB state: upgrade, instance paused: p50 135.8 µs, p99 162.8 µs, max 162.8 µs
+    64 KiB state: upgrade to first reply: p50 151.3 µs, p99 180.9 µs, max 180.9 µs
+  1024 KiB state: snapshot taken: p50 288.9 µs, p99 985.7 µs, max 985.7 µs
+  1024 KiB state: upgrade, instance paused: p50 1940.2 µs, p99 1997.7 µs, max 1997.7 µs
+  1024 KiB state: upgrade to first reply: p50 1997.6 µs, p99 2059.5 µs, max 2059.5 µs
+ 16384 KiB state: snapshot taken: p50 7251.1 µs, p99 16179.7 µs, max 16179.7 µs
+ 16384 KiB state: upgrade, instance paused: p50 28581.4 µs, p99 33003.6 µs, max 33003.6 µs
+ 16384 KiB state: upgrade to first reply: p50 28640.9 µs, p99 33101.8 µs, max 33101.8 µs
+```
+
+`target/release/examples/restart_cost 4` (2.32 s wall, 1.38 s user, 0.97 s system, 141272 KiB peak RSS):
+
+```text
+tokio workers: 4; 500 restarts each, 50 upgrades per size
+a crash (trap in handle-cast) to the restarted instance's first reply: p50 203.1 µs, p99 304.6 µs, max 503.4 µs
+a kill to the restarted instance's first reply: p50 122.6 µs, p99 138.6 µs, max 141.7 µs
+     0 KiB state: snapshot taken: p50 5.6 µs, p99 17.8 µs, max 17.8 µs
+     0 KiB state: upgrade, instance paused: p50 69.0 µs, p99 138.2 µs, max 138.2 µs
+     0 KiB state: upgrade to first reply: p50 86.8 µs, p99 160.9 µs, max 160.9 µs
+    64 KiB state: snapshot taken: p50 12.3 µs, p99 42.6 µs, max 42.6 µs
+    64 KiB state: upgrade, instance paused: p50 137.5 µs, p99 189.9 µs, max 189.9 µs
+    64 KiB state: upgrade to first reply: p50 153.2 µs, p99 210.6 µs, max 210.6 µs
+  1024 KiB state: snapshot taken: p50 296.4 µs, p99 754.0 µs, max 754.0 µs
+  1024 KiB state: upgrade, instance paused: p50 1941.6 µs, p99 2681.8 µs, max 2681.8 µs
+  1024 KiB state: upgrade to first reply: p50 1993.3 µs, p99 2742.8 µs, max 2742.8 µs
+ 16384 KiB state: snapshot taken: p50 6896.8 µs, p99 20001.2 µs, max 20001.2 µs
+ 16384 KiB state: upgrade, instance paused: p50 27439.4 µs, p99 41020.4 µs, max 41020.4 µs
+ 16384 KiB state: upgrade to first reply: p50 27511.1 µs, p99 41138.9 µs, max 41138.9 µs
+```
+
+### Pi 5, 2026-10-24 run: heap: heap growth, memory held live and after exit, slot reuse, passivated state by size
+
+`target/release/examples/heap_cost 1` (8.75 s wall, 2.38 s user, 3.89 s system, 2516844 KiB peak RSS):
+
+```text
+tokio workers: 1; 16 instances per size; medians
+  0 MiB heap: alloc call 20 µs (native 0 µs); 0.12 MiB resident each live, 0.05 MiB after exit; instantiate on a reused slot 92.9 µs
+  1 MiB heap: alloc call 430 µs (native 481 µs); 1.03 MiB resident each live, 0.00 MiB after exit; instantiate on a reused slot 98.7 µs
+ 16 MiB heap: alloc call 6720 µs (native 5176 µs); 16.03 MiB resident each live, 0.00 MiB after exit; instantiate on a reused slot 96.0 µs
+ 64 MiB heap: alloc call 24705 µs (native 20285 µs); 64.03 MiB resident each live, 0.00 MiB after exit; instantiate on a reused slot 92.1 µs
+  0 MiB state, passivated: snapshot 0 KiB held by the host; call that wakes it 69 µs
+  1 MiB state, passivated: snapshot 1024 KiB held by the host; call that wakes it 1387 µs
+ 16 MiB state, passivated: snapshot 16384 KiB held by the host; call that wakes it 15686 µs
+ 64 MiB state, passivated: snapshot 65536 KiB held by the host; call that wakes it 65609 µs
+```
+
+### Pi 5, 2026-10-24 run: compile: compile time by component size, and loads from the compiled-code cache
+
+`target/release/examples/compile_cost` (27.19 s wall, 26.38 s user, 0.14 s system, 63476 KiB peak RSS):
+
+```text
+median of 5 loads each, one thread
+component                                     size KiB  compile ms cache write ms   cached ms  cache KiB
+release/paddock_fixture_echo.wasm                   17        26.1          29.6        0.46        264
+release/paddock_fixture_chaos.wasm                 150       201.4         236.9        1.02        613
+release/paddock_fixture_sdk.wasm                   543       646.9         686.3        1.12       1429
+release/example_scada_control.wasm                 487       594.8         633.6        0.96       1311
+debug/paddock_fixture_sdk.wasm                    5417      1156.9        1201.6        1.64       3260
+```
+### Pi 5, 2026-10-24 run: beam: Erlang/OTP reference: gen_server call, cast, spawn, process memory, send_after lateness (1 and 4 schedulers)
+
+`ERL_FLAGS='+S 1:1' escript scripts/beam_baseline.escript` (15.15 s wall, 12.73 s user, 0.12 s system, 135560 KiB peak RSS):
+
+```text
+erts 15.2.7.4, OTP 27, schedulers: 1
+call, empty call: p50 2.44 us, p99 4.89 us, p99.9 12.26 us, max 1636.77 us; 344524 calls/s sequential
+call, 1 KiB echo: p50 2.63 us, p99 4.87 us, p99.9 302.35 us, max 1627.57 us; 288805 calls/s sequential
+cast: 3428733 casts/s handled (200000 casts, unbounded mailbox)
+start to first reply (1000 gen_servers): p50 7.50 us, p99 24.00 us
+idle memory per process: 2.7 KiB (erlang:memory(processes) delta), 2.6 KiB (process_info)
+idle, send_after 1 ms: lateness p50 456 us, p99 1020 us, max 1033 us
+idle, send_after 10 ms: lateness p50 436 us, p99 1019 us, max 1039 us
+idle, send_after 50 ms: lateness p50 417 us, p99 1018 us, max 1033 us
+load: 64 clients, 16 gen_servers, busy 314 rounds per call (about 31 us)
+loaded, send_after 1 ms: lateness p50 943 us, p99 2355 us, max 2441 us
+loaded, send_after 10 ms: lateness p50 1576 us, p99 2225 us, max 2245 us
+loaded, send_after 50 ms: lateness p50 1598 us, p99 2147 us, max 2395 us
+```
+
+`ERL_FLAGS='+S 4:4' escript scripts/beam_baseline.escript` (11.06 s wall, 30.99 s user, 0.28 s system, 150384 KiB peak RSS):
+
+```text
+erts 15.2.7.4, OTP 27, schedulers: 4
+call, empty call: p50 2.44 us, p99 4.80 us, p99.9 12.33 us, max 1876.18 us; 348333 calls/s sequential
+call, 1 KiB echo: p50 2.56 us, p99 4.76 us, p99.9 295.24 us, max 1562.92 us; 294929 calls/s sequential
+cast: 3517550 casts/s handled (200000 casts, unbounded mailbox)
+start to first reply (1000 gen_servers): p50 7.24 us, p99 14.76 us
+idle memory per process: 2.7 KiB (erlang:memory(processes) delta), 2.6 KiB (process_info)
+idle, send_after 1 ms: lateness p50 481 us, p99 1049 us, max 1093 us
+idle, send_after 10 ms: lateness p50 621 us, p99 1076 us, max 1109 us
+idle, send_after 50 ms: lateness p50 645 us, p99 1051 us, max 1078 us
+load: 64 clients, 16 gen_servers, busy 353 rounds per call (about 31 us)
+loaded, send_after 1 ms: lateness p50 1037 us, p99 1755 us, max 1893 us
+loaded, send_after 10 ms: lateness p50 1012 us, p99 1588 us, max 2398 us
+loaded, send_after 50 ms: lateness p50 1038 us, p99 1628 us, max 3531 us
+```
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
 - Calls, casts and replicated writes between two machines (every cluster figure is on loopback).
 - Resident memory over hours of load (`scripts/soak.sh` does not sample it).
-- The 2026-10-24 benchmarks on the Pi.
+- Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).
