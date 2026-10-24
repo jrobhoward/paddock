@@ -1,0 +1,45 @@
+[package]
+name = "paddock-native"
+version = "0.0.0"
+description = "Native-process apps for Paddock: the frame protocol, the app API and paddock-runner"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["runner"]
+# `paddock_native::app`: a native app as an executable (Unix).
+app = ["dep:rustix", "rustix/stdio"]
+# `paddock-runner`, the launcher a node runs native apps through (Linux).
+runner = [
+    "app",
+    "dep:landlock",
+    "dep:seccompiler",
+    "dep:libc",
+    "dep:rustbridge-consumer",
+    "dep:serde_json",
+]
+
+[[bin]]
+name = "paddock-runner"
+path = "src/bin/paddock-runner.rs"
+required-features = ["runner"]
+
+[dependencies]
+ciborium.workspace = true
+serde.workspace = true
+landlock = { version = "0.4.7", optional = true }
+seccompiler = { version = "0.5", optional = true }
+libc = { version = "0.2", optional = true }
+rustix = { workspace = true, optional = true }
+rustbridge-consumer = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest.workspace = true
+
+[lints]
+workspace = true

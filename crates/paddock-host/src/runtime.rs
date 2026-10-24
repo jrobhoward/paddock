@@ -14,7 +14,7 @@ use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConf
 use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{PaddockApp, PaddockAppPre};
 use crate::compiled;
-use crate::config::{HostObjects, MemoryProfile, RuntimeConfig};
+use crate::config::{HostObjects, MemoryProfile, NativeConfig, RuntimeConfig};
 use crate::delivery::{self, Origin};
 use crate::deny;
 use crate::error::{HostError, describe};
@@ -23,6 +23,7 @@ use crate::links::{LinkInfo, LinkTable};
 use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
 use crate::message::{CallError, Envelope};
 use crate::metrics::Metrics;
+use crate::native::NativeCode;
 use crate::pid::Pid;
 use crate::pool::Pool;
 use crate::registry::Registry;
@@ -108,6 +109,11 @@ impl RuntimeInner {
         self.config.host_objects
     }
 
+    /// How the node runs native-process apps.
+    pub(crate) fn native_config(&self) -> &NativeConfig {
+        &self.config.native
+    }
+
     /// The transport to other nodes, once set.
     pub(crate) fn transport(&self) -> Option<&Arc<dyn Transport>> {
         self.transport.get()
@@ -153,14 +159,50 @@ impl fmt::Debug for RuntimeInner {
     }
 }
 
-/// A compiled component, linked against the host and ready to instantiate.
+/// A compiled component, linked against the host and ready to instantiate,
+/// or a native-process app's program.
 #[derive(Clone)]
 pub struct LoadedApp {
-    pub(crate) pre: PaddockAppPre<InstanceState>,
+    code: Code,
     stubbed: Arc<Vec<String>>,
 }
 
+/// What a loaded app runs.
+#[derive(Clone)]
+enum Code {
+    Component(PaddockAppPre<InstanceState>),
+    Native(Arc<NativeCode>),
+}
+
 impl LoadedApp {
+    /// The component, ready to instantiate.
+    ///
+    /// # Errors
+    ///
+    /// A native-process app has none.
+    pub(crate) fn component(&self) -> wasmtime::Result<&PaddockAppPre<InstanceState>> {
+        match &self.code {
+            Code::Component(pre) => Ok(pre),
+            Code::Native(_) => Err(wasmtime::Error::msg(
+                "a native-process app has no component",
+            )),
+        }
+    }
+
+    /// A native-process app's program.
+    pub(crate) fn native(&self) -> Option<&Arc<NativeCode>> {
+        match &self.code {
+            Code::Native(program) => Some(program),
+            Code::Component(_) => None,
+        }
+    }
+
+    /// Whether this is a native-process app.
+    #[must_use]
+    pub fn is_native(&self) -> bool {
+        self.native().is_some()
+    }
+
     /// Imported interfaces no host here provides, linked to deny stubs.
     #[must_use]
     pub fn stubbed_imports(&self) -> &[String] {
@@ -183,7 +225,8 @@ impl Runtime {
     ///
     /// [`HostError::Engine`] if wasmtime rejects the configuration (for
     /// example when the pool cannot reserve its address space) or the epoch
-    /// thread cannot start.
+    /// thread cannot start, and [`HostError::NativeCgroup`] if
+    /// `native.cgroup` is set but the node cannot move itself into it.
     pub fn new(config: RuntimeConfig) -> Result<Self, HostError> {
         Self::with_extensions(config, Vec::new())
     }
@@ -206,6 +249,10 @@ impl Runtime {
                 config.creation,
                 crate::pid::MAX_CREATION
             )));
+        }
+        if let Some(root) = &config.native.cgroup {
+            crate::native::cgroup::prepare(root)
+                .map_err(|e| HostError::NativeCgroup(format!("{}: {e}", root.display())))?;
         }
         let mut packages = std::collections::BTreeSet::new();
         for ext in &extensions {
@@ -296,9 +343,20 @@ impl Runtime {
         let load = |e: wasmtime::Error| HostError::Load(describe(&e));
         let (pre, stubbed) = self.link(component, cache).map_err(load)?;
         Ok(LoadedApp {
-            pre: PaddockAppPre::new(pre).map_err(load)?,
+            code: Code::Component(PaddockAppPre::new(pre).map_err(load)?),
             stubbed: Arc::new(stubbed),
         })
+    }
+
+    /// A native-process app whose program is `program` (ROADMAP N2): its
+    /// instances run it through `paddock-runner`. Nothing is checked here;
+    /// a program that does not start fails each instance's start.
+    #[must_use]
+    pub fn load_native(&self, program: NativeCode) -> LoadedApp {
+        LoadedApp {
+            code: Code::Native(Arc::new(program)),
+            stubbed: Arc::new(Vec::new()),
+        }
     }
 
     /// Compile a connection-handler component

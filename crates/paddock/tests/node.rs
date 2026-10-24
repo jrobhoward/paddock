@@ -12,7 +12,8 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    TestNode, bundle, call, counter, counter_manifest, fast, fixture, kind, services_manifest,
+    TestNode, bundle, call, counter, counter_manifest, fast, fixture, kind, native_bundle,
+    native_fixtures, services_manifest,
 };
 use paddock::api::RolloutParams;
 use serde_json::json;
@@ -1398,4 +1399,49 @@ async fn blue_green____new_version_gives_up_mid_step____dropped_and_refused() {
         ("1.0.0", None)
     );
     assert!(!n.dir.path().join("data/bundles/bg/2.0.0.rbp").exists());
+}
+
+#[tokio::test]
+async fn native____executable_deployed____answers_and_network_refused() {
+    let (runner, program) = native_fixtures();
+    let program = std::fs::read(program).unwrap();
+    let n = TestNode::start(&format!("[native]\nrunner = {runner:?}\n")).await;
+    let manifest = |extra: serde_json::Value| {
+        let mut m = json!({ "kind": "native-process", "native": { "program": "executable" } });
+        if let (Some(m), Some(e)) = (m.as_object_mut(), extra.as_object()) {
+            m.extend(e.clone());
+        }
+        fast(m)
+    };
+
+    n.client
+        .deploy(native_bundle(
+            &n.key,
+            "vendor",
+            "1.0.0",
+            &program,
+            manifest(json!({})),
+        ))
+        .await
+        .unwrap();
+    let echo = call(&n, "vendor", "echo native").await;
+    let read = call(&n, "vendor", "read /etc/hostname").await;
+    let sockets = n
+        .client
+        .deploy(native_bundle(
+            &n.key,
+            "vendor2",
+            "1.0.0",
+            &program,
+            manifest(json!({ "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/8" }] } } })),
+        ))
+        .await
+        .unwrap_err();
+
+    assert_eq!(echo, "native");
+    assert!(read.contains("Permission denied"), "{read}");
+    assert!(
+        format!("{sockets:?}").contains("a native-process app may declare only wasi:logging"),
+        "{sockets:?}"
+    );
 }

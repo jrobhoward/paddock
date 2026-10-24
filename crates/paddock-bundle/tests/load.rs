@@ -150,6 +150,7 @@ fn open____native_only_bundle____refused_no_component() {
     BundleBuilder::new(Manifest::new("orders", "1.0.0"))
         .add_library(Platform::LinuxX86_64, &lib)
         .unwrap()
+        .with_extension("appserver", json!({}))
         .with_signing_key(keypair.pk.to_base64(), keypair.sk)
         .write(&path)
         .unwrap();
@@ -160,6 +161,25 @@ fn open____native_only_bundle____refused_no_component() {
         matches!(result, Err(BundleError::NoComponent)),
         "{result:?}"
     );
+}
+
+/// A signed bundle of kind `native-process` with `library` for this
+/// node's platform.
+fn native_bundle(dir: &TempDir, keypair: KeyPair, library: &[u8]) -> std::path::PathBuf {
+    let lib = dir.path().join("liborders.so");
+    std::fs::write(&lib, library).unwrap();
+    let path = dir.path().join("native.rbp");
+    BundleBuilder::new(Manifest::new("orders", "1.0.0"))
+        .add_library(Platform::current().unwrap(), &lib)
+        .unwrap()
+        .with_extension(
+            "appserver",
+            json!({ "kind": "native-process", "capabilities": { "wasi:logging": {} } }),
+        )
+        .with_signing_key(keypair.pk.to_base64(), keypair.sk)
+        .write(&path)
+        .unwrap();
+    path
 }
 
 #[test]
@@ -349,7 +369,27 @@ fn open____malformed_appserver_section____parse_path_rooted_at_section() {
 }
 
 #[test]
-fn open____native_process_kind____refused_unsupported_kind() {
+fn open____native_process_for_this_platform____program_and_declared_grant() {
+    let dir = TempDir::new().unwrap();
+    let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
+    let key = keypair.pk.to_base64();
+    let path = native_bundle(&dir, keypair, b"\x7fELF native");
+
+    let bundle = VerifiedBundle::open(&path, &[key]).unwrap();
+    let grant = bundle
+        .effective_grant(
+            &OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"wasi:logging\"]\n").unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(bundle.component, b"\x7fELF native");
+    assert!(bundle.manifest.component.world.is_empty());
+    assert!(bundle.imports().unwrap().is_empty());
+    assert!(grant.granted.contains(&Capability::Logging));
+}
+
+#[test]
+fn open____native_process_with_component_only____refused_no_native_variant() {
     let dir = TempDir::new().unwrap();
     let spec = Spec {
         appserver: Some(json!({ "kind": "native-process" })),
@@ -359,10 +399,7 @@ fn open____native_process_kind____refused_unsupported_kind() {
 
     let err = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap_err();
 
-    assert_eq!(
-        err.to_string(),
-        "app kind 'native-process' is not supported in Phase 1"
-    );
+    assert!(matches!(err, BundleError::NoNativeVariant(_)), "{err:?}");
 }
 
 #[test]

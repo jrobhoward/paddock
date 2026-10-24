@@ -329,7 +329,6 @@ fn unenforced_fields____design_example____lists_later_phase_fields() {
 #[test]
 fn unenforced_fields____every_later_section____listed_with_phase() {
     let spec = AppSpec::from_json_value(&json!({
-        "kind": "native-process",
         "registered_names": [{ "name": "g", "scope": "global" }],
         "instances": { "min": 1, "max": 3 },
         "limits": { "fuel_per_message": 10, "storage_quota": "1GiB", "open_files": 4, "outbound_connections": 2 },
@@ -352,7 +351,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
     assert_eq!(
         fields,
         vec![
-            ("kind".into(), Phase::Later),
             ("registered_names[0].scope".into(), Phase::Phase2),
             ("instances.min".into(), Phase::Later),
             ("instances.max".into(), Phase::Later),
@@ -399,4 +397,37 @@ fn AppManifest____invalid_app_name____invalid_at_plugin_name() {
     let paths = invalid_paths(manifest.validate().unwrap_err());
 
     assert_eq!(paths, vec!["plugin.name"]);
+}
+
+#[rstest]
+#[case(json!({ "kind": "native-process", "capabilities": { "wasi:keyvalue": {} } }), "capabilities.wasi:keyvalue")]
+#[case(json!({ "kind": "native-process", "capabilities": { "wasi:sockets": {} } }), "capabilities.wasi:sockets")]
+#[case(json!({ "kind": "native-process", "capabilities": { "extensions": { "acme:x": {} } } }), "capabilities.extensions.\"acme:x\"")]
+#[case(json!({ "kind": "native-process", "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
+#[case(json!({ "kind": "native-process", "upgrade": { "mode": "snapshot", "snapshot_version": 1 } }), "upgrade.mode")]
+#[case(json!({ "native": { "program": "executable" } }), "native")]
+fn validate____native_process_outside_its_rules____refused_at_path(
+    #[case] section: serde_json::Value,
+    #[case] path: &str,
+) {
+    let found = AppSpec::from_json_value(&section);
+
+    let Err(ManifestError::Invalid(errors)) = found else {
+        panic!("{found:?}");
+    };
+    assert!(errors.iter().any(|e| e.path == path), "{errors:?}");
+}
+
+#[test]
+fn validate____native_process_with_logging____accepted_with_program() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": { "wasi:logging": {} },
+        "upgrade": { "mode": "blue-green" }
+    }))
+    .unwrap();
+
+    assert_eq!(found.native.unwrap().program, NativeProgram::Executable);
+    assert!(found.unenforced_fields().is_empty());
 }

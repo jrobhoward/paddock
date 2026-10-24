@@ -44,8 +44,8 @@ pub use capabilities::{
 };
 pub use error::{ManifestError, ValidationError};
 pub use lifecycle::{
-    Backoff, ChildSpec, Instances, Kind, Lifecycle, RestartType, Routing, Strategy, Supervision,
-    Upgrade, UpgradeMode,
+    Backoff, ChildSpec, Instances, Kind, Lifecycle, Native, NativeProgram, RestartType, Routing,
+    Strategy, Supervision, Upgrade, UpgradeMode,
 };
 pub use limits::{Limits, WASM32_MEMORY_MAX};
 pub use sections::{
@@ -69,6 +69,9 @@ pub const SECTION: &str = "appserver";
 pub struct AppSpec {
     /// What the bundle runs.
     pub kind: Kind,
+    /// A `native-process` app's program; only for that kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native: Option<Native>,
     /// Message catalog.
     pub api: Api,
     /// Apps that must be running first, in start order.
@@ -186,6 +189,49 @@ impl AppSpec {
             v.at(format!("listeners[{i}]"), |v| l.validate(v));
         }
         v.unique_names("listeners", self.listeners.iter().map(|l| l.name.as_str()));
+        self.check_native(v);
+    }
+
+    /// What a `native-process` app may not have: any capability but
+    /// `wasi:logging` (no network, filesystem or other service yet),
+    /// listeners, passivation and snapshot upgrades; and the `native`
+    /// section on any other kind.
+    fn check_native(&self, v: &mut Validator) {
+        if self.kind != Kind::NativeProcess {
+            if self.native.is_some() {
+                v.error_at("native", "is only for kind \"native-process\"");
+            }
+            return;
+        }
+        for c in self.capabilities.declared() {
+            if c != Capability::Logging {
+                v.error_at(
+                    format!("capabilities.{}", c.key()),
+                    "a native-process app may declare only wasi:logging",
+                );
+            }
+        }
+        for package in self.capabilities.extensions.keys() {
+            v.error_at(
+                format!("capabilities.extensions.\"{package}\""),
+                "a native-process app may declare only wasi:logging",
+            );
+        }
+        if !self.listeners.is_empty() {
+            v.error_at("listeners", "a native-process app has no listeners");
+        }
+        if self.instances.passivate_after_ms.is_some() {
+            v.error_at(
+                "instances.passivate_after_ms",
+                "a native-process app is never passivated",
+            );
+        }
+        if self.upgrade.mode == UpgradeMode::Snapshot {
+            v.error_at(
+                "upgrade.mode",
+                "a native-process app upgrades with \"restart\" or \"blue-green\"",
+            );
+        }
     }
 }
 

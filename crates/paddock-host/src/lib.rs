@@ -38,6 +38,7 @@ mod links;
 pub mod listener;
 mod message;
 pub mod metrics;
+mod native;
 mod output;
 pub mod pid;
 mod pool;
@@ -59,8 +60,8 @@ pub use apps::{
     AppDeployment, AppHandle, AppStatus, Apps, NewSideInfo, UpgradeOptions, UpgradeReport,
 };
 pub use config::{
-    Egress, HostObjectRequest, HostObjects, MemoryProfile, RuntimeConfig, SecretSource,
-    SharedBucket, SqlDatasource, SqlTls,
+    Egress, HostObjectRequest, HostObjects, MemoryProfile, NativeConfig, RuntimeConfig,
+    SecretSource, SharedBucket, SqlDatasource, SqlTls,
 };
 pub use error::HostError;
 pub use formats::{FIRST_FORMATS, FinalizeRefused, Finalized};
@@ -70,6 +71,7 @@ pub use lifecycle::LifecycleState;
 pub use links::LinkInfo;
 pub use listener::{CONNECTION_WORLD, Listener, ListenerSpec, ListenerStats, LoadedConnection};
 pub use message::{CallError, Envelope, ExitReason};
+pub use native::NativeCode;
 pub use paddock_bundle::manifest::{RestartType, Strategy};
 /// Address networks (`10.0.0.0/24`), for extensions' node configuration.
 pub use paddock_bundle::manifest::{cidr_contains, parse_cidr};

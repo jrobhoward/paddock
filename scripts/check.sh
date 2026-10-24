@@ -183,6 +183,8 @@ check_guests() {
     local dir name packages="" wasm wit f failed=0
     for dir in $(members); do
         grep -q 'crate-type = \["cdylib"\]' "$dir/Cargo.toml" || continue
+        # A native library (a rustbridge plugin), not a guest.
+        grep -q '^native-library = true' "$dir/Cargo.toml" && continue
         packages="$packages $(package_name "$dir/Cargo.toml")"
     done
     echo "guests:$packages"

@@ -3,6 +3,7 @@
 # Install:
 #   useradd --system --no-create-home --shell /usr/sbin/nologin paddock
 #   install -m 0755 target/release/paddock /usr/local/bin/paddock
+#   install -m 0755 target/release/paddock-runner /usr/local/bin/paddock-runner  # native-process apps
 #   install -d -m 0750 -o root -g paddock /etc/paddock     # node.toml, policy, keys
 #   install -m 0644 examples/systemd/paddock.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now paddock
@@ -50,6 +51,8 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
+# Native-process apps' memory and process limits ([native] cgroup): replace
+# with Delegate=yes.
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes

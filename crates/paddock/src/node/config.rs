@@ -197,6 +197,9 @@ pub struct NodeConfig {
     /// bind and listen on. Unset: no ceiling.
     #[serde(default)]
     pub sockets: Option<SocketsCeiling>,
+    /// Native-process apps: the runner, the cgroup and the pings.
+    #[serde(default)]
+    pub native: NativeBinding,
     /// The admin API over TLS, for operators on other machines.
     #[serde(default)]
     pub admin: Option<AdminBinding>,
@@ -736,6 +739,57 @@ impl SocketsCeiling {
     }
 }
 
+/// `[native]`: how the node runs native-process apps (ROADMAP N2).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NativeBinding {
+    /// The `paddock-runner` executable; unset for the one beside
+    /// `paddock`.
+    pub runner: Option<PathBuf>,
+    /// A cgroup v2 directory delegated to the node (systemd
+    /// `Delegate=yes`), with the node its only process: native instances
+    /// then run in cgroups of their own under it, with `memory.max` and
+    /// `pids.max`. Unset: `memory_max` is each process's `RLIMIT_DATA`.
+    pub cgroup: Option<PathBuf>,
+    /// Most processes and threads in one native instance, with `cgroup`.
+    pub pids_max: u32,
+    /// How long an idle native instance goes between pings.
+    pub ping_interval_ms: u64,
+    /// How long a ping may go unanswered before the instance is killed.
+    pub ping_timeout_ms: u64,
+    /// Run native apps on a kernel without Landlock.
+    pub landlock_optional: bool,
+}
+
+impl Default for NativeBinding {
+    fn default() -> Self {
+        let host = paddock_host::NativeConfig::default();
+        Self {
+            runner: None,
+            cgroup: None,
+            pids_max: host.pids_max,
+            ping_interval_ms: 10_000,
+            ping_timeout_ms: 5_000,
+            landlock_optional: false,
+        }
+    }
+}
+
+impl NativeBinding {
+    /// The runtime's settings.
+    #[must_use]
+    pub fn runtime(&self) -> paddock_host::NativeConfig {
+        let mut native = paddock_host::NativeConfig::default();
+        native.runner.clone_from(&self.runner);
+        native.cgroup.clone_from(&self.cgroup);
+        native.pids_max = self.pids_max;
+        native.ping_interval = std::time::Duration::from_millis(self.ping_interval_ms);
+        native.ping_timeout = std::time::Duration::from_millis(self.ping_timeout_ms);
+        native.landlock_optional = self.landlock_optional;
+        native
+    }
+}
+
 fn yes() -> bool {
     true
 }
@@ -920,6 +974,22 @@ impl NodeConfig {
                 .any(|b| b.scope == BucketScope::Cluster)
     }
 
+    fn check_native(&self) -> Result<(), NodeError> {
+        let n = &self.native;
+        for (name, value) in [
+            ("pids_max", u64::from(n.pids_max)),
+            ("ping_interval_ms", n.ping_interval_ms),
+            ("ping_timeout_ms", n.ping_timeout_ms),
+        ] {
+            if value == 0 {
+                return Err(NodeError::Invalid(format!(
+                    "node config: native.{name} must be more than 0"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn check_sockets(&self) -> Result<(), NodeError> {
         let Some(s) = &self.sockets else {
             return Ok(());
@@ -1006,6 +1076,7 @@ impl NodeConfig {
         config.check_failover()?;
         config.check_egress()?;
         config.check_sockets()?;
+        config.check_native()?;
         for (name, binding) in &config.http {
             let invalid =
                 |m: String| Err(NodeError::Invalid(format!("node config: http.{name}.{m}")));

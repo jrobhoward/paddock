@@ -1,0 +1,24 @@
+[package]
+name = "paddock-fixture-plugin"
+version = "0.0.0"
+description = "Test fixture: a rustbridge plugin run as a native-process app"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rustbridge.workspace = true
+serde.workspace = true
+
+# Built for the host, not wasm32-wasip2 (scripts/check.sh's `guests`).
+[package.metadata.paddock]
+native-library = true
+
+[lints]
+workspace = true

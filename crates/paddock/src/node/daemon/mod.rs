@@ -209,6 +209,7 @@ impl Node {
                 },
                 log_records_per_sec: config.limits.log_records_per_sec,
                 incoming_calls_per_peer: config.cluster.incoming_calls_max,
+                native: config.native.runtime(),
                 secrets: config
                     .secrets
                     .iter()

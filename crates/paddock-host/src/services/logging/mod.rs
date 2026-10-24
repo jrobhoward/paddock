@@ -268,6 +268,25 @@ impl logging::Host for ServiceCtx<'_, Instance> {
     }
 }
 
+/// A native app's log record (ROADMAP N2), through the same level and rate
+/// checks as a component's `wasi:logging` records.
+pub(crate) async fn record(
+    ctx: &mut ServiceCtx<'_, Instance>,
+    level: paddock_native::protocol::Level,
+    message: String,
+) {
+    use paddock_native::protocol::Level;
+    let level = match level {
+        Level::Trace => logging::Level::Trace,
+        Level::Debug => logging::Level::Debug,
+        Level::Info => logging::Level::Info,
+        Level::Warn => logging::Level::Warn,
+        Level::Error => logging::Level::Error,
+        Level::Critical => logging::Level::Critical,
+    };
+    let _ = logging::Host::log(ctx, level, String::new(), message).await;
+}
+
 #[cfg(test)]
 #[path = "logging_tests.rs"]
 mod logging_tests;

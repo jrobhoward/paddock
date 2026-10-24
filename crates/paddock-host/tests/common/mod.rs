@@ -187,3 +187,37 @@ pub fn app_manifest(name: &str, appserver: serde_json::Value) -> AppManifest {
         spec: AppSpec::from_json_value(&appserver).unwrap(),
     }
 }
+
+/// `paddock-runner`, the native fixture executable and the rustbridge
+/// fixture plugin, built natively on first use into their own target
+/// directory.
+pub fn native_fixtures() -> &'static (PathBuf, PathBuf, PathBuf) {
+    static BUILT: OnceLock<(PathBuf, PathBuf, PathBuf)> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let root = workspace_root();
+        let target = root.join("target/fixtures/native");
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let status = Command::new(cargo)
+            .current_dir(&root)
+            .args([
+                "build",
+                "-p",
+                "paddock-native",
+                "-p",
+                "paddock-fixture-native",
+                "-p",
+                "paddock-fixture-plugin",
+                "--target-dir",
+            ])
+            .arg(&target)
+            .status()
+            .expect("run cargo to build native fixtures");
+        assert!(status.success(), "building native fixtures failed");
+        let debug = target.join("debug");
+        (
+            debug.join("paddock-runner"),
+            debug.join("paddock-fixture-native"),
+            debug.join("libpaddock_fixture_plugin.so"),
+        )
+    })
+}

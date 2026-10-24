@@ -179,7 +179,19 @@ impl Node {
         let cache = self
             .store
             .compiled_path(&name, &version, &manifest.component.checksum);
+        let native = manifest.spec.native.unwrap_or_default().program;
+        let is_native = manifest.spec.kind == paddock_bundle::manifest::Kind::NativeProcess;
         let loaded = tokio::task::spawn_blocking(move || match world.as_str() {
+            // A native program is written beside the compiled components,
+            // where only the node can change it.
+            _ if is_native => {
+                let path = cache.with_extension("native");
+                write_program(&path, &component)
+                    .map(|()| {
+                        Loaded::App(rt.load_native(paddock_host::NativeCode { path, kind: native }))
+                    })
+                    .map_err(|e| format!("writing the native program: {e}"))
+            }
             paddock_bundle::CONNECTION_WORLD => rt
                 .load_connection_cached(&component, &cache)
                 .map(Loaded::Connection)
@@ -660,4 +672,27 @@ fn load_handler(
     _cache: &Path,
 ) -> Result<Loaded, String> {
     Err("an HTTP handler needs the HTTP ingress, and this build of paddock has none (cargo feature `http`)".into())
+}
+
+/// Write a native program to `path`, readable and executable by the node's
+/// user only, replacing any file there in one step (a running instance
+/// keeps the file it started).
+fn write_program(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("no directory"))?;
+    std::fs::create_dir_all(dir)?;
+    let tmp = path.with_extension("native.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o500)
+        .open(&tmp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, path)
 }

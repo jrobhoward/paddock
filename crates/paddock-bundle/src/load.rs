@@ -93,7 +93,8 @@ pub const PRIV_DIR: &str = "priv/";
 pub struct VerifiedBundle {
     /// The app manifest.
     pub manifest: AppManifest,
-    /// The component bytes, checksum- and signature-verified.
+    /// The component bytes, or for a `native-process` app its program for
+    /// this node's platform; checksum- and signature-verified.
     pub component: Vec<u8>,
     /// The files under `priv/`, by path relative to it, each checked against
     /// the signed manifest's `files` checksums.
@@ -104,9 +105,9 @@ impl VerifiedBundle {
     /// Open a `.rbp` bundle and verify it.
     ///
     /// Checks, in order: the manifest signature against `trusted_keys` (the
-    /// key inside the bundle is ignored), the `wasm32-wasip2` release
-    /// variant's checksum and signature, the component's world, and the
-    /// `appserver` section.
+    /// key inside the bundle is ignored), the `appserver` section, the
+    /// release variant's checksum and signature (`wasm32-wasip2`, or for a
+    /// `native-process` app this node's platform), and a component's world.
     ///
     /// # Errors
     ///
@@ -119,10 +120,28 @@ impl VerifiedBundle {
 
         let key_index = loader.verify_manifest_signature_trusted(&keys)?;
         let rb = loader.manifest().clone();
+        let section = rb.extension(SECTION).ok_or(BundleError::NoAppSection)?;
+        let spec = AppSpec::from_json_value(section).map_err(prefix_section)?;
+        // A component for every node, or a native program for this one's
+        // platform.
+        let platform = if spec.kind == Kind::NativeProcess {
+            Platform::current().ok_or_else(|| {
+                BundleError::NoNativeVariant(format!(
+                    "{}-{}",
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ))
+            })?
+        } else {
+            Platform::Wasm32Wasip2
+        };
         let variant = rb
-            .get_variant(Platform::Wasm32Wasip2, Some(VARIANT))
-            .ok_or(BundleError::NoComponent)?;
-        let component = loader.read_variant_verified(Platform::Wasm32Wasip2, VARIANT, &keys)?;
+            .get_variant(platform, Some(VARIANT))
+            .ok_or_else(|| match platform {
+                Platform::Wasm32Wasip2 => BundleError::NoComponent,
+                other => BundleError::NoNativeVariant(other.as_str().to_string()),
+            })?;
+        let component = loader.read_variant_verified(platform, VARIANT, &keys)?;
         let mut priv_files = Vec::new();
         for path in loader.list_files() {
             let Some(relative) = path.strip_prefix(PRIV_DIR) else {
@@ -139,33 +158,25 @@ impl VerifiedBundle {
         }
         priv_files.sort();
 
+        // A native program has no world.
         let world = variant
             .component
             .as_ref()
             .map(|c| c.world.clone())
             .unwrap_or_default();
-        if !SUPPORTED_WORLDS.contains(&world.as_str()) {
-            return Err(BundleError::UnsupportedWorld {
-                world,
-                supported: SUPPORTED_WORLDS.join(", "),
-            });
-        }
-
-        let section = rb.extension(SECTION).ok_or(BundleError::NoAppSection)?;
-        let spec = AppSpec::from_json_value(section).map_err(prefix_section)?;
-        check_world(&world, &spec).map_err(|(path, message)| {
-            ManifestError::Invalid(vec![ValidationError {
-                path: format!("{SECTION}.{path}"),
-                message,
-            }])
-        })?;
-        if spec.kind != Kind::WasmComponent {
-            return Err(BundleError::UnsupportedKind(
-                serde_json::to_value(spec.kind)
-                    .ok()
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_default(),
-            ));
+        if spec.kind != Kind::NativeProcess {
+            if !SUPPORTED_WORLDS.contains(&world.as_str()) {
+                return Err(BundleError::UnsupportedWorld {
+                    world,
+                    supported: SUPPORTED_WORLDS.join(", "),
+                });
+            }
+            check_world(&world, &spec).map_err(|(path, message)| {
+                ManifestError::Invalid(vec![ValidationError {
+                    path: format!("{SECTION}.{path}"),
+                    message,
+                }])
+            })?;
         }
 
         let version =
@@ -242,12 +253,17 @@ impl VerifiedBundle {
         Ok(())
     }
 
-    /// The component's top-level imports.
+    /// The component's top-level imports; none for a native program.
     ///
     /// # Errors
     ///
     /// [`BundleError::InvalidComponent`] if the bytes are not a component.
     pub fn imports(&self) -> Result<Vec<String>, BundleError> {
+        if self.manifest.spec.kind == Kind::NativeProcess {
+            // A native program imports nothing: it asks the node over its
+            // pipe, for what its manifest declares.
+            return Ok(Vec::new());
+        }
         component_imports(&self.component)
     }
 

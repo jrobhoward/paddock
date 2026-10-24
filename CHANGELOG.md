@@ -707,6 +707,27 @@ All notable changes are recorded here. The format follows
   `connect_host`, non-blocking `read`, `write_all`, `notify_readable`),
   `TcpListener` (`bind`, `accept`, `notify_acceptable`), `notify`,
   `cancel` and `ready_tag`. `paddock-fixture-net`, its test guest.
+- Native-process apps (ROADMAP N2): `kind = "native-process"` with
+  `native.program = "library"` (a rustbridge plugin: calls and casts as
+  JSON, by schema id) or `"executable"` (a program on `paddock-native`'s
+  app API, with the process functions). The bundle's release variant for
+  the node's platform runs as one process per instance through
+  `paddock-runner`, with a pid, mailbox, links, monitors and supervision;
+  a callback's deadline and pings kill a stuck one, and its exit, a panic
+  or an OOM kill become exit reasons. `memory_max` is a delegated cgroup's
+  `memory.max` or `RLIMIT_DATA`. A native app may declare only
+  `wasi:logging`. Linux only.
+- `crates/paddock-native`: the frame protocol between a node and a native
+  app, the app API (feature `app`), and `paddock-runner` (feature
+  `runner`, default), which restricts itself with Landlock and a seccomp
+  filter (no files but its libraries and the app's, no execution, no
+  sockets, signals only to itself, non-dumpable) before loading or
+  executing the program. `paddock-fixture-native` and
+  `paddock-fixture-plugin` are its test apps.
+- Node config `[native]`: `runner`, `cgroup` (a delegated cgroup v2
+  directory), `pids_max`, `ping_interval_ms`, `ping_timeout_ms` and
+  `landlock_optional`. `examples/systemd/paddock.service` installs
+  `paddock-runner` and says how to delegate a cgroup.
 
 ### Fixed
 

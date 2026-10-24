@@ -149,12 +149,14 @@ pub fn effective_grant(
         });
     }
 
-    // Capabilities served without imports are used whenever declared.
+    // Capabilities served without imports are used whenever declared, and
+    // a native program imports nothing: what it declares, it uses.
+    let native = spec.kind == crate::manifest::Kind::NativeProcess;
     imported.extend(
         declared
             .iter()
             .copied()
-            .filter(|c| crate::manifest::Capabilities::import_free(*c)),
+            .filter(|c| native || crate::manifest::Capabilities::import_free(*c)),
     );
     let (granted, denied): (BTreeSet<Capability>, BTreeSet<Capability>) = imported
         .iter()

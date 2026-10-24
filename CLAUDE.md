@@ -168,6 +168,20 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-fixture-net`: a guest that connects, listens and binds
   UDP through `paddock-sdk`'s `net` module and waits on its sockets with
   `paddock:io` (`paddock-host`'s `tests/sockets.rs`).
+- `crates/paddock-native`: native-process apps (ROADMAP N2): `protocol`
+  (CBOR frames between a node and a native app), `app` (feature `app`: an
+  executable's App trait and process functions) and `runner` (feature
+  `runner`, default; Linux): `paddock-runner`, which restricts itself
+  (Landlock, seccomp, non-dumpable) before loading a rustbridge plugin or
+  executing the program. paddock-host depends on it without default
+  features (the protocol only). The host side is
+  `crates/paddock-host/src/native/` (the port, cgroups, conversions) and
+  `src/instance_native.rs` (the lifecycle, a child module of `instance`).
+- `crates/paddock-fixture-native` (an executable on the app API) and
+  `crates/paddock-fixture-plugin` (a rustbridge `.so`): native test apps,
+  built natively into `target/fixtures/native` by the tests that use them.
+  The plugin's `[package.metadata.paddock] native-library = true` keeps
+  `scripts/check.sh guests` from building it for wasm32.
 - `crates/paddock-fixture-counter`: a stateful counter built three ways by
   feature (v1, v2, a broken v3) for upgrade and passivation tests
   (`tests/passivation.rs`, `examples/passivation_cost.rs`); each version

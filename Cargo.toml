@@ -8,11 +8,14 @@ members = [
     "crates/paddock-fixture-counter",
     "crates/paddock-fixture-echo",
     "crates/paddock-fixture-http",
+    "crates/paddock-fixture-native",
     "crates/paddock-fixture-net",
+    "crates/paddock-fixture-plugin",
     "crates/paddock-fixture-sdk",
     "crates/paddock-fixture-services",
     "crates/paddock-host",
     "crates/paddock-modbus",
+    "crates/paddock-native",
     "crates/paddock-sdk",
     "crates/paddock-sdk-macros",
     "crates/paddock-soak",
@@ -110,6 +113,7 @@ paddock-bundle = { path = "crates/paddock-bundle" }
 # Without the HTTP ingress; `paddock` enables `http` and `tls` by feature.
 paddock-host = { path = "crates/paddock-host", default-features = false }
 paddock-modbus = { path = "crates/paddock-modbus" }
+paddock-native = { path = "crates/paddock-native", default-features = false }
 paddock-sdk = { path = "crates/paddock-sdk" }
 paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
 # rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2
@@ -117,6 +121,10 @@ paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
 # checksums). Cargo.lock pins the commit. Move to a crates.io release once one
 # includes format 1.2.
 rustbridge-bundle = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
+# Loads a rustbridge plugin in paddock-runner (paddock-native).
+rustbridge-consumer = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
+# A rustbridge plugin, for paddock-fixture-plugin.
+rustbridge = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
 # USDT probes (paddock-host's `probes` feature). Pre-release; Cargo.lock pins
 # the commit of `main`. Move to a crates.io release once there is one.
 anyprobe = { git = "https://github.com/jrobhoward/anyprobe", branch = "main", default-features = false }

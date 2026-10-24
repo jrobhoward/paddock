@@ -674,3 +674,41 @@ fn sockets____bad_cidr____refused() {
 
     assert!(err.contains("sockets.bind[0].cidr"), "{err}");
 }
+
+#[test]
+fn native____set____runtime_settings_follow() {
+    let config = NodeConfig::from_toml_str(
+        r#"
+data_dir = "/d"
+[native]
+runner = "/opt/paddock/paddock-runner"
+cgroup = "/sys/fs/cgroup/system.slice/paddock.service"
+pids_max = 32
+ping_interval_ms = 2000
+"#,
+    )
+    .unwrap();
+
+    let n = config.native.runtime();
+
+    assert_eq!(
+        n.runner.as_deref(),
+        Some(Path::new("/opt/paddock/paddock-runner"))
+    );
+    assert_eq!(n.pids_max, 32);
+    assert_eq!(n.ping_interval, std::time::Duration::from_secs(2));
+    assert_eq!(n.ping_timeout, std::time::Duration::from_secs(5));
+    assert!(!n.landlock_optional);
+}
+
+#[rstest::rstest]
+#[case("pids_max = 0", "native.pids_max")]
+#[case("ping_interval_ms = 0", "native.ping_interval_ms")]
+#[case("ping_timeout_ms = 0", "native.ping_timeout_ms")]
+fn native____zero____refused(#[case] line: &str, #[case] path: &str) {
+    let err = NodeConfig::from_toml_str(&format!("data_dir = \"/d\"\n[native]\n{line}\n"))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains(path), "{err}");
+}

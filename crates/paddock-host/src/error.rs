@@ -67,6 +67,11 @@ pub enum HostError {
     /// A respawn named an instance id that is still alive.
     #[error("instance {0} is still running")]
     StillRunning(crate::Pid),
+
+    /// Node config `[native] cgroup` is not a cgroup v2 directory delegated
+    /// to the node.
+    #[error("cannot set up native apps' cgroup: {0}")]
+    NativeCgroup(String),
 }
 
 /// Render a wasmtime error with its causes on one line.

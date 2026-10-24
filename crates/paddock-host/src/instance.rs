@@ -94,6 +94,9 @@ pub enum SnapshotError {
     /// instance exited with this reason and its supervisor restarts it.
     #[error("save-snapshot failed: {0}")]
     Failed(ExitReason),
+    /// A native-process app takes no snapshot.
+    #[error("a native-process app takes no snapshot")]
+    NotSupported,
 }
 
 /// How often an instance waiting for a Store slot asks an idle one to
@@ -724,6 +727,10 @@ impl InstanceTask {
         app: &LoadedApp,
         spec: &InstanceSpec,
     ) -> ExitReason {
+        if let Some(code) = app.native() {
+            let code = code.clone();
+            return Box::pin(self.native(rt, &code, spec)).await;
+        }
         let engine = rt.engine.clone();
         let weak = Arc::downgrade(&rt);
         let rt_slots = rt.clone();
@@ -828,7 +835,7 @@ impl InstanceTask {
         let init = tokio::time::timeout(
             spec.init_timeout,
             Box::pin(async {
-                let instance = app.pre.instantiate_async(&mut *store).await?;
+                let instance = app.component()?.instantiate_async(&mut *store).await?;
                 let result = match &handover {
                     Some(h) => {
                         instance
@@ -1162,7 +1169,10 @@ impl InstanceTask {
         let load = tokio::time::timeout(
             next.init_timeout,
             Box::pin(async {
-                let new_instance = app.pre.instantiate_async(&mut fresh).await;
+                let new_instance = match app.component() {
+                    Ok(pre) => pre.instantiate_async(&mut fresh).await,
+                    Err(e) => Err(e),
+                };
                 match new_instance {
                     Err(err) => Err(UpgradeError::Instantiate(describe(&err))),
                     Ok(new_instance) => match new_instance
@@ -1342,7 +1352,7 @@ impl InstanceTask {
         let load = tokio::time::timeout(
             spec.init_timeout,
             Box::pin(async {
-                let instance = app.pre.instantiate_async(&mut *store).await?;
+                let instance = app.component()?.instantiate_async(&mut *store).await?;
                 let result = instance
                     .call_load_snapshot(&mut *store, &spec.version, snapshot)
                     .await?;
@@ -1490,6 +1500,9 @@ async fn killable<F: Future>(
 }
 
 /// Map a failed guest call to an exit reason.
+#[path = "instance_native.rs"]
+mod native;
+
 pub(crate) fn classify(err: &wasmtime::Error, state: &InstanceState) -> ExitReason {
     if state.limiter.memory_exceeded {
         return ExitReason::Crashed("memory_limit".to_string());

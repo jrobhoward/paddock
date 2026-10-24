@@ -1,0 +1,16 @@
+[package]
+name = "paddock-fixture-native"
+version = "0.0.0"
+description = "Test fixture: a native-process app (an executable) that misbehaves on request"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+paddock-native = { workspace = true, features = ["app"] }
+
+[lints]
+workspace = true

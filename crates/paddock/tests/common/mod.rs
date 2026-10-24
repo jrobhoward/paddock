@@ -187,6 +187,58 @@ fn bundle_world(
     std::fs::read(out).unwrap()
 }
 
+/// `paddock-runner` and the native fixture executable, built natively on
+/// first use into their own target directory.
+pub fn native_fixtures() -> &'static (PathBuf, PathBuf) {
+    static BUILT: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let target = workspace_root().join("target/fixtures/native");
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let status = Command::new(cargo)
+            .current_dir(workspace_root())
+            .args([
+                "build",
+                "-p",
+                "paddock-native",
+                "-p",
+                "paddock-fixture-native",
+                "--target-dir",
+            ])
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success(), "building native fixtures failed");
+        let debug = target.join("debug");
+        (
+            debug.join("paddock-runner"),
+            debug.join("paddock-fixture-native"),
+        )
+    })
+}
+
+/// A signed `.rbp` of a native-process app: `program` as the release
+/// variant for this machine's platform, and `appserver`.
+pub fn native_bundle(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    program: &[u8],
+    appserver: serde_json::Value,
+) -> Vec<u8> {
+    let dir = TempDir::new().unwrap();
+    let lib = dir.path().join(name);
+    std::fs::write(&lib, program).unwrap();
+    let out = dir.path().join("out.rbp");
+    BundleBuilder::new(Manifest::new(name, version))
+        .add_library(Platform::current().unwrap(), &lib)
+        .unwrap()
+        .with_extension("appserver", appserver)
+        .with_signing_key(key.pk.to_base64(), key.sk.clone())
+        .write(&out)
+        .unwrap();
+    std::fs::read(out).unwrap()
+}
+
 /// The log ring every test node shares (one global subscriber).
 pub fn ring() -> Arc<LogRing> {
     static RING: OnceLock<Arc<LogRing>> = OnceLock::new();

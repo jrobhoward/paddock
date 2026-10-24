@@ -33,9 +33,10 @@ pub enum BundleError {
         supported: String,
     },
 
-    /// The bundle's `kind` is not supported yet.
-    #[error("app kind '{0}' is not supported in Phase 1")]
-    UnsupportedKind(String),
+    /// A `native-process` bundle has no release variant for this node's
+    /// platform.
+    #[error("bundle has no release variant for {0} (a native-process app runs its platform's)")]
+    NoNativeVariant(String),
 
     /// The bundle has no `appserver` section.
     #[error("bundle manifest has no '{}' section", crate::manifest::SECTION)]

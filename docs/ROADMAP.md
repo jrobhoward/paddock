@@ -22,7 +22,7 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | --- | --- | --- |
 | 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Met on 2026-10-18 (G2, the Pi's baselines) |
 | 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | Met: the rest on 2026-10-15, the serial line criterion on 2026-10-16 (F5) |
-| 3: application server | One real workload runs a full release cycle with zero downtime | Met on 2026-10-22 (X2); N2 and the docs pass left (see "Phase 3") |
+| 3: application server | One real workload runs a full release cycle with zero downtime | Met on 2026-10-22 (X2); the docs pass left (see "Phase 3") |
 
 The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
@@ -30,7 +30,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
-1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `paddock-soak scada` under faults passed. N1, guest sockets, on 2026-10-23. S19, N2's spike, the same day: a port. Next: N2's implementation and the docs pass for Phase 3.
+1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `paddock-soak scada` under faults passed. N1, guest sockets, on 2026-10-23. S19, N2's spike, the same day: a port; N2 itself the same day. Next: the docs pass for Phase 3.
 2. W1 (Phase 2's docs), now unblocked; H5 and E4b only for a user who needs them.
 
 ## Order
@@ -114,6 +114,7 @@ Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run i
 
 Docs known to be out of date, cleared by W1:
 
+- WRITING_APPS.md does not describe native-process apps (N2): writing one on `paddock-native`'s app API or as a rustbridge plugin, building the bundle's platform variant, and what the runner allows. ARCHITECTURE.md does not describe `crates/paddock-native`, `paddock-host`'s `native/` and `instance_native.rs`, or `LoadedApp` holding a component or a native program.
 - WRITING_APPS.md does not describe guest sockets (N1): `paddock_sdk::net`, waiting on a socket with `paddock:io` between callbacks, and why HTTP egress is preferred where it fits. ARCHITECTURE.md does not describe `services/sockets` (the linker's redefined socket functions and destructors), `ready.rs` or the instance loop's wait on pollables.
 - README, GETTING_STARTED and WRITING_APPS were not reviewed as Tracks D, E, F and H landed.
 - ARCHITECTURE.md does not describe passivation (S11): the `Passive` state, Store slots (`RuntimeInner::slots`) and eviction under pressure.
@@ -142,6 +143,8 @@ Done on 2026-10-21: X1, the SCADA reference app (`examples/scada`): `points`, `h
 
 Done on 2026-10-23: N1, guest sockets. `wasi:sockets` is enforced from the manifest's `connect` and `bind` rules and `listen`, inside node config's `[sockets]`, with the address guard (loopback, link-local and unspecified destinations need a rule inside their range) and `max_sockets` per app across its instances. An instance waits on its sockets between callbacks through `paddock:io` (readiness as the host event `io-ready`, as Erlang's `{active, once}`); `paddock_sdk::net` wraps both for TCP.
 
+Done on 2026-10-23: N2, native-process apps, after spike S19 chose a port over a node. `kind = "native-process"` runs the bundle's platform variant as one process per instance through `paddock-runner` (`crates/paddock-native`), which restricts itself (non-dumpable, Landlock, a seccomp filter) and then loads a rustbridge plugin (callbacks and logging only) or executes a program on `paddock-native`'s app API (with the process functions). Supervised like an instance; a callback deadline and pings kill a stuck one; `memory_max` as a delegated cgroup's `memory.max` or `RLIMIT_DATA`; `wasi:logging` only, the network and other services refused at deploy. Linux only; tested on Linux 6.8 x86-64.
+
 Done on 2026-10-22: X2, Phase 3's exit. `paddock-soak scada` runs X1's apps on the failover soak's pair and witness, with link cuts, holds and drops, kills and stops between releases of `control` across the pair, planned switchovers and a primary lost in the middle of a release. On planned steps it fails no point read, leaves no point gap of 1 s, and fails `control`'s requests only within a switchover's hand-over (1 s). After every heal one node runs `control`, the acknowledged alarm is still acknowledged, and the release converges. Under faults it records failures and gaps without judging them. An hour on an idle machine (seed 2026) passed: 45 switchovers with point gaps of 813 ms at most, 34 releases with no failed request, 58 heals, no overlap (examples/scada/README.md). The first hour failed on switchovers: the hand-over grew with the replicated log and passed 1 s, because a new primary counted its send window from a match it did not yet have (CHANGELOG, Fixed; S20's `Retransmit` widened to match, Design1 and Eager1 rerun). The stall X1's third run found when a standby rejoins is fixed too (2026-10-21). X1's history of point values was dropped: the exit did not need it.
 
 Decided 2026-10-16: the pair and its witness are the target topology, and general clusters of many nodes come later; replicated buckets replicate synchronously within the pair, using the failover epochs and leases, not Raft; blue-green upgrades, guest sockets, native-process plugins and moving instances are in scope; general placement, global names, more guest SDKs and fuel metering are parked.
@@ -150,15 +153,14 @@ Order: X1 first, so the app drives the rest; K3 next, on K2's machinery; N1 alon
 
 ```
 X1 app ─► K3 app buckets ─► M1 move ─► L1 fast hand-over ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
-            N1 sockets (alongside K)              N2 native plugins (ports, S19)
+            N1 sockets (alongside K)              N2 native plugins (ports, S19): done
 ```
 
-- [ ] **N2 Native-process plugins.** Spike S19 (done 2026-10-23, [spikes/s19](../spikes/s19/README.md)) chose a port over a node: `kind = "native-process"` runs a bundle's native library through a runner the node spawns, one process per instance, with a pid, links, monitors and supervision like an instance, and the callbacks and the plugin's requests to the node as frames over stdin and stdout (rustbridge's `Server` trait on the plugin side). Limits: a deadline per call then a kill, a ping deadline, `memory_max` as cgroup `memory.max` with a delegated cgroup (else `RLIMIT_AS`), `pids.max`, no core dumps, non-dumpable, `no_new_privs`, the parent-death signal. Sandbox: Landlock set by the runner before the plugin loads (read the bundle and system libraries, no execution, preopens as rules). Two choices left for N2: network for a plugin with `wasi:sockets` rules (Landlock has TCP ports only, no addresses: allow the `connect` rules' ports or refuse at deploy), and signals on kernels before 6.12 (no Landlock scopes: a seccomp filter, or require 6.12). Linux first.
 - [ ] **W2 Phase 3's docs.** A docs pass for Phase 3, as W1 for Phase 2.
 
 Parked from Phase 3 (2026-10-16): placement across many nodes (labels, spread, `all-nodes`); opt-in global names (Raft); more guest SDKs; fuel metering.
 
-The rustbridge work for Phase 3 is the guest adapter (`Plugin` → `paddock:runtime/app`), the `Server` trait and the native-process runner (N2).
+The rustbridge work left from Phase 3 is the guest adapter (`Plugin` → `paddock:runtime/app`) and the `Server` trait; the native-process runner is Paddock's own (`paddock-runner`, N2), loading plugins through `rustbridge-consumer`.
 
 ## Investigations
 

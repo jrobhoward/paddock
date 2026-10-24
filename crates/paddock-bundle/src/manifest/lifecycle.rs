@@ -17,9 +17,30 @@ pub enum Kind {
     /// A WebAssembly component implementing `paddock:runtime/app`.
     #[default]
     WasmComponent,
-    /// A rustbridge native library run as a separate OS process. Not
-    /// supported in Phase 1.
+    /// A native program (a rustbridge plugin or an executable) run as a
+    /// separate OS process through `paddock-runner`; see [`Native`].
     NativeProcess,
+}
+
+/// The `native` section of a `native-process` app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Native {
+    /// What the bundle's platform variant is.
+    pub program: NativeProgram,
+}
+
+/// What a `native-process` app's platform variant is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativeProgram {
+    /// A rustbridge plugin (`.so`), loaded by the runner: callbacks and
+    /// logging only.
+    #[default]
+    Library,
+    /// An executable linking `paddock-native`'s app API, run in the
+    /// runner's place: the process functions as well.
+    Executable,
 }
 
 /// When a supervisor restarts a child that exited (OTP restart types).

@@ -48,11 +48,12 @@ deadpool-postgres = { workspace = true, optional = true }
 tokio-postgres-rustls = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 paddock-bundle = { workspace = true }
+paddock-native = { workspace = true }
 redb = { workspace = true }
 semver = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "process"] }
 tracing = { workspace = true }
 wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator", "call-hook"] }
 wasmtime-wasi = { workspace = true, features = ["p2"] }

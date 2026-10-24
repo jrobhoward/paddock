@@ -10,7 +10,6 @@ use std::fmt;
 use serde::Serialize;
 
 use crate::manifest::AppSpec;
-use crate::manifest::lifecycle::Kind;
 use crate::manifest::sections::{NameScope, PlacementMode};
 
 /// When a field starts being enforced.
@@ -64,9 +63,6 @@ impl AppSpec {
 
     /// `kind`, `registered_names`, `instances` and `limits`.
     fn unenforced_runtime(&self, out: &mut Fields) {
-        if self.kind == Kind::NativeProcess {
-            out.add("kind", Phase::Later);
-        }
         for (i, name) in self.registered_names.iter().enumerate() {
             if name.scope == NameScope::Global {
                 out.add(format!("registered_names[{i}].scope"), Phase::Phase2);

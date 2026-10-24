@@ -85,7 +85,8 @@ log_level = "info"
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `kind` | `"wasm-component"` | `"native-process"` is *not enforced* (later phase). |
+| `kind` | `"wasm-component"` | `"native-process"`: a native program run as a process (see "Native-process apps" below). |
+| `native` | | For `kind = "native-process"` only: `program = "library"` (default; a rustbridge plugin) or `"executable"`. |
 | `registered_names` | `[]` | Names the app may register with `ctx.register`. Each is a string (local name), or `{ name, scope = "global" }` (*not enforced*, Phase 2). Registering an unlisted name is refused. |
 | `dependencies` | `[]` | `{ app, version }` pairs (`version` is a semver requirement, such as `"^2"`). The app starts after its dependencies, in list order, and stops before them. It fails to start if one is not running, and a dependency cannot be removed while needed. |
 
@@ -239,6 +240,17 @@ A component exporting `wasi:http/incoming-handler` (any 0.2 version; the `wasi:h
 - Each request holds one of the node's `max_instances` Store slots; none free answers 503 with `Retry-After`. Upgrades apply to new requests.
 - Needs `[http]` in node config and a node built with the `http` and `egress` features (both default).
 
+### Native-process apps
+
+`kind = "native-process"` runs native code as a process the node spawns, an Erlang-style port, instead of a component. The bundle carries a release variant for the node's platform (`linux-x86_64`, `linux-aarch64`) in place of `wasm32-wasip2`; deploy writes it under `data_dir`, readable and executable by the node's user only.
+
+- `native.program = "library"` is a rustbridge plugin (`.so`), loaded by `paddock-runner`: calls and casts go to its `handle_request` with the envelope's schema id as the type tag, in JSON (`application/json`); a reply carries the same schema id, and an error the schema id `rustbridge.error` with `{"error": "..."}`. The init arguments become the plugin's config `data`. It cannot call other apps, since rustbridge's interface has no call into the host.
+- `native.program = "executable"` is a program linking `paddock-native`'s app API (feature `app`): `init`, `handle_call`, `handle_cast`, `handle_info` and `terminate`, with the process functions during a callback (send, cast, call, reply later, links, monitors, registered names, timers, exit signals). What it prints goes to the log as stderr does.
+- Each instance is one process, with a pid, mailbox, links, monitors and supervision like a component's, one callback at a time. `limits.callback_deadline_ms` bounds each callback's wall time, less time spent answering the app's requests; past it the process is killed (`timeout`). An idle instance is pinged (`[native]`); no answer kills it (`timeout`). The process exiting is `crashed` with its status or signal, a panic in a callback `crashed` with the panic's message, and going over `memory_max` with a cgroup `crashed: memory_limit`.
+- `memory_max` is the process's cgroup `memory.max` with node config `[native] cgroup`, else its `RLIMIT_DATA` (a failed allocation then aborts it).
+- Only `wasi:logging` may be declared: any other capability, an extension, `listeners`, `instances.passivate_after_ms` and `upgrade.mode = "snapshot"` are refused. Upgrades are `restart` or `blue-green`.
+- The runner restricts the program before it runs (SECURITY.md, "Native-process apps"): it reads only the system libraries, its own directory and the app's `priv/` files, executes nothing else, opens no sockets, and signals only itself. Linux only.
+
 ### Documentation-only and later sections
 
 | Section | Status |
@@ -303,6 +315,14 @@ max_concurrent = 64                    # requests in flight per app, unless its 
 connect = [{ cidr = "10.20.0.0/16", ports = "1883" }]  # the most any app may connect to (manifest syntax)
 bind = [{ cidr = "0.0.0.0/0", ports = "9000-9099" }]   # the most any app may bind
 listen = false                         # whether any app may listen
+
+[native]                               # native-process apps
+runner = "/usr/local/bin/paddock-runner"  # unset: paddock-runner beside the paddock executable
+cgroup = "/sys/fs/cgroup/system.slice/paddock.service"  # a delegated cgroup v2 directory (Delegate=yes), the node its only process; unset: memory_max as RLIMIT_DATA
+pids_max = 64                          # most processes and threads per native instance, with cgroup
+ping_interval_ms = 10000               # an idle native instance is pinged this often
+ping_timeout_ms = 5000                 # and killed (timeout) without an answer within this
+landlock_optional = false              # run native apps on a kernel without Landlock
 
 [metrics]
 address = "127.0.0.1:9100"             # GET /metrics for Prometheus; unauthenticated, keep it off public networks

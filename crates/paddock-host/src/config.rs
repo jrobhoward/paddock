@@ -274,6 +274,47 @@ pub struct RuntimeConfig {
     /// instances' `pending_calls_max`; this bounds a faulty one. 0 for no
     /// limit.
     pub incoming_calls_per_peer: u32,
+    /// Native-process apps (ROADMAP N2).
+    pub native: NativeConfig,
+}
+
+/// How a node runs native-process apps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct NativeConfig {
+    /// The `paddock-runner` executable; `None` for the one beside the
+    /// node's own executable.
+    pub runner: Option<PathBuf>,
+    /// A cgroup v2 directory delegated to the node (systemd's
+    /// `Delegate=yes`). With it, the node moves itself into its `node`
+    /// child and runs each native instance in a cgroup of its own under
+    /// `native`, with `memory.max` from the app's `memory_max`, no swap,
+    /// and `pids.max`. Without it, `memory_max` is the process's
+    /// `RLIMIT_DATA`.
+    pub cgroup: Option<PathBuf>,
+    /// Most processes and threads in one native instance (with a cgroup).
+    pub pids_max: u32,
+    /// How long an idle native instance goes between pings.
+    pub ping_interval: Duration,
+    /// How long a ping may go unanswered before the instance is killed
+    /// (`timeout`).
+    pub ping_timeout: Duration,
+    /// Whether to run native apps on a kernel without Landlock (which the
+    /// runner then cannot restrict to its files): off by default.
+    pub landlock_optional: bool,
+}
+
+impl Default for NativeConfig {
+    fn default() -> Self {
+        Self {
+            runner: None,
+            cgroup: None,
+            pids_max: 64,
+            ping_interval: Duration::from_secs(10),
+            ping_timeout: Duration::from_secs(5),
+            landlock_optional: false,
+        }
+    }
 }
 
 /// HTTP egress (`wasi:http/outgoing-handler`, ROADMAP E2): what every
@@ -349,6 +390,7 @@ impl Default for RuntimeConfig {
             egress: Egress::default(),
             log_records_per_sec: 1_000,
             incoming_calls_per_peer: 10_000,
+            native: NativeConfig::default(),
         }
     }
 }
