@@ -32,6 +32,11 @@ BENCHES=(
   "replication|writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket|R/examples/replication_cost 4"
   "passivation|wake cost, instances per Store slot, random calls|R/examples/passivation_cost 4 1000 100000; R/examples/passivation_cost 4 100 2000; R/examples/passivation_cost 4 1000 1000 off"
   "modbus|Modbus points through the scada pool|R/examples/modbus_load 16 100 10 4 4; R/examples/modbus_load 64 125 1 4 4; R/examples/modbus_load 64 125 1 8 8"
+  "timer|send-after and guest sleep lateness against a native tokio sleep, idle and loaded; clock reads|R/examples/timer_cost 4"
+  "restart|crash and kill to the restarted instance's first reply; upgrades by state size|R/examples/restart_cost 1; R/examples/restart_cost 4"
+  "heap|heap growth, memory held live and after exit, slot reuse, passivated state by size|R/examples/heap_cost 1"
+  "compile|compile time by component size, and loads from the compiled-code cache|R/examples/compile_cost"
+  "beam|Erlang/OTP reference: gen_server call, cast, spawn, process memory, send_after lateness (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_baseline.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_baseline.escript"
   "s14|spike S14: storage in the guest and host services|S/s14-bench spikes/target/wasm32-wasip2/release/s14_guest.wasm"
   "s15|spike S15: HTTP in the guest and the host, and the connection sweep|S/s15-bench 4; S/s15-bench 4 sweep"
 )
@@ -72,7 +77,10 @@ fi
 echo "bench: building (release)"
 cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures
 cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-sdk -p paddock-fixture-counter \
-  -p paddock-fixture-http -p example-chaos -p example-scada-points
+  -p paddock-fixture-http -p paddock-fixture-echo -p paddock-fixture-chaos -p example-chaos \
+  -p example-scada-points -p example-scada-control
+# compile_cost's large component: the SDK fixture unoptimized.
+cargo build -q --target wasm32-wasip2 -p paddock-fixture-sdk
 cargo build -q --release -p paddock-host --examples
 cargo build -q --release -p paddock --example admin_latency
 cargo build -q --release -p paddock-modbus --example modbus_load
@@ -107,6 +115,10 @@ mem=$(awk '/MemTotal/ { printf "%.0f GiB", $2 / 1048576 }' /proc/meminfo)
 for b in "${BENCHES[@]}"; do
   IFS='|' read -r name what commands <<<"$b"
   wanted "$name" || continue
+  if [ "$name" = beam ] && ! command -v escript >/dev/null; then
+    echo "bench: beam skipped (no escript on the PATH)" >&2
+    continue
+  fi
   echo "bench: $name"
   { echo; echo "### $name: $what"; } >>"$out"
   IFS=';' read -ra cmds <<<"$commands"

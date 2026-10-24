@@ -1101,7 +1101,266 @@ counts kept: 1244813 of 1244813 increments
 64 devices x 125 registers every 1 ms, pool of 8, 8 workers: 6317 updates/s stored (64000 polls/s asked), 789609 points/s
 ```
 
+## 2026-10-24: what running in Wasm costs
+
+AMD Ryzen Threadripper 1950X (16 threads, 63 GiB), Linux 6.8.0-146-generic, rustc 1.99.0, wasmtime 49, commit fac7857 with the new benchmarks; Erlang/OTP 28 (erts 16.2) for the reference; `scripts/bench.sh baseline timer restart heap compile beam`, load average 0.73 at the start. The full output is below, after the reading.
+
+New harnesses: `timer_cost`, `restart_cost`, `heap_cost` and `compile_cost` (`paddock-host` examples), and `scripts/beam_baseline.escript`, which runs the shapes of `baseline` and `timer_cost` as gen_servers. The chaos fixture gained the commands they use (`timed`, `lateness`, `clock`, `ballast`).
+
+### Against Erlang/OTP
+
+| Measure | Paddock, 1 worker | Paddock, 4 workers | BEAM, 1 scheduler | BEAM, 4 schedulers |
+| --- | --- | --- | --- | --- |
+| Empty call p50 | 2.69 µs | 4.53 µs | 1.97 µs | 2.00 µs |
+| 1 KiB echo call p50 | 4.78 µs | 6.49 µs | 2.08 µs | 2.07 µs |
+| Casts handled per second | 636,000 | 441,000 | 4,257,000 | 2,060,000 |
+| Start to first reply p50 | 85 µs | 88 µs | 5.1 µs | 5.2 µs |
+| Idle memory per instance or process | 60 KiB (19 to 25 KiB passivated) | 62 KiB | 2.7 KiB | 2.6 KiB |
+| Timer lateness p50 / p99, idle (`send-after`, `send_after`) | | 1.1 / 2.0 ms | 0.41 / 1.0 ms | 0.41 / 1.05 ms |
+| Timer lateness p50 / p99, loaded | | 1.9 to 2.1 / 4.9 to 5.0 ms | 1.0 to 1.1 / 1.7 ms | 0.65 to 0.76 / 1.3 ms |
+
+The loaded rows run the same load on both: 64 clients calling 16 instances or gen_servers back to back, each call about 31 µs of integer work; Paddock's timer figures are from 4 workers.
+
+- **Calls** cost about 1.4 times a gen_server call on one thread, and 2.3 times on four, where Paddock's reply wakes a task on another worker and BEAM's does not leave the scheduler. A 1 KiB body adds about 2 µs in Paddock (copied into and out of guest memory) and nothing measurable in BEAM, which passes binaries over 64 bytes by reference.
+- **Casts** handled per second are a sixth to a fifth of BEAM's. Part of that is the guest boundary per message; part is the bounded mailbox (the 4-worker sender found it full 411,443 times; BEAM's mailbox is unbounded).
+- **Starting an instance** costs about 17 times a gen_server start, and an idle instance holds about 22 times a process's memory: a Store, its linear memory's first pages, a WASI context and the host-side state, against a small heap and stack.
+- **Timers** are handled about 0.7 ms later than BEAM's at p50 when idle, and about 1 ms later under load. The difference is the host's timer, not Wasm: a native tokio sleep on the same runtime is 1.2 ms late at p50, and `send-after` is a tokio sleep. tokio's timer has a 1 ms grain and rounds a deadline up; why it is more than 1 ms late was not looked into. Under load, the instance's wait for a worker adds up to an epoch tick (2 ms) at p99.
+
+### Timers and clocks
+
+- **Idle, 4 workers:** a native tokio sleep is 1.18 to 1.21 ms late at p50 and 1.26 to 1.35 ms at p99, whatever the delay (1, 10 or 50 ms). `send-after`, handled in the guest's `handle-info`, is 1.09 to 1.12 ms late at p50 and about 2 ms at p99. A guest's `wasi:clocks` sleep, timed by the caller (so including one call), is 1.54 to 1.58 ms late at p50 and 1.8 to 1.9 ms at p99.
+- **Loaded:** native sleeps reach 3.2 to 4.5 ms at p99; `send-after` 4.9 to 5.0 ms (max 7.2 ms); guest sleeps 4.6 to 5.4 ms. The lateness does not grow with the delay.
+- **A monotonic clock read** costs 169 ns in a guest against 25 ns natively: it is a host call (`wasi:clocks`), where the native read is a vDSO call.
+- **Not measured:** wall-clock (`wasi:clocks/wall-clock`) reads, and timers on the Pi.
+
+### Restarts and upgrades
+
+| Measure, 1 worker | p50 | p99 |
+| --- | --- | --- |
+| Kill to the restarted instance's first reply | 66.5 µs | 73.8 µs |
+| Crash (trap) to the restarted instance's first reply | 115.8 µs | 127.7 µs |
+| Snapshot upgrade, instance paused, no state | 47.6 µs | 86.4 µs |
+| Same, 64 KiB of state | 104 µs | 120 µs |
+| Same, 1 MiB | 920 µs | 1.37 ms |
+| Same, 16 MiB | 21.0 ms | 25.7 ms |
+
+- A restart costs about an instantiation; a trap adds about 50 µs over a kill, not attributed.
+- An upgrade pauses the instance for about 1.3 ms per MiB of state past the first 64 KiB: `save-snapshot` (3.6 ms at 16 MiB; the guest copies its state into a new vector), the copy out of the old Store, and `load-snapshot` in the new one (a copy in, then the guest's own copy). The share of each was not measured.
+- On 4 workers the restart and small-upgrade figures are up to 70% higher (a kill 82 µs, an upgrade with no state 81 µs), the large-state ones the same.
+
+### Heap size
+
+| Heap (16 instances, medians, 1 worker) | Growing it (`alloc`) | Native, fresh pages | Resident each, live | After exit | Call that wakes it, passivated with that much state |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 10 µs | 0 | 0.10 MiB | 0.06 MiB | 35 µs |
+| 1 MiB | 556 µs | 541 µs | 1.03 MiB | 0 | 1.21 ms |
+| 16 MiB | 5.7 ms | 6.2 ms | 16.03 MiB | 0 | 14.9 ms |
+| 64 MiB | 23.4 ms | 22.5 ms | 64.03 MiB | 0 | 59.7 ms |
+
+- Growing linear memory costs what a native allocation of fresh pages costs: page faults dominate both.
+- An instance's memory is returned when it exits: the pooling allocator decommits its slot, and a new instance on the slot starts in 47 to 78 µs whatever the last one held. While it lives, an instance keeps the most it ever grew to (linear memory does not shrink).
+- A passivated instance holds its snapshot in host memory, the size of its state, and waking it costs about 0.9 ms per MiB of state (`load-snapshot`, as in an upgrade). Passivation suits instances with small state; one with tens of MiB saves no memory and pays tens of ms per wake.
+
+### Compiling
+
+| Component | Size | Compile | Load from the compiled-code cache | Cache file |
+| --- | --- | --- | --- | --- |
+| echo fixture | 17 KiB | 21.8 ms | 0.32 ms | 60 KiB |
+| chaos fixture | 150 KiB | 180 ms | 0.49 ms | 453 KiB |
+| scada `control` example | 488 KiB | 516 ms | 0.53 ms | 1,295 KiB |
+| SDK fixture | 543 KiB | 570 ms | 0.73 ms | 1,453 KiB |
+| SDK fixture, debug build | 5,486 KiB | 1,057 ms | 0.96 ms | 3,244 KiB |
+
+- Release components compile at about 1 ms per KiB, on one thread: `paddock-host` does not enable wasmtime's `parallel-compilation` feature. A deploy pays this once; a node restart reads the cache in under a millisecond.
+- The debug build is ten times the size but compiles in twice the time; size alone does not predict compile time.
+- A cache directory that group or others can write is refused and the component compiled again, as designed (`paddock_host::compiled`). The harness found it: a directory made under umask 002 is group-writable.
+
+### What these leave open
+
+- Wake and upgrade cost per MiB of state (about 1 ms per MiB, roughly 1 GB/s), which looks slow for copies; not attributed between the guest's copies, the canonical ABI and page faults.
+- Compile time with `parallel-compilation` on.
+- Timer lateness with a finer timer than tokio's 1 ms grain.
+
+### 2026-10-24 run: baseline: call, cast, instantiate, idle memory (1 and 4 workers, dense)
+
+`target/release/examples/baseline 1 1000 standard` (1.60 s wall, 1.30 s user, 0.09 s system, 87840 KiB peak RSS):
+
+```text
+tokio workers: 1, memory profile: Standard
+component: 150 KiB, compiled in 184 ms
+call, empty call: p50 2.69 µs, p99 3.44 µs, p99.9 6.82 µs, max 22.47 µs; 362575 calls/s sequential
+call, 1 KiB echo: p50 4.78 µs, p99 5.64 µs, p99.9 9.46 µs, max 745.33 µs; 205844 calls/s sequential
+cast: 636465 casts/s handled (200000 casts, mailbox 1024, sender saw a full mailbox 1520 times)
+instantiate to first reply (1000 instances): p50 85.05 µs, p99 212.56 µs, mean 85.90 µs
+idle memory per instance: 60 KiB resident, 0 KiB virtual (process: 86 MiB resident, 8129 GiB virtual)
+```
+
+`target/release/examples/baseline 4 1000 standard` (2.12 s wall, 2.41 s user, 0.80 s system, 89112 KiB peak RSS):
+
+```text
+tokio workers: 4, memory profile: Standard
+component: 150 KiB, compiled in 184 ms
+call, empty call: p50 4.53 µs, p99 7.67 µs, p99.9 13.25 µs, max 114.61 µs; 199676 calls/s sequential
+call, 1 KiB echo: p50 6.49 µs, p99 10.82 µs, p99.9 13.91 µs, max 218.55 µs; 159193 calls/s sequential
+cast: 440529 casts/s handled (200000 casts, mailbox 1024, sender saw a full mailbox 411443 times)
+instantiate to first reply (1000 instances): p50 88.31 µs, p99 184.74 µs, mean 88.73 µs
+idle memory per instance: 62 KiB resident, 0 KiB virtual (process: 87 MiB resident, 8129 GiB virtual)
+```
+
+`target/release/examples/baseline 1 5000 dense` (2.17 s wall, 1.59 s user, 0.37 s system, 365732 KiB peak RSS):
+
+```text
+tokio workers: 1, memory profile: Dense
+component: 150 KiB, compiled in 214 ms
+call, empty call: p50 2.73 µs, p99 3.47 µs, p99.9 6.63 µs, max 18.14 µs; 359437 calls/s sequential
+call, 1 KiB echo: p50 4.80 µs, p99 5.59 µs, p99.9 8.82 µs, max 24.12 µs; 205712 calls/s sequential
+cast: 632052 casts/s handled (200000 casts, mailbox 1024, sender saw a full mailbox 1529 times)
+instantiate to first reply (5000 instances): p50 85.52 µs, p99 214.14 µs, mean 89.02 µs
+idle memory per instance: 67 KiB resident, 26 KiB virtual (process: 357 MiB resident, 1265 GiB virtual)
+```
+
+### 2026-10-24 run: timer: send-after and guest sleep lateness against a native tokio sleep, idle and loaded; clock reads
+
+`target/release/examples/timer_cost 4` (10.81 s wall, 27.90 s user, 0.19 s system, 30788 KiB peak RSS):
+
+```text
+tokio workers: 4; 100 timers at once, 10 rounds per delay; lateness in µs
+monotonic clock read: native 25.3 ns, guest 169.2 ns (one run of 1000000 reads)
+                                    delay      p50      p99      max
+idle, native tokio sleep              1 ms     1176     1261     1268
+idle, guest send-after                1 ms     1085     1985     2044
+idle, guest wasi:clocks sleep         1 ms     1544     1814     1876
+idle, native tokio sleep             10 ms     1202     1265     1280
+idle, guest send-after               10 ms     1108     2037     2073
+idle, guest wasi:clocks sleep        10 ms     1579     1868     1912
+idle, native tokio sleep             50 ms     1214     1350     1359
+idle, guest send-after               50 ms     1119     1986     2063
+idle, guest wasi:clocks sleep        50 ms     1583     1831     1879
+loaded, native tokio sleep            1 ms     1475     3519     3520
+loaded, guest send-after              1 ms     2108     4957     6269
+loaded, guest wasi:clocks sleep       1 ms     2362     4595     4649
+loaded, native tokio sleep           10 ms      976     3248     3250
+loaded, guest send-after             10 ms     1861     4934     6653
+loaded, guest wasi:clocks sleep      10 ms     3409     5440     5485
+loaded, native tokio sleep           50 ms     2260     4516     4520
+loaded, guest send-after             50 ms     2133     5014     7196
+loaded, guest wasi:clocks sleep      50 ms     2961     5434     5457
+```
+
+### 2026-10-24 run: restart: crash and kill to the restarted instance's first reply; upgrades by state size
+
+`target/release/examples/restart_cost 1` (1.61 s wall, 0.84 s user, 0.77 s system, 106232 KiB peak RSS):
+
+```text
+tokio workers: 1; 500 restarts each, 50 upgrades per size
+a crash (trap in handle-cast) to the restarted instance's first reply: p50 115.8 µs, p99 127.7 µs, max 213.5 µs
+a kill to the restarted instance's first reply: p50 66.5 µs, p99 73.8 µs, max 78.5 µs
+     0 KiB state: snapshot taken: p50 2.7 µs, p99 5.2 µs, max 5.2 µs
+     0 KiB state: upgrade, instance paused: p50 47.6 µs, p99 86.4 µs, max 86.4 µs
+     0 KiB state: upgrade to first reply: p50 59.1 µs, p99 99.8 µs, max 99.8 µs
+    64 KiB state: snapshot taken: p50 7.4 µs, p99 60.4 µs, max 60.4 µs
+    64 KiB state: upgrade, instance paused: p50 104.3 µs, p99 120.3 µs, max 120.3 µs
+    64 KiB state: upgrade to first reply: p50 117.9 µs, p99 135.6 µs, max 135.6 µs
+  1024 KiB state: snapshot taken: p50 95.4 µs, p99 920.5 µs, max 920.5 µs
+  1024 KiB state: upgrade, instance paused: p50 919.8 µs, p99 1366.7 µs, max 1366.7 µs
+  1024 KiB state: upgrade to first reply: p50 938.3 µs, p99 1396.1 µs, max 1396.1 µs
+ 16384 KiB state: snapshot taken: p50 3589.9 µs, p99 15686.3 µs, max 15686.3 µs
+ 16384 KiB state: upgrade, instance paused: p50 20974.8 µs, p99 25654.4 µs, max 25654.4 µs
+ 16384 KiB state: upgrade to first reply: p50 21022.6 µs, p99 25703.1 µs, max 25703.1 µs
+```
+
+`target/release/examples/restart_cost 4` (1.63 s wall, 0.86 s user, 0.80 s system, 106744 KiB peak RSS):
+
+```text
+tokio workers: 4; 500 restarts each, 50 upgrades per size
+a crash (trap in handle-cast) to the restarted instance's first reply: p50 126.7 µs, p99 243.3 µs, max 421.7 µs
+a kill to the restarted instance's first reply: p50 82.4 µs, p99 141.2 µs, max 159.3 µs
+     0 KiB state: snapshot taken: p50 7.7 µs, p99 11.8 µs, max 11.8 µs
+     0 KiB state: upgrade, instance paused: p50 80.8 µs, p99 130.1 µs, max 130.1 µs
+     0 KiB state: upgrade to first reply: p50 101.9 µs, p99 160.4 µs, max 160.4 µs
+    64 KiB state: snapshot taken: p50 10.1 µs, p99 93.5 µs, max 93.5 µs
+    64 KiB state: upgrade, instance paused: p50 103.0 µs, p99 212.7 µs, max 212.7 µs
+    64 KiB state: upgrade to first reply: p50 117.6 µs, p99 238.3 µs, max 238.3 µs
+  1024 KiB state: snapshot taken: p50 97.6 µs, p99 828.9 µs, max 828.9 µs
+  1024 KiB state: upgrade, instance paused: p50 868.2 µs, p99 1242.4 µs, max 1242.4 µs
+  1024 KiB state: upgrade to first reply: p50 888.0 µs, p99 1268.3 µs, max 1268.3 µs
+ 16384 KiB state: snapshot taken: p50 3612.4 µs, p99 15938.7 µs, max 15938.7 µs
+ 16384 KiB state: upgrade, instance paused: p50 20887.0 µs, p99 25830.1 µs, max 25830.1 µs
+ 16384 KiB state: upgrade to first reply: p50 20939.5 µs, p99 25882.0 µs, max 25882.0 µs
+```
+
+### 2026-10-24 run: heap: heap growth, memory held live and after exit, slot reuse, passivated state by size
+
+`target/release/examples/heap_cost 1` (7.85 s wall, 1.30 s user, 4.07 s system, 2514592 KiB peak RSS):
+
+```text
+tokio workers: 1; 16 instances per size; medians
+  0 MiB heap: alloc call 10 µs (native 0 µs); 0.10 MiB resident each live, 0.06 MiB after exit; instantiate on a reused slot 78.2 µs
+  1 MiB heap: alloc call 556 µs (native 541 µs); 1.03 MiB resident each live, 0.00 MiB after exit; instantiate on a reused slot 77.5 µs
+ 16 MiB heap: alloc call 5733 µs (native 6159 µs); 16.03 MiB resident each live, 0.00 MiB after exit; instantiate on a reused slot 46.7 µs
+ 64 MiB heap: alloc call 23411 µs (native 22499 µs); 64.03 MiB resident each live, 0.00 MiB after exit; instantiate on a reused slot 46.7 µs
+  0 MiB state, passivated: snapshot 0 KiB held by the host; call that wakes it 35 µs
+  1 MiB state, passivated: snapshot 1024 KiB held by the host; call that wakes it 1212 µs
+ 16 MiB state, passivated: snapshot 16384 KiB held by the host; call that wakes it 14940 µs
+ 64 MiB state, passivated: snapshot 65536 KiB held by the host; call that wakes it 59687 µs
+```
+
+### 2026-10-24 run: compile: compile time by component size, and loads from the compiled-code cache
+
+`target/release/examples/compile_cost` (23.77 s wall, 23.50 s user, 0.15 s system, 59380 KiB peak RSS):
+
+```text
+median of 5 loads each, one thread
+component                                     size KiB  compile ms cache write ms   cached ms  cache KiB
+release/paddock_fixture_echo.wasm                   17        21.8          24.6        0.32         60
+release/paddock_fixture_chaos.wasm                 150       179.9         185.4        0.49        453
+release/paddock_fixture_sdk.wasm                   543       570.3         584.5        0.73       1453
+release/example_scada_control.wasm                 488       516.2         530.1        0.53       1295
+debug/paddock_fixture_sdk.wasm                    5486      1057.2        1073.5        0.96       3244
+```
+
+### 2026-10-24 run: beam: Erlang/OTP reference: gen_server call, cast, spawn, process memory, send_after lateness (1 and 4 schedulers)
+
+`ERL_FLAGS='+S 1:1' escript scripts/beam_baseline.escript` (11.58 s wall, 9.17 s user, 0.13 s system, 124784 KiB peak RSS):
+
+```text
+erts 16.2, OTP 28, schedulers: 1
+call, empty call: p50 1.97 us, p99 4.06 us, p99.9 6.74 us, max 2578.63 us; 423593 calls/s sequential
+call, 1 KiB echo: p50 2.08 us, p99 4.17 us, p99.9 273.00 us, max 874.81 us; 361996 calls/s sequential
+cast: 4256707 casts/s handled (200000 casts, unbounded mailbox)
+start to first reply (1000 gen_servers): p50 5.07 us, p99 10.53 us
+idle memory per process: 2.7 KiB (erlang:memory(processes) delta), 2.6 KiB (process_info)
+idle, send_after 1 ms: lateness p50 409 us, p99 1005 us, max 1019 us
+idle, send_after 10 ms: lateness p50 432 us, p99 996 us, max 1024 us
+idle, send_after 50 ms: lateness p50 408 us, p99 977 us, max 1015 us
+load: 64 clients, 16 gen_servers, busy 298 rounds per call (about 31 us)
+loaded, send_after 1 ms: lateness p50 1033 us, p99 1702 us, max 1976 us
+loaded, send_after 10 ms: lateness p50 1054 us, p99 1665 us, max 1811 us
+loaded, send_after 50 ms: lateness p50 1112 us, p99 1652 us, max 1734 us
+```
+
+`ERL_FLAGS='+S 4:4' escript scripts/beam_baseline.escript` (7.29 s wall, 16.62 s user, 0.23 s system, 120908 KiB peak RSS):
+
+```text
+erts 16.2, OTP 28, schedulers: 4
+call, empty call: p50 2.00 us, p99 3.98 us, p99.9 7.45 us, max 2392.34 us; 427179 calls/s sequential
+call, 1 KiB echo: p50 2.07 us, p99 4.10 us, p99.9 272.27 us, max 899.15 us; 367700 calls/s sequential
+cast: 2060291 casts/s handled (200000 casts, unbounded mailbox)
+start to first reply (1000 gen_servers): p50 5.24 us, p99 12.86 us
+idle memory per process: 2.6 KiB (erlang:memory(processes) delta), 2.6 KiB (process_info)
+idle, send_after 1 ms: lateness p50 408 us, p99 1054 us, max 1067 us
+idle, send_after 10 ms: lateness p50 481 us, p99 1059 us, max 1086 us
+idle, send_after 50 ms: lateness p50 732 us, p99 1080 us, max 1090 us
+load: 64 clients, 16 gen_servers, busy 293 rounds per call (about 31 us)
+loaded, send_after 1 ms: lateness p50 652 us, p99 1273 us, max 1583 us
+loaded, send_after 10 ms: lateness p50 742 us, p99 1308 us, max 1467 us
+loaded, send_after 50 ms: lateness p50 757 us, p99 1339 us, max 1446 us
+```
+
 ## Not measured yet
 
-- Epoch-check overhead on compiled Rust apps beyond S8's kernels.
-- The per-callback metric counters.
+- Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
+- Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
+- Calls, casts and replicated writes between two machines (every cluster figure is on loopback).
+- Resident memory over hours of load (`scripts/soak.sh` does not sample it).
+- The 2026-10-24 benchmarks on the Pi.

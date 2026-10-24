@@ -35,6 +35,14 @@
 //! - `timer:<ms>:<text>`: start a timer; reply its reference.
 //! - `cancel:<ref>`: cancel a timer; reply `cancelled`.
 //! - `timers`: reply the texts of the timers that fired, comma-separated.
+//! - `timed:<ms>`: start a timer that, when its message is handled, records
+//!   how late that was against the time asked; reply its reference.
+//! - `lateness`: reply the lateness of each `timed` timer handled since the
+//!   last `lateness`, in µs, comma-separated, and forget them.
+//! - `clock:<n>`: read the monotonic clock `<n>` times; reply the time the
+//!   reads took, in ns.
+//! - `ballast:<kib>`: keep `<kib>` KiB of state that `save-snapshot` writes
+//!   and `load-snapshot` reads; reply `ok`.
 //! - `link:<pid>` / `unlink:<pid>`: reply `ok`.
 //! - `trap-exits:<on|off>`: reply `ok`.
 //! - `monitor:<pid>`: reply the monitor reference.
@@ -60,6 +68,8 @@ mod bindings {
 }
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use bindings::paddock::runtime::process;
 use bindings::paddock::runtime::types::{CallError, Pid, RegisterError};
@@ -76,7 +86,15 @@ struct State {
     /// Health checks answered, and what to answer (`ok` unless told).
     health_checks: u64,
     health: Option<String>,
+    /// When each `timed` timer was due, by reference.
+    due: HashMap<u64, Instant>,
+    /// How late each `timed` timer was handled, in µs.
+    late: Vec<u64>,
+    ballast: Vec<u8>,
 }
+
+/// Ends the deferred callers in a snapshot; the ballast follows it.
+const BALLAST_MARK: u64 = u64::MAX;
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
@@ -263,6 +281,30 @@ fn run(caller: Option<CallRef>, msg: &Envelope) -> Outcome {
             reply("cancelled".into())
         }
         "timers" => reply(STATE.with_borrow(|s| s.fired.join(","))),
+        "timed" => {
+            let ms: u32 = arg.parse().unwrap_or(0);
+            let due = Instant::now() + Duration::from_millis(ms.into());
+            let reference = process::send_after(ms, &text("timed"));
+            STATE.with_borrow_mut(|s| s.due.insert(reference, due));
+            reply(reference.to_string())
+        }
+        "lateness" => reply(STATE.with_borrow_mut(|s| {
+            let late: Vec<String> = s.late.drain(..).map(|us| us.to_string()).collect();
+            late.join(",")
+        })),
+        "clock" => {
+            let reads: u64 = arg.parse().unwrap_or(0);
+            let started = Instant::now();
+            for _ in 0..reads {
+                std::hint::black_box(Instant::now());
+            }
+            reply(started.elapsed().as_nanos().to_string())
+        }
+        "ballast" => {
+            let kib: usize = arg.parse().unwrap_or(0);
+            STATE.with_borrow_mut(|s| s.ballast = vec![7u8; kib << 10]);
+            reply("ok".into())
+        }
         "link" => {
             process::link(parse_pid(arg));
             reply("ok".into())
@@ -344,9 +386,16 @@ impl Guest for Chaos {
 
     fn handle_info(msg: Info) {
         match msg {
-            Info::Timer((_, envelope)) => {
+            Info::Timer((reference, envelope)) => {
+                let now = Instant::now();
                 let body = String::from_utf8_lossy(&envelope.body).into_owned();
-                STATE.with_borrow_mut(|s| s.fired.push(body));
+                STATE.with_borrow_mut(|s| {
+                    if let Some(due) = s.due.remove(&reference) {
+                        let late = now.saturating_duration_since(due).as_micros();
+                        s.late.push(u64::try_from(late).unwrap_or(u64::MAX));
+                    }
+                    s.fired.push(body);
+                });
             }
             Info::Exit((pid, reason)) => {
                 let line = format!("exit:{}:{}", show_pid(pid), show_exit(&reason));
@@ -371,23 +420,32 @@ impl Guest for Chaos {
 
     /// The snapshot is the count, then each remembered caller, as 8-byte
     /// little-endian numbers, so a new version can answer deferred calls.
+    /// Ballast, if any, follows a [`BALLAST_MARK`].
     fn save_snapshot() -> Vec<u8> {
         STATE.with_borrow(|s| {
             let mut out = s.count.to_le_bytes().to_vec();
             for caller in &s.deferred {
                 out.extend_from_slice(&caller.to_le_bytes());
             }
+            if !s.ballast.is_empty() {
+                out.extend_from_slice(&BALLAST_MARK.to_le_bytes());
+                out.extend_from_slice(&s.ballast);
+            }
             out
         })
     }
 
     fn load_snapshot(_from_version: String, snapshot: Vec<u8>) -> Result<(), String> {
-        if snapshot.len() < 8 || !snapshot.len().is_multiple_of(8) {
+        let chunks = snapshot.as_chunks::<8>().0;
+        let mark = chunks
+            .iter()
+            .position(|c| u64::from_le_bytes(*c) == BALLAST_MARK);
+        let numbers_end = mark.map_or(snapshot.len(), |i| i * 8);
+        if numbers_end < 8 || !numbers_end.is_multiple_of(8) {
             return Err("snapshot must be whole 8-byte numbers".to_string());
         }
-        let mut numbers = snapshot
-            .as_chunks::<8>()
-            .0
+        let ballast = mark.map_or_else(Vec::new, |i| snapshot[(i + 1) * 8..].to_vec());
+        let mut numbers = chunks[..numbers_end / 8]
             .iter()
             .map(|c| u64::from_le_bytes(*c));
         let count = numbers.next().unwrap_or(0);
@@ -395,6 +453,7 @@ impl Guest for Chaos {
         STATE.with_borrow_mut(|s| {
             s.count = count;
             s.deferred = deferred;
+            s.ballast = ballast;
         });
         Ok(())
     }

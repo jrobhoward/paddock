@@ -534,6 +534,7 @@ line to ROADMAP.md's "Doc debt" instead of rewriting it then:
 | `docs/SECURITY.md` | Threat model: what is protected, whom Paddock trusts, each boundary's controls and gaps, fuzz targets | Update when a boundary or a control changes; findings are fixed through ROADMAP items |
 | `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
 | `docs/OPERATIONS.md` | Paths under `data_dir`, environment variables, signals, backups, running as a service | Update with every path, variable or signal change |
+| `docs/GLOSSARY.md` | What each Paddock term means, with a pointer to the file that has the detail | Add a term when the docs start using it; a word with two meanings says so |
 | `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |
 | `CHANGELOG.md` | What changed: `Unreleased`, then a section per tagged version | Keep a Changelog format; one line per change |

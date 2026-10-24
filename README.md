@@ -44,6 +44,7 @@ is released.
 - [`docs/MANIFEST.md`](docs/MANIFEST.md): every manifest field, capabilities,
   node configuration and operator policy.
 - [`docs/BASELINE.md`](docs/BASELINE.md): baseline performance numbers.
+- [`docs/GLOSSARY.md`](docs/GLOSSARY.md): the terms the docs and code use.
 - [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md): instance stats, calling
   one instance, and tracing a live node with its probes.
 - [`docs/DESIGN.md`](docs/DESIGN.md): architecture, app model, manifest and

@@ -6,6 +6,24 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `docs/GLOSSARY.md`: the terms the docs and code use, with the two
+  meanings of "epoch" (the wasmtime epoch tick and the failover epoch) kept
+  apart.
+- Benchmarks of what running in Wasm costs, each a `paddock-host` example
+  and a `scripts/bench.sh` entry: `timer_cost` (`send-after` and guest
+  sleep lateness against a native tokio sleep, idle and loaded; clock reads),
+  `restart_cost` (a crash or kill to the restarted instance's first reply;
+  upgrades by state size), `heap_cost` (heap growth, memory held live and
+  after exit, slot reuse, passivated state by size) and `compile_cost`
+  (compile time by component size, and cached loads); and
+  `scripts/beam_baseline.escript`, the same shapes on Erlang/OTP for
+  reference (`bench.sh beam`).
+- The chaos fixture's `timed`, `lateness`, `clock` and `ballast` commands,
+  for those benchmarks; its snapshot carries the ballast after a marker,
+  and reads snapshots without one as before.
+
 ### Changed
 
 - The minimum Rust version is 1.99.0 (was 1.96.0), so dependencies resolve
