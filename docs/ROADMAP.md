@@ -114,22 +114,15 @@ Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run i
 
 Docs known to be out of date, cleared by W1:
 
-- WRITING_APPS.md does not describe native-process apps (N2): writing one on `paddock-native`'s app API or as a rustbridge plugin, building the bundle's platform variant, and what the runner allows. ARCHITECTURE.md does not describe `crates/paddock-native`, `paddock-host`'s `native/` and `instance_native.rs`, or `LoadedApp` holding a component or a native program.
-- WRITING_APPS.md does not describe guest sockets (N1): `paddock_sdk::net`, waiting on a socket with `paddock:io` between callbacks, and why HTTP egress is preferred where it fits. ARCHITECTURE.md does not describe `services/sockets` (the linker's redefined socket functions and destructors), `ready.rs` or the instance loop's wait on pollables.
+- WRITING_APPS.md does not describe native-process apps (N2): writing one on `paddock-native`'s app API or as a rustbridge plugin, building the bundle's platform variant, and what the runner allows.
+- WRITING_APPS.md does not describe guest sockets (N1): `paddock_sdk::net`, waiting on a socket with `paddock:io` between callbacks, and why HTTP egress is preferred where it fits.
 - README, GETTING_STARTED and WRITING_APPS were not reviewed as Tracks D, E, F and H landed.
-- ARCHITECTURE.md does not describe passivation (S11): the `Passive` state, Store slots (`RuntimeInner::slots`) and eviction under pressure.
-- ARCHITECTURE.md's threads and tasks leave out the health check task each instance of an app with a `health` section runs (D7); WRITING_APPS does not mention `App::health`.
 - DESIGN.md places SQL datasources in Phase 3; E5 is now in stage 5.
-- ARCHITECTURE.md does not describe HTTP egress (`services::egress`: the send hook, the pool, the resolver guard) or the call hook that now measures host time; WRITING_APPS does not mention `paddock_sdk::http_client`.
-- ARCHITECTURE.md does not describe P1's additions: the node's event hub (`node/events.rs`, fed by the audit log, `Runtime::instance_events`, member events and failover changes), the streaming admin responses (`server.rs` `stream`), and the shell (`cli/shell.rs`, `cli/contacts.rs`). GETTING_STARTED does not mention `paddock shell`, `paddock events` or `logs --follow`.
+- GETTING_STARTED does not mention `paddock shell`, `paddock events` or `logs --follow`.
 - DESIGN.md's roadmap section repeats parts of this plan.
-- ARCHITECTURE.md does not describe the serial heartbeat path (F5): `crates/paddock/src/serial/` (tty layer, frames, relay) and `node/serial_path.rs` (one task per device, reopened on failure).
-- ARCHITECTURE.md describes replication for `cluster` buckets only: not apps' `replicated` buckets (K3, `<app>/<bucket>` in `@cluster`), `[failover] replication`, or the gate's wait for `ReplicationStatus::ready`. WRITING_APPS does not mention replicated buckets.
-- ARCHITECTURE.md does not describe moving a singleton (M1): `paddock-host`'s `handover.rs` (the `@handover` records in `@cluster`, `Pending` on the runtime), the instance's `MoveOut` operation and the gate's `hand_over` and `start`. WRITING_APPS does not say that a singleton in `snapshot` mode is moved with its state.
-- ARCHITECTURE.md does not describe HTTP handlers (E6): `paddock-host`'s `http/handler.rs` (an instance per request, the timers, the cut stream) and the node's `daemon/handlers.rs`.
-- ARCHITECTURE.md does not describe blue-green upgrades (U2): the pool's two sides and weight (`pool.rs`), the new side's root supervisor and watcher in `apps.rs`, and the node's `daemon/blue_green.rs`.
-- ARCHITECTURE.md does not describe the versions of a release (U1): `wire::since` and `Transport::version`, `paddock-host`'s `formats.rs` (the `@release` record, the start check), or `paddock release`.
-- ARCHITECTURE.md (drafted 2026-10-10) does not describe what stage 3 changed: the HTTP ingress behind the `http` and `tls` features (`node/daemon/ingress.rs`), the gate checking held singletons and retrying failed starts, the failover transitions' `Env` trait, and the Modbus guest interface on `State`.
+- WRITING_APPS does not mention `App::health` (health checks) or `paddock_sdk::http_client` (HTTP egress).
+- WRITING_APPS does not mention replicated buckets.
+- WRITING_APPS does not say that a singleton in `snapshot` mode is moved with its state.
 
 ## Phase 3
 
