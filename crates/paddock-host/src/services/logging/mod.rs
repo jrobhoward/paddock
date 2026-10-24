@@ -268,7 +268,7 @@ impl logging::Host for ServiceCtx<'_, Instance> {
     }
 }
 
-/// A native app's log record (ROADMAP N2), through the same level and rate
+/// A native app's log record, through the same level and rate
 /// checks as a component's `wasi:logging` records.
 pub(crate) async fn record(
     ctx: &mut ServiceCtx<'_, Instance>,

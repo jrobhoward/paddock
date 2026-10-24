@@ -1,4 +1,4 @@
-//! Blue-green upgrades (ROADMAP U2; DESIGN.md, "Blue-green upgrades"): the
+//! Blue-green upgrades (DESIGN.md, "Blue-green upgrades"): the
 //! new version beside the old, traffic moved in steps, then the old version
 //! retired or the new one dropped. The host keeps both sides in the app's
 //! pool ([`paddock_host::Apps::start_new`]); this keeps the deploy store in

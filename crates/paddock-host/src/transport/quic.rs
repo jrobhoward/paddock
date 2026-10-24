@@ -1,4 +1,4 @@
-//! QUIC between nodes (ROADMAP D1): a [`Transport`] over quinn with mutual
+//! QUIC between nodes: a [`Transport`] over quinn with mutual
 //! TLS (rustls on ring).
 //!
 //! **Identity.** Pinned public keys, as WireGuard does, with no

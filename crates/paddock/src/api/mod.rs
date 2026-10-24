@@ -234,7 +234,7 @@ pub struct FailoverInfo {
 }
 
 /// The versions a node speaks and keeps, for a release across an HA pair
-/// (ROADMAP U1; DESIGN.md, "Mixed versions during a release").
+/// (DESIGN.md, "Mixed versions during a release").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseInfo {
     /// The pair's version for what is kept (the replicated log, the
@@ -249,7 +249,7 @@ pub struct ReleaseInfo {
     pub peers: BTreeMap<u32, u16>,
 }
 
-/// A node's replicated log (`cluster` buckets, ROADMAP K2): one log for
+/// A node's replicated log (`cluster` buckets): one log for
 /// every such bucket.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplicationInfo {

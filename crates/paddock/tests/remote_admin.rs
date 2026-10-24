@@ -1,4 +1,4 @@
-//! The remote admin API (ROADMAP D6): TLS 1.3 with pinned keys both ways,
+//! The remote admin API: TLS 1.3 with pinned keys both ways,
 //! the same routes as the admin socket, changes audited with the
 //! operator's name, and the operators file read again on reload.
 

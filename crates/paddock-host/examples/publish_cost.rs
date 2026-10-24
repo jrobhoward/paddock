@@ -1,5 +1,5 @@
-//! What a publish to a process group costs, for `docs/BASELINE.md` (ROADMAP
-//! B7): with 1 to 1,000 members on one node, the time of one `publish` call
+//! What a publish to a process group costs, for `docs/BASELINE.md`:
+//! with 1 to 1,000 members on one node, the time of one `publish` call
 //! (the host casts to every member before it returns), and deliveries per
 //! second until every member has handled a burst of publishes.
 //!

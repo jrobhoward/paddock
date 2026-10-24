@@ -15,7 +15,7 @@
 #   scada     the failover cluster running the SCADA example against fake
 #             Modbus devices, probed over HTTP on both nodes, alternating
 #             fault episodes with releases of `control` across the pair and
-#             planned switchovers (paddock-soak scada; Phase 3's exit, X2);
+#             planned switchovers (paddock-soak scada; Phase 3's exit);
 #             fails when a planned step fails a point read, leaves a point
 #             gap of 1 s or more, or fails a request to `control` outside a
 #             switchover's hand-over, or when, after a heal, other than one

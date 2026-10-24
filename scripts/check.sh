@@ -203,7 +203,7 @@ check_guests() {
             echo "$name: connection handler"
             continue
         fi
-        # HTTP handlers export `wasi:http/incoming-handler` (ROADMAP E6).
+        # HTTP handlers export `wasi:http/incoming-handler`.
         if echo "$wit" | has "export wasi:http/incoming-handler@0.2."; then
             echo "$name: HTTP handler"
             continue

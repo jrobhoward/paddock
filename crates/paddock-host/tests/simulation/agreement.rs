@@ -1,4 +1,4 @@
-//! Both nodes agree on every link and monitor between them (ROADMAP C6):
+//! Both nodes agree on every link and monitor between them:
 //! one test per counterexample of spike S12's model, each failing without
 //! the rule that fixes it. The fourth counterexample (a replaced QUIC
 //! connection) has its test in `tests/quic.rs`.
@@ -130,7 +130,7 @@ fn acl(accept_from: &[&str], may_call: &[&str]) -> paddock_host::acl::Acl {
     }
 }
 
-/// Messaging ACLs across nodes (ROADMAP D5): the target's node checks the
+/// Messaging ACLs across nodes: the target's node checks the
 /// sender's stamp. A refused link leaves no side on either node.
 #[test]
 fn acl____across_nodes____checked_on_the_target_node() {

@@ -117,7 +117,7 @@ Read roughly:
 ## Effect on the design
 
 - Paddock suits coarse-grained work: tasks taking more than tens of microseconds per message. Chatty, tiny calls pay a 2–5 µs floor each.
-- Consider enabling `simd128` by default for guests built with `paddock bundle` (M8). Every current wasm runtime supports it.
+- Consider enabling `simd128` by default for guests built with `paddock bundle`. Every current wasm runtime supports it.
 - Crypto-heavy apps should expect native SHA and AES to be several times faster. A `paddock:crypto` host interface would be a later-phase option.
 - Large messages are fine to send but are copied at each boundary. A bulk-data path (a shared bucket or file passed by reference) only matters for payloads of many MiB per message.
-- M9's baseline benchmarks should reuse this harness, and split out the cost of epoch interruption by comparing against a raw wasmtime store without it.
+- The baseline benchmarks should reuse this harness, and split out the cost of epoch interruption by comparing against a raw wasmtime store without it.

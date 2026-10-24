@@ -22,7 +22,7 @@ defaults:
 jobs:
   # The host will touch per-OS behaviour (sockets, filesystem preopens,
   # address-space limits, the serial tty layer), so every OS runs the whole
-  # suite, and Linux on arm64 too (ROADMAP G3: the Raspberry Pi 5 and other
+  # suite, and Linux on arm64 too (the Raspberry Pi 5 and other
   # arm64 nodes; wasmtime's code generator differs by architecture).
   test:
     name: test (${{ matrix.os }})

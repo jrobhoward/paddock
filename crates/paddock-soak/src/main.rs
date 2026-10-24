@@ -1,5 +1,4 @@
-//! `paddock-soak`: the long-running checks behind `scripts/soak.sh`
-//! (ROADMAP T2).
+//! `paddock-soak`: the long-running checks behind `scripts/soak.sh`.
 //!
 //! - `failover`: a witness and an HA pair as `paddock node` processes, each
 //!   reached through a UDP proxy that cuts, holds or drops each direction
@@ -8,16 +7,15 @@
 //!   node must run the singleton.
 //! - `replication`: the failover cluster with a `cluster` bucket on the
 //!   pair, written through both nodes by the ledger example; after each
-//!   heal both copies must agree and hold every acknowledged write
-//!   (ROADMAP K2).
+//!   heal both copies must agree and hold every acknowledged write.
 //! - `scada`: the failover cluster running the SCADA example against fake
 //!   Modbus devices, probed over HTTP on both nodes; between fault
 //!   episodes, releases of `control` across the pair and planned
-//!   switchovers, which must not interrupt the point table (ROADMAP X2).
+//!   switchovers, which must not interrupt the point table.
 //! - `cluster`: three member nodes behind the same proxies, their instances
 //!   linking and monitoring each other at random under link and node
 //!   faults; after each heal every link and monitor must be listed on both
-//!   nodes (ROADMAP D3, spike S12).
+//!   nodes (spike S12).
 //! - `chaos`: the chaos example on one node, sent random commands that trap,
 //!   spin and allocate; the node must keep answering.
 //! - `check`: reads a failover run's directory and fails on any moment when

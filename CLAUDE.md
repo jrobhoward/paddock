@@ -26,8 +26,8 @@ before changing anything structural:
 
 ## Local machines
 
-Details of the machines this checkout tests on (the Raspberry Pi 5 for T3,
-G2 and F5: host, logins, toolchain) are in `CLAUDE.local.md`, which is
+Details of the machines this checkout tests on (the Raspberry Pi 5 for the ARM
+baselines and the serial line: host, logins, toolchain) are in `CLAUDE.local.md`, which is
 gitignored. Read it before work on real hardware. Never copy hostnames,
 logins or addresses from it into tracked files or commit messages.
 
@@ -168,7 +168,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-fixture-net`: a guest that connects, listens and binds
   UDP through `paddock-sdk`'s `net` module and waits on its sockets with
   `paddock:io` (`paddock-host`'s `tests/sockets.rs`).
-- `crates/paddock-native`: native-process apps (ROADMAP N2): `protocol`
+- `crates/paddock-native`: native-process apps: `protocol`
   (CBOR frames between a node and a native app), `app` (feature `app`: an
   executable's App trait and process functions) and `runner` (feature
   `runner`, default; Linux): `paddock-runner`, which restricts itself
@@ -230,7 +230,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   starts and kills `singleton` apps as `may_run` changes;
   `crates/paddock/tests/failover.rs` runs a pair and a witness over QUIC.
 - `crates/paddock-host/src/replication/`: `cluster` shared buckets on the
-  HA pair (ROADMAP K2). `core.rs` is the replica as a state machine whose
+  HA pair. `core.rs` is the replica as a state machine whose
   transitions are named after spike S20's actions
   (`spikes/s20/PairReplication.tla`); `log.rs` the log, in the keyvalue
   redb file; `mod.rs` the task around them. The rules are S20's R1 to R7
@@ -281,7 +281,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   between every node's `ps` links and monitors, `scada` the failover
   cluster running `examples/scada` against fake devices with HTTP probes, between
   fault episodes releasing `control` across the pair and switching over
-  (Phase 3's exit, ROADMAP X2), `chaos` the chaos example on
+  (Phase 3's exit), `chaos` the chaos example on
   one node, and `check` reads a failover run's events and node logs for
   any moment when both nodes ran the singleton. It reads the gate's
   `singleton starting`, `singleton killed` and `singleton stopped` log
@@ -317,7 +317,7 @@ hang the run.
 
 **The epoch ticker is an OS thread, not a tokio task.** Guests yield only when
 the epoch advances; if every worker ran a spinning guest, a ticker task would
-never be scheduled and nothing would yield again (M2).
+never be scheduled and nothing would yield again.
 
 **A Store whose call future was dropped, or that trapped, is poisoned.** The
 next entry traps with `cannot enter component instance`. Killing an instance
@@ -330,7 +330,7 @@ hook times every host import (`CallHook::CallingHost` to
 subtracts that time, so waiting on another instance, a timer or I/O is not
 runaway code. Host functions do not time themselves. The epoch callback
 yields every tick for fairness (S1). The hook costs nothing measurable in
-`baseline` (E2, BASELINE.md).
+`baseline` (BASELINE.md).
 
 **The epoch tick bounds how long a busy instance holds a worker.** Receiving
 from a non-empty mailbox never suspends, so an instance draining a full
@@ -343,7 +343,7 @@ the tick or the instance loop (0.5, `docs/BASELINE.md`).
 
 **A component imports only what its code calls.** An app that never calls a
 `process` function has no `process` import, so deploy-time checks treat an
-absent import as unused, not as an error (M0).
+absent import as unused, not as an error.
 
 **`from` is a WIT keyword.** It can't be a parameter name (`handle-call` takes
 `caller`).
@@ -378,21 +378,21 @@ integrity, not authorship (S6). Use `verify_manifest_signature_trusted` and
 **Import inspection skips type imports.** A world that uses interface types
 (`use types.{envelope}`) imports each type by its plain name (`envelope`); these
 are bound to the interface instance, not linked separately. Counting them as
-imports refuses every real component (M1, found by the echo fixture).
+imports refuses every real component (found by the echo fixture).
 
 **Unix-only code compiles cleanly on Windows.** The admin API and its client
 are `cfg(unix)`; code reachable only from them must not warn on Windows, where
 CI runs clippy with `-Dwarnings`. Scope Unix-only imports inside the function,
-or allow dead code for the module with a comment (M7).
+or allow dead code for the module with a comment.
 
 **Fixtures and examples build per feature set.** Cargo unifies features within
 one build, so each feature combination (counter v1/v2/v3, services with and
 without `denied`) builds into its own `target/fixtures/<name>` directory, and
-test binaries that build the same set share a directory (M6 to M8).
+test binaries that build the same set share a directory.
 
 **Unix socket paths are short.** About 107 bytes on Linux and 103 on macOS;
 the node refuses a longer `admin_socket` with a message saying so, and tests
-keep data directories short (M7).
+keep data directories short.
 
 **wasmtime 49 has its own `wasmtime::Error`, not `anyhow::Error`.** Use
 `wasmtime::Result` at the wasmtime boundary and convert into this crate's

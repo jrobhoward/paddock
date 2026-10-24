@@ -1,4 +1,4 @@
-//! Shared keyvalue buckets (ROADMAP H3): named in the runtime's
+//! Shared keyvalue buckets: named in the runtime's
 //! configuration and opened by several apps, read-only or read-write,
 //! through `paddock-sdk`'s `kv` wrapper and the SDK fixture.
 

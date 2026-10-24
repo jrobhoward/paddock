@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The SCADA release drill (ROADMAP X1, X2): the example's apps on an HA
+# The SCADA release drill: the example's apps on an HA
 # pair and a witness, three `paddock node` processes, with two fake Modbus
 # devices, taken through a release cycle while a probe per node asks the
 # HMI for the point table and the alarms ten times a second:
@@ -17,7 +17,7 @@
 # pump-1-pressure alarm (raised and acknowledged before the cycle) as the
 # primary sees it after each step. The point table is a `cluster` bucket
 # polled by the primary alone, and control's buckets are `replicated`.
-# X2 turns the report into a pass or fail.
+# paddock-soak scada turns the report into a pass or fail.
 #
 #   examples/scada/drill.sh                 # STEP_SECS=5 between steps
 #   DRILL_DIR=/tmp/drill examples/scada/drill.sh
@@ -137,7 +137,7 @@ for n in 1 2 3; do
       echo "partner = $((3 - n))"
       echo "arbiter = \"witness\""
       echo "witness = 3"
-      # control's own buckets, replicated on the pair (K3).
+      # control's own buckets, replicated on the pair.
       echo "replication = true"
     fi
     echo "lease_ms = 2000"
@@ -147,7 +147,7 @@ for n in 1 2 3; do
       echo "address = \"127.0.0.1:$((HTTP_PORT + n - 1))\""
       # control's routes: from the standby to the primary, over the cluster.
       echo "standby = \"forward\""
-      # The point table, one copy on each node of the pair (K2), written
+      # The point table, one copy on each node of the pair, written
       # by the primary's polls only.
       echo "[buckets.points]"
       echo "durability = \"disk\""

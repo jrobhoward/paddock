@@ -1,5 +1,5 @@
 //! Whether other nodes are alive and reachable: heartbeats, sessions, and
-//! the events that failover reads (ROADMAP C5).
+//! the events that failover reads.
 //!
 //! Every `heartbeat_interval` (see [`RuntimeConfig`](crate::RuntimeConfig)),
 //! a runtime sends each peer a [`Frame::Heartbeat`](super::Frame) over its
@@ -27,7 +27,7 @@
 //! and the receiver keeps the latest one per path. Extra paths only report
 //! [`NodeEvent::PathSilent`] and [`NodeEvent::PathHeard`]; they carry no
 //! frames and never end a session.
-//! Failover (ROADMAP D10) reads them to tell a partition (link silent, serial
+//! Failover reads them to tell a partition (link silent, serial
 //! heard) from a dead node (both silent).
 
 use std::collections::BTreeMap;
@@ -601,7 +601,7 @@ fn round(rt: &Arc<RuntimeInner>) {
     for node in liveness.check(Instant::now()) {
         super::end_session(rt, node);
     }
-    // Process groups: a snapshot to each peer in a new session (ROADMAP D4).
+    // Process groups: a snapshot to each peer in a new session.
     rt.services.groups().sync(rt);
     // Membership gossip, every few rounds: every member this node knows,
     // to each member it reaches, and a join to each peer it watches and

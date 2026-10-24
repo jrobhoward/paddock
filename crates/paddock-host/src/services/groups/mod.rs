@@ -1,5 +1,5 @@
 //! `paddock:groups`: process groups across the cluster, with publish
-//! (ROADMAP H2 on one node, D4 across nodes, as OTP's `pg`).
+//! (on one node and across nodes, as OTP's `pg`).
 //!
 //! Each node owns its own members. The table is keyed by pid, so an upgrade
 //! (same pid, new Store) keeps an instance's groups, and an exit removes them

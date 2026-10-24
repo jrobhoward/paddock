@@ -1,4 +1,4 @@
-//! A native-process instance's lifecycle (ROADMAP N2): the app's process,
+//! A native-process instance's lifecycle: the app's process,
 //! through its [`Port`], in place of a Store.
 //!
 //! Same pid, mailbox, signals, operations, links, monitors and exit

@@ -1,4 +1,4 @@
-//! Native-process apps for Paddock (ROADMAP N2, spike S19).
+//! Native-process apps for Paddock (spike S19).
 //!
 //! A native app runs as a process the node spawns and supervises like an
 //! instance, talking to the node over its stdin and stdout: an

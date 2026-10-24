@@ -1,5 +1,5 @@
 //! `paddock cluster keygen` and `paddock cluster pubkey`: a node's key for
-//! the cluster transport (ROADMAP D1).
+//! the cluster transport.
 //!
 //! Nodes trust each other by public key, as WireGuard peers do; there is
 //! no certificate authority and nothing expires. `keygen` writes a node's

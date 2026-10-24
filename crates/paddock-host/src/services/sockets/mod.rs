@@ -1,4 +1,4 @@
-//! `wasi:sockets`: TCP and UDP from apps (ROADMAP N1).
+//! `wasi:sockets`: TCP and UDP from apps.
 //!
 //! wasmtime-wasi implements the interfaces and every app is linked to them;
 //! this service narrows them. Without the capability granted, TCP, UDP and

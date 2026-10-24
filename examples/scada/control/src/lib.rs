@@ -11,7 +11,7 @@
 //! kept in the app's `alarms` bucket and every change in its `events`
 //! bucket, the last 1000 of them, both on disk on the node it runs on.
 //!
-//! Before replicated buckets (ROADMAP K3), a failover or switchover starts
+//! Before replicated buckets, a failover or switchover starts
 //! it on the other node from that node's own buckets: alarms that changed
 //! meanwhile are re-raised from the table, and their acknowledgements and
 //! the events of the other node are not there.

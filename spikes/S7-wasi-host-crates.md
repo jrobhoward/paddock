@@ -22,5 +22,5 @@ Checked 2026-10-05 by reading the published crate sources.
 
 ## Effect on the plan
 
-- M5 scope: our own `wasi:keyvalue` and `wasi:logging` hosts. `wasi:config` and core WASI come from wasmtime.
+- Scope: our own `wasi:keyvalue` and `wasi:logging` hosts. `wasi:config` and core WASI come from wasmtime.
 - Interface rule update: the denial case is named `access-denied`.

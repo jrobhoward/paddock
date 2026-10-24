@@ -1,4 +1,4 @@
-//! The failover pair's serial heartbeat path (ROADMAP F5): a beat to the
+//! The failover pair's serial heartbeat path: a beat to the
 //! partner every heartbeat interval, as a [`frame`], and the
 //! partner's beats reported to the runtime as path [`PATH`].
 //!

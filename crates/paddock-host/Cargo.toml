@@ -15,9 +15,9 @@ default = ["http", "tls", "sql", "egress"]
 http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 # HTTPS on the HTTP ingress (`http::IngressTls`).
 tls = ["http", "dep:tokio-rustls"]
-# SQL datasources (`paddock:sql`, ROADMAP E5): a Postgres pool per datasource
+# SQL datasources (`paddock:sql`): a Postgres pool per datasource
 # in node config. Idle without one.
-# HTTP egress (`wasi:http/outgoing-handler`, ROADMAP E2): a filtering
+# HTTP egress (`wasi:http/outgoing-handler`): a filtering
 # sender with a connection pool. Without it, the interface is deny-stubbed.
 egress = ["tls", "dep:wasmtime-wasi-http", "dep:hyper-rustls", "dep:rustls-native-certs", "dep:tower-service", "hyper-util/client-legacy", "hyper-util/http1"]
 sql = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio-postgres-rustls", "dep:futures-util"]

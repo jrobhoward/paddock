@@ -6,7 +6,7 @@
 //! with [`Runtime::node_down`](crate::Runtime::node_down). Packets from
 //! other nodes arrive through [`Runtime::deliver`](crate::Runtime::deliver).
 //! [`memory`] is an in-process transport for tests, with faults to inject;
-//! QUIC (ROADMAP D1) implements the same trait.
+//! QUIC implements the same trait.
 //!
 //! Each node keeps its own side of a link or monitor between nodes. When the
 //! session with a node ends, because the transport reported it lost or
@@ -183,7 +183,7 @@ pub enum Frame {
         reference: u64,
     },
     /// Every member the sender has in each process group, replacing what
-    /// the receiver knew of the sender's members (ROADMAP D4).
+    /// the receiver knew of the sender's members.
     GroupSync {
         /// Each group and the sender's members in it.
         groups: Vec<(String, Vec<Pid>)>,
@@ -224,7 +224,7 @@ pub enum Frame {
         /// Why.
         reason: ExitReason,
     },
-    /// Replication between the nodes of an HA pair (ROADMAP K2): log
+    /// Replication between the nodes of an HA pair: log
     /// entries, acknowledgements, snapshots, and operations the standby
     /// forwards to the primary, as CBOR the replication module reads.
     Replication {
@@ -234,7 +234,7 @@ pub enum Frame {
     },
     /// A call from the sending node's host to the app called `app` on the
     /// receiving node, whose pool picks the instance as for a local caller
-    /// (an HTTP request forwarded from a standby's ingress, ROADMAP D11);
+    /// (an HTTP request forwarded from a standby's ingress);
     /// answered with [`Frame::Reply`].
     AppCall {
         /// The caller's node's id for this call.

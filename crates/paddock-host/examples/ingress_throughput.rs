@@ -1,12 +1,12 @@
-//! HTTP ingress throughput, for `docs/BASELINE.md` (ROADMAP B7): the
+//! HTTP ingress throughput, for `docs/BASELINE.md`: the
 //! node's ingress (`HttpIngress`, hyper in the host) on loopback, each
 //! request a call to a pool of the SDK fixture answering `/plain` with
 //! `plain`; or, with `handler`, a new instance of the HTTP-handler fixture
-//! per request answering `/hello` with `hello`, streamed (ROADMAP E6); or,
+//! per request answering `/hello` with `hello`, streamed; or,
 //! with `s15`, spike S15's host-hyper shape (a bare hyper service calling
 //! chaos instances round-robin with `echo:ok`, no envelopes, no routing),
-//! so the ingress's own cost shows against it under the same client (ROADMAP
-//! B8); or, with `chaos`, the ingress in front of a pool of chaos instances,
+//! so the ingress's own cost shows against it under the same client;
+//! or, with `chaos`, the ingress in front of a pool of chaos instances,
 //! which answer any request with a short text reply (no CBOR in the guest):
 //! the ingress's host cost alone. The load comes from keep-alive HTTP/1.1 connections on their own
 //! tokio runtime, as in spike S15.

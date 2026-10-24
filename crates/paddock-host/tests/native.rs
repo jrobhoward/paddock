@@ -1,4 +1,4 @@
-//! Native-process apps (ROADMAP N2) through `paddock-runner`: the fixture
+//! Native-process apps through `paddock-runner`: the fixture
 //! executable's callbacks and process functions, its failures as exit
 //! reasons, its limits, and a rustbridge plugin.
 
@@ -238,7 +238,7 @@ async fn library____json_call____plugin_answers() {
 }
 
 #[tokio::test]
-async fn runner_missing____instance_crashed_at_start() {
+async fn runner____missing____instance_crashed_at_start() {
     let rt = runtime(|n| n.runner = Some("/nonexistent/paddock-runner".into()));
     let app = executable(&rt);
 

@@ -1,4 +1,4 @@
-//! `wasi:http/outgoing-handler`: HTTP requests from apps (ROADMAP E2).
+//! `wasi:http/outgoing-handler`: HTTP requests from apps.
 //!
 //! wasmtime-wasi-http implements the interface; its send hook is this
 //! module's filter. A request goes out only if the operator granted the

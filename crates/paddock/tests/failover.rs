@@ -1,4 +1,4 @@
-//! An HA pair with a witness over the QUIC transport (ROADMAP D10): a
+//! An HA pair with a witness over the QUIC transport: a
 //! singleton runs on the primary only, moves to the standby when the
 //! primary stops or its process is killed, and stays put when the old
 //! primary comes back.
@@ -318,7 +318,7 @@ impl Watch {
     }
 }
 
-/// ROADMAP D11, step 3: `paddock failover --watch` prints the standby's
+/// For a virtual-IP agent: `paddock failover --watch` prints the standby's
 /// standing, a line when it is promoted, `unreachable` when its node goes,
 /// and the node's standing again once it is back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -363,7 +363,7 @@ async fn failover_watch____promotion_node_loss_and_return____a_line_each() {
     }
 }
 
-/// ROADMAP D10b: `paddock failover switchover` on the primary stops its
+/// A planned switchover: `paddock failover switchover` on the primary stops its
 /// singleton gracefully and the standby runs it within about a lease,
 /// without a node timeout; the old primary rejoins as standby. On a
 /// standby it is refused, and nothing stops.
@@ -715,7 +715,7 @@ async fn gate____start_fails_at_promotion____tried_again_until_it_starts() {
     n.shutdown().await;
 }
 
-/// The pair's serial line (ROADMAP F5): two ptys joined by a relay the test
+/// The pair's serial line: two ptys joined by a relay the test
 /// can cut, or with `PADDOCK_SERIAL_PAIR=/dev/ttyUSB0,/dev/ttyUSB1` a pty
 /// relayed to the first device while node 2 opens the second, so beats
 /// cross a real cable. The devices each node of the pair opens, the cut
@@ -799,7 +799,7 @@ async fn failover_serial____line_cut_and_restored_then_primary_killed____paths_f
 }
 
 /// The SDK fixture as a singleton with its own `replicated` bucket
-/// `state` (ROADMAP K3).
+/// `state`.
 fn replicated_singleton(signer: &minisign::KeyPair) -> Vec<u8> {
     let manifest = fast(serde_json::json!({
         "placement": { "mode": "singleton" },
@@ -907,7 +907,7 @@ async fn failover____singleton_with_replicated_bucket_primary_killed____new_prim
 }
 
 /// The counter fixture as a singleton in `snapshot` upgrade mode: it
-/// moves with its count in a planned switchover (ROADMAP M1).
+/// moves with its count in a planned switchover.
 fn moving_counter(signer: &minisign::KeyPair) -> Vec<u8> {
     let mut manifest = common::counter_manifest(None);
     manifest["placement"] = serde_json::json!({ "mode": "singleton" });
@@ -996,7 +996,7 @@ async fn gate____replicated_bucket_on_a_node_without_replication____deploy_refus
     n.shutdown().await;
 }
 
-/// The last step of a release across the pair (ROADMAP U1): `release`
+/// The last step of a release across the pair: `release`
 /// shows the versions each node speaks and keeps, `release finalize`
 /// raises the pair's version on both nodes, once, and is refused on the
 /// witness, which keeps nothing replicated.
@@ -1106,7 +1106,7 @@ async fn release(args: &[&str], pair: &Path) -> (bool, serde_json::Value) {
     (out.status.success(), report)
 }
 
-/// A release across the pair (ROADMAP U1): `release upgrade` moves the
+/// A release across the pair: `release upgrade` moves the
 /// standby, then the primary in place, keeping the singleton's state;
 /// `release rollback` returns both; a version whose `load-snapshot` fails
 /// is refused on the primary, and the standby already upgraded is rolled
@@ -1245,8 +1245,8 @@ async fn release_upgrade____singleton_on_a_pair____standby_then_primary_and_abor
     }
 }
 
-/// A release across the pair whose primary is lost between its steps
-/// (ROADMAP U1, X1): `--standby-only` upgrades the standby and pauses; the
+/// A release across the pair whose primary is lost between its steps:
+/// `--standby-only` upgrades the standby and pauses; the
 /// primary is killed, the standby takes over at the new version, and a
 /// second run, once the old primary is back as standby, upgrades it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -274,12 +274,12 @@ impl Shared {
         })
     }
 
-    /// Process groups, which other nodes' frames update (ROADMAP D4).
+    /// Process groups, which other nodes' frames update.
     pub(crate) fn groups(&self) -> &Arc<groups::Shared> {
         &self.groups
     }
 
-    /// Keyvalue buckets, which replication writes (ROADMAP K2).
+    /// Keyvalue buckets, which replication writes.
     pub(crate) fn keyvalue(&self) -> &Arc<keyvalue::storage::KvStore> {
         &self.keyvalue
     }

@@ -1,5 +1,5 @@
 //! Failover of a singleton between an HA pair (nodes 1 and 2) with a
-//! witness (node 3) (ROADMAP D10), against the rules spike S16 checked.
+//! witness (node 3), against the rules spike S16 checked.
 //!
 //! Every change in each node's `may_run` is logged with its virtual time;
 //! `overlap` replays the log and finds any moment when both nodes could run
@@ -241,7 +241,7 @@ fn bound_instances____lease_moves_with_no_gate____guest_code_runs_only_under_the
 
 /// A standby whose request's answer was lost, and which then hears its
 /// primary again, goes back to confirming the primary's lease once the
-/// request's retry time passes (ROADMAP Q12): the primary keeps running
+/// request's retry time passes: the primary keeps running
 /// when it later loses the witness.
 #[test]
 fn lost_answer____partner_heard_again____standby_confirms_the_lease_again() {
@@ -633,7 +633,7 @@ fn failover____random_faults____never_two_runners_one_after_healing() {
 }
 
 /// As [`failover____random_faults____never_two_runners_one_after_healing`],
-/// with planned switchovers among the faults (ROADMAP D10b).
+/// with planned switchovers among the faults.
 #[test]
 fn failover____random_faults_and_switchovers____never_two_runners_one_after_healing() {
     random_faults(true);
@@ -737,7 +737,7 @@ fn random_faults(switchovers: bool) {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// A planned switchover (ROADMAP D10b): the standby runs the singleton
+/// A planned switchover: the standby runs the singleton
 /// within a lease and its margin, without a node timeout, the old primary
 /// rejoins as its standby, and the two never run at once. A standby asked
 /// to hand over refuses.
@@ -784,7 +784,7 @@ fn switchover____healthy_pair____standby_takes_over_within_a_lease_old_primary_r
 /// "Mixed versions during a release"): the old primary's release is a
 /// frame the witness cannot read, so it is not sent, and the witness waits
 /// the lease out as for a release lost; with a witness of this build it
-/// grants within a few beats (ROADMAP L1).
+/// grants within a few beats.
 #[test]
 fn switchover____witness_one_release_older____standby_waits_the_lease_out() {
     let switch = |witness_version: u16| {

@@ -1,4 +1,4 @@
-//! Messaging ACLs on one node (ROADMAP D5): calls, casts, exit signals and
+//! Messaging ACLs on one node: calls, casts, exit signals and
 //! links between apps pass only when the sender's `may_call` and the
 //! target's `accept_from` both allow them; monitors, the host and an app's
 //! own instances are not checked.

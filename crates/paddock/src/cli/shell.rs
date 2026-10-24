@@ -1,4 +1,4 @@
-//! `paddock shell`: a session with a node (ROADMAP P1). Each line is a
+//! `paddock shell`: a session with a node. Each line is a
 //! `paddock` command run against the node the session is connected to;
 //! `connect` moves the session to another node from the contacts file
 //! ([`super::contacts`]). Ctrl-C ends the command running (a follow, a

@@ -1,4 +1,4 @@
-//! The floor under a call between nodes (ROADMAP B8): bare quinn over
+//! The floor under a call between nodes: bare quinn over
 //! loopback, without Paddock, so `cluster_throughput`'s two-node call
 //! latency can be split into what QUIC and tokio cost and what Paddock
 //! adds. Two endpoints in one process, TLS 1.3 on ring (a self-signed

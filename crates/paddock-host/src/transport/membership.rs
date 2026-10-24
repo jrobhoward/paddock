@@ -1,4 +1,4 @@
-//! Which nodes form the cluster (ROADMAP D2).
+//! Which nodes form the cluster.
 //!
 //! A node joins by sending [`Frame::Join`](super::Frame) to one or more
 //! seeds. A node that hears a join adds the newcomer, answers with every
@@ -31,7 +31,7 @@ pub enum Role {
     /// Runs apps.
     #[default]
     Member,
-    /// Runs no apps; takes part in failover decisions (ROADMAP D10).
+    /// Runs no apps; takes part in failover decisions.
     Witness,
 }
 

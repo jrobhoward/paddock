@@ -75,7 +75,7 @@ cfg Vac_Handover -1 1 1 "" "INVARIANT NoHandover"
 cfg Links3NoLeaseReads 3 3 0 "LeaseReads=FALSE Crashes=FALSE WitnessCrashes=FALSE" "$SAFETY"
 cfg Links3NoCommitRunning 3 3 0 "CommitWhileRunning=FALSE Crashes=FALSE WitnessCrashes=FALSE" "$SAFETY"
 
-# K2's variant: a new primary starts in sync; the record is made only when
+# The implementation's variant: a new primary starts in sync; the record is made only when
 # it goes alone.
 cfg Sync1 1 9 1 "PromoteAlone=FALSE" "$SAFETY"
 cfg SyncNoOutdated -1 1 1 "PromoteAlone=FALSE Outdated=FALSE" "$SAFETY"
@@ -83,7 +83,7 @@ cfg SyncVac_AloneCommit -1 1 0 "PromoteAlone=FALSE" "PROPERTY NoAloneCommit"
 cfg SyncVac_Refusal -1 1 0 "PromoteAlone=FALSE" "INVARIANT NoRefusal"
 cfg SyncVac_WriteAfterFailover -1 1 0 "PromoteAlone=FALSE" "INVARIANT NoWriteAfterFailover"
 
-# And as K2's code runs it: back to sync mode at any time.
+# And as the code runs it: back to sync mode at any time.
 cfg EagerSeq -1 1 1 "PromoteAlone=FALSE EagerSync=TRUE" "$SAFETY"
 cfg Eager1 1 9 1 "PromoteAlone=FALSE EagerSync=TRUE" "$SAFETY"
 cfg EagerNoReportInSync -1 1 1 "PromoteAlone=FALSE EagerSync=TRUE ReportOnlyInSync=FALSE" "$SAFETY"

@@ -1,4 +1,4 @@
-//! Serial lines (ROADMAP F5): a raw tty layer, the frames the failover
+//! Serial lines: a raw tty layer, the frames the failover
 //! pair's heartbeat path sends over a serial cable, and a relay that joins
 //! two ttys for tests and the soak. Unix only: the common Rust serial
 //! crates are MPL-2.0, which the licence policy refuses, so the tty layer

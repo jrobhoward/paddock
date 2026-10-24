@@ -52,7 +52,7 @@ repository = "https://github.com/jrobhoward/paddock"
 wasmtime = { version = "49", default-features = false }
 wasmtime-wasi = { version = "49", default-features = false }
 wasmtime-wasi-config = "49"
-# HTTP egress (ROADMAP E2): our own sender, so no default-send-request
+# HTTP egress: our own sender, so no default-send-request
 # (webpki-roots) and no p3.
 wasmtime-wasi-http = { version = "49", default-features = false, features = ["p2"] }
 wit-bindgen = "0.62"
@@ -86,12 +86,12 @@ tower-service = "0.3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-# QUIC between nodes (ROADMAP D1), on rustls with ring.
+# QUIC between nodes, on rustls with ring.
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 # Parses peers' raw public keys (rustls' own verifier crate).
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 base64 = "0.23"
-# SQL datasources (ROADMAP E5): Postgres, pooled, TLS on rustls with ring.
+# SQL datasources: Postgres, pooled, TLS on rustls with ring.
 tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"] }
 deadpool-postgres = { version = "0.14", default-features = false, features = ["rt_tokio_1"] }
 futures-util = { version = "0.3", default-features = false }

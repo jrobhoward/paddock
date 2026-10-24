@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run Paddock's benchmarks and write a dated section for docs/BASELINE.md
-# (ROADMAP B7). Each benchmark runs as its own process under GNU time, which
+# Run Paddock's benchmarks and write a dated section for docs/BASELINE.md.
+# Each benchmark runs as its own process under GNU time, which
 # adds its wall time, CPU time and peak resident memory (from the kernel's
 # rusage; no root). Benchmarks run one at a time, on an idle machine: the
 # script refuses to start while the load average is above BENCH_MAX_LOAD
@@ -25,11 +25,11 @@ BENCHES=(
   "admin|admin API latency (1 and 4 workers)|R/examples/admin_latency 1; R/examples/admin_latency 4"
   "watch|keyvalue writes with watchers, memory and disk buckets|R/examples/watch_cost 4; R/examples/watch_cost 4 disk"
   "publish|a publish to 1 to 1,000 group members|R/examples/publish_cost 4"
-  "ingress|HTTP ingress throughput: requests as calls to a pool, the ingress with a guest doing no CBOR, S15's bare shape, and an HTTP handler's instance per request (E6)|R/examples/ingress_throughput 4 4; R/examples/ingress_throughput 4 4 chaos; R/examples/ingress_throughput 4 4 s15; R/examples/ingress_throughput 4 4 handler"
-  "batch|points per second between apps, one cast each or batched (F4)|R/examples/batch_cost 1; R/examples/batch_cost 4"
+  "ingress|HTTP ingress throughput: requests as calls to a pool, the ingress with a guest doing no CBOR, S15's bare shape, and an HTTP handler's instance per request|R/examples/ingress_throughput 4 4; R/examples/ingress_throughput 4 4 chaos; R/examples/ingress_throughput 4 4 s15; R/examples/ingress_throughput 4 4 handler"
+  "batch|points per second between apps, one cast each or batched|R/examples/batch_cost 1; R/examples/batch_cost 4"
   "egress|outgoing HTTP from a guest through the pool|R/examples/egress_cost 1; R/examples/egress_cost 4; R/examples/egress_cost 4 nopool"
   "cluster|calls, casts and payloads between two nodes over QUIC, and bare quinn's floor|R/examples/cluster_throughput 4; R/examples/quic_floor 4"
-  "replication|writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket (K2)|R/examples/replication_cost 4"
+  "replication|writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket|R/examples/replication_cost 4"
   "passivation|wake cost, instances per Store slot, random calls|R/examples/passivation_cost 4 1000 100000; R/examples/passivation_cost 4 100 2000; R/examples/passivation_cost 4 1000 1000 off"
   "modbus|Modbus points through the scada pool|R/examples/modbus_load 16 100 10 4 4; R/examples/modbus_load 64 125 1 4 4; R/examples/modbus_load 64 125 1 8 8"
   "s14|spike S14: storage in the guest and host services|S/s14-bench spikes/target/wasm32-wasip2/release/s14_guest.wasm"

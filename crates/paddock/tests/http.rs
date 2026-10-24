@@ -1,4 +1,4 @@
-//! HTTP ingress through a node (ROADMAP E1): `examples/http-counter`
+//! HTTP ingress through a node: `examples/http-counter`
 //! bundled with the CLI, deployed under operator policy, and driven over
 //! HTTP; route clashes, ungranted routes, stop and start.
 

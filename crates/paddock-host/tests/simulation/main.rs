@@ -1,12 +1,12 @@
 //! Races between links, monitors, exits, partitions and heals across nodes,
-//! on a paused clock, so each test sees the same interleaving on every run
-//! (ROADMAP C3). `liveness` covers heartbeats and silent failures (C5),
-//! `membership` joining, restarts and leaving (D2), `failover` an HA pair
-//! with a witness (D10);
+//! on a paused clock, so each test sees the same interleaving on every run.
+//! `liveness` covers heartbeats and silent failures,
+//! `membership` joining, restarts and leaving, `failover` an HA pair
+//! with a witness;
 //! `random` runs seeded random scenarios against the distribution rules;
-//! `agreement` replays spike S12's counterexamples (C6); `backpressure` a
-//! congested link (D8); `groups` process groups across nodes (D4);
-//! `replication` replicated buckets on an HA pair (K2).
+//! `agreement` replays spike S12's counterexamples; `backpressure` a
+//! congested link; `groups` process groups across nodes;
+//! `replication` replicated buckets on an HA pair.
 //!
 //! Each targeted test fixes a frame delay, puts an event inside that window,
 //! and asserts the one outcome DESIGN.md's "Distribution" rules allow.

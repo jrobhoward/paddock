@@ -99,9 +99,9 @@ The harness prints more combinations than shown here.
 - **Tail latency under oversubscription is uneven.** The mean matches Little's law (clients ÷ throughput: 256 ÷ 324,000/s ≈ 790 µs), but most calls finish near the p50 and a few wait about 10 ms.
   - Cause: an instance with a full mailbox runs callbacks back to back. It gives its worker back only when tokio's cooperative budget runs out (128 mailbox receives) or the 10 ms epoch tick yields it. Meanwhile, clients and instances queued on that worker wait.
   - Tried and not adopted: a `yield_now` after every callback. p99 fell to about 5 ms, but throughput fell too, to 143,000 calls/s with 16 workers, pool 16 and 64 clients (from 314,000), and to 486,000 casts/s in `baseline` (from 787,000).
-  - Recorded as roadmap item 0.5, and fixed there by a 2 ms tick (next section).
+  - Fixed by a 2 ms tick (next section).
 
-## 2026-10-07: 2 ms epoch tick (roadmap 0.5)
+## 2026-10-07: 2 ms epoch tick
 
 Same machine. The default epoch tick changed from 10 ms to 2 ms; the sections above ran at 10 ms. `pool_load` takes the tick in µs as its second argument, so both can be rerun.
 
@@ -122,7 +122,7 @@ The tail above follows the tick, not the gaps between messages. With 16 workers,
   - Yielding after 1 ms of back-to-back callbacks, at the 10 ms tick: p99 stayed at 9–11 ms. The tail tracks the tick instead, so the waiting comes from preemption inside callbacks at the tick, not from gaps between messages.
 - Epoch-check overhead (`epoch_cost`) is the same at 2 ms: the checks cost the same whatever the tick, and a yield every 2 ms is negligible.
 
-## 2026-10-07: guest log records (roadmap A3)
+## 2026-10-07: guest log records
 
 Same machine. `log_cost.rs` runs `examples/chaos` (built with `paddock-sdk`), whose `log:<n>` command writes n `debug!` records, on one instance with `wasi:logging` granted. Cost per record is the time of `log:100000` minus `log:0`, divided by 100,000; median of 5 runs. No tracing subscriber is installed, so the host's own output formatting is not counted.
 
@@ -131,16 +131,16 @@ cargo build --release --target wasm32-wasip2 -p example-chaos
 cargo run --release -p paddock-host --example log_cost
 ```
 
-| Record | Before A3 | After A3 |
+| Record | Before | After |
 | --- | --- | --- |
 | Below the level (`debug!` at level `info`) | 426–451 ns | 3 ns |
 | Emitted (`debug!` at level `debug`) | 607–618 ns | 607–624 ns |
 
-- Before A3 a filtered record was formatted in the guest, copied to the host and dropped there.
+- Before this change a filtered record was formatted in the guest, copied to the host and dropped there.
 - Now the host announces the effective level as a `log-level` host event and the SDK's macros check it before `format!`, so a filtered record is a load and a compare.
 - Emitted records cost the same: the guest-side check adds nothing measurable.
 
-## 2026-10-07: admin API and probes (roadmap B1, B5)
+## 2026-10-07: admin API and probes
 
 Same machine.
 
@@ -167,7 +167,7 @@ cargo run --release -p paddock-host --example baseline --features probes -- 1 10
 
 Probes (`paddock-host`'s `probes` feature, anyprobe USDT) with no tracer attached, `baseline` on 1 worker, two runs each: empty call p50 2.30–2.35 µs without the feature and 2.36–2.40 µs with it, 763,000–770,000 casts/s against 766,000–775,000. The difference is within run-to-run variation.
 
-## 2026-10-09: keyvalue watches (roadmap H4)
+## 2026-10-09: keyvalue watches
 
 Same machine, but probably not idle: a TLA+ model check using about 8 of the 16 cores was likely running at the time (load average about 10 an hour later). Treat these figures as provisional; the 2026-10-15 section below reruns them on an idle machine. `watch_cost.rs` runs `paddock-fixture-sdk` instances against a shared `memory` bucket. A writer instance sets one key 2,000 times through `wasi:keyvalue` (median per call) while 0 to 1,000 other instances watch that key, or another key, through `paddock:watch`. Write to notice: the time from starting a write until a call to the watcher returns the change, polling with calls (signals are taken before calls), median of 1,000.
 
@@ -195,7 +195,7 @@ cargo run --release -p paddock-host --example watch_cost -- 4    # and 1
 - A notice is handled about 17–20 µs after the write call starts, beyond two plain calls: the write, the wake-up and one `handle-info` with a JSON decode in the guest.
 - Not measured: watches on `disk` buckets (the fsync dominates the write), and resuming a prefix watch over a large bucket (it scans the bucket's keys once).
 
-## Modbus point throughput (roadmap F6)
+## Modbus point throughput
 
 `modbus_load.rs` runs in-process fake Modbus TCP devices whose registers all change on every read (the worst case for report by exception), polls them through the `paddock-modbus` extension over loopback, and delivers each scan to `examples/scada/points`, a hash-routed pool that writes every update into a shared `memory` bucket in one batch. It reports updates stored per second against polls asked, and points per second.
 
@@ -546,7 +546,7 @@ server tokio workers: 4; load generator: 4 workers, separate threads
 
 ### Reading the 2026-10-15 numbers
 
-- **Between nodes.** A call to an instance on the other node, over QUIC on loopback with both nodes in one process, takes about 106 µs at p50 against 3.5 µs on one node: about 9,200 sequential calls per second. Concurrent callers reach about 62,000 calls per second, about 13% of one node's rate, and 64 KiB bodies move 277 MiB/s each way. Where the 100 µs goes (the QUIC stream per frame, encryption, wake-ups across tasks) is not attributed. In the cast burst, 104,239 of 400,000 casts were refused at once by the per-peer send queue's frame cap (65,536 frames, D8), and every cast accepted was handled. The figure is between two processes' worth of work in one process; between machines, the network adds its own latency.
+- **Between nodes.** A call to an instance on the other node, over QUIC on loopback with both nodes in one process, takes about 106 µs at p50 against 3.5 µs on one node: about 9,200 sequential calls per second. Concurrent callers reach about 62,000 calls per second, about 13% of one node's rate, and 64 KiB bodies move 277 MiB/s each way. Where the 100 µs goes (the QUIC stream per frame, encryption, wake-ups across tasks) is not attributed. In the cast burst, 104,239 of 400,000 casts were refused at once by the per-peer send queue's frame cap (65,536 frames), and every cast accepted was handled. The figure is between two processes' worth of work in one process; between machines, the network adds its own latency.
 - **HTTP ingress.** 12,400 requests per second on one keep-alive connection (p50 84 µs), and 82,000 to 88,000 with 32 to 128 connections, against a pool of 4. S15's host-hyper shape measured 110,500 at 32 connections in the same suite; the clients differ (S15's is hyper, this one a plain HTTP/1.1 loop) and so does the app, and the gap is not explained yet.
 - **Groups.** A publish call costs about 1.7 µs per member on its node, since the host casts to every member before it returns; deliveries level off at about 550,000 per second on 4 workers.
 - **`disk` buckets.** A write costs about 810 µs, the redb commit with its fsync; watchers add what they add on a `memory` bucket (about 3 µs each on the written key). From a write to a watcher having handled its notice: 854 µs.
@@ -554,9 +554,9 @@ server tokio workers: 4; load generator: 4 workers, separate threads
 - **Modbus.** 160,000 points per second at the paced load (16 devices every 10 ms, every poll stored). At 64 devices polled every millisecond, the node stored 6,200 updates per second (775,000 points) with a pool of 4 and 4 workers, but fewer, 4,800 (595,000 points), with 8 and 8; the fake devices share the cores, and why more workers stored less is not explained yet.
 - **Not measured:** the cost of the per-callback metric counters, which needs a build without them.
 
-## 2026-10-15: host time by call hook, and HTTP egress (roadmap E2)
+## 2026-10-15: host time by call hook, and HTTP egress
 
-Same machine as the suite above (Threadripper 1950X, 16 threads); commit bfae14b with E2's changes; the load average was 0.5 to 3 from builds between runs, so read differences under about 10% as noise.
+Same machine as the suite above (Threadripper 1950X, 16 threads); commit bfae14b with HTTP egress; the load average was 0.5 to 3 from builds between runs, so read differences under about 10% as noise.
 
 `baseline` before and after the Store's call hook (wasmtime `call-hook`, which times every host import as host time), three runs each:
 
@@ -580,7 +580,7 @@ On 1 worker the hook is within run-to-run variation; on 4 workers both sets vary
 - What is left is not the connection: on 1 worker a request takes 86 µs, on 4 it takes 140 to 164 µs. wasmtime-wasi-http spawns a task per request and hyper's pooled connection runs on a task of its own, so a request crosses tasks several times, and on several workers each crossing is a wake-up on another thread. Not attributed further.
 - Spike S15 measured 172 µs mean through wasmtime's own sender (a new connection per request) on the same machine.
 
-## 2026-10-16: batches between apps (roadmap F4)
+## 2026-10-16: batches between apps
 
 Same machine (Threadripper 1950X, 16 threads); load average 0.97 at the start (`scripts/bench.sh batch`). `batch_cost`: `source` instances of the SDK fixture each send 200,000 sample points (about 25 bytes each in CBOR) to a `sink` instance, one cast per point or in batches through `paddock_sdk::batch`; the clock runs from the first send until the sinks have counted every point. Nothing was dropped (the sinks' mailboxes held every message).
 
@@ -595,7 +595,7 @@ Same machine (Threadripper 1950X, 16 threads); load average 0.97 at the start (`
 - A batch of one costs about 10% more than a plain cast (an array around the item, and a schema id).
 - Four pairs on one worker move what one pair does: the worker is the limit. On 4 workers four pairs move about 2.3 times one pair.
 
-## 2026-10-16: HTTP handlers (roadmap E6)
+## 2026-10-16: HTTP handlers
 
 Same machine (Threadripper 1950X, 16 threads); load average 0.89 at the start (`scripts/bench.sh ingress`). `ingress_throughput` on 4 server workers and 4 client workers, keep-alive HTTP/1.1 on loopback: requests as calls to a pool of 4 SDK-fixture instances (`/plain`), against the `paddock-fixture-http` handler with a new instance per request (`/hello`, a streamed `hello`).
 
@@ -607,7 +607,7 @@ Same machine (Threadripper 1950X, 16 threads); load average 0.89 at the start (`
 - A handler serves about 30% of the pool's requests per second with 32 to 128 connections, and adds about 115 µs to one request: S15 measured the same shape (21,000 to 23,000 at 32 connections, 164 to 193 µs p50) with `wasmtime serve`'s model. The split between instantiation and the `wasi:http` resources was not measured.
 - Peak resident memory was lower for the handler run (28.9 MiB against 38.2 MiB): the pool keeps 4 instances alive, a handler only those serving a request.
 
-## 2026-10-16: what B7 left unexplained (roadmap B8)
+## 2026-10-16: what the first suite left unexplained
 
 Same machine (Threadripper 1950X, 16 threads). Benchmarks ran back to back, so the load average (1.5 to 6) is mostly their own; each comparison alternates its two sides in one session. `perf` profiles were taken with `kernel.perf_event_paranoid = 2` and `line-tables-only` debug info.
 
@@ -647,7 +647,7 @@ Neither run uses its cores (about 3.3 busy either way), and lock waits are under
 
 **Boxing the guest callback futures.** Not worth it: a passivated instance stays at 19.3 KiB resident either way (an idle task never touches the futures' space), and call latency does not change.
 
-## 2026-10-18: replicated buckets (roadmap K2)
+## 2026-10-18: replicated buckets
 
 `replication_cost` (`scripts/bench.sh replication`): an HA pair and a witness as three runtimes in one process over QUIC on loopback, 4 tokio workers for all three, each pair node's keyvalue database on the root filesystem (ext4 on a Samsung 970 EVO Plus NVMe), the SDK fixture writing 2,000 sequential writes, or as many as 16 or 64 writers manage in 5 s. 16-core machine, idle. Two builds alternated three times each: applying committed entries synced (one synced redb commit per apply) and unsynced (as shipped: the entries are already synced in both nodes' logs; see `replication/log.rs`).
 
@@ -667,11 +667,11 @@ Neither run uses its cores (about 3.3 busy either way), and lock waits are under
 - The disk bucket's single-writer figure and the alone figures jump between two modes from run to run with no change in the code (0.9 or 2.5 ms for the same write), which looks like the drive's fsync latency; take ranges, not single runs.
 - Not measured: between machines (the network adds its round trip), on the Pi, or with large values.
 
-## 2026-10-18: Raspberry Pi 5 (roadmap G2)
+## 2026-10-18: Raspberry Pi 5
 
 Raspberry Pi 5 Model B Rev 1.1 (Cortex-A76), 4 cores, 8 GiB, Ubuntu 26.04, Linux 7.0.0-1020-raspi, 4 KiB pages; rustc 1.99.1; commit 7d7095d; `scripts/bench.sh` with every benchmark but `s14` and `s15` (the spikes workspace was not built on the Pi), load average 0.02 at the start. Home directory, and so `target/` and the disk buckets, on ext4 on an NVMe drive (Realtek RTS5765DL, DRAM-less). An 8 GB swap partition was on and stayed unused (0 B) throughout. Drive temperature peaked at 49 °C, with no throttling and no errors. The full output is below, after the summary.
 
-Against the 16-core machine (the 2026-10-15 suite unless marked; the Pi's run includes B8's ingress changes, the 16-core suite does not):
+Against the 16-core machine (the 2026-10-15 suite unless marked; the Pi's run includes the 2026-10-16 ingress changes, the 16-core suite does not):
 
 | Measure | Pi 5 | 16-core |
 | --- | --- | --- |
@@ -883,7 +883,7 @@ write to notice handled: 144.1 µs (two plain calls: 36.3 µs; median of 1000)
  1000 members: publish call 4343.6 µs (median), 227059 deliveries/s handled
 ```
 
-### Pi 5: ingress: HTTP ingress throughput: requests as calls to a pool, the ingress with a guest doing no CBOR, S15's bare shape, and an HTTP handler's instance per request (E6)
+### Pi 5: ingress: HTTP ingress throughput: requests as calls to a pool, the ingress with a guest doing no CBOR, S15's bare shape, and an HTTP handler's instance per request
 
 `target/release/examples/ingress_throughput 4 4` (20.74 s wall, 29.66 s user, 26.37 s system, 52920 KiB peak RSS):
 
@@ -925,7 +925,7 @@ ingress_throughput: 4 server workers, an HTTP handler (an instance per request),
 128 connections: 24129 requests/s
 ```
 
-### Pi 5: batch: points per second between apps, one cast each or batched (F4)
+### Pi 5: batch: points per second between apps, one cast each or batched
 
 `target/release/examples/batch_cost 1` (14.58 s wall, 14.31 s user, 0.23 s system, 194952 KiB peak RSS):
 
@@ -1015,7 +1015,7 @@ quic_floor: bare quinn ping-pong over loopback, 64-byte frames, one in flight
 current thread, one write: 32691 round trips/s, p50 30.1 us, p99 39.9 us
 ```
 
-### Pi 5: replication: writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket (K2)
+### Pi 5: replication: writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket
 
 `target/release/examples/replication_cost 4` (41.85 s wall, 22.29 s user, 8.86 s system, 124160 KiB peak RSS):
 

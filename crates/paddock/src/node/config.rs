@@ -167,7 +167,7 @@ pub struct NodeConfig {
     /// Secrets, by name: where each value comes from.
     #[serde(default)]
     pub secrets: BTreeMap<String, SecretBinding>,
-    /// SQL datasources apps may use, by name (`paddock:sql`, ROADMAP E5).
+    /// SQL datasources apps may use, by name (`paddock:sql`).
     #[serde(default)]
     pub datasources: BTreeMap<String, DatasourceBinding>,
     /// Each extension's node configuration, by package
@@ -297,7 +297,7 @@ pub struct BucketConfig {
     #[serde(default)]
     pub quota: Option<ByteSize>,
     /// Where the bucket's data lives: this node, or both nodes of the HA
-    /// pair, replicated (ROADMAP K2).
+    /// pair, replicated.
     #[serde(default)]
     pub scope: BucketScope,
 }
@@ -406,7 +406,7 @@ pub enum ClusterRole {
     /// Runs apps.
     #[default]
     Member,
-    /// Runs no apps: a third node for failover decisions (ROADMAP D10).
+    /// Runs no apps: a third node for failover decisions.
     Witness,
 }
 
@@ -609,7 +609,7 @@ pub struct ListenerBinding {
 }
 
 /// `[admin]`: the admin API over TCP with TLS 1.3 and pinned keys, for
-/// operators on other machines (ROADMAP D6). The node presents `key`'s
+/// operators on other machines. The node presents `key`'s
 /// public key; an operator connects only with a key the operators file
 /// lists, and has every right the admin socket gives.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -626,7 +626,7 @@ pub struct AdminBinding {
     pub key: Option<PathBuf>,
 }
 
-/// `[egress]`: HTTP requests from apps (ROADMAP E2). Each app reaches
+/// `[egress]`: HTTP requests from apps. Each app reaches
 /// only what its manifest's `allow` lists, inside `allow` here.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -704,7 +704,7 @@ impl EgressBinding {
     }
 }
 
-/// `[sockets]`: TCP and UDP from apps (ROADMAP N1). Each app's
+/// `[sockets]`: TCP and UDP from apps. Each app's
 /// `wasi:sockets` rules must fall inside the rules here, in the manifest's
 /// syntax (`{ cidr = "10.0.0.0/8", ports = "1883" }`); a deploy asking for
 /// more is refused.
@@ -739,7 +739,7 @@ impl SocketsCeiling {
     }
 }
 
-/// `[native]`: how the node runs native-process apps (ROADMAP N2).
+/// `[native]`: how the node runs native-process apps.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NativeBinding {

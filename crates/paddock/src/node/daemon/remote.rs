@@ -1,4 +1,4 @@
-//! The admin API for operators on other machines (ROADMAP D6): the same
+//! The admin API for operators on other machines: the same
 //! routes as the admin socket, over TCP with TLS 1.3 and pinned keys.
 //!
 //! The node presents its key (`[admin] key`, or `[cluster] key`); an

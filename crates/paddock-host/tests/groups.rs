@@ -1,4 +1,4 @@
-//! `paddock:groups` (ROADMAP H2): join, leave, members and publish through
+//! `paddock:groups`: join, leave, members and publish through
 //! `paddock-sdk`'s `groups` wrapper and the SDK fixture.
 
 #![allow(non_snake_case)]

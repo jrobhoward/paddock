@@ -723,7 +723,7 @@ async fn versions_of(app: &paddock_host::AppHandle, n: usize) -> (usize, usize) 
     (one, two)
 }
 
-/// A blue-green upgrade (ROADMAP U2): the new version starts beside the
+/// A blue-green upgrade: the new version starts beside the
 /// old at no traffic, calls by name follow the weight, and promoting it
 /// stops the old side and makes it current; other upgrades wait.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

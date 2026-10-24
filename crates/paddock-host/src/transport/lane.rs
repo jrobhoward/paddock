@@ -1,4 +1,4 @@
-//! What one direction of a link to another node lets in (ROADMAP D8): the
+//! What one direction of a link to another node lets in: the
 //! rule for a congested link is the rule for a full mailbox.
 //!
 //! Messages (casts, calls and replies) are let in while the bytes of

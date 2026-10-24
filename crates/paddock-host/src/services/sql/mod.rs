@@ -1,4 +1,4 @@
-//! `paddock:sql`: SQL datasources the node binds (ROADMAP E5), Postgres.
+//! `paddock:sql`: SQL datasources the node binds, Postgres.
 //!
 //! An instance uses only datasources its manifest lists and the operator's
 //! policy grants ([`SqlSpec::datasources`], narrowed by

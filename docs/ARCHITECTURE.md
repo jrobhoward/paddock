@@ -1,6 +1,6 @@
 # Paddock: Architecture
 
-2026-10-10 · Draft (ROADMAP R1); W1 finishes it · Companion to [DESIGN.md](DESIGN.md)
+2026-10-10 · Draft; W1 finishes it · Companion to [DESIGN.md](DESIGN.md)
 
 A map of the code as built: the crates, the paths a call, a deploy and a failover take through them, the threads and tasks that run, and where state lives. DESIGN.md says why; this file says where. The stage 2 reviews (R2 to R5) work from it.
 
@@ -271,7 +271,7 @@ Node configuration, the node's cluster key and the peers file live wherever the 
 
 Found while drafting; each review decides.
 
-- **R2 (done, Q7):** the daemon's `NodeState` lock was held across bundle verification and compilation, and `list` and `status` took it too, so a slow deploy or upgrade stalled read-only admin calls. Changes now hold a separate change lock; reads take only the brief state lock.
+- **R2 (done):** the daemon's `NodeState` lock was held across bundle verification and compilation, and `list` and `status` took it too, so a slow deploy or upgrade stalled read-only admin calls. Changes now hold a separate change lock; reads take only the brief state lock.
 - **R3 (done):** an incoming `Frame::Call` spawns a task with no bound on how many run at once (SECURITY.md S8). An instance's signal queue is unbounded as a channel but bounded in practice: exit signals by the node's instance count, timers and watches by their limits.
-- **R5 (done, Q7):** `daemon.rs` was 1,860 lines; it is now `node/daemon/` by concern: `mod.rs` (the node, opening, shutdown, TLS reload), `deploy.rs` (build, deploy, start, stop, remove, restore), `upgrade.rs`, `connections.rs`, `cluster.rs` (transport, failover, witness) and `queries.rs`.
+- **R5 (done):** `daemon.rs` was 1,860 lines; it is now `node/daemon/` by concern: `mod.rs` (the node, opening, shutdown, TLS reload), `deploy.rs` (build, deploy, start, stop, remove, restore), `upgrade.rs`, `connections.rs`, `cluster.rs` (transport, failover, witness) and `queries.rs`.
 - **R4 (done):** the gate is outside `failover/` and outside the model: it writes the epoch, then starts or kills singletons. The model's `may_run` is the leadership's; the window between them is not modelled, and singleton instances close it themselves by checking the lease before each callback and at each epoch tick (`failover::RunUntil`; A8). The review's results are in `docs/tla/VERIFICATION.md`, "Conformance with the code".

@@ -1,4 +1,4 @@
-//! The SCADA soak (ROADMAP X2, Phase 3's exit): the failover soak's
+//! The SCADA soak (Phase 3's exit): the failover soak's
 //! witness and pair, behind the same proxies and under the same faults,
 //! running the SCADA example (`examples/scada`: `points`, `hmi` and the
 //! `control` singleton in two versions) against two fake Modbus devices,

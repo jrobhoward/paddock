@@ -250,7 +250,7 @@ fn tree_key(body: &[u8], field: &str) -> Option<Vec<u8>> {
 }
 
 /// Reading one top-level field of a CBOR map without building the rest
-/// (ROADMAP B8: every hash-routed message was decoded whole). The walk
+/// (every hash-routed message was decoded whole). The walk
 /// reads every item, so a body that does not decode still has no key, and
 /// copies out only the field's value. It handles maps and arrays (of known
 /// length or not), text, bytes, integers, floats and the simple values

@@ -1,4 +1,4 @@
-//! HTTP handlers (ROADMAP E6): an unmodified `wasi:http` component gets a
+//! HTTP handlers: an unmodified `wasi:http` component gets a
 //! new instance per request on its routes, with streaming bodies; the
 //! `paddock-fixture-http` guest.
 

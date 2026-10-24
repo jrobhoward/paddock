@@ -1,4 +1,4 @@
-//! Cluster membership (ROADMAP D2): joining through a seed, roles, a node
+//! Cluster membership: joining through a seed, roles, a node
 //! that restarts with a new creation, leaving, and frames from or for an
 //! earlier creation.
 

@@ -1,4 +1,4 @@
-//! HTTP handlers (ROADMAP E6): an unmodified `wasi:http` component
+//! HTTP handlers: an unmodified `wasi:http` component
 //! (`wasi:http/proxy`, exporting `wasi:http/incoming-handler`) gets a new
 //! instance for each request on its routes, with streaming bodies.
 //!

@@ -1,4 +1,4 @@
-//! Health checks (ROADMAP D7): an app whose manifest has a `health` section
+//! Health checks: an app whose manifest has a `health` section
 //! is called every `interval_ms` with a [`HEALTH_SCHEMA`] envelope, on each
 //! instance, from the moment `init` returns. A reply whose body is `ok` is
 //! healthy; any other reply, an error, or no reply within the interval is a

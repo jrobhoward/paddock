@@ -1,5 +1,5 @@
 //! Points per second from one app to another, one cast per point against
-//! batches through `paddock_sdk::batch` (ROADMAP F4), for
+//! batches through `paddock_sdk::batch`, for
 //! `docs/BASELINE.md`.
 //!
 //! Two apps of `paddock-fixture-sdk`: `source` instances each send N sample

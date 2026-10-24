@@ -1,5 +1,5 @@
 //! What a write to a replicated (`cluster`) bucket costs, for
-//! `docs/BASELINE.md` (ROADMAP K2): an HA pair (nodes 1 and 2) and a
+//! `docs/BASELINE.md`: an HA pair (nodes 1 and 2) and a
 //! witness (node 3) as three runtimes in one process, joined over the QUIC
 //! transport on loopback, each pair node with its keyvalue database on
 //! disk in a temporary directory under `target/` (a real filesystem with

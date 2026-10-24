@@ -1,4 +1,4 @@
-//! HTTP ingress (ROADMAP E1): requests to an app's routes become calls to
+//! HTTP ingress: requests to an app's routes become calls to
 //! its pool, through `paddock-sdk`'s `http` module and the SDK fixture.
 
 #![allow(non_snake_case)]

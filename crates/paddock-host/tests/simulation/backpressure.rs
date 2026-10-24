@@ -1,4 +1,4 @@
-//! A congested link between nodes (ROADMAP D8): past the message budget a
+//! A congested link between nodes: past the message budget a
 //! cast is dropped and a call fails with `overloaded`, as at a full
 //! mailbox, while link and monitor notices are still let in, so congestion
 //! never costs a link.

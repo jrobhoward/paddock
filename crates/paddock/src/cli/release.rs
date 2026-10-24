@@ -1,5 +1,5 @@
 //! `paddock release upgrade` and `paddock release rollback`: an app's
-//! release across an HA pair (ROADMAP U1; DESIGN.md, "Releases across the
+//! release across an HA pair (DESIGN.md, "Releases across the
 //! pair"), driven from here over each node's admin API.
 //!
 //! Each step reads both nodes first and does the next thing left, so a run

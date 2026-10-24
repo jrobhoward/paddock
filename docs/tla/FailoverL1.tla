@@ -1,19 +1,18 @@
 ------------------------------ MODULE FailoverL1 ------------------------------
 (*
  * Spike S16: failover of a singleton app between an HA pair (Alpha, Beta)
- * with a witness on a third site (ROADMAP D10, DESIGN.md "Two nodes cannot
+ * with a witness on a third site (DESIGN.md "Two nodes cannot
  * break a tie alone").
  *
- * Adapted from HAppliance's SyncReplication.tla (roles, epochs, LAN and
- * serial channels, witness promotion) and SyncReplicationL3_Promotion.tla
- * (promotion in three steps, witness crash and recovery, a resume that
- * cancels pending promotions). The replicated data path is left out.
+ * The base: roles, epochs, LAN and serial channels, witness promotion in
+ * three steps, witness crash and recovery, and a resume that cancels
+ * pending promotions. Replicated data is left out.
  *
  * What Paddock adds:
  *   - The property is about apps, not roles: at most one node RUNS the
- *     singleton at any moment (AtMostOneRunning). HAppliance allows a stale
- *     primary at a lower epoch to keep going until it is fenced; a SCADA
- *     singleton cannot.
+ *     singleton at any moment (AtMostOneRunning). A stale primary at a
+ *     lower epoch may not keep going until it is fenced: a SCADA singleton
+ *     cannot.
  *   - A lease. A primary runs the singleton only while it holds a lease,
  *     renewed through its partner (over LAN or serial: the standby's
  *     heartbeat says "standby, not promoting, epoch e") or through the
@@ -237,7 +236,7 @@ Rejoin(n) ==
 
 \* The node the witness last promoted resumes as primary when it cannot
 \* rejoin a primary. Like a grant, it waits for the partner's lease, and it
-\* cancels the partner's pending request (HAppliance L3 fix).
+\* cancels the partner's pending request.
 ResumeViaWitness(n) ==
     /\ alive[n] /\ role[n] = "Down"
     /\ CanReachWitness(n)
@@ -294,13 +293,13 @@ AtMostOneRunning == ~(running[Alpha] /\ running[Beta])
 \* An app runs only on a live primary.
 RunningOnPrimary == \A n \in Nodes : running[n] => alive[n] /\ role[n] = "Primary"
 
-\* From HAppliance: two live primaries never share an epoch.
+\* Two live primaries never share an epoch.
 AtMostOnePrimaryPerEpoch ==
     \A m, n \in Nodes :
         (m # n /\ alive[m] /\ alive[n] /\ role[m] = "Primary" /\ role[n] = "Primary")
         => epoch[m] # epoch[n]
 
-\* From HAppliance L3: the witness never grants two promotions at once.
+\* The witness never grants two promotions at once.
 OneGrantAtATime == ~(promState[Alpha] = "Granted" /\ promState[Beta] = "Granted")
 
 \* Availability when faults stop: some node runs the app, unless no node
@@ -315,7 +314,7 @@ Available == <>[](\E n \in Nodes : running[n]) \/ <>[]NobodyCanRun
 
 EpochBound == \A n \in Nodes : epoch[n] <= MaxEpoch
 
-\* The serial line fails only with a node (HAppliance's safe model).
+\* The serial line fails only with a node (the safe model).
 SerialReliable == (alive[Alpha] /\ alive[Beta]) => serialUp
 
 =============================================================================

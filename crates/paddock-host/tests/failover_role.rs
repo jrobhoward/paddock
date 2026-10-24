@@ -1,4 +1,4 @@
-//! The `failover-role` host event (ROADMAP D10): told to instances that
+//! The `failover-role` host event: told to instances that
 //! asked for it (a `hot-standby` app), after `init` and on every change.
 
 #![allow(non_snake_case)]

@@ -81,7 +81,8 @@ fn request_envelope____key_and_body____cbor_map_routable_by_key() {
 }
 
 /// The format apps read: the same bytes as a CBOR value tree built field
-/// by field, as the envelope was encoded before ROADMAP B8.
+/// by field, as the envelope was encoded before requests were encoded
+/// straight from the borrowed request.
 #[rstest::rstest]
 #[case::with_query_and_key(Some("a=1"), Some("t1"))]
 #[case::without_either(None, None)]

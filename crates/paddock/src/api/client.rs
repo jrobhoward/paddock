@@ -1,5 +1,5 @@
 //! A client for the admin API: over the node's Unix socket, or (with the
-//! `node` feature) over TLS to its remote admin API (`[admin]`, ROADMAP D6).
+//! `node` feature) over TLS to its remote admin API (`[admin]`).
 
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};

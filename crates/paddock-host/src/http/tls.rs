@@ -1,4 +1,4 @@
-//! TLS for the HTTP ingress (ROADMAP E1b): rustls on ring, certificates
+//! TLS for the HTTP ingress: rustls on ring, certificates
 //! from PEM files, chosen by the client's SNI host name, and reloaded from
 //! their files without a restart.
 //!

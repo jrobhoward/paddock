@@ -1,6 +1,6 @@
 package paddock:sql@0.1.0;
 
-/// SQL datasources the node binds (ROADMAP E5): Postgres today. Separate
+/// SQL datasources the node binds: Postgres today. Separate
 /// from `paddock:runtime` so the frozen app world does not change; an app
 /// imports it only if it calls it.
 ///

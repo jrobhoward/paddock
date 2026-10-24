@@ -432,7 +432,7 @@ fn short_dir() -> tempfile::TempDir {
         .unwrap()
 }
 
-/// Tutorial chapter 3 (ROADMAP D4's demo): the board as a hot standby on an
+/// Tutorial chapter 3 (process groups across nodes): the board as a hot standby on an
 /// HA pair. The primary puts each write on the standby's board, through a
 /// process group across the nodes, before it answers, so the count survives
 /// `kill -9` of the primary.
@@ -503,7 +503,7 @@ async fn location(port: u16, method: &str, path: &str) -> (u16, String) {
     (status, to)
 }
 
-/// ROADMAP D11, step 1: the board as a singleton on an HA pair (tutorial
+/// A standby redirecting to the primary: the board as a singleton on an HA pair (tutorial
 /// chapter 2) with `partner_url` on each listener. The standby redirects
 /// the board's requests to the primary (307, path and query kept); after
 /// the primary is killed, node 2 serves the board itself.
@@ -550,7 +550,7 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
     assert_eq!(after, 0, "node 2 serves its own board");
 }
 
-/// ROADMAP D11, step 2: the board as a singleton on an HA pair with
+/// A standby forwarding to the primary: the board as a singleton on an HA pair with
 /// `standby = "forward"` on each listener. The standby's ingress sends the
 /// board's requests over the cluster to the primary's board, so either
 /// address serves it; after the primary is killed, node 2 serves its own.
@@ -605,7 +605,7 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
     assert!(own_pid.starts_with("<2."), "{own_pid}");
 }
 
-/// The board on a `cluster` bucket (ROADMAP K2): the bucket itself is
+/// The board on a `cluster` bucket: the bucket itself is
 /// replicated between the pair, so the count survives `kill -9` of the
 /// primary without the app replicating anything.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

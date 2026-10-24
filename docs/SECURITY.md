@@ -1,6 +1,6 @@
 # Paddock: Security
 
-2026-10-10 · Draft (ROADMAP R3); W1 finishes it · Companion to [ARCHITECTURE.md](ARCHITECTURE.md)
+2026-10-10 · Draft; W1 finishes it · Companion to [ARCHITECTURE.md](ARCHITECTURE.md)
 
 The threat model as built: what Paddock protects, whom it trusts, each boundary between trusted and untrusted parts with the controls on it and the gaps found, and the fuzz targets. Findings are numbered S1 and on; their fixes are ROADMAP stage 3 items.
 

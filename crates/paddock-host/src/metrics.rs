@@ -9,7 +9,7 @@
 //! `app` label. An app may hold at most its `max_series` series; past it,
 //! registering fails.
 //!
-//! Host metrics count the events B1's probes report, per app: callbacks by
+//! Host metrics count the events the probes report, per app: callbacks by
 //! kind and their guest time, instance exits by reason, dropped messages,
 //! and, read when rendered, instances, memory and mailbox depth. Each
 //! instance holds its app's counters from the start, so recording is an
@@ -336,7 +336,7 @@ fn escape_help(v: &str) -> String {
     v.replace('\\', "\\\\").replace('\n', "\\n")
 }
 
-/// The host's counters for one app: what B1's probes report, counted.
+/// The host's counters for one app: what the probes report, counted.
 #[derive(Debug)]
 pub(crate) struct AppStats {
     /// Callbacks run: call, cast, info.
@@ -348,7 +348,7 @@ pub(crate) struct AppStats {
     pub(crate) dropped: AtomicU64,
     /// Instance exits by reason class.
     exits: Mutex<BTreeMap<&'static str, u64>>,
-    /// Passivations, wakes and their time (spike S11, ROADMAP E7).
+    /// Passivations, wakes and their time (spike S11).
     passivations: AtomicU64,
     wake_time: Histogram,
     /// Starts, wakes and upgrades that found no Store slot in time.

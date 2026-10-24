@@ -323,7 +323,7 @@ impl Guest for Chaos {
     }
 
     fn handle_call(caller: CallRef, msg: Envelope) -> CallResult {
-        // A host health check (ROADMAP D7): `ok`, or what `health:<text>`
+        // A host health check: `ok`, or what `health:<text>`
         // set.
         if msg.schema.as_deref() == Some("paddock/health") {
             let answer = STATE.with_borrow_mut(|s| {

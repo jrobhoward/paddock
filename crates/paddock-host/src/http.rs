@@ -1,4 +1,4 @@
-//! HTTP ingress (ROADMAP E1): the host terminates HTTP and delivers each
+//! HTTP ingress: the host terminates HTTP and delivers each
 //! request to an app as a call.
 //!
 //! An [`HttpIngress`] holds the node's route table and listens on any number
@@ -26,7 +26,7 @@
 //!
 //! A request for an app that does not run here, but runs on the node's
 //! partner now ([`HttpIngress::set_elsewhere`]), is answered as the
-//! listener's [`Standby`] says (ROADMAP D11): the standby of an HA pair
+//! listener's [`Standby`] says: the standby of an HA pair
 //! refuses it (503), redirects it with `307 Temporary Redirect` to the same
 //! path and query under the partner's URL (307 keeps the method and body,
 //! so a client that follows redirects repeats a POST there), or forwards it
@@ -659,7 +659,7 @@ async fn handle(
     let (parts, body) = req.into_parts();
     let limit = usize::try_from(route.max_body).unwrap_or(usize::MAX);
     // A request hyper knows has no body (a GET without a length) arms no
-    // body timer: one timer fewer per request (ROADMAP B8).
+    // body timer: one timer fewer per request.
     let body_empty = hyper::body::Body::is_end_stream(&body);
     let read = async {
         Limited::new(body, limit)
@@ -773,8 +773,8 @@ async fn serve_handler(
 }
 
 /// A request as the app receives it, borrowed from the request: encoded
-/// straight to CBOR, without copying headers or building a value tree
-/// (ROADMAP B8). The map's keys and their order are the request format in
+/// straight to CBOR, without copying headers or building a value tree.
+/// The map's keys and their order are the request format in
 /// the module documentation.
 struct RequestEnvelope<'a> {
     scheme: &'a str,

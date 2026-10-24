@@ -1,6 +1,6 @@
 # Spike S19: ports or nodes for native processes
 
-**Question (ROADMAP N2).** Native code (a rustbridge `.so`) cannot be sandboxed or unloaded safely inside the node. Should it run as an Erlang-style port, a process the node spawns and talks to over stdin and stdout, owned and supervised like an instance? Or should it join as a cluster node through a client library? What does each cost, and which limits can the node put on it?
+**Question.** Native code (a rustbridge `.so`) cannot be sandboxed or unloaded safely inside the node. Should it run as an Erlang-style port, a process the node spawns and talks to over stdin and stdout, owned and supervised like an instance? Or should it join as a cluster node through a client library? What does each cost, and which limits can the node put on it?
 
 **Answer: a port.** Only a process the node spawns can be limited and stopped by the node, and only a port keeps Paddock's grants as the boundary. A cluster member is trusted with its stamps on every frame; a node also restricts what a port can do on the machine itself.
 
@@ -167,7 +167,7 @@ All of that would have to be kept in step for every language. A port needs about
 
 None is needed for the pair and a witness. A port can be reached from the other node through the cluster like any instance.
 
-## What it changes (ROADMAP N2)
+## What it changes
 
 - **`kind = "native-process"`** runs a bundle's native library (the variant for the node's platform) as a port through a runner shipped with the node. Each instance of the app is one process, and `instances.count` and pools apply as for components. A port gets a pid like an instance.
 - **The protocol** extends the spike's frames:
@@ -184,9 +184,9 @@ None is needed for the pair and a witness. A port can be reached from the other 
 - **The sandbox** is Landlock in the runner, set before the plugin loads:
   - **Files:** read the bundle's directory and the system libraries; nothing else, and no execution.
   - **Preopens:** `wasi:filesystem` preopens map to Landlock rules on their directories.
-  - **Network:** none unless granted, since Landlock rules are TCP ports only. A plugin with `wasi:sockets` rules either gets the ports of its `connect` rules (addresses unchecked, said so in SECURITY.md) or is refused at deploy. N2 picks one.
+  - **Network:** none unless granted, since Landlock rules are TCP ports only. A plugin with `wasi:sockets` rules either gets the ports of its `connect` rules (addresses unchecked, said so in SECURITY.md) or is refused at deploy. The implementation refuses it at deploy.
 - **Kernel versions:**
-  - **Before Linux 6.12:** no Landlock scopes, so a plugin can signal the node's other processes, the node included. A seccomp filter on `kill`, `tkill`, `tgkill` and `pidfd_send_signal`, or a separate user for plugins, would close that. N2 decides whether to require 6.12 or add the filter.
+  - **Before Linux 6.12:** no Landlock scopes, so a plugin can signal the node's other processes, the node included. A seccomp filter on `kill`, `tkill`, `tgkill` and `pidfd_send_signal`, or a separate user for plugins, would close that. The implementation adds the filter.
   - **Before Linux 7.1:** Landlock applies only to the thread that sets it and the threads it starts. A runner must restrict itself before starting any thread or loading the plugin, as here.
 - **Upgrades** are `restart` or `blue-green` only (DESIGN.md), and a port is never passivated.
 - **Linux only to begin with.** The parent-death signal, Landlock and cgroups are Linux interfaces. Another system would need its own controls (FreeBSD: `procctl`, Capsicum, jails); nothing else was run.

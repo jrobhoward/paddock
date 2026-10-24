@@ -1,4 +1,4 @@
-//! `paddock-sdk`'s batches (ROADMAP F4) between two apps of the SDK
+//! `paddock-sdk`'s batches between two apps of the SDK
 //! fixture: full batches, one cast per point, and a partial batch sent by
 //! its timer.
 

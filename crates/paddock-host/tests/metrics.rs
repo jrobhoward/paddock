@@ -1,4 +1,4 @@
-//! Metrics (ROADMAP E4): apps' own through `paddock:metrics` and the SDK
+//! Metrics: apps' own through `paddock:metrics` and the SDK
 //! fixture, and the host's per-app counters, rendered as Prometheus text.
 
 #![allow(non_snake_case)]

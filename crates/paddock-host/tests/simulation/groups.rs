@@ -1,4 +1,4 @@
-//! Process groups across nodes (ROADMAP D4), as OTP's `pg`: every node sees
+//! Process groups across nodes, as OTP's `pg`: every node sees
 //! every member, a publish reaches members on every node, a member that
 //! exits or a node cut off drops out, and a heal merges the groups again.
 

@@ -1,6 +1,6 @@
 # Spike S13: host-owned listeners, connections as guest streams
 
-**Question (ROADMAP F1).** Can the host own a listener, keep it running across guest crashes and upgrades, and hand each accepted connection to a guest as streams? What does a stream-per-instance guest cost against native code?
+**Question.** Can the host own a listener, keep it running across guest crashes and upgrades, and hand each accepted connection to a guest as streams? What does a stream-per-instance guest cost against native code?
 
 **Answer: yes, at native throughput.** With an instance per connection, reading and writing through `wasi:io` streams, the guest matched native hyper from 4 to 64 connections (158,616 against 157,901 requests/s at 32 connections). A new connection costs about 40–65 µs more than native, the price of instantiating. A trapping guest loses only its own connection, and swapping the component under load lost no requests.
 
@@ -49,9 +49,9 @@ Upgrade under load: 8 clients making a new connection per request for 2 s, v2 sw
 - **Crash isolation** is per connection: a trap ends that instance's Store and closes its socket; nothing else notices.
 - **Upgrades** apply to new connections at once; connections already open keep the version they started with until they close, as Erlang keeps old code for running processes. Draining long-lived connections (a timeout, or a host event asking the instance to finish) is a design choice for F2/F3.
 
-## What it changed (ROADMAP F2, F3)
+## What it changed
 
-- Guest streams are cheap enough: F3 goes ahead, with an instance per connection as the default policy.
-- A connection handler does not fit the `gen_server` callbacks: `serve` runs for the connection's life. F3 needs a separate world for connection handlers (with `wasi:io` streams, which `paddock:runtime` excludes for the WASI 0.3 migration; in 0.3 they become `stream<u8>`), its own deadline rules (time blocked in stream reads is host time; a per-request or idle timeout rather than a per-callback deadline), and supervision per connection (a crash closes the connection; no restart).
+- Guest streams are cheap enough: connection handlers go ahead, with an instance per connection as the default policy.
+- A connection handler does not fit the `gen_server` callbacks: `serve` runs for the connection's life. Connection handlers need a separate world for connection handlers (with `wasi:io` streams, which `paddock:runtime` excludes for the WASI 0.3 migration; in 0.3 they become `stream<u8>`), its own deadline rules (time blocked in stream reads is host time; a per-request or idle timeout rather than a per-callback deadline), and supervision per connection (a crash closes the connection; no restart).
 - Listener ownership in the host works as designed: crashes and upgrades never touched the listener.
 - Not attributed: why one instance with many connections slows down (S15). `perf` needs `kernel.perf_event_paranoid` of 2 or less for a normal user; it was 4. Moot for an instance per connection.

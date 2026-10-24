@@ -1,7 +1,6 @@
 //! The replication soak: the failover soak's witness and pair, behind the
 //! same proxies and under the same faults, with a `cluster` bucket on the
-//! pair and the ledger example writing to it through both nodes
-//! (ROADMAP K2).
+//! pair and the ledger example writing to it through both nodes.
 //!
 //! During each episode a writer puts a new key through one node or the
 //! other at random intervals, and sorts each answer: acknowledged (`ok`),

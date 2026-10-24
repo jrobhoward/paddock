@@ -1,6 +1,6 @@
 //! Failover on a node of an HA pair: `singleton` apps run only while the
 //! pair's leadership lets this node run them, and `hot-standby` apps are
-//! told the node's role (ROADMAP D10).
+//! told the node's role.
 //!
 //! The gate holds every singleton the node would run, in deploy order. A
 //! leadership with `may_run` starts them from `init`; one without kills

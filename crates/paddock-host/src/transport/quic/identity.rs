@@ -334,7 +334,7 @@ impl ClientCertVerifier for PinnedKeys {
     }
 }
 
-/// TLS for a node's remote admin API (ROADMAP D6): TLS 1.3 with raw public
+/// TLS for a node's remote admin API: TLS 1.3 with raw public
 /// keys, the node presenting the key in `key` and accepting a client only
 /// if `accepts` its key (the operators file).
 ///

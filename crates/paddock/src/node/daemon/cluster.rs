@@ -348,7 +348,7 @@ impl Node {
         Ok(Done { message })
     }
 
-    /// A planned switchover (ROADMAP D10b): this primary stops its
+    /// A planned switchover: this primary stops its
     /// singletons gracefully, while its lease holds, and hands over; its
     /// standby takes over within about a lease, with no node timeout, and
     /// this node rejoins as the new primary's standby. Refused, with nothing

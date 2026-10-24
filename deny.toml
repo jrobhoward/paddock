@@ -54,11 +54,11 @@ allow = [
     "Unicode-3.0",
     # `foldhash` (via hashbrown) is Zlib-only.
     "Zlib",
-    # `ring`, `rustls-webpki` and `untrusted` (TLS for the HTTP ingress, ROADMAP
-    # E1b). ISC is a permissive licence equivalent to MIT.
+    # `ring`, `rustls-webpki` and `untrusted` (TLS for the HTTP
+    # ingress). ISC is a permissive licence equivalent to MIT.
     "ISC",
     # `clipboard-win` and `error-code`, Windows-only dependencies of
-    # `rustyline` (the `paddock shell` line editor, ROADMAP P1). The Boost
+    # `rustyline` (the `paddock shell` line editor). The Boost
     # licence is permissive: notices only, nothing for binaries.
     "BSL-1.0",
 ]

@@ -1,4 +1,4 @@
-//! `examples/tally` through a node (ROADMAP E5): bundled with the CLI and
+//! `examples/tally` through a node: bundled with the CLI and
 //! deployed under policy, with a `[datasources.main]` on a scratch Postgres
 //! this test starts; its count lives in the database, so it outlives the
 //! app. Skipped, saying so, when no Postgres is installed.

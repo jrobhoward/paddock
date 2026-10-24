@@ -1,4 +1,4 @@
-//! Failover of singleton apps between an HA pair (ROADMAP D10), following
+//! Failover of singleton apps between an HA pair, following
 //! the rules spike S16 model-checked (`spikes/s16/README.md`, R1 to R7).
 //!
 //! Each node of the pair is `Primary`, `Standby` or `Down`, at an epoch.
@@ -26,7 +26,7 @@
 //!   node (S16's `NoLeaseSafe`).
 //! - [`Arbiter::Operator`]: as `Paths`, but only once an operator confirms.
 //!
-//! For replicated buckets (ROADMAP K2), the witness also keeps a record
+//! For replicated buckets, the witness also keeps a record
 //! that the primary's partner is out of date
 //! (`record_partner`; spike S20's R1, R13 in
 //! `docs/tla/VERIFICATION.md`): set before the primary commits a write
@@ -300,7 +300,7 @@ pub enum FailoverMsg {
     },
     /// The sender, the node promoted at `epoch`, has stepped down for a
     /// planned switchover and given up its lease: its partner may be
-    /// granted without waiting the lease out (ROADMAP L1). No answer; lost,
+    /// granted without waiting the lease out. No answer; lost,
     /// the witness waits as before.
     Release {
         /// The sender's epoch.
@@ -395,7 +395,7 @@ impl FailoverHandle {
         self.confirm.notify_one();
     }
 
-    /// A planned switchover (ROADMAP D10b): this node, a primary with a
+    /// A planned switchover: this node, a primary with a
     /// lease whose partner is heard as a confirming standby, steps down at
     /// once and yields; its singletons may no longer run. The standby, on
     /// hearing the yield, asks the witness at once instead of after hearing

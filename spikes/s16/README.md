@@ -2,15 +2,15 @@
 
 This model is now layer 1 of [docs/tla](../../docs/tla/VERIFICATION.md), which adds a timed layer 2 of the code and keeps the results current.
 
-**Question.** Can a singleton app fail over between an HA pair and a witness without ever running on both nodes, under any single failure, and when the network and the serial line fail together while both nodes live? Which rules does the implementation (ROADMAP D10) need for that?
+**Question.** Can a singleton app fail over between an HA pair and a witness without ever running on both nodes, under any single failure, and when the network and the serial line fail together while both nodes live? Which rules does the implementation need for that?
 
 **Answer.**
 - **Yes, with a lease.** In the model, a primary runs the singleton only while it holds a lease, renewed through its partner (over the network or the serial line) or through the witness (only at the witness's epoch). The witness grants a promotion only once the old primary's lease has run out. With that, no reachable state has the app running on two nodes, with every fault the model has: crashes and restarts, the network, the serial line, each node's WAN link, and the witness crashing.
-- **Without the lease, network plus serial cut while both nodes live gives two runners** (counterexample below): the witness promotes the standby while the cut-off primary keeps running at the old epoch. HAppliance's model accepts this window until the stale primary is fenced on reconnect; a singleton driving devices cannot.
+- **Without the lease, network plus serial cut while both nodes live gives two runners** (counterexample below): the witness promotes the standby while the cut-off primary keeps running at the old epoch. Fencing the stale primary on reconnect would accept this window; a singleton driving devices cannot.
 - **With a serial line that fails only with a node, the lease is not needed** (`NoLeaseSafe` passes). The lease is what covers network and serial failing together, the case a witness on a third site was added for.
 - **Availability.** When faults stop, some node runs the app unless neither node can renew a lease (both dead, or each cut off from its partner and the witness alike). With network and serial cut and both nodes reaching the witness, the primary keeps the app (it renews at the witness), and the standby is not promoted.
 
-Checked on 2026-10-08 with TLC 2026.02.28 (OpenJDK 21). Built from HAppliance's `docs/tla/SyncReplication.tla` and `SyncReplicationL3_Promotion.tla` (MIT OR Apache-2.0, same author): roles, epochs, LAN and serial channels, promotion in three steps, witness crash and recovery, and a resume that cancels the partner's pending request. HAppliance's replicated data path is left out.
+Checked on 2026-10-08 with TLC 2026.02.28 (OpenJDK 21). The model: roles, epochs, LAN and serial channels, promotion in three steps, witness crash and recovery, and a resume that cancels the partner's pending request. Replicated data is left out.
 
 ## How to run
 
@@ -56,13 +56,13 @@ Each lease guard is needed: removing any one of these makes `Adversarial` fail `
 
 `NoLease` counterexample, 8 states: Alpha starts the app; the network fails; the serial line fails; Beta, hearing Alpha on neither, asks the witness; the witness grants epoch 2; Beta becomes primary and starts the app while Alpha, cut off at epoch 1, still runs it.
 
-## Requirements for D10
+## Requirements for the implementation
 
-- **R1.** The standby's serial heartbeat carries its role, epoch and whether it is promoting, so a primary cut off from the network but not the serial line renews its lease over serial. (C5's heartbeat paths carry no data yet.)
+- **R1.** The standby's serial heartbeat carries its role, epoch and whether it is promoting, so a primary cut off from the network but not the serial line renews its lease over serial. (The heartbeat paths carried no data yet.)
 - **R2.** The witness renews a lease only at its own epoch; a primary renewing at a lower epoch learns the higher one and steps down, stopping the app.
 - **R3.** The witness grants a promotion or a resume only after the lease length plus a drift margin has passed since the last renewal it or the requester knows of. The requester reports when it last confirmed the primary's lease.
 - **R4.** A standby stops confirming the primary's lease once it asks to be promoted.
-- **R5.** The witness handles grants and resumes one at a time; a resume cancels the partner's pending request (HAppliance's L3 fix).
+- **R5.** The witness handles grants and resumes one at a time; a resume cancels the partner's pending request.
 - **R6.** A primary stops its singletons a margin before its own lease would run out, so it is stopped before the witness counts the lease as gone.
 - **R7.** Losing the witness stops automatic promotion (no requests are granted). An operator-confirmed promotion is the way out, and must itself wait out the lease.
 
@@ -71,5 +71,5 @@ Each lease guard is needed: removing any one of these makes `Adversarial` fail `
 - More than two app nodes, or more than one witness.
 - `hot-standby` roles (several instances, one leading); only a singleton.
 - Clocks: the lease's timing is abstracted as above, so drift bounds are an assumption, not a result.
-- C5's sessions and the transport underneath: the model's channels are up or down as a whole.
+- Sessions and the transport underneath: the model's channels are up or down as a whole.
 - Several singleton apps with their own leases; one lease per node is assumed to cover all of a node's singletons.

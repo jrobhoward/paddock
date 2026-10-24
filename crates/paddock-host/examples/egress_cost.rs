@@ -1,5 +1,5 @@
-//! What an outgoing HTTP request from an app costs, for `docs/BASELINE.md`
-//! (ROADMAP E2): a native client on a kept-alive connection against the
+//! What an outgoing HTTP request from an app costs, for `docs/BASELINE.md`:
+//! a native client on a kept-alive connection against the
 //! same request from a guest through `wasi:http` and the node's connection
 //! pool, one request at a time and from 16 instances at once. Spike S15
 //! measured the guest at about 172 µs per request when wasmtime's sender
@@ -15,7 +15,7 @@
 //! ```
 //!
 //! Arguments: tokio worker threads (default 4), and `nopool` to keep no
-//! idle connection (a new connection per request, as before E2).
+//! idle connection (a new connection per request, as before the pool).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 

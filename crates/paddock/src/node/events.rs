@@ -1,5 +1,5 @@
-//! The node's event stream, for `GET /v1/events` and `paddock events`
-//! (ROADMAP P1): audit records as they are written, instance exits and
+//! The node's event stream, for `GET /v1/events` and `paddock events`:
+//! audit records as they are written, instance exits and
 //! restarts, cluster members heard and lost, and failover changes. Each
 //! event is one JSON object (`time_ms`, `kind`, `event`, and fields of its
 //! own) on a line of its own; [`crate::api::Event`] reads them back.

@@ -1,6 +1,6 @@
 ---------------------------- MODULE PairReplication ----------------------------
 (*
- * Spike S20 (ROADMAP K1): synchronous replication of a log between the HA
+ * Spike S20: synchronous replication of a log between the HA
  * pair (A, B), with the witness breaking ties, on top of failover.
  *
  * Failover is as in layer 1 (docs/tla/FailoverL1.tla): atomic steps, links

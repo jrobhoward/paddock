@@ -143,7 +143,7 @@ pub enum SecretSource {
     Env(String),
 }
 
-/// A SQL datasource the node binds (`[datasources.<name>]`, ROADMAP E5):
+/// A SQL datasource the node binds (`[datasources.<name>]`):
 /// a Postgres database, pooled. Apps name it; they never see its address
 /// or credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,7 +261,7 @@ pub struct RuntimeConfig {
     pub buckets: BTreeMap<String, SharedBucket>,
     /// Secrets, by name.
     pub secrets: BTreeMap<String, SecretSource>,
-    /// SQL datasources, by name (ROADMAP E5).
+    /// SQL datasources, by name.
     pub datasources: BTreeMap<String, SqlDatasource>,
     /// HTTP egress for every app.
     pub egress: Egress,
@@ -274,7 +274,7 @@ pub struct RuntimeConfig {
     /// instances' `pending_calls_max`; this bounds a faulty one. 0 for no
     /// limit.
     pub incoming_calls_per_peer: u32,
-    /// Native-process apps (ROADMAP N2).
+    /// Native-process apps.
     pub native: NativeConfig,
 }
 
@@ -317,7 +317,7 @@ impl Default for NativeConfig {
     }
 }
 
-/// HTTP egress (`wasi:http/outgoing-handler`, ROADMAP E2): what every
+/// HTTP egress (`wasi:http/outgoing-handler`): what every
 /// app's outgoing requests share. Each app may reach only what its
 /// manifest's `allow` lists, within [`Egress::allow`].
 #[derive(Debug, Clone, PartialEq, Eq)]

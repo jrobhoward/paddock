@@ -1,4 +1,4 @@
-//! Heartbeats, sessions and silent failures (ROADMAP C5): a node that stops
+//! Heartbeats, sessions and silent failures: a node that stops
 //! answering is found by its peers, a one-way failure ends the session on
 //! both sides, frames held across a session's end are discarded, and an
 //! extra heartbeat path tells a partition from a dead node.

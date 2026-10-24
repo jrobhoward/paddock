@@ -1,7 +1,7 @@
 # Failover demo
 
 A singleton moving between two Paddock nodes when the primary's process is
-killed, with a witness deciding the promotion (ROADMAP D10). Three
+killed, with a witness deciding the promotion. Three
 `paddock node` processes run on loopback: a witness (node 3) and a pair
 (nodes 1 and 2).
 

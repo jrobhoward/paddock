@@ -1,6 +1,6 @@
 ----------------------------- MODULE RemoteLinks -----------------------------
 (*
- * Spike S12 (ROADMAP C4): links and monitors between two nodes, with C5's
+ * Spike S12: links and monitors between two nodes, with the transport's
  * sessions, pid incarnations and node creations, over a network that
  * stalls, closes connections and (in the adversarial configs) loses frames
  * or refuses them when a send queue is full.

@@ -1,4 +1,4 @@
-//! Throughput between nodes, for `docs/BASELINE.md` (ROADMAP B7, D3): two
+//! Throughput between nodes, for `docs/BASELINE.md`: two
 //! runtimes in one process joined over the QUIC transport on loopback, with
 //! mutual TLS and pinned keys as `paddock node` uses. The host on node 1
 //! calls and casts instances of the chaos fixture on node 2, and the same

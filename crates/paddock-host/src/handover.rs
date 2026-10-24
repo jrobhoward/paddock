@@ -1,5 +1,5 @@
-//! Moving a singleton to the other node of an HA pair with its state
-//! (ROADMAP M1): in a planned switchover the old primary takes the
+//! Moving a singleton to the other node of an HA pair with its state:
+//! in a planned switchover the old primary takes the
 //! instance's snapshot and writes it to the pair's replicated log; the
 //! node that next starts the singleton loads it in place of `init`.
 //!

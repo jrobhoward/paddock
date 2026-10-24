@@ -24,7 +24,7 @@ components, with Erlang/OTP-style semantics:
 
 Pre-release. A single node runs: `paddock node` deploys signed bundles and
 supervises their instances, and the rest of the `paddock` CLI manages it. Phase 1
-milestones M0 to M9 are done. rustbridge's bundle format 1.2 comes from its
+milestones are done. rustbridge's bundle format 1.2 comes from its
 `experiment/wasm` branch on GitHub until it is released.
 
 - [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md): run a node and

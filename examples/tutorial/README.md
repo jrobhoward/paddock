@@ -112,7 +112,7 @@ backend board
 
 Cloud load balancers work the same way. A virtual IP that moves with the
 primary (as VRRP would) is planned as a separate agent driven by the
-node's leadership (ROADMAP D11). It stays outside `paddock node`, which
+node's leadership. It stays outside `paddock node`, which
 then needs no network privileges.
 
 What this shows: failover moves where an app runs, not its state. The next

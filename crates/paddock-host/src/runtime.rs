@@ -348,7 +348,7 @@ impl Runtime {
         })
     }
 
-    /// A native-process app whose program is `program` (ROADMAP N2): its
+    /// A native-process app whose program is `program`: its
     /// instances run it through `paddock-runner`. Nothing is checked here;
     /// a program that does not start fails each instance's start.
     #[must_use]

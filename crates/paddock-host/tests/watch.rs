@@ -1,4 +1,4 @@
-//! `paddock:watch` (ROADMAP H4): revisioned reads, compare-and-swap and
+//! `paddock:watch`: revisioned reads, compare-and-swap and
 //! change watches, through `paddock-sdk`'s `watch` wrapper and the SDK
 //! fixture.
 

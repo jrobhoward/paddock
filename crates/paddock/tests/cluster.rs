@@ -1,4 +1,4 @@
-//! Two nodes over the QUIC transport (ROADMAP D1): joined through a seed
+//! Two nodes over the QUIC transport: joined through a seed
 //! address with pinned keys, a call from one node's admin API to an
 //! instance on the other, and a clean leave.
 

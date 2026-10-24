@@ -1,5 +1,5 @@
 //! Replicated buckets on an HA pair (nodes 1 and 2) with a witness (node
-//! 3) (ROADMAP K2), against spike S20's properties: a write acknowledged
+//! 3), against spike S20's properties: a write acknowledged
 //! to a client is never lost over a failure, the two copies agree once
 //! healed, and a linearizable read sees every acknowledged write.
 //!
@@ -456,7 +456,7 @@ fn replicated____pair_without_replication____runs_none() {
     assert_eq!(statuses, [None, None]);
 }
 
-/// The pair's version for what is kept (ROADMAP U1): refused while the
+/// The pair's version for what is kept: refused while the
 /// witness is one release older, then raised on both copies once every
 /// node speaks this build's version, from either node; a second raise
 /// changes nothing.
@@ -497,7 +497,7 @@ fn finalize_formats____every_node_at_this_version____raised_on_both_copies() {
 }
 
 /// A standby on a build older than the pair's version (one cut off while
-/// a newer partner finalized, then rolled back; ROADMAP U1): once it
+/// a newer partner finalized, then rolled back): once it
 /// applies the record, from the log or from a snapshot after an outage,
 /// its replication stops and says so, and the primary carries on
 /// committing without it.

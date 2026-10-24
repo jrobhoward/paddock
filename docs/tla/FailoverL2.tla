@@ -36,7 +36,7 @@
  *   - With SerialLost, there is no serial line: it is lost from the start
  *     and never heals, and its loss is not counted among the faults.
  *   - With MaxSwitchovers > 0, an operator may hand over on purpose (a
- *     planned switchover, ROADMAP D10b): a primary whose partner it hears as
+ *     planned switchover): a primary whose partner it hears as
  *     a confirming standby stops its singleton at once, steps down and beats
  *     Down and yielding. A standby that hears a yield asks the witness at
  *     once, rather than after hearing nothing for Timeout, and does not
@@ -57,7 +57,7 @@
  * the tick. A frame sent in a round arrives in the next (Delay = 1) unless
  * its link is held or lost.
  *
- * Sessions (C5) are not modelled: every delivered frame is acted on, which is
+ * Sessions are not modelled: every delivered frame is acted on, which is
  * the worst case for stale beats. Clocks do not drift.
  *
  * The property: the singleton never runs on both nodes at once.
@@ -600,7 +600,7 @@ OperatorConfirm(n) ==
                    downAge, view, seenAge, overridden, yielding, beaten, stepped, witnessVars,
                    chan, q, faults, sw>>
 
-\* A planned switchover (ROADMAP D10b): an operator asks a primary, with a
+\* A planned switchover: an operator asks a primary, with a
 \* lease of its own and a partner it hears as a confirming standby, to hand
 \* over. It stops its singleton and steps down at once, yielding. Not a
 \* fault.

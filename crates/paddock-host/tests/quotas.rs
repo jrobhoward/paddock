@@ -1,4 +1,4 @@
-//! Host-object quotas (ROADMAP H1): timers, monitors, links and pending
+//! Host-object quotas: timers, monitors, links and pending
 //! calls per instance, against the chaos fixture.
 
 #![allow(non_snake_case)]

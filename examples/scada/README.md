@@ -1,6 +1,6 @@
 # SCADA reference app
 
-Phase 3's workload (ROADMAP X1): a small SCADA system on Paddock, fed by
+Phase 3's workload: a small SCADA system on Paddock, fed by
 the built-in Modbus TCP extension (`paddock node` built with the `modbus`
 feature). Three apps:
 
@@ -66,11 +66,11 @@ On 2026-10-16 (16-core Linux machine, idle), the drill showed:
   longest gap was 121 ms, about the poll period.
 - Control's routes failed for about 2.5 s on both nodes during the
   switchover, and on the surviving node when the primary was killed: the
-  singleton stops on one node and starts from `init` on the other (M1
-  moves it with its state).
+  singleton stops on one node and starts from `init` on the other (moving
+  it with its state came next).
 - The acknowledged alarm came back `active` after the switchover, from the
   new primary's own buckets, and `acked` again after the failover back,
-  from that node's older copy (K3 replicates them).
+  from that node's older copy (replicating apps' buckets came next).
 - Snapshot upgrades and rollbacks of `control` failed no requests.
 
 ## Second run: the table and the alarms on replicated buckets
@@ -90,11 +90,11 @@ bucket polled by the primary alone and `control`'s buckets `replicated`:
   the switchover.
 - In steady steps the longest gap was 115 to 231 ms on either node, the
   standby's table trailing the primary's by about a poll.
-- Run again the same day with singletons moved with their state (ROADMAP
-  M1): at the switchover `control` handed its state over (263 bytes) and
+- Run again the same day with singletons moved with their state: at the
+  switchover `control` handed its state over (263 bytes) and
   started on node 2 from it, not from `init`; the gaps and failures were
   as above (3,069 and 3,058 ms; 28 alarm requests failed on each node).
-- With the lease released at the witness in a switchover (ROADMAP L1),
+- With the lease released at the witness in a switchover,
   run the same night: the switchover's longest point gap fell to 572 ms
   on node 1 and 571 ms on node 2, and 6 and 5 alarm requests failed,
   against about 3 s and 28. The failover (the primary killed) is
@@ -104,7 +104,7 @@ bucket polled by the primary alone and `control`'s buckets `replicated`:
 
 On 2026-10-21 (same machine, load average about 1.4 from other work), with
 the upgrades and the rollback run by `paddock release` across the pair
-(ROADMAP U1) instead of a command per node:
+ instead of a command per node:
 
 - Each release did the standby (a bundle swap of the held singleton),
   then the primary in place by snapshot, and failed no requests; the
@@ -126,7 +126,7 @@ the upgrades and the rollback run by `paddock release` across the pair
 
 ## Under faults: `paddock-soak scada`
 
-`paddock-soak scada` (`scripts/soak.sh --only scada`, ROADMAP X2) runs
+`paddock-soak scada` (`scripts/soak.sh --only scada`) runs
 the same apps on the failover soak's pair and witness, behind proxies
 that cut, hold and drop the links, with nodes killed and stopped, and
 between episodes of faults releases `control` across the pair and
@@ -147,7 +147,7 @@ windows, 79 of them planned, and 58 heals, with one node running
   204 ms.
 - The primary lost in the middle of a release (ten times) stopped the
   surviving node's point table for about 3.5 to 3.8 s and failed about 25
-  of its alarm requests, until it held the lease, as in X1's third run.
+  of its alarm requests, until it held the lease, as in the third run above.
 - Under faults, 23,158 of 119,781 requests failed, and the longest point
   gap was 31 s.
 

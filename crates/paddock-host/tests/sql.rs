@@ -1,4 +1,4 @@
-//! `paddock:sql` (ROADMAP E5) through `paddock-sdk`'s `sql` wrapper and the
+//! `paddock:sql` through `paddock-sdk`'s `sql` wrapper and the
 //! SDK fixture. Access checks run anywhere; the rest run against a scratch
 //! Postgres this test starts as the current user (`initdb` and `pg_ctl` in
 //! a temporary directory, on a Unix socket only), and are skipped, saying

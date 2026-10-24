@@ -30,5 +30,5 @@ cargo build -p s10-host --release
 
 ## Effect on the design
 
-- Before M8 freezes `paddock-sdk` against `@0.1.0`: add the reserved `host-event` case to `info` (action A1 in [`docs/REVIEW_HAPPLIANCE_OTP.md`](../../docs/REVIEW_HAPPLIANCE_OTP.md)).
+- Before `paddock-sdk` is frozen against `@0.1.0`: add the reserved `host-event` case to `info`.
 - Anything else that changes an export-signature type needs `@0.2.0` and the host's per-version linker, as the WASI migration plan already describes.

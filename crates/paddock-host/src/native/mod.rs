@@ -1,4 +1,4 @@
-//! Native-process apps (ROADMAP N2, spike S19): an app's program runs as a
+//! Native-process apps (spike S19): an app's program runs as a
 //! process the node spawns through `paddock-runner`, an Erlang-style port,
 //! with a pid, mailbox, links, monitors and supervision like an instance.
 //!

@@ -1,4 +1,4 @@
-//! The QUIC transport (ROADMAP D1): nodes joined through a seed address
+//! The QUIC transport: nodes joined through a seed address
 //! with mutual TLS, calls across them, refused identities, and a peer that
 //! goes away and comes back.
 

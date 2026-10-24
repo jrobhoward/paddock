@@ -971,7 +971,7 @@ async fn restart____app_deployed____compiled_component_read_not_compiled_again()
     n.shutdown().await;
 }
 
-/// ROADMAP E7: with `max_processes` above `max_instances` (32 here), apps
+/// Passivation for apps: with `max_processes` above `max_instances` (32 here), apps
 /// that passivate fit beyond the Store slots; one whose instances never
 /// passivate is refused when they would not fit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1228,7 +1228,7 @@ async fn versions_reached(node: &TestNode, n: usize) -> (usize, usize) {
     (one, two)
 }
 
-/// A blue-green upgrade through the node (ROADMAP U2): started at no
+/// A blue-green upgrade through the node: started at no
 /// traffic (`steps=0`), moved by hand, kept across a restart at the same
 /// weight, then promoted; a second one dropped by rollback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

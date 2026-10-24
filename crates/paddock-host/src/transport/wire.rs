@@ -1,4 +1,4 @@
-//! The wire format between nodes (ROADMAP D1, D3): a [`Packet`] as CBOR,
+//! The wire format between nodes: a [`Packet`] as CBOR,
 //! with the protocol version alongside.
 //!
 //! A connection starts with a [`Hello`] each way, carrying the versions the

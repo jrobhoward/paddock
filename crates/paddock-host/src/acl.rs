@@ -1,4 +1,4 @@
-//! Messaging ACLs (ROADMAP D5): which apps an app's instances may send to,
+//! Messaging ACLs: which apps an app's instances may send to,
 //! and which apps may send to them, by app name, from the manifest's
 //! `messaging_acl` (`may_call`, `accept_from`).
 //!

@@ -1,4 +1,4 @@
-//! `paddock:io/ready`: readiness as messages (ROADMAP N1).
+//! `paddock:io/ready`: readiness as messages.
 //!
 //! An instance names a pollable and a tag with `notify`; while it waits
 //! between callbacks, its task polls those pollables beside the mailbox

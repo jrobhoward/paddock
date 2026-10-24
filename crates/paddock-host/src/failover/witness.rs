@@ -34,7 +34,7 @@ pub(super) struct Witness {
     /// The last renewal the witness granted each node.
     pub(super) renewed: HashMap<u32, Instant>,
     /// `promoted` stepped down at `epoch` in a planned switchover and gave
-    /// up its lease (`Release`, ROADMAP L1): its partner's request need not
+    /// up its lease (`Release`): its partner's request need not
     /// wait the lease out. Cleared by every grant; kept in memory only, so
     /// a restarted witness waits as before.
     pub(super) released: bool,

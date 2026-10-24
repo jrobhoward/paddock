@@ -1,4 +1,4 @@
-//! The pair's version for what is kept (ROADMAP U1; DESIGN.md, "Mixed
+//! The pair's version for what is kept (DESIGN.md, "Mixed
 //! versions during a release"): the protocol version whose formats the
 //! nodes of an HA pair write to what outlives a connection, the
 //! replicated log and the `@cluster` records among them.

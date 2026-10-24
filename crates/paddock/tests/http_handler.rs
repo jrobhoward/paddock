@@ -1,4 +1,4 @@
-//! HTTP-handler apps on a node (ROADMAP E6): a `wasi:http/proxy` component
+//! HTTP-handler apps on a node: a `wasi:http/proxy` component
 //! deployed under operator policy, an instance per request on its routes;
 //! upgrade, rollback, stop, start, restart and remove.
 

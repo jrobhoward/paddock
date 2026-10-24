@@ -1,4 +1,4 @@
-//! The cluster soak (ROADMAP D3): three member nodes as `paddock node`
+//! The cluster soak: three member nodes as `paddock node`
 //! processes, each behind a proxy, each running a pool of the chaos
 //! fixture. Instances are told, at random, to link, unlink, monitor and
 //! demonitor instances on any node, to trap exits or not, and are killed;

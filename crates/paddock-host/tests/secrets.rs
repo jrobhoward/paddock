@@ -1,4 +1,4 @@
-//! `paddock:secrets` (ROADMAP E3): names the manifest lists and the
+//! `paddock:secrets`: names the manifest lists and the
 //! operator grants, read from the node's file or environment sources,
 //! through `paddock-sdk`'s `secrets` module and the SDK fixture.
 

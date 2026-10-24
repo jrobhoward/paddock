@@ -1,6 +1,6 @@
 # Spike S12: a TLA+ model of remote links and monitors
 
-**Question (ROADMAP C4).** With C5's sessions (numbers on frames, `hears_you`, ending on either side), pid incarnations and node creations, do both nodes always agree on every link and monitor between them, so that no exit or down notice is lost and no entry leaks? What must D3 add for that?
+**Question.** With the transport's sessions (numbers on frames, `hears_you`, ending on either side), pid incarnations and node creations, do both nodes always agree on every link and monitor between them, so that no exit or down notice is lost and no entry leaks? What must remote links and monitors add for that?
 
 **Answer: not as built; four changes make it hold.** The model finds four ways for the two sides to disagree. Each ends with an instance that keeps a link or monitor that the other node has no record of, so the exit of its partner never reaches it:
 
@@ -49,7 +49,7 @@ java -XX:+UseParallelGC -jar ~/tla/tla2tools.jar -simulate num=3000000 -depth 80
 
 ## Results
 
-Checked on 2026-10-14 with TLC 2026.02.28 (OpenJDK 21) on the 16-core development machine, while the D10 soak ran. Bounds: `MaxInc = 2`, `MaxRef = 1`, `MaxSession = 3`, `MaxChan = 2`, `MaxFaults = 2`, `MaxCr = 1` unless stated; symmetry between the two nodes for safety configs.
+Checked on 2026-10-14 with TLC 2026.02.28 (OpenJDK 21) on the 16-core development machine, while the failover soak ran. Bounds: `MaxInc = 2`, `MaxRef = 1`, `MaxSession = 3`, `MaxChan = 2`, `MaxFaults = 2`, `MaxCr = 1` unless stated; symmetry between the two nodes for safety configs.
 
 | Config | Faults | Fixes | Distinct states | Result |
 | --- | --- | --- | --- | --- |
@@ -79,7 +79,7 @@ Counterexamples, shortest found:
 
 ## What this changes
 
-- **D3** builds on R1 to R4 before remote links and monitors are offered across nodes. R1, R2 and R4 change code that exists today (`delivery.rs`, `transport/mod.rs`, `transport/quic.rs`, `transport/liveness.rs`); R3 adds a frame, so the wire format's version goes up.
+- **Remote links and monitors** build on R1 to R4 before remote links and monitors are offered across nodes. R1, R2 and R4 change code that exists today (`delivery.rs`, `transport/mod.rs`, `transport/quic.rs`, `transport/liveness.rs`); R3 adds a frame, so the wire format's version goes up.
 - **The mesh's `drop` fault** is outside the guarantee. Tests that drop frames check only what survives loss, as `random.rs` does.
 - **Calls** are not modeled. A `Reply` refused for the same reasons is lost too; the caller then waits for its timeout, and with R1 it fails with `noconnection` instead, when the session ends.
 

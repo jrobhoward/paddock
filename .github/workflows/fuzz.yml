@@ -50,7 +50,7 @@ jobs:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}
 
-  # Random distribution scenarios (ROADMAP C3) on new seeds each night: run
+  # Random distribution scenarios on new seeds each night: run
   # N starts at N * 1000. A failure prints its seed; replay it locally with
   # PADDOCK_SIM_SEED=<seed> cargo test -p paddock-host --test simulation random.
   simulation:

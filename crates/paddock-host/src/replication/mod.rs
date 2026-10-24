@@ -1,4 +1,4 @@
-//! Replicated buckets (ROADMAP K2): `cluster`-scoped shared buckets kept
+//! Replicated buckets: `cluster`-scoped shared buckets kept
 //! whole on both nodes of an HA pair, by the rules spike S20
 //! model-checked (`spikes/s20/README.md`, R1 to R7).
 //!
