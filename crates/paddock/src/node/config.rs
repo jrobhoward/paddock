@@ -193,6 +193,10 @@ pub struct NodeConfig {
     /// app may reach, trusted roots, timeouts and the connection pool.
     #[serde(default)]
     pub egress: EgressBinding,
+    /// TCP and UDP from apps (`wasi:sockets`): the most any app may reach,
+    /// bind and listen on. Unset: no ceiling.
+    #[serde(default)]
+    pub sockets: Option<SocketsCeiling>,
     /// The admin API over TLS, for operators on other machines.
     #[serde(default)]
     pub admin: Option<AdminBinding>,
@@ -697,6 +701,41 @@ impl EgressBinding {
     }
 }
 
+/// `[sockets]`: TCP and UDP from apps (ROADMAP N1). Each app's
+/// `wasi:sockets` rules must fall inside the rules here, in the manifest's
+/// syntax (`{ cidr = "10.0.0.0/8", ports = "1883" }`); a deploy asking for
+/// more is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SocketsCeiling {
+    /// Addresses apps may bind.
+    #[serde(default)]
+    pub bind: Vec<paddock_bundle::manifest::SocketRule>,
+    /// Addresses apps may connect and send to.
+    #[serde(default)]
+    pub connect: Vec<paddock_bundle::manifest::SocketRule>,
+    /// Whether apps may listen.
+    #[serde(default)]
+    pub listen: bool,
+}
+
+impl SocketsCeiling {
+    /// Check an app's `wasi:sockets` scope against this ceiling.
+    ///
+    /// # Errors
+    ///
+    /// What is outside it, for the operator.
+    pub fn admits(&self, scope: &paddock_bundle::manifest::SocketsScope) -> Result<(), String> {
+        let ceiling = paddock_bundle::manifest::SocketsScope {
+            bind: self.bind.clone(),
+            connect: self.connect.clone(),
+            listen: self.listen,
+            ..paddock_bundle::manifest::SocketsScope::default()
+        };
+        paddock_host::services::sockets::within(scope, &ceiling)
+    }
+}
+
 fn yes() -> bool {
     true
 }
@@ -881,6 +920,23 @@ impl NodeConfig {
                 .any(|b| b.scope == BucketScope::Cluster)
     }
 
+    fn check_sockets(&self) -> Result<(), NodeError> {
+        let Some(s) = &self.sockets else {
+            return Ok(());
+        };
+        for (list, rules) in [("bind", &s.bind), ("connect", &s.connect)] {
+            for (i, rule) in rules.iter().enumerate() {
+                if paddock_bundle::manifest::parse_cidr(&rule.cidr).is_none() {
+                    return Err(NodeError::Invalid(format!(
+                        "node config: sockets.{list}[{i}].cidr '{}' is not a CIDR block such as 10.0.0.0/8",
+                        rule.cidr
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn check_egress(&self) -> Result<(), NodeError> {
         let e = &self.egress;
         if let Some(allow) = &e.allow {
@@ -949,6 +1005,7 @@ impl NodeConfig {
         }
         config.check_failover()?;
         config.check_egress()?;
+        config.check_sockets()?;
         for (name, binding) in &config.http {
             let invalid =
                 |m: String| Err(NodeError::Invalid(format!("node config: http.{name}.{m}")));

@@ -23,6 +23,9 @@ http = []
 # `paddock_sdk::http_client`: HTTP requests from the app
 # (`wasi:http/outgoing-handler`).
 http-client = ["dep:wasip2"]
+# `paddock_sdk::net`: TCP from the app (`wasi:sockets`), with readiness as
+# messages (`paddock:io`).
+net = ["dep:wasip2"]
 # `paddock_sdk::secrets`: secrets the operator binds (`paddock:secrets`).
 secrets = []
 # `paddock_sdk::metrics`: counters, gauges and histograms (`paddock:metrics`).

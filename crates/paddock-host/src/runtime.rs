@@ -782,6 +782,8 @@ fn base_linker(
 ) -> wasmtime::Result<Linker<InstanceState>> {
     let mut linker = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    services::sockets::shadow(&mut linker)?;
+    crate::ready::link(&mut linker)?;
     PaddockApp::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)?;
     services::link(&mut linker)?;
     for ext in extensions {

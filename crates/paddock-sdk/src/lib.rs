@@ -43,6 +43,9 @@
 //!   to hosts its manifest allows (`wasi:http/outgoing-handler`).
 //! - `metrics` (cargo feature `metrics`): `paddock:metrics`, counters,
 //!   gauges and histograms the node exports.
+//! - `net` (cargo feature `net`): TCP to and from addresses the manifest
+//!   allows (`wasi:sockets`), with readiness delivered as host events
+//!   (`paddock:io`).
 //! - `secrets` (cargo feature `secrets`): `paddock:secrets`, values the
 //!   operator binds on the node.
 //! - `watch` (cargo feature `watch`): `paddock:watch`, revisioned reads,
@@ -77,6 +80,8 @@ pub mod kv;
 pub mod log;
 #[cfg(feature = "metrics")]
 pub mod metrics;
+#[cfg(feature = "net")]
+pub mod net;
 #[cfg(feature = "secrets")]
 pub mod secrets;
 pub mod snapshot;

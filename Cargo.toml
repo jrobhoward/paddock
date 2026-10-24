@@ -8,6 +8,7 @@ members = [
     "crates/paddock-fixture-counter",
     "crates/paddock-fixture-echo",
     "crates/paddock-fixture-http",
+    "crates/paddock-fixture-net",
     "crates/paddock-fixture-sdk",
     "crates/paddock-fixture-services",
     "crates/paddock-host",

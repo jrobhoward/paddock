@@ -355,6 +355,11 @@ pub(crate) struct AppStats {
     slot_timeouts: AtomicU64,
     /// Outgoing HTTP requests by outcome ([`EGRESS_OUTCOMES`]).
     egress: [AtomicU64; 4],
+    /// Sockets the app's instances hold open (`wasi:sockets`).
+    sockets_open: AtomicU64,
+    /// Socket addresses refused by policy, and sockets refused over
+    /// `max_sockets`.
+    sockets_refused: AtomicU64,
 }
 
 /// The outcomes of an outgoing HTTP request, as `paddock_egress_requests_total`
@@ -373,6 +378,8 @@ impl Default for AppStats {
             wake_time: Histogram::new(&CALLBACK_BUCKETS),
             slot_timeouts: AtomicU64::new(0),
             egress: Default::default(),
+            sockets_open: AtomicU64::new(0),
+            sockets_refused: AtomicU64::new(0),
         }
     }
 }
@@ -413,6 +420,22 @@ impl AppStats {
         if let Some(n) = self.egress.get(outcome) {
             n.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// An instance opened a socket.
+    pub(crate) fn socket_opened(&self) {
+        self.sockets_open.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// An instance closed a socket, or exited holding it. Paired with
+    /// [`Self::socket_opened`] by the permit that holds the socket's share.
+    pub(crate) fn socket_closed(&self) {
+        self.sockets_open.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// A socket address was refused, or a socket over `max_sockets`.
+    pub(crate) fn socket_refused(&self) {
+        self.sockets_refused.fetch_add(1, Ordering::Relaxed);
     }
 
     /// An instance exited with `reason`.
@@ -491,10 +514,6 @@ impl Metrics {
             }
         }
         let mut out = String::new();
-        let header = |out: &mut String, name: &str, kind: &str, help: &str| {
-            let _ = writeln!(out, "# HELP {name} {help}");
-            let _ = writeln!(out, "# TYPE {name} {kind}");
-        };
         header(&mut out, "paddock_instances", "gauge", "Live instances.");
         for (app, (n, _, _)) in &live {
             let _ = writeln!(out, "paddock_instances{{app=\"{}\"}} {n}", escape(app));
@@ -654,10 +673,60 @@ impl Metrics {
                 );
             }
         }
+        write_sockets(&mut out, &apps);
         for (app, (m, _)) in &apps {
             m.write(&mut out, app);
         }
         out
+    }
+}
+
+/// A metric's `HELP` and `TYPE` lines.
+fn header(out: &mut String, name: &str, kind: &str, help: &str) {
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} {kind}");
+}
+
+/// `paddock_sockets_open` and `paddock_sockets_refused_total`, for apps
+/// that have opened a socket or been refused one.
+fn write_sockets(out: &mut String, apps: &BTreeMap<String, AppEntry>) {
+    let sockets = |s: &AppStats| {
+        (
+            s.sockets_open.load(Ordering::Relaxed),
+            s.sockets_refused.load(Ordering::Relaxed),
+        )
+    };
+    header(
+        out,
+        "paddock_sockets_open",
+        "gauge",
+        "Sockets the app's instances hold open (wasi:sockets).",
+    );
+    for (app, (_, s)) in apps {
+        if sockets(s) != (0, 0) {
+            let _ = writeln!(
+                out,
+                "paddock_sockets_open{{app=\"{}\"}} {}",
+                escape(app),
+                sockets(s).0
+            );
+        }
+    }
+    header(
+        out,
+        "paddock_sockets_refused_total",
+        "counter",
+        "Socket addresses refused by the app's policy, and sockets refused over max_sockets.",
+    );
+    for (app, (_, s)) in apps {
+        if sockets(s) != (0, 0) {
+            let _ = writeln!(
+                out,
+                "paddock_sockets_refused_total{{app=\"{}\"}} {}",
+                escape(app),
+                sockets(s).1
+            );
+        }
     }
 }
 

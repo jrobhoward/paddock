@@ -1,0 +1,38 @@
+package paddock:io@0.1.0;
+
+/// Readiness as messages, as Erlang's `{active, once}`: an instance hands
+/// the host a pollable (a socket's stream, a listening socket, any
+/// `wasi:io` pollable) and handles its other messages meanwhile; when the
+/// pollable is ready, the host sends the instance the host event
+/// `io-ready`, whose body is JSON `{"tag": <tag>}`. The instance then
+/// reads or accepts without blocking and, to hear of the next readiness,
+/// calls `notify` again.
+///
+/// Granted to every app: it gives no access the pollable did not.
+///
+/// Kept apart from `paddock:runtime`, which has no `wasi:io` types so a
+/// WASI 0.3 world can be added without changing it.
+interface ready {
+  use wasi:io/poll@0.2.12.{pollable};
+
+  /// Why `notify` failed.
+  variant error {
+    /// The instance already waits on as many pollables as it may (1,024).
+    limit-reached,
+  }
+
+  /// Send `io-ready` with `tag` once `p` is ready, then forget it. The
+  /// instance keeps owning `p`: dropping it, or calling `cancel`, withdraws
+  /// the notice. Asking again for a pollable already waited on replaces
+  /// its tag. A notice is sent at most once per call, so a pollable that
+  /// stays ready is not reported again until asked.
+  notify: func(p: borrow<pollable>, tag: u64) -> result<_, error>;
+
+  /// Withdraw the notice for `p`. Whether one was waiting.
+  cancel: func(p: borrow<pollable>) -> bool;
+}
+
+/// What a component may import of this package.
+world imports {
+  import ready;
+}

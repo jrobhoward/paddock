@@ -30,6 +30,7 @@ const PROVIDED: &[(&str, Option<&[&str]>)] = &[
     ("wasi:random", None),
     ("wasi:filesystem", None),
     ("wasi:sockets", None),
+    ("paddock:io", Some(&["ready"])),
     ("paddock:runtime", Some(&["types", "process"])),
 ];
 

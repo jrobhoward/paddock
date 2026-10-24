@@ -687,6 +687,22 @@ All notable changes are recorded here. The format follows
   `partner_outdated`); `Runtime::replication_status`. Metrics
   `paddock_replication_commit_index`, `paddock_replication_last_index`,
   `paddock_replication_partner_lag_entries`, `paddock_replication_alone`.
+- Guest sockets (ROADMAP N1): `wasi:sockets` is enforced. The manifest's
+  `connect` and `bind` rules and `listen` decide every address a socket
+  binds, listens on, accepts from, connects or sends to; loopback,
+  link-local and unspecified destinations need a rule inside their range;
+  name lookups need `connect` rules. `max_sockets` (default 16) caps the
+  sockets an app holds open across its instances (`new-socket-limit`).
+  Node config `[sockets]` is a ceiling checked at deploy. Metrics
+  `paddock_sockets_open` and `paddock_sockets_refused_total`.
+- `paddock:io@0.1.0` (`wit/io`), granted to every app: `ready.notify`
+  sends the host event `io-ready` with a tag once a pollable is ready, so
+  an instance waits on its sockets between callbacks, as Erlang's
+  `{active, once}`, and handles messages meanwhile; `ready.cancel`.
+- `paddock_sdk::net` (cargo feature `net`): `TcpStream` (`connect`,
+  `connect_host`, non-blocking `read`, `write_all`, `notify_readable`),
+  `TcpListener` (`bind`, `accept`, `notify_acceptable`), `notify`,
+  `cancel` and `ready_tag`. `paddock-fixture-net`, its test guest.
 
 ### Fixed
 

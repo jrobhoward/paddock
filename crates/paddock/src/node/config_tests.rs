@@ -643,3 +643,34 @@ fn egress____invalid____refused(#[case] line: &str, #[case] expected: &str) {
 
     assert!(err.contains(expected), "{err}");
 }
+
+#[test]
+fn sockets____set____rules_read() {
+    let config = NodeConfig::from_toml_str(
+        r#"
+data_dir = "/d"
+[sockets]
+connect = [{ cidr = "10.0.0.0/8", ports = "1883" }]
+listen = true
+"#,
+    )
+    .unwrap();
+
+    let s = config.sockets.unwrap();
+
+    assert_eq!(s.connect.len(), 1);
+    assert_eq!(s.connect[0].cidr, "10.0.0.0/8");
+    assert!(s.bind.is_empty());
+    assert!(s.listen);
+}
+
+#[test]
+fn sockets____bad_cidr____refused() {
+    let err = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[sockets]\nbind = [{ cidr = \"10.0.0.0/40\" }]\n",
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("sockets.bind[0].cidr"), "{err}");
+}

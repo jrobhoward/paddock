@@ -1127,6 +1127,88 @@ async fn egress____inside_and_outside_the_node_ceiling____fetches_or_refused() {
     n.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sockets____inside_and_outside_the_node_ceiling____connects_or_refused() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let _ = stream.write_all(b"hello").await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    });
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy = policy_dir.path().join("policy.toml");
+    std::fs::write(&policy, "[apps.mqtt]\ngrant = [\"wasi:sockets\"]\n").unwrap();
+    let mut n = TestNode::start(&format!(
+        "policy = {policy:?}\n[sockets]\nconnect = [{{ cidr = \"127.0.0.1/32\", ports = \"{}\" }}]\n",
+        address.port()
+    ))
+    .await;
+    let manifest =
+        |scope: serde_json::Value| fast(json!({ "capabilities": { "wasi:sockets": scope } }));
+    let net = fixture("paddock_fixture_net");
+
+    let outside = n
+        .client
+        .deploy(bundle(
+            &n.key,
+            "mqtt",
+            "1.0.0",
+            &net,
+            manifest(json!({ "connect": [{ "cidr": "127.0.0.0/8" }] })),
+            &[],
+        ))
+        .await
+        .unwrap_err();
+    let listen = n
+        .client
+        .deploy(bundle(
+            &n.key,
+            "mqtt",
+            "1.0.0",
+            &net,
+            manifest(json!({ "listen": true })),
+            &[],
+        ))
+        .await
+        .unwrap_err();
+    n.client
+        .deploy(bundle(
+            &n.key,
+            "mqtt",
+            "1.0.0",
+            &net,
+            manifest(json!({ "connect": [{ "cidr": "127.0.0.1/32", "ports": address.port().to_string() }] })),
+            &[],
+        ))
+        .await
+        .unwrap();
+    let id = call(&n, "mqtt", &format!("connect {address}")).await;
+    call(&n, "mqtt", &format!("watch {id}")).await;
+    let mut received = String::new();
+    for _ in 0..100 {
+        received = call(&n, "mqtt", "received").await;
+        if !received.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    assert_eq!(kind(&outside), "invalid");
+    assert!(
+        outside
+            .to_string()
+            .contains("outside the node's [sockets] connect"),
+        "{outside}"
+    );
+    assert!(listen.to_string().contains("listen"), "{listen}");
+    assert_eq!(received, "1:hello");
+    n.shutdown().await;
+}
+
 /// The counter in `blue-green` upgrade mode, two instances.
 fn blue_green_counter(n: &TestNode, version: &str, build: u8) -> Vec<u8> {
     let mut manifest = fast(json!({ "instances": { "count": 2 } }));

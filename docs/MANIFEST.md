@@ -163,7 +163,7 @@ Each key requests one host interface, with the scope that narrows it. Importing 
 - **Imported but not declared:** the component is refused by `paddock bundle` and at deploy.
 - **Declared but not granted:** the app deploys. Its imports are linked to stubs that return the interface's permission error (`access-denied` for keyvalue, for example) at call time. `paddock status` lists these under `denied`.
 
-Always available, with no declaration: `paddock:runtime/process` and `types`, `wasi:clocks`, `wasi:random`, `wasi:io` and `wasi:cli` (stdout and stderr become log records).
+Always available, with no declaration: `paddock:runtime/process` and `types`, `paddock:io` (readiness of a pollable as the host event `io-ready`; see `wasi:sockets`), `wasi:clocks`, `wasi:random`, `wasi:io` and `wasi:cli` (stdout and stderr become log records).
 
 | Key | Scope fields | Phase 1 |
 | --- | --- | --- |
@@ -177,7 +177,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `w
 | `paddock:metrics` | `prefix` (required; letters, digits, `_`): every metric is exported as `<prefix>_<name>` with an `app` label. `max_series` (default 1000): most name and label combinations the app may hold; past it, registering returns `limit-reached`. | enforced |
 | `wasi:http/outgoing-handler` | `allow`: what the app may reach, each entry a scheme, host and port: `https://api.example.com` (port 443), `http://plc.internal:8080`, a bare `api.example.com` (HTTPS), `*.internal` (any host under `internal`, HTTPS, 443), or an address, `http://10.0.0.5:8080`, `https://[fd00::1]` (reached only as written, never through a name). No path, query or user. `methods` (upper case; empty for any). `max_concurrent`: requests in flight at once across the app's instances (default: the node's `[egress] max_concurrent`, 64); past it a request fails at once with `connection-limit-reached`. Anything else is refused with `HTTP-request-denied`, and a name that resolves only to loopback or link-local addresses with `destination-IP-prohibited`, unless node config sets `allow_loopback`. Node config's `[egress] allow` is a ceiling: a deploy asking for more is refused. Cargo feature `egress` (on by default); `paddock_sdk::http_client` is the SDK's client. | enforced |
 | `paddock:sql` | `datasources.<name>.max_connections` (default 4): the SQL datasources the app uses, and how many connections its instances hold on each at once, transactions included. Each name needs a `[datasources.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`datasources = [...]`); using an ungranted one returns `access-denied`. A call that cannot get a connection within the datasource's `acquire_timeout_ms` returns `limit-reached`. Postgres only; see `wit/sql/sql.wit` for what values carry. | enforced |
-| `wasi:sockets` | as documented in `paddock_bundle::manifest` | *not enforced* (Phase 3) |
+| `wasi:sockets` | `connect = [{ cidr, ports }]`: where the app may connect TCP and send UDP (`ports` is `"1883"` or `"8000-8100"`; unset for any). `bind = [{ cidr, ports }]`: what it may bind; the unspecified address with port 0, the bind before every connect, needs no rule. `listen` (default `false`): whether it may listen on a bound TCP address, accept connections and take UDP datagrams from any peer (without it, datagrams only from `connect` addresses). `max_sockets` (default 16): sockets open at once across the app's instances, TCP and UDP, accepted ones included; past it, creating or accepting one fails with `new-socket-limit`. Loopback, link-local (`169.254.0.0/16`, cloud metadata) and unspecified destinations are reached only through a rule whose block lies inside that range (`127.0.0.1/32` reaches loopback; `0.0.0.0/0` does not). Name lookups are allowed only with `connect` rules; the addresses they return are checked like any other. Anything else fails with `access-denied` (a refused name lookup as `permanent-resolver-failure`). Node config's `[sockets]` is a ceiling: a deploy asking for more is refused. Sockets close when the instance exits or is upgraded, and an instance holding one is not passivated. `paddock_sdk::net` is the SDK's TCP client and listener; it waits for bytes with `paddock:io` instead of blocking the instance. | enforced |
 | `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
 | `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
 
@@ -298,6 +298,11 @@ between_bytes_timeout_ms = 30000       # between chunks of a response body
 pool_idle_timeout_ms = 90000           # idle pooled connections are closed after this
 pool_max_idle_per_host = 32
 max_concurrent = 64                    # requests in flight per app, unless its manifest says
+
+[sockets]                              # TCP and UDP from apps (wasi:sockets); unset: no ceiling
+connect = [{ cidr = "10.20.0.0/16", ports = "1883" }]  # the most any app may connect to (manifest syntax)
+bind = [{ cidr = "0.0.0.0/0", ports = "9000-9099" }]   # the most any app may bind
+listen = false                         # whether any app may listen
 
 [metrics]
 address = "127.0.0.1:9100"             # GET /metrics for Prometheus; unauthenticated, keep it off public networks

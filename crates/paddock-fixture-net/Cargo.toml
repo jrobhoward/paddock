@@ -1,0 +1,19 @@
+[package]
+name = "paddock-fixture-net"
+version = "0.0.0"
+description = "Test fixture: an app using wasi:sockets and paddock:io through paddock-sdk's net module"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true, features = ["net"] }
+
+[lints]
+workspace = true

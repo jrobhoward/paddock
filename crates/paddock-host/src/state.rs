@@ -20,6 +20,7 @@ use crate::message::Envelope;
 use crate::output::{CapturedOutput, Tags};
 use crate::pid::Pid;
 use crate::process::{Timers, limit};
+use crate::ready::Waits;
 use crate::runtime::RuntimeInner;
 use crate::services::config::Config;
 use crate::services::egress::Egress;
@@ -28,6 +29,7 @@ use crate::services::keyvalue::KeyValue;
 use crate::services::logging::{LogRate, Logging};
 use crate::services::metrics::MetricsService;
 use crate::services::secrets::Secrets;
+use crate::services::sockets::{self, Sockets};
 use crate::services::sql::Sql;
 use crate::services::{HostState, Service, ServiceCtx, States};
 use crate::spec::InstanceSpec;
@@ -70,6 +72,8 @@ pub struct InstanceState {
     /// The lease ended while guest code ran, and the epoch callback
     /// interrupted it.
     pub(crate) lease_ended: bool,
+    /// Pollables the guest asked to hear about (`paddock:io/ready`).
+    pub(crate) ready: Waits,
     services: States,
 }
 
@@ -83,8 +87,10 @@ impl InstanceState {
             version: spec.version.clone(),
             pid,
         });
-        // No environment and no sockets; stdout and stderr become logs.
+        // No environment; stdout and stderr become logs; sockets as the
+        // app's policy allows.
         let mut wasi = WasiCtx::builder();
+        sockets::configure(&mut wasi, spec, ctx.rt.metrics.stats(&spec.app));
         let rate = LogRate::new(
             ctx.rt.services.logging.clone(),
             spec.services.logging.rate_limit,
@@ -127,6 +133,7 @@ impl InstanceState {
             announce_role: spec.announce_role,
             lease,
             lease_ended: false,
+            ready: Waits::default(),
             services,
         })
     }
@@ -148,6 +155,11 @@ impl InstanceState {
     /// Resources handed to the guest.
     pub(crate) fn table_mut(&mut self) -> &mut ResourceTable {
         &mut self.table
+    }
+
+    /// The pollables the guest waits on and the table they live in.
+    pub(crate) fn ready_parts(&mut self) -> (&mut Waits, &mut ResourceTable) {
+        (&mut self.ready, &mut self.table)
     }
 
     /// The host events the services want this instance to see now.
@@ -235,6 +247,7 @@ host_state!(Logging, logging);
 host_state!(Secrets, secrets);
 host_state!(MetricsService, metrics);
 host_state!(Sql, sql);
+host_state!(Sockets, sockets);
 
 impl WasiView for InstanceState {
     fn ctx(&mut self) -> WasiCtxView<'_> {

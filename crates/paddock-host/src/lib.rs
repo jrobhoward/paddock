@@ -43,6 +43,7 @@ pub mod pid;
 mod pool;
 mod probe;
 mod process;
+mod ready;
 mod registry;
 mod replication;
 mod runtime;

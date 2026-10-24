@@ -123,8 +123,8 @@ impl Capability {
             | Self::Secrets
             | Self::Sql
             | Self::Metrics
-            | Self::HttpOutgoing => None,
-            Self::Sockets => Some(Phase::Phase3),
+            | Self::HttpOutgoing
+            | Self::Sockets => None,
             Self::Supervisor | Self::Admin => Some(Phase::Later),
         }
     }
@@ -184,6 +184,7 @@ const KEYVALUE: usize = 4;
 /// interfaces)`, where `None` means the whole package.
 const IMPLICIT: &[(&str, Option<&[&str]>)] = &[
     ("paddock:runtime", Some(&["types", "process"])),
+    ("paddock:io", None),
     ("wasi:clocks", None),
     ("wasi:random", None),
     ("wasi:io", None),
@@ -815,7 +816,7 @@ pub struct Route {
 /// Scope of `wasi:sockets`. Bind and connect have separate rules: Rust's
 /// standard library binds `0.0.0.0:0` before every connect, so one
 /// destination-only rule would refuse every connection.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SocketsScope {
     /// Addresses the app may bind.
@@ -826,6 +827,23 @@ pub struct SocketsScope {
     pub connect: Vec<SocketRule>,
     /// Whether the app may listen on bound TCP sockets.
     pub listen: bool,
+    /// Most sockets the app's instances hold open at once, TCP and UDP,
+    /// listening and accepted ones included.
+    pub max_sockets: u32,
+}
+
+/// [`SocketsScope::max_sockets`] when a manifest does not set it.
+pub const DEFAULT_MAX_SOCKETS: u32 = 16;
+
+impl Default for SocketsScope {
+    fn default() -> Self {
+        Self {
+            bind: Vec::new(),
+            connect: Vec::new(),
+            listen: false,
+            max_sockets: DEFAULT_MAX_SOCKETS,
+        }
+    }
 }
 
 impl SocketsScope {
@@ -839,6 +857,9 @@ impl SocketsScope {
                     );
                 }
             }
+        }
+        if self.max_sockets == 0 {
+            v.error_at("max_sockets", "must be greater than zero");
         }
     }
 }

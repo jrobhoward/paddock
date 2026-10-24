@@ -49,6 +49,7 @@ pub fn fixture(name: &str) -> Vec<u8> {
     static CHAOS: OnceLock<()> = OnceLock::new();
     static SERVICES: OnceLock<()> = OnceLock::new();
     static SDK: OnceLock<()> = OnceLock::new();
+    static NET: OnceLock<()> = OnceLock::new();
     let (package, dir, once) = if name == "paddock_fixture_services" {
         (
             "paddock-fixture-services",
@@ -57,6 +58,8 @@ pub fn fixture(name: &str) -> Vec<u8> {
         )
     } else if name == "paddock_fixture_sdk" {
         ("paddock-fixture-sdk", "target/fixtures/sdk-plain", &SDK)
+    } else if name == "paddock_fixture_net" {
+        ("paddock-fixture-net", "target/fixtures/net-plain", &NET)
     } else {
         (
             "paddock-fixture-chaos",

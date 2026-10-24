@@ -226,6 +226,7 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "v", "mode": "rw", "quota": "5GiB" } } } } }), "capabilities.wasi:filesystem.preopens./data.quota")]
 #[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "v", "quota": "1MiB" } } } } }), "capabilities.wasi:filesystem.preopens./data.quota")]
 #[case(json!({ "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/33" }] } } }), "capabilities.wasi:sockets.connect[0].cidr")]
+#[case(json!({ "capabilities": { "wasi:sockets": { "max_sockets": 0 } } }), "capabilities.wasi:sockets.max_sockets")]
 #[case(json!({ "capabilities": { "wasi:http/outgoing-handler": { "allow": ["x"], "methods": ["get"] } } }), "capabilities.wasi:http/outgoing-handler.methods[0]")]
 #[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "orders" }] } } }), "capabilities.wasi:http/incoming-handler.routes[0].path_prefix")]
 #[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [] } } }), "capabilities.wasi:http/incoming-handler.routes")]
@@ -333,7 +334,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
         "instances": { "min": 1, "max": 3 },
         "limits": { "fuel_per_message": 10, "storage_quota": "1GiB", "open_files": 4, "outbound_connections": 2 },
         "capabilities": {
-            "wasi:sockets": {},
             "paddock:admin": {}
         },
         "upgrade": { "mode": "blue-green" },
@@ -360,7 +360,6 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
             ("limits.storage_quota".into(), Phase::Later),
             ("limits.open_files".into(), Phase::Later),
             ("limits.outbound_connections".into(), Phase::Later),
-            ("capabilities.wasi:sockets".into(), Phase::Phase3),
             ("capabilities.paddock:admin".into(), Phase::Later),
             ("placement.mode".into(), Phase::Phase3),
             ("placement.required_labels".into(), Phase::Phase3),

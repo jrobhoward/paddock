@@ -9,6 +9,7 @@ use super::*;
 #[rstest]
 #[case("paddock:runtime/types@0.1.0")]
 #[case("paddock:runtime/process@0.1.0")]
+#[case("paddock:io/ready@0.1.0")]
 #[case("wasi:clocks/monotonic-clock@0.2.12")]
 #[case("wasi:random/random@0.2.12")]
 #[case("wasi:io/streams@0.2.12")]

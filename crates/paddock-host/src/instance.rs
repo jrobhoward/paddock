@@ -76,6 +76,13 @@ enum Op {
     Announce,
 }
 
+/// What woke an instance waiting for its next message: the message (or
+/// what to do instead), or a host operation to run first.
+enum Woke {
+    Next(Next),
+    Op(Box<Op>),
+}
+
 /// Why reading an instance's state failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -960,28 +967,40 @@ impl InstanceTask {
                 None => std::future::pending().await,
             }
         };
-        tokio::select! {
+        let (waits, table) = store.data_mut().ready_parts();
+        let ready = crate::ready::next(waits, table);
+        let woke = tokio::select! {
             biased;
             changed = self.control.changed() => {
                 if changed.is_err() {
                     return Next::Done(Err(ExitReason::Killed));
                 }
-                Next::Again
+                Woke::Next(Next::Again)
             }
-            Some(op) = self.ops.recv() => self.run_op(store, instance, spec, op).await,
-            Some(info) = self.signals.recv() => match info.resolve() {
+            Some(op) = self.ops.recv() => Woke::Op(op),
+            Some(info) = self.signals.recv() => Woke::Next(match info.resolve() {
                 Some(info) => Next::Message(Message::Info(info)),
                 // A withdrawn notice (an ended watch).
                 None => Next::Again,
-            },
-            message = self.mailbox.recv() => match message {
+            }),
+            // Ahead of the mailbox: a notice is sent once per `notify`, so
+            // the guest decides how often it comes.
+            event = ready => Woke::Next(match event {
+                Some((name, msg)) => Next::Message(Message::Info(Info::HostEvent { name, msg })),
+                None => Next::Again,
+            }),
+            message = self.mailbox.recv() => Woke::Next(match message {
                 Some(message) => Next::Message(message),
                 None => Next::Done(Ok(Served::Stop(ExitReason::Shutdown))),
-            },
+            }),
             () = tokio::time::sleep(idle.unwrap_or_default()), if idle.is_some() => {
-                Next::Done(Ok(Served::Idle))
+                Woke::Next(Next::Done(Ok(Served::Idle)))
             }
-            () = wanted, if idle.is_some() => Next::Done(Ok(Served::Idle)),
+            () = wanted, if idle.is_some() => Woke::Next(Next::Done(Ok(Served::Idle))),
+        };
+        match woke {
+            Woke::Next(next) => next,
+            Woke::Op(op) => self.run_op(store, instance, spec, op).await,
         }
     }
 

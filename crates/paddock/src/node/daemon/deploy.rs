@@ -204,6 +204,11 @@ impl Node {
             self.config.egress.allow.as_deref(),
         )
         .map_err(|e| NodeError::Invalid(format!("wasi:http/outgoing-handler: {e}")))?;
+        if let (Some(scope), Some(ceiling)) = (&spec.services.sockets.scope, &self.config.sockets) {
+            ceiling
+                .admits(scope)
+                .map_err(|e| NodeError::Invalid(format!("wasi:sockets: {e}")))?;
+        }
         if let Some(missing) = grant
             .granted_datasources
             .iter()

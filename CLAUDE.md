@@ -165,6 +165,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   keyvalue, the filesystem and stdout. Its `denied` feature adds an import no
   host implements, for deny-stub tests; nodes refuse that build, so node tests
   build it without the feature into `target/fixtures/services-plain`.
+- `crates/paddock-fixture-net`: a guest that connects, listens and binds
+  UDP through `paddock-sdk`'s `net` module and waits on its sockets with
+  `paddock:io` (`paddock-host`'s `tests/sockets.rs`).
 - `crates/paddock-fixture-counter`: a stateful counter built three ways by
   feature (v1, v2, a broken v3) for upgrade and passivation tests
   (`tests/passivation.rs`, `examples/passivation_cost.rs`); each version
@@ -183,7 +186,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   since `crates/paddock-host/wit` imports them. The SQL service
   (`src/services/sql`, cargo feature `sql`) runs Postgres through
   `tokio-postgres` and `deadpool-postgres`; its tests start a scratch
-  Postgres as the current user and skip when none is installed. `wit/vendor/`
+  Postgres as the current user and skip when none is installed. `wit/io/`:
+  `paddock:io` (readiness of a pollable as a host event), bound on its own
+  (`src/ready.rs`, the SDK's `net`) since it uses `wasi:io` types; guest
+  sockets are `src/services/sockets` (`wasi:sockets` narrowed, the count
+  kept by redefined linker functions). `wit/vendor/`
   holds unmodified copies of the WASI interfaces Paddock binds against
   (keyvalue, config, logging, and `wasi:io` for connections); bindings name
   each package path explicitly.

@@ -45,6 +45,8 @@ pub fn fixture(name: &str) -> Vec<u8> {
                 "-p",
                 "paddock-fixture-http",
                 "-p",
+                "paddock-fixture-net",
+                "-p",
                 "paddock-fixture-services",
                 "--features",
                 "paddock-fixture-services/denied",
