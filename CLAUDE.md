@@ -78,9 +78,10 @@ scripts/check-secrets.sh --push
 # Supply chain: run before adding or updating any dependency.
 cargo deny check licenses bans sources advisories
 
-# MSRV: the floor is wasmtime's (rust-version 1.96.0). Needs
-# `rustup toolchain install 1.96.0` once.
-cargo +1.96.0 check --workspace --all-targets
+# MSRV: rust-version 1.99.0, the stable rustc when it was last raised, so
+# dependencies resolve to current releases. Needs
+# `rustup toolchain install 1.99.0` once.
+cargo +1.99.0 check --workspace --all-targets
 
 # Guest components (examples, test fixtures) build for WASI 0.2. Needs
 # `rustup target add wasm32-wasip2` once. CI checks each one is a valid

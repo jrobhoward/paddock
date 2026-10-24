@@ -46,24 +46,22 @@ Paddock takes the failure model from Erlang/OTP, the deployment model from JBoss
 
 Each node is one OS process: a host runtime in Rust that runs many sandboxed Wasm app instances and joins a QUIC mesh with other nodes. Apps reach the outside world only through WIT imports the operator granted.
 
-```
-┌──────────────────────────── Node A ────────────────────────────┐
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐        │
-│  │    orders    │   │   billing    │   │     web      │        │
-│  │Wasm component│   │Wasm component│   │Wasm component│        │
-│  │ own memory,  │   │ own memory,  │   │ own memory,  │        │
-│  │   mailbox    │   │   mailbox    │   │   mailbox    │        │
-│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘        │
-│         │  WIT imports, granted only          │                │
-│  ┌──────▼─────────────────▼───────────────────▼─────────────┐  │      ┌────────┐
-│  │ Host runtime (wasmtime, tokio)                           │  │      │ Node B │
-│  │  Mailboxes, timers │ Supervision     │ Registry          │  │  ┌──►│        │
-│  │  Term storage      │ Logging, config │ Capability policy │  │  │   └───▲────┘
-│  └──────────────────────────────────────────────────────────┘  │  │       │
-│  ┌──────────────────────────────────────────────────────────┐  │  │   ┌───▼────┐
-│  │ Distribution: QUIC + mTLS, heartbeats, registry sync     ├──┼──┴──►│ Node C │
-│  └──────────────────────────────────────────────────────────┘  │      └────────┘
-└────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph A["Node A"]
+        orders["orders<br/>Wasm component<br/>own memory, mailbox"]
+        billing["billing<br/>Wasm component<br/>own memory, mailbox"]
+        web["web<br/>Wasm component<br/>own memory, mailbox"]
+        host["Host runtime (wasmtime, tokio)<br/>mailboxes, timers · supervision · registry<br/>term storage · logging, config · capability policy"]
+        dist["Distribution: QUIC + mTLS, heartbeats, registry sync"]
+        orders --> host
+        billing -->|"WIT imports, granted only"| host
+        web --> host
+        host --- dist
+    end
+    dist <--> B["Node B"]
+    dist <--> C["Node C"]
+    B <--> C
 ```
 
 Apps sit inside the sandbox; mailboxes, supervision, registry, storage, logging and policy all live in the trusted host. The distribution layer carries messages, links and registry updates between nodes. Native rustbridge plugins run as separate OS processes that the host supervises like any instance.

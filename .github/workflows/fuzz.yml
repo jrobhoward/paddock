@@ -7,6 +7,10 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch:
 
+# The jobs only read the repository; the token can do nothing else.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

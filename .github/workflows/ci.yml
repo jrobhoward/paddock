@@ -10,6 +10,10 @@ on:
   schedule:
     - cron: "0 6 * * 1"
 
+# The jobs only read the repository; the token can do nothing else.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -104,17 +108,17 @@ jobs:
       - name: Guests
         run: scripts/check.sh guests
 
-  # Guards `rust-version = "1.96.0"`, wasmtime 49's floor.
+  # Guards `rust-version = "1.99.0"`, the stable rustc the dependencies resolve for.
   msrv:
-    name: msrv 1.96.0
+    name: msrv 1.99.0
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install toolchain
         run: |
-          rustup toolchain install 1.96.0 --profile minimal
-          rustup default 1.96.0
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
           rustc --version
 
       - uses: actions/cache@v4

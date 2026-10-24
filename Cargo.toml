@@ -41,8 +41,9 @@ exclude = ["spikes", "fuzz"]
 [workspace.package]
 version = "0.3.0"
 edition = "2024"
-# wasmtime 49 declares rust-version 1.96.0, so that is the floor.
-rust-version = "1.96.0"
+# The current stable rustc: dependencies resolve to their newest releases
+# (resolver 3 picks versions that build on rust-version). wasmtime 49 needs 1.96.0.
+rust-version = "1.99.0"
 license = "MIT OR Apache-2.0"
 authors = ["James Howard <jrobhoward@gmail.com>"]
 repository = "https://github.com/jrobhoward/paddock"
@@ -64,7 +65,8 @@ wit-parser = "0.259"
 # Same wasmparser line as wit-parser and wasmtime 49, so the graph carries one
 # copy.
 wasmparser = { version = "0.259", default-features = false, features = ["component-model", "std"] }
-tokio = "1"
+# 1.54: the current line (`AsyncFd::register`, which the serial tty uses, is 1.53.3 on).
+tokio = "1.54"
 # MIT OR Apache-2.0. Client (polling) and server (serving registers) over TCP.
 tokio-modbus = { version = "0.17", default-features = false, features = ["tcp", "tcp-server"] }
 thiserror = "2"

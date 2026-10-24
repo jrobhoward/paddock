@@ -35,10 +35,10 @@ Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (i
 
 ## Order
 
-```
-1 Tooling ─► 2 Review ─► 3 Rework ─► V2 ─► 4 Cluster ─► 5 Platform features ─► 6 Platforms and benchmarks ─► 7 Docs
-   (S)         (M)        (M–L)     (20 h)     (L)              (L)                       (M)                  (M)
-  done        done        done       done      done             next
+```mermaid
+flowchart LR
+    s1["1 Tooling (S)<br/>done"] --> s2["2 Review (M)<br/>done"] --> s3["3 Rework (M–L)<br/>done"] --> v2["V2 (20 h)<br/>done"] --> s4["4 Cluster (L)<br/>done"]
+    s4 --> s5["5 Platform features (L)<br/>next"] --> s6["6 Platforms and benchmarks (M)"] --> s7["7 Docs (M)"]
 ```
 
 - **Tools first.** The checks, the soak runner and the benchmark runner are each one command, so every later stage runs them instead of re-deriving them.
@@ -105,6 +105,11 @@ On an idle machine only.
 Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run is BASELINE.md's 2026-10-15 section, which replaces the numbers flagged provisional on 2026-10-09 and records Modbus throughput. Done on 2026-10-16: B8, what B7 left unexplained (BASELINE.md, 2026-10-16): the call between nodes is mostly QUIC and tokio wakes (`quic_floor`); the ingress gap was per-request waste, removed (78k to 85k, 88k to 99k without guest CBOR, at 32 connections); `modbus_load`'s drop comes from the pool size on one shared bucket; the metric counters cost nothing measurable; boxing the callback futures saves nothing. Hash routing then stopped decoding whole bodies (it walks the CBOR map for the key): `modbus_load` (64 devices, pool of 4, 8 workers) stores about 25% more updates with about 12% less CPU. G3, Linux arm64 in CI (`ubuntu-24.04-arm` in the test matrix), the same day. Done on 2026-10-18: G2, the Raspberry Pi 5 baseline (BASELINE.md, 2026-10-18): the suite on the Pi, and about 9,400 idle live instances per GiB on the dense profile (40,000 held), 54,000 passivated. Left open from it: an idle live instance takes about 110 KiB on the Pi against 58 to 63 KiB on the 16-core machine, not explained, and epoch checks cost up to 1.5 times in tight loops there.
 - [ ] **G5 Dedicated workers and CPU budgets** for latency-critical instances: priority classes mapped to separate worker sets, a CPU budget per period per app (`CallbackClock`), and a rule for priority inversion. Measure first (S15 saw 10–47 µs over native at one connection that client-side timing could not explain).
 - [ ] **G1 Large machine** (tabled 2026-10-07: none with more than 16 cores or several sockets is available). `scripts/bench.sh` at 32 to 80 workers; watch the process table, registry and pool round robin for contention. Until then no design may assume one core or one socket.
+- [ ] **Major-version dependency upgrades** (listed 2026-10-24, after `rust-version` went to 1.99.0 and every lock file was updated within semver). `cargo update --verbose --dry-run` lists what is behind. Each is its own change; raise `rust-version` to the current stable rustc with it if a dependency needs one.
+  - [ ] **Y1 wasmtime 49 to 50**, with `wasmtime-wasi`, `wasmtime-wasi-http`, and `wasmparser`, `wit-parser` and `wit-bindgen` on the lines wasmtime 50 uses, as one group. Rerun `baseline` and `pool_load` (CLAUDE.md, the epoch tick constraint) and the S1 and S4 spikes on the constraints they back. Recheck the wasmtime-49 notes under stage 5's smaller items: `http-error-code` for a failure inside a response body (the SDK matches a timeout by its text), a response body dropped without `finish`, and instance reuse in `ProxyHandler`.
+  - [ ] **Y2 redb 3 to 4.** Every node's `kv/` file (disk buckets and the replicated log) is redb. Find out first whether 4 changes the file format; if it does, a node upgraded in place needs a migration (or a documented export and import) and OPERATIONS.md says so, and a pair running two builds during a release must still replicate (U1's versions).
+  - [ ] **Y3 minisign 0.9 to 0.10**, together with rustbridge-bundle on rustbridge's `experiment/wasm` branch, which uses the same major so bundles verify with one copy: change and push rustbridge first, then update the lock here.
+  - [ ] **Y4 The smaller ones**: rstest 0.28, rustyline 19 (`paddock shell`), toml 1.x (manifest, node config and policy parsing; check the error messages tests match), wasip2 2.0 (`paddock_sdk::http_client` and the HTTP fixtures).
 
 ## Stage 7: Docs (M)
 
@@ -136,11 +141,6 @@ Done on 2026-10-22: X2, Phase 3's exit. `paddock-soak scada` runs X1's apps on t
 Decided 2026-10-16: the pair and its witness are the target topology, and general clusters of many nodes come later; replicated buckets replicate synchronously within the pair, using the failover epochs and leases, not Raft; blue-green upgrades, guest sockets, native-process plugins and moving instances are in scope; general placement, global names, more guest SDKs and fuel metering are parked.
 
 Order: X1 first, so the app drives the rest; K3 next, on K2's machinery; N1 alongside K, since it shares no code; M1 after K3; L1 after M1; U1 after L1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
-
-```
-X1 app ─► K3 app buckets ─► M1 move ─► L1 fast hand-over ─► U1 pair rollout ─► U2 blue-green ─► X2 exit
-            N1 sockets (alongside K)              N2 native plugins (ports, S19): done
-```
 
 - [ ] **W2 Phase 3's docs.** A docs pass for Phase 3, as W1 for Phase 2.
 

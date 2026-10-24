@@ -4,6 +4,10 @@
 
 The threat model as built: what Paddock protects, whom it trusts, each boundary between trusted and untrusted parts with the controls on it and the gaps found, and the fuzz targets. Findings are numbered S1 and on; their fixes are ROADMAP stage 3 items.
 
+## Reporting a vulnerability
+
+Report it privately through the repository's Security tab ("Report a vulnerability"), not in a public issue. Paddock is a research project without support (README.md): reports are read, but there is no response time and no fixed releases.
+
 ## What is protected
 
 - **Singleton exclusivity.** A singleton drives devices; two copies running at once is the worst outcome (DESIGN.md, "Distribution"; `docs/tla/VERIFICATION.md`).

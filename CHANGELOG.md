@@ -6,6 +6,12 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The minimum Rust version is 1.99.0 (was 1.96.0), so dependencies resolve
+  to current releases; the lock files of the workspace, fuzz and spikes are
+  updated within semver.
+
 ## [0.3.0] - 2026-10-23
 
 The first tagged version: a research release, not feature complete, with
@@ -17,6 +23,10 @@ unstable APIs and formats.
 - `README.md` states that Paddock is a research project without support.
 - rustbridge comes from its `experiment/wasm` branch on GitHub again, with
   zip 9; the fuzz workspace's lock file moves from zip 8.6 to 9.0.5.
+- The workspace requires tokio 1.54 (the serial tty layer needs
+  `AsyncFd::register`, from 1.53.3).
+- CI and fuzz workflows run with a read-only token.
+- `docs/SECURITY.md` says how to report a vulnerability.
 
 ### Added
 

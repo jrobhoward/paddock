@@ -28,10 +28,14 @@ components, with Erlang/OTP-style semantics:
 
 ## Status
 
-Pre-release. A single node runs: `paddock node` deploys signed bundles and
-supervises their instances, and the rest of the `paddock` CLI manages it. Phase 1
-milestones are done. rustbridge's bundle format 1.2 comes from its
-`experiment/wasm` branch on GitHub until it is released.
+Version 0.3.0, a research release: not feature complete, with unstable APIs
+and formats. Phases 1 to 3 are done: a single node (`paddock node` deploys
+signed bundles and supervises their instances, and the `paddock` CLI manages
+it), clusters with an HA pair and a witness for failover, replicated shared
+buckets, and releases across the pair without downtime. The docs for Phases 2
+and 3 are still being written; `docs/ROADMAP.md` has what is left. rustbridge's
+bundle format 1.2 comes from its `experiment/wasm` branch on GitHub until it
+is released.
 
 - [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md): run a node and
   deploy, upgrade and roll back an app.
@@ -53,7 +57,7 @@ milestones are done. rustbridge's bundle format 1.2 comes from its
 
 ## Building
 
-Rust 1.96.0 or newer. Guest components build for `wasm32-wasip2`:
+Rust 1.99.0 or newer. Guest components build for `wasm32-wasip2`:
 
 ```sh
 cargo test --workspace --all-features

@@ -6,7 +6,7 @@ Phase 1 runs on Linux and macOS. The admin API is a Unix socket, and Windows is 
 
 ## 1. Build
 
-Rust 1.96 or newer, plus the WebAssembly target that apps compile to:
+Rust 1.99 or newer, plus the WebAssembly target that apps compile to:
 
 ```sh
 rustup target add wasm32-wasip2

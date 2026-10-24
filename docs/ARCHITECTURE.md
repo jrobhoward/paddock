@@ -6,35 +6,27 @@ A map of the code as built: the crates, the paths a call, a deploy, a failover, 
 
 ## Crates
 
+```mermaid
+flowchart TD
+    operator(["operator"]) -->|"CLI, over the Unix socket or TLS"| paddock
+    paddock["paddock (bin + lib)<br/>api: admin types, client<br/>node: daemon, store, gate, events, audit, serial path<br/>cli: commands, shell"]
+    host["paddock-host<br/>runtime, process core, services, supervisors,<br/>transport, failover, replication, http, listeners, native"]
+    bundle["paddock-bundle<br/>manifest, .rbp, verify, policy, grant<br/>(no wasmtime)"]
+    native["paddock-native<br/>protocol, app, paddock-runner"]
+    ext["extensions<br/>paddock-modbus, greeter service"]
+    guests["guests (Wasm)<br/>paddock-sdk, fixtures, examples"]
+    napps["native apps<br/>rustbridge plugins, executables<br/>on paddock-native's app API"]
+    paddock --> host
+    paddock --> bundle
+    paddock -->|"modbus feature"| ext
+    host --> bundle
+    host -->|"protocol only"| native
+    ext -->|"Extension trait"| host
+    guests -.->|"WIT imports"| host
+    napps -.->|"run by paddock-runner"| native
 ```
-                       ┌──────────────────────────────┐
-  operator ──CLI──────►│ paddock (bin + lib)          │
-  (Unix socket, TLS)   │  api: admin types, client    │
-                       │  node: daemon, store, gate,  │
-                       │   events, audit, serial path │
-                       │  cli: commands, shell        │
-                       └──────┬───────────────┬───────┘
-                              │               │
-              ┌───────────────▼──┐      ┌─────▼────────────┐
-              │ paddock-host     │◄─────┤ paddock-bundle   │
-              │  runtime, process│      │  manifest, .rbp  │
-              │  core, services, │      │  verify, policy, │
-              │  supervisors,    │      │  grant (no       │
-              │  transport,      │      │  wasmtime)       │
-              │  failover,       │      └──────────────────┘
-              │  replication,    │
-              │  http, listeners,│      ┌──────────────────┐
-              │  native ─────────┼─────►│ paddock-native   │
-              └──▲────────────▲──┘      │  protocol, app,  │
-                 │            │         │  paddock-runner  │
-   ┌─────────────┴───┐   ┌────┴───────┐ └──────────────────┘
-   │ guests (Wasm):  │   │ paddock-   │   native apps: rustbridge
-   │ paddock-sdk,    │   │ modbus,    │   plugins, executables on
-   │ fixtures,       │   │ greeter    │   paddock-native's app API
-   │ examples        │   │ service    │
-   └─────────────────┘   └────────────┘
-                        Extension trait
-```
+
+Solid arrows point from a crate to the crates it depends on; dotted arrows are what runs on the host, not Cargo dependencies.
 
 | Crate | Builds | What it holds |
 | --- | --- | --- |
@@ -73,28 +65,23 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 
 ### From the operator
 
-```
-paddock call app body
-  │  HTTP over the admin socket (or TLS): POST /v1/apps/<app>/call
-  ▼
-node::server ──► Node::send ──► resolve(target)
-  │                 app  → the app's pool picks an instance (round robin, or a hash of a key;
-  │                        during a blue-green upgrade, the new side by weight)
-  │                 pid  → the process table
-  │                 name → the registry
-  ▼
-InstanceHandle::call ──► size check ──► mailbox try_send(Call{msg, oneshot})
-  │                                       full mailbox → error at once
-  ▼
-instance task (serve loop)
-  │  takes, in order: control changes, host ops (upgrade, snapshot, move),
-  │  signals (exits, timers, watch notices), readiness of the guest's
-  │  pollables (io-ready), then the mailbox
-  │  starts the callback clock (callback_deadline_ms counts guest time only)
-  ▼
-guest handle-call in the Store ──► reply, or noreply and process.reply later
-  ▼
-oneshot ──► Node::send ──► HTTP response ──► CLI
+```mermaid
+sequenceDiagram
+    participant CLI as paddock call app body
+    participant Node as node::server, Node::send
+    participant H as InstanceHandle
+    participant T as instance task (serve loop)
+    participant G as guest (Store)
+    CLI->>Node: HTTP over the admin socket (or TLS), POST /v1/apps/{app}/call
+    Note over Node: resolve(target)<br/>app: the app's pool picks an instance (round robin, or a hash of a key,<br/>during a blue-green upgrade the new side by weight)<br/>pid: the process table<br/>name: the registry
+    Node->>H: call
+    Note over H: size check, a full mailbox is an error at once
+    H->>T: mailbox try_send(Call{msg, oneshot})
+    Note over T: takes, in order: control changes, host ops (upgrade, snapshot, move),<br/>signals (exits, timers, watch notices), readiness of the guest's<br/>pollables (io-ready), then the mailbox<br/>starts the callback clock (callback_deadline_ms counts guest time only)
+    T->>G: handle-call
+    G-->>T: reply, or noreply and process.reply later
+    T-->>Node: oneshot
+    Node-->>CLI: HTTP response
 ```
 
 The caller waits with its timeout; a reply after the timeout is dropped. A guest that exceeds its deadline traps at an epoch tick, and the instance exits with a reason its supervisor acts on. Guest time excludes host time: the Store's call hook stops the callback clock while a host function runs (`CallHook::CallingHost`) and starts it again on return, so a guest waiting in `process.call` or a keyvalue read is not charged for it.
@@ -134,21 +121,20 @@ Stores are bounded by `RuntimeInner::slots`, a semaphore of `max_instances` perm
 
 A native app (`kind = "native-process"`) runs as a process, one per instance, through `paddock-runner`:
 
-```
-instance task (instance_native)         paddock-runner (one process)
-  spawn: pre_exec sets the parent-       non-dumpable; Landlock (read libraries
-  death signal, no core dumps, the       and the app's files, execute only the
-  cgroup or RLIMIT_DATA                  program); seccomp (signals to itself
-                                         only, no ptrace, no sockets)
-                                         then: load the rustbridge .so, or
-                                         execve the executable (paddock-native app)
-  ◄──────────── Hello ────────────────
-  Init ──────────────────────────────►  init
-  Call / Cast / Info ────────────────►  one callback at a time
-  ◄──────────── Request (process.*) ──   during a callback
-  Answer ────────────────────────────►
-  ◄──────────── Reply / Done / Failed
-  Ping (idle) ───────────────────────►  answered by a reader thread
+```mermaid
+sequenceDiagram
+    participant I as instance task (instance_native)
+    participant R as paddock-runner (one process)
+    Note over I: spawn: pre_exec sets the parent-death signal,<br/>no core dumps, the cgroup or RLIMIT_DATA
+    I->>R: spawn
+    Note over R: non-dumpable, Landlock (read libraries and the app's files,<br/>execute only the program), seccomp (signals to itself only,<br/>no ptrace, no sockets), then load the rustbridge .so<br/>or execve the executable (paddock-native app)
+    R->>I: Hello
+    I->>R: Init
+    I->>R: Call / Cast / Info, one callback at a time
+    R->>I: Request (process.*), during a callback
+    I->>R: Answer
+    R->>I: Reply / Done / Failed
+    I->>R: Ping (idle), answered by a reader thread
 ```
 
 - **The port** (`native::port`) holds the child and three tasks: a writer (frames queued without blocking the instance task), a reader (decoding frames), and stderr copied into log lines as a component's stderr is.
@@ -159,32 +145,17 @@ No snapshots, so no passivation, snapshot upgrades or moves; upgrade operations 
 
 ## A deploy
 
-```
-paddock deploy app.rbp
-  │  POST /v1/apps (bundle bytes)
-  ▼
-Node (holds the change lock for the whole deploy; reads do not wait for it)
-  ├─ write the upload to <data_dir>/tmp
-  ├─ blocking pool: VerifiedBundle::open
-  │     signature against trusted_keys, the appserver section, checksums,
-  │     the wasm32-wasip2 variant and its world, or a native app's platform variant
-  ├─ effective grant: manifest ∩ operator policy (a native program declares, imports nothing)
-  ├─ ceilings: [egress] allow, [sockets], datasources bound
-  ├─ blocking pool: Runtime::load_cached (compile with Cranelift, inspect imports,
-  │     link deny stubs; the compiled code kept under compiled/), or for a native
-  │     app write the program under compiled/ (mode 0500) and Runtime::load_native
-  ├─ InstanceSpec from the manifest, narrowed by the grant
-  ├─ store: extract priv/, keep bundles/<app>/<version>.rbp
-  ├─ run:
-  │     HTTP routes, if granted; an HTTP handler only routes
-  │     singleton on a failover node → gate.hold (starts only while may_run)
-  │     otherwise                    → Apps::add
-  │        dependency check, root supervisor, pool of instances;
-  │        each instance: instantiate in a new Store (or spawn the native process),
-  │        init, then serve
-  ├─ state.json saved
-  └─ audit.log record
-```
+`paddock deploy app.rbp` sends the bundle (`POST /v1/apps`). The node holds the change lock for the whole deploy; reads do not wait for it.
+
+1. The upload is written to `<data_dir>/tmp`.
+2. `VerifiedBundle::open`, on the blocking pool: the signature against `trusted_keys`, the `appserver` section, checksums, and the `wasm32-wasip2` variant and its world, or a native app's platform variant.
+3. The effective grant: manifest ∩ operator policy. A native program declares its capabilities but has no imports to inspect.
+4. The ceilings: `[egress] allow`, `[sockets]`, datasources bound.
+5. `Runtime::load_cached`, on the blocking pool: compile with Cranelift, inspect imports, link deny stubs, and keep the compiled code under `compiled/`. A native app's program is written under `compiled/` (mode 0500) and loaded with `Runtime::load_native`.
+6. The `InstanceSpec`, from the manifest, narrowed by the grant.
+7. The store: `priv/` extracted, the bundle kept as `bundles/<app>/<version>.rbp`.
+8. Run: HTTP routes, if granted (an HTTP handler only routes). A singleton on a failover node goes to `gate.hold` and starts only while `may_run`; anything else goes to `Apps::add`: the dependency check, the root supervisor and a pool of instances, each instantiated in a new Store (or spawned as a native process), then `init`, then serving.
+9. `state.json` saved, and an `audit.log` record.
 
 On restart a node re-verifies every stored bundle and starts the apps `state.json` marks running, in deploy order, reading compiled components from `compiled/` instead of compiling them.
 
@@ -200,23 +171,38 @@ Rollback goes to the previous version the same way.
 
 ## A failover
 
+```mermaid
+sequenceDiagram
+    participant N1 as node 1 (primary)
+    participant W as witness (node 3)
+    participant N2 as node 2 (standby)
+    Note over N1,N2: liveness loop, on the LAN and the serial line
+    N1->>N2: beats: standing, epoch
+    N2->>N1: beats: standby, epoch e, confirming (renews 1's lease)
+    N1->>W: renews its lease
+    Note over W: records the renewal
+    Note over N1,N2: node 1 is cut off
+    Note over N1: at lease end − margin: may_run = false,<br/>the gate kills singletons
+    Note over N2: hears 1 on no path: stops confirming
+    N2->>W: asks
+    Note over W: waits lease + margin since 1's last renewal,<br/>writes witness-state
+    W->>N2: grants
+    Note over N2: promotes at epoch e+1. The gate writes failover-epoch,<br/>waits for replication, then starts singletons
 ```
-          node 1 (primary)              witness (node 3)             node 2 (standby)
- liveness  beats: standing, epoch  ───────────────────────►  beats: "standby, epoch e,
- loop      ◄───────────────────────────────────────────────  confirming"  (renews 1's lease)
- (LAN and  renews at the witness ─────►  record renewal
-  serial)
- failover  lease end − margin:                                hears 1 on no path:
- node::run   may_run = false                                  stops confirming, asks ──►
-                                       waits lease + margin
-                                       since 1's last renewal
-                                       writes witness-state
-                                       grants ────────────────►  promotes: epoch e+1
- gate      kills singletons                                      gate follows:
-                                                                   writes failover-epoch,
-                                                                   waits for replication,
-                                                                   then starts singletons
+
+Each node's failover task moves between three standings. The transitions are named after the actions in `docs/tla/FailoverL2.tla`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Down
+    Down --> Standby: Rejoin, a primary at no lower an epoch
+    Down --> Primary: Granted (Resume), or Bootstrap
+    Standby --> Primary: Granted after Ask, Override, or Paths
+    Standby --> Down: Refused or StandDown
+    Primary --> Down: Fenced or Switchover
 ```
+
+A standby asks the witness once its partner is silent on every path, or at once when the partner yields in a switchover. `Override` promotes on an operator's confirmation, when the witness cannot be reached either; `Paths` promotes on silence alone, for a pair without a witness. `Bootstrap` is the start of a pair: with both nodes down, the lower node id leads.
 
 - **Liveness** (`transport::liveness`) beats every peer each heartbeat interval, on the cluster link and any extra path, with a payload failover sets (standing, epoch, whether it confirms). A path silent for `node_timeout` raises an event; a peer that stops being reachable ends its session.
 - **The serial path** (`node/serial_path.rs`, on `paddock::serial`): one task per configured device writes this node's beats as serial frames and reports the partner's to the runtime as a heartbeat path. A device that fails is reopened a second later, the path silent meanwhile; frames from or for another node are dropped. The tty layer is Paddock's own, on `rustix`.
@@ -233,16 +219,22 @@ The rules are R1 to R14 in `docs/tla/VERIFICATION.md`; the assumptions the model
 
 ## A replicated write
 
-```
-   instance on node 2 (standby)     node 2 replication task        node 1 replication task (primary)
-   wasi:keyvalue set ──► KvStore::run ──► forwards Write ─────────────►  appends at epoch e (synced)
-                                                                         Append ──────────┐
-                                    appends (synced), Ack  ◄──────────────────────────────┘
-                                    ───────────────────────────────────►  commits: applies to its
-                                                                          @cluster copy, notifies
-                                                                          watches, answers Done
-   set returns ◄──────────────────  Done  ◄────────────────────────────  next Append or heartbeat
-                                    applies to its copy, notifies       carries the commit index
+```mermaid
+sequenceDiagram
+    participant I as instance on node 2 (standby)
+    participant R2 as node 2 replication task
+    participant R1 as node 1 replication task (primary)
+    I->>R2: wasi:keyvalue set, through KvStore::run
+    R2->>R1: forwards Write
+    Note over R1: appends at epoch e (synced)
+    R1->>R2: Append
+    Note over R2: appends (synced)
+    R2->>R1: Ack
+    Note over R1: commits: applies to its @cluster copy,<br/>notifies watches
+    R1->>R2: Done
+    R2->>I: set returns
+    R1->>R2: the next Append or heartbeat carries the commit index
+    Note over R2: applies to its copy, notifies watches
 ```
 
 - **What replicates:** `cluster` buckets from node config, apps' buckets declared `replicated` (kept as `<app>/<bucket>` in the `@cluster` namespace), and the reserved records `@handover` and `@release`. Replication runs on a pair with `[failover] replication = true`.

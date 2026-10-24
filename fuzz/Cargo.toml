@@ -24,7 +24,7 @@ paddock-modbus = { path = "../crates/paddock-modbus" }
 semver = "1"
 serde_json = "1"
 tempfile = "3"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+tokio = { version = "1.54", features = ["rt", "rt-multi-thread", "time"] }
 
 [[bin]]
 name = "bundle_open"

@@ -2,4 +2,4 @@ cognitive-complexity-threshold = 20
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 # Matches the workspace `rust-version`; enables `clippy::incompatible_msrv`.
-msrv = "1.96.0"
+msrv = "1.99.0"
