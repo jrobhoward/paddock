@@ -355,9 +355,12 @@ absent import as unused, not as an error.
 `paddock:runtime` never exposes `wasi:io` pollables or streams, so a later
 WASI 0.3 world is additive (S3, `docs/DESIGN.md` → WASI migration).
 
-**Never call `Linker::define_unknown_imports_as_traps` next to the WASI
-linker.** It redefines re-exported WASI resources and breaks instantiation.
-Ungranted capabilities get typed deny stubs built with `func_new` (S4).
+**Ungranted capabilities get typed deny stubs built with `func_new`, not
+`Linker::define_unknown_imports_as_traps`.** A typed stub returns
+`access-denied` as a value; a trap stub kills the instance on the first
+call. On wasmtime 49.0.2 the trap stubs also broke instantiation next to the
+WASI linker (re-exported WASI resources redefined), fixed in 50 (S4, rerun
+2026-10-25).
 
 **Capability functions return `result<T, error>` with an `access-denied`
 case.** That is what lets a generic deny stub return an error instead of

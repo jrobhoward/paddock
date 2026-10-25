@@ -44,6 +44,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- redb 4 (disk buckets and the replicated log). The file format is unchanged:
+  a node's existing `kv/` file opens as it is, and a build on redb 3 still
+  opens a file redb 4 has written to (OPERATIONS.md; ROADMAP Y2).
 - wasmtime 50 (with `wasmtime-wasi` and `wasmtime-wasi-http`), wasmparser
   and wit-parser 0.261 (wasmtime 50's line), and wit-bindgen 0.63 for
   guests and the SDK; the spikes workspace moves with them (ROADMAP Y1).

@@ -81,7 +81,7 @@ ciborium = "0.2"
 # The same line as ciborium: its low-level decoder, for reading one field of
 # a CBOR map without decoding the rest (hash routing).
 ciborium-ll = "0.2"
-redb = "3"
+redb = "4"
 hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12"] }

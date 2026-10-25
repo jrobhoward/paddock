@@ -1763,12 +1763,31 @@ The section before's runs with both nodes' databases on each machine's NVMe inst
 | `pool_load 4`, `busy:20000`, pool of 16, 64 clients | 105,711 to 106,434 calls/s | 105,646 to 105,976 calls/s |
 
 - **No change beyond noise.** Every row's ranges overlap but two: on 1 worker, `pool_load` with empty calls runs 1 to 2% fewer calls/s on 50 with a pool of 4 (399,151 to 406,484 against 408,709 to 409,805) and with a pool of 16 and one client (359,645 to 369,051 against 370,682 to 377,159). The 16-worker rows vary by up to 40% from run to run on either version.
-- **Spikes.** S1's eight experiments and its poisoned-Store check (`REUSE_AFTER_DROP`) pass on 50 as on 49; E3's spinner is killed at 702 to 704 ms on both versions (its README says about 500 ms). S4's results match its README, except that `define_unknown_imports_as_traps` after the WASI linker now instantiates (the missing imports trap when called); whether 49.0.4 already did is not checked.
+- **Spikes.** S1's eight experiments and its poisoned-Store check (`REUSE_AFTER_DROP`) pass on 50 as on 49; E3's spinner is killed at 702 to 704 ms on both versions (its README says about 500 ms). S4's results match its README, except that `define_unknown_imports_as_traps` after the WASI linker now instantiates (the missing imports trap when called): wasmtime 50 preserves resource aliases when stubbing unknown imports (its release notes, #14396).
+
+## 2026-10-25: redb 3 to 4 (Y2)
+
+`replication_cost` on the 16-core machine's loopback with both nodes' databases on its NVMe, as in "replicated writes between two machines on disk" above: that section's three redb 3.1.3 runs against three on redb 4.4.0 the same afternoon, same disk and keys, idle (load under 1). Writes/s and p50 in µs:
+
+| | redb 3 | redb 4 |
+|---|---|---|
+| Disk bucket, one writer | 979 to 1,037/s, 861 to 911 | 667 to 964/s, 944 to 1,120 |
+| Disk bucket, 64 writers | 1,004 to 1,016/s | 934 to 954/s |
+| Replicated, one writer on the primary | 361 to 362/s, 2,386 to 2,395 | 270 to 371/s, 2,354 to 3,769 |
+| Replicated, one writer on the standby | 145 to 204/s, 5,857 to 7,154 | 258 to 347/s, 2,740 to 2,816 |
+| Replicated, 16 writers | 1,549 to 1,657/s | 1,732 to 1,770/s |
+| Replicated, 64 writers | 4,785 to 4,937/s | 4,623 to 4,732/s |
+| Replicated, alone, one writer | 266 to 597/s, 1,264 to 3,387 | 439 to 730/s, 1,222 to 1,560 |
+| Replicated, alone, 16 writers | 1,306 to 3,149/s | 3,661 to 3,776/s |
+
+- **Writes on the standby.** A forwarded write takes 2.74 to 2.82 ms on redb 4, the same as between the two machines, where redb 3 took 5.9 to 7.2 ms on this loopback. Not attributed further; redb 4.2's notes list faster `Durability::None` commits (the replicated log's) and freed pages reused one transaction sooner.
+- **Alone** is steady on redb 4 (1.22 to 1.56 ms, 3,661 to 3,776/s with 16 writers) where redb 3's runs spread by more than two times.
+- **The rest** is within this disk's variation: one writer on the primary at 2.35 ms in two runs and 3.77 ms in one; synced disk-bucket writes 5 to 7% fewer per second on redb 4, less than the spread between runs this morning (383 to 1,037/s in that section).
 
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
-- What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate. Why a write on the standby takes 5.9 to 7.2 ms on the 16-core machine's loopback on disk, against 2.7 to 2.8 ms between machines.
+- What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.
 - Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).
