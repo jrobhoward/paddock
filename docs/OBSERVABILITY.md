@@ -1,6 +1,6 @@
 # Observability
 
-What an operator can see on a running node: instance stats, direct calls to one instance, metrics for Prometheus, and probes a tracer attaches to without a restart.
+What an operator can see on a running node: instance stats, events and log records as they happen, direct calls to one instance, metrics for Prometheus, and probes a tracer attaches to without a restart.
 
 ## Instances
 

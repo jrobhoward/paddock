@@ -16,7 +16,7 @@ A node reads its configuration, keys and policy from wherever its config file na
 | `failover-epoch` | A pair node's highest failover epoch | never restore an older one |
 | `witness-state` | A witness's epoch, the node it last promoted, and `outdated` while that node's partner lacks replicated writes | never restore an older one |
 | `priv/<app>/<version>/` | Each bundle's `priv/` files, extracted again on every start | no |
-| `compiled/<app>/<version>/` | Compiled components, so a restart does not compile again; only files owned by the node's user and not writable by group or others are read | no |
+| `compiled/<app>/<version>/` | Compiled components, so a restart does not compile again; only files owned by the node's user and not writable by group or others are read. A native-process app's program is written here too (`.native`), executable by the node's user only | no |
 | `tmp/` | Uploads being verified | no |
 | `node.lock` | Held while the node runs; a second node on the same `data_dir` is refused | no |
 | `admin.sock` | The admin API (mode 0600), unless `admin_socket` names another path | no |
@@ -42,6 +42,16 @@ Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back t
 
 Secrets may also come from variables the node config names (`[secrets.<name>] env = ...`).
 
+## The remote admin API
+
+`[admin] address` serves the admin API over TCP with TLS 1.3 to operators on other machines (cargo feature `tls`, on by default), with the same routes and rights as the admin socket. Keys are pinned both ways, with no certificate authority:
+
+- The node presents `[admin] key`, or its `[cluster] key` when unset. `paddock cluster pubkey <key file>` prints the public key operators pin with `--node-key` (or `PADDOCK_NODE_KEY`).
+- Each operator makes a key with `paddock cluster keygen <path>`, and the node's operators file lists the public keys it accepts, by name: `[operators] alice = ["ed25519:..."]`. The file is read again on SIGHUP and `paddock reload-tls`; removing a key stops new connections, not open ones.
+- `paddock --remote <host:port> --node-key ed25519:... --key <operator key> <command>` runs any command against the node; the shell keeps these in a contacts file (below).
+
+Each connection is logged with the operator's name, and every request but a `GET` is written to the audit log with it. Every listed operator has every right; put the address on a management network (SECURITY.md, "The admin socket and the remote admin API").
+
 ## The shell
 
 `paddock shell` runs `paddock` commands at a prompt against one node: the admin socket, or the node `--remote` names. `connect <name>` (or a node id, or `local` for the socket) moves the session to a node in the operator's contacts file, reached over its remote admin API (`[admin]`) with the key pinned there:
@@ -62,7 +72,7 @@ Ctrl-C stops the command running (a follow, a slow call); Ctrl-D or `exit` leave
 ## Signals
 
 - **SIGTERM or Ctrl-C** stops every app, in reverse start order, and leaves the cluster.
-- **SIGHUP** reloads the HTTPS certificates and the cluster key and peers file (as `paddock reload-tls` does). Both also reload by themselves when their files change (`tls_reload_s`, `identity_reload_s`).
+- **SIGHUP** reloads the HTTPS certificates, the cluster key and peers file, and the remote admin operators file (as `paddock reload-tls` does). The certificates and the cluster identity also reload by themselves when their files change (`tls_reload_s`, `identity_reload_s`).
 
 ## Running as a service
 
@@ -89,7 +99,7 @@ A node speaks its own wire protocol version and the one before, so the witness a
 
 ### Releasing an app across a pair
 
-`paddock release upgrade <app> <bundle> --pair pair.toml` upgrades an app on both nodes: the standby, then the primary in place, waiting after each for the app to run at the new version there (`--timeout-s`, 60 by default). The pair file lists each node as `[[node]]` with its `id` and either `socket` (its admin socket) or `address` and `key` (its remote admin API and public key, with `--key` for the operator's private key). Each run reads both nodes first, so after a stop (a node out of reach, a change of roles) running the same command continues; a refused step or a failed gate rolls back what the run changed (`--no-abort` leaves it). `paddock release rollback <app> --pair pair.toml` returns both nodes to their common previous version. The rollout settings of `paddock upgrade` (`--approve`, `--batch`, `--observe-ms`, `--max-restarts`, `--restart`) apply on each node. With `--json` the report lists each step and the outcome (`done`, `stopped`, `aborted`); the command exits non-zero unless it is `done`.
+`paddock release upgrade <app> <bundle> --pair pair.toml` upgrades an app on both nodes: the standby, then the primary in place, waiting after each for the app to run at the new version there (`--timeout-s`, 60 by default). The pair file lists each node as `[[node]]` with its `id` and either `socket` (its admin socket) or `address` and `key` (its remote admin API and public key, with `--key` for the operator's private key). Each run reads both nodes first, so after a stop (a node out of reach, a change of roles) running the same command continues; a refused step or a failed gate rolls back what the run changed (`--no-abort` leaves it). `--standby-only` upgrades the standby alone and leaves the primary for a later run without it, to look at the new version before the primary moves (`examples/scada/drill.sh` uses it). `paddock release rollback <app> --pair pair.toml` returns both nodes to their common previous version. The rollout settings of `paddock upgrade` (`--approve`, `--batch`, `--observe-ms`, `--max-restarts`, `--restart`, and for a blue-green app `--steps` and `--drain-ms`) apply on each node. With `--json` the report lists each step and the outcome (`done`, `stopped`, `aborted`); the command exits non-zero unless it is `done`.
 
 ### A virtual IP that follows the primary
 

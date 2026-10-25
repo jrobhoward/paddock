@@ -193,6 +193,29 @@ salutation = "Howdy"
 
 A node built without the extension links deny stubs for the package, as for any declared interface no host provides.
 
+### Capabilities at a glance
+
+What each host service needs from the app, the node and the operator. Every capability also needs a grant in policy (`grant = [...]`); the "Policy" column lists what policy names beyond that.
+
+| Service | Manifest | Node config | Policy | `paddock-sdk` | Node build |
+| --- | --- | --- | --- | --- | --- |
+| Logging | `wasi:logging` | `[limits] log_records_per_sec` (optional) | | always | |
+| Configuration | `wasi:config`, `config.defaults` | `[config.<app>]` (optional) | | `config` | |
+| Keyvalue, the app's own buckets | `wasi:keyvalue` `buckets` | `[failover] replication = true` for `replicated` | | `keyvalue`; `watch` for revisions and watches | |
+| Keyvalue, shared buckets | `wasi:keyvalue` `shared` | `[buckets.<name>]` | `buckets` | `keyvalue`, `watch` | |
+| Process groups | `paddock:groups` | | | `groups` | |
+| Files | `wasi:filesystem` `preopens` | `[volumes]` | | `std::fs` | |
+| Secrets | `paddock:secrets` | `[secrets.<name>]` | `secrets` | `secrets` | |
+| Metrics | `paddock:metrics` | `[metrics] address` to scrape (optional) | | `metrics` | |
+| SQL | `paddock:sql` | `[datasources.<name>]` | `datasources` | `sql` | `sql` (default) |
+| HTTP in (as calls) | `wasi:http/incoming-handler` `routes` | `[http.<name>]` | | `http` | `http` (default) |
+| HTTP out | `wasi:http/outgoing-handler` `allow` | `[egress]` (optional ceiling) | | `http-client` | `egress` (default) |
+| Sockets | `wasi:sockets` | `[sockets]` (optional ceiling) | | `net` | |
+| TCP connections (a connection handler) | `listeners` (not a capability) | `[listeners.<name>]` | | `connection` | |
+| An extension | `extensions."<package>"` | `[extensions."<package>"]` | the package in `grant` | the extension's own bindings | the extension (`modbus` for Modbus) |
+
+Always available, with nothing to declare: `paddock:runtime/process` (calls, casts, links, monitors, names, timers), `paddock:io`, clocks, random, and stdout and stderr as log records.
+
 ### `config`
 
 | Field | Default | Meaning |

@@ -111,7 +111,7 @@ ctx.register("orders")?;          // the name must be listed in registered_names
 let me = ctx.pid();
 ```
 
-A `CallError` is one of `Noproc` (dead pid or unknown name), `Timeout`, `Overloaded` (the target's mailbox is full), `TooLarge`, `AccessDenied` or `Exited(reason)` (the target died while handling the call). A call to your own pid traps, because it could never be answered.
+A `CallError` is one of `Noproc` (dead pid or unknown name), `Noconnection` (the target's node was lost, or cannot be reached), `Timeout`, `Overloaded` (the target's mailbox is full), `TooLarge`, `AccessDenied` (refused by `messaging_acl`) or `Exited(reason)` (the target died while handling the call). A call to your own pid traps, because it could never be answered.
 
 A blocked `ctx.call` holds up only this instance. The host suspends it without tying up a thread.
 
@@ -125,7 +125,7 @@ ctx.demonitor(m);
 ctx.exit(other, &ExitReason::Shutdown);
 ```
 
-Exit reasons: `Normal`, `Shutdown`, `Killed`, `Noproc`, `Noconnection`, `Timeout` (the CPU deadline), and `Crashed(text)`. The text is the trap message, `memory_limit`, or `init_timeout`.
+Exit reasons: `Normal`, `Shutdown`, `Killed`, `Noproc`, `Noconnection`, `Timeout` (the CPU deadline), and `Crashed(text)`. The text is the trap message, or one of the host's: `memory_limit`, `table_limit`, `init_timeout`, `unhealthy` (failed health checks), `lease_ended` (a singleton whose node lost its lease), `no_slot` (no Store slot for a start or wake), or a host-object limit (`timer_limit`, `monitor_limit`, `link_limit`, `pending_call_limit`).
 
 The supervisor restarts an app's instances according to `supervision` (strategy, intensity, backoff). It follows OTP: too many restarts within `period_ms` and it gives up. The app is then marked `failed`, with the reason in `paddock status`.
 
@@ -237,14 +237,14 @@ The other modes need no snapshot: `restart` stops the old version and starts the
 
 ## Host services
 
-Each service must be declared under `capabilities` in the manifest **and** granted by the node's operator policy. A component that imports an undeclared interface is refused at bundle and deploy time. A declared but ungranted interface is linked to a stub that returns `permission-denied` (or the interface's own error) at call time, so the app can degrade instead of failing to start.
+Each service must be declared under `capabilities` in the manifest **and** granted by the node's operator policy. A component that imports an undeclared interface is refused at bundle and deploy time. A declared but ungranted interface is linked to a stub that returns `access-denied` (or the interface's own permission error) at call time, so the app can degrade instead of failing to start. [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance) lists, for each service, what the operator configures on the node and which SDK feature wraps it.
 
 | Capability | Use from Rust |
 | --- | --- |
 | `wasi:logging` | `paddock_sdk::info!("order {id} accepted")` (and `trace!`, `debug!`, `warn!`, `error!`). Records carry the app, version and pid. The host caps level and rate (`max_level`, `rate_limit_per_sec`), and the operator can change the level at run time with `paddock log-level`. The host tells the SDK the effective level, so a record below it is skipped before formatting (about 3 ns, against about 440 ns when the host drops it); records written during `init` are filtered by the host only. |
 | `wasi:config` | `paddock_sdk::config::get("db.host")` and `get_all()`, with the SDK's `config` feature. Values come from `config.defaults`, overridden by the node's `[config.<app>]`. Without the capability granted they return `ConfigError::Denied`. |
 | `wasi:keyvalue` | `paddock_sdk::kv::Bucket::open("orders")`, with the SDK's `keyvalue` feature: `get`, `set`, `delete`, `exists`, `keys` (all pages), `increment`, the batch calls, and CBOR-typed `get_value` and `set_value`. Only the buckets the manifest names open. `memory` buckets survive instance crashes; `disk` buckets also survive node restarts. Each bucket can have a quota. Shared buckets (manifest `shared`, defined by the node and granted by policy) open the same way and hold one copy for every app that lists them: the place for a point table or settings several apps read. A read-only one refuses writes with `KvError::AccessDenied`. With the SDK's `watch` feature, `paddock_sdk::watch` adds, on the same buckets: `get` with the value's revision, `compare_and_swap` and `compare_and_delete` on a revision (a lock-free update: read, then swap, retrying on `Conflict`), and `watch`, `watch_prefix` and `resume`. A watch delivers `kv-changed` host events to `handle_info` (`Change::from_info`) naming the key and revision, not the value; notices are conflated per key, so a slow instance skips intermediate values but always sees the latest. Store the last revision handled to `resume` after a restart; `TooOld` means reread the keys and watch from the revision it carries. Watches end when the instance exits and survive upgrades, so `init` is the place to start them. A shared bucket the node scopes to the cluster is replicated on an HA pair: writes return once committed on the primary, reads and watches use this node's copy, `get_linearizable` reads through the primary, and `Unavailable` means no primary could take the operation (for a write, it may still have committed: reread before retrying a compare-and-swap). |
-| `paddock:groups` | `paddock_sdk::groups::join("prices")`, `leave`, `members` and `publish("prices", envelope)`, with the SDK's `groups` feature. `publish` casts one copy to each member on the node (the publisher too, if it is a member) and returns how many mailboxes took it; members receive it in `handle_cast`. The manifest lists the groups an app may join and publish to. An instance leaves its groups when it exits and keeps them across an upgrade, so `init` (not `load_snapshot`) is the place to join. In a cluster, members on every node receive it. |
+| `paddock:groups` | `paddock_sdk::groups::join("prices")`, `leave`, `members` and `publish("prices", envelope)`, with the SDK's `groups` feature. `publish` casts one copy to each member, on every node of the cluster (the publisher too, if it is a member; not across a `messaging_acl` refusal), and returns how many members took it (on another node, all its members once the copy is sent); members receive it in `handle_cast`. The manifest lists the groups an app may join and publish to. An instance leaves its groups when it exits and keeps them across an upgrade, so `init` (not `load_snapshot`) is the place to join. |
 | `paddock:metrics` | `paddock_sdk::metrics::{Counter, Gauge, Histogram}`, with the SDK's `metrics` feature: make them in `init` (`Counter::new("orders_total", "Orders taken.", &[("region", "eu")])?`) and keep them in state; `inc`, `add`, `set` and `observe` are one host call each. Names are exported as `<prefix>_<name>` with an `app` label, per app: all instances add into the same series. Keep label values few (no ids or timestamps); `max_series` caps them. |
 | `paddock:sql` | `paddock_sdk::sql::query("main", "SELECT ... WHERE id = $1", &[id.into()])`, `execute`, and `begin` for a transaction (`commit`, or drop it to roll back), with the SDK's `sql` feature. Name each datasource in the manifest with its `max_connections`; the operator grants it and binds it to a Postgres database. Parameters are bound, never interpolated; columns of types the interface does not carry are refused, so cast them (`col::text`). |
 | `paddock:secrets` | `paddock_sdk::secrets::get_string("db-password")` (or `get` for bytes), with the SDK's `secrets` feature. List the names in the manifest; the operator grants each and binds it to a file or variable. Read a secret when it is needed instead of keeping it in state (state goes into snapshots), and never log it. |
@@ -259,7 +259,7 @@ Always available without a declaration: clocks, random, stdout and stderr (captu
 
 ### Replicated buckets
 
-On an HA pair with `[failover] replication = true`, a bucket declared with `durability = "replicated"` is kept whole on both nodes: a write returns once committed on the primary and its partner, reads and watches use this node's copy, and `get_linearizable` (with the `watch` feature) reads through the primary. It survives losing either node, so it is where a singleton keeps what must survive a failover. A write while no primary can take it fails with `Unavailable`; it may still have committed, so reread before retrying a compare-and-swap. Writes cost about a round trip between the nodes (about 2.3 ms at p50 on loopback, [BASELINE.md](BASELINE.md)), so batch them.
+On an HA pair with `[failover] replication = true`, a bucket declared with `durability = "replicated"` is kept whole on both nodes: a write returns once committed on the primary and its partner, reads and watches use this node's copy, and `get_linearizable` (with the `watch` feature) reads through the primary. It survives losing either node, so it is where a singleton keeps what must survive a failover. A write while no primary can take it fails with `Unavailable`; it may still have committed, so reread before retrying a compare-and-swap. A write waits for the standby to have it on disk: about 2.2 to 2.8 ms at p50 with both nodes on NVMe, on one machine or across a LAN, where the drive's sync sets the pace ([BASELINE.md](BASELINE.md), 2026-10-25). Batch writes that belong together into one.
 
 ### Singletons on a pair
 
@@ -349,12 +349,16 @@ Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent
 
 ## Testing
 
-- **Unit-test the logic natively.** Keep message handling in plain functions, and leave the `App` impl as a thin shell around them.
-- **Integration-test against a node.** The `paddock` crate's tests start a node in a temporary directory and drive it through `paddock::api::Client`. [`crates/paddock/tests/exit_criteria.rs`](../crates/paddock/tests/exit_criteria.rs) shows the pattern.
-- **Read state while debugging:** `paddock state <pid>`. Note that an instance whose `save_snapshot` traps is restarted.
+Three levels, from fastest to most complete:
+
+- **The logic, natively.** Keep message handling in plain functions over plain types, and the `App` impl a thin shell that decodes the envelope, calls them and encodes the reply. `cargo test` runs them on the host target. The `Ctx` methods and the service wrappers call host imports, which only a node provides, so test code does not call them.
+- **The component, in a runtime.** A test can build the component (`cargo build --target wasm32-wasip2`, as [`crates/paddock/tests/board.rs`](../crates/paddock/tests/board.rs) does from its `build()`) and run it in a `paddock_host::Runtime`: `Runtime::new(RuntimeConfig::default())`, `rt.load(&bytes)`, `rt.spawn(&app, InstanceSpec::new("name", "1.0.0"))`, then `handle.call(Envelope::new("text/plain", "inc"), timeout)`. That covers the callbacks, snapshots (`handle.upgrade`), traps and limits, with no services beyond the always-available ones. [`crates/paddock-host/examples/app_cost.rs`](../crates/paddock-host/examples/app_cost.rs) is a short example of the calls.
+- **The app on a node.** For services, manifests and policy, start a `paddock::node::Node` in a temporary directory with a node config written by the test, bundle the app with the CLI and drive it through `paddock::api::Client`, as `board.rs` (HTTP, a shared bucket, a node restart) and [`scada.rs`](../crates/paddock/tests/scada.rs) (an HA pair and a witness in one process) do.
+
+While debugging, `paddock state <pid>` shows an SDK app's state through its `save_snapshot`; an instance whose `save_snapshot` traps is restarted. `paddock logs <app> -f` follows its records, and `paddock events` shows exits and restarts as they happen.
 
 ## Limits to design around
 
 - Calls cost about 2 µs, plus the copy. Paddock suits work that takes tens of microseconds or more per message, not chatty fine-grained calls.
-- Compute runs at about 1.0 to 2.4 times native speed, and further behind when native code would use SHA or AES instructions ([spike S8](../spikes/s8/README.md)).
+- Compute runs at about 1.4 to 2.6 times native time on ordinary app code (JSON with serde, regex, Markdown, maps; `app_cost`, [BASELINE.md](BASELINE.md)), and further behind when native code would use SHA or AES instructions ([spike S8](../spikes/s8/README.md)). Byte-at-a-time loops such as string comparison in sorted maps pay most.
 - A full mailbox drops casts and fails calls with `overloaded`. Size `limits.mailbox_max` to absorb bursts, and treat `Overloaded` as back-pressure.
