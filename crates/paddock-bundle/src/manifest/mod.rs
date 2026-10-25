@@ -7,9 +7,9 @@
 //! `appserver` section carries the rest, modelled here as [`AppSpec`].
 //! [`AppManifest`] combines the four once a bundle has been verified.
 //!
-//! The model covers every section in the design, including fields enforced
-//! only in later phases; [`AppSpec::unenforced_fields`] lists the ones a
-//! manifest sets that Phase 1 ignores. See
+//! The model covers every section in the design, including fields the host
+//! does not enforce; [`AppSpec::unenforced_fields`] lists the ones a
+//! manifest sets. See
 //! <https://github.com/jrobhoward/paddock/blob/main/docs/DESIGN.md> (App
 //! manifest and capability model).
 //!
@@ -52,7 +52,7 @@ pub use sections::{
     Api, ConfigSpec, Dependency, Health, ListenerDecl, LogLevel, MessagePattern, MessageSpec,
     MessagingAcl, NameScope, Observability, Placement, PlacementMode, RegisteredName,
 };
-pub use unenforced::{Phase, UnenforcedField};
+pub use unenforced::UnenforcedField;
 pub use validate::{MAX_NAME_LEN, is_valid_name};
 
 use serde::{Deserialize, Serialize};

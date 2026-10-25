@@ -2,7 +2,7 @@
 
 This walks through running a Paddock node and deploying the counter example: build, sign, deploy, call, upgrade with state kept, and roll back. It takes about ten minutes, most of it compiling.
 
-Phase 1 runs on Linux and macOS. The admin API is a Unix socket, and Windows is not supported yet.
+A node runs on Linux or macOS: its admin API is a Unix socket, and on Windows `paddock node` stops at start.
 
 ## 1. Build
 
@@ -65,7 +65,7 @@ paddock deploy ~/paddock-demo/counter-1.0.0.rbp
 paddock call counter inc           # 1
 paddock call counter inc           # 2
 paddock call counter get           # 1.0.0 count=2
-paddock ps                         # PID, APP, VERSION, STATE, QUEUED, DROPPED
+paddock ps                         # PID, APP, VERSION, STATE, QUEUED, DROPPED, MEMORY, RESTARTS, LAST EXIT
 paddock state 0.1.1@1              # the instance's state: (paddock-sdk, ..., format 1) {"count": 2}
 ```
 
@@ -115,8 +115,9 @@ A rollback is an upgrade to the previous version, in that version's own upgrade 
 ## 7. Look around
 
 ```sh
-paddock logs counter -n 20         # the app's log records
+paddock logs counter -n 20         # the app's log records; -f to follow
 paddock log-level counter debug    # raise its log level now; `reset` to undo
+paddock events                     # deploys, upgrades, kills, exits and restarts as they happen
 paddock cast counter inc           # fire and forget
 paddock --json status counter      # every command takes --json
 cat ~/paddock-demo/data/audit.log  # deploys, upgrades, kills, refusals
@@ -124,10 +125,14 @@ paddock stop counter && paddock start counter
 paddock remove counter
 ```
 
+`paddock shell` runs these commands at a prompt, with history and completion, and can `connect` to other nodes listed in a contacts file.
+
 The API is JSON over HTTP on the socket, so `curl --unix-socket ~/paddock-demo/data/admin.sock http://paddock/v1/apps` works too. The `paddock::api` module documents every route.
 
 ## Next
 
+- [The tutorial](../examples/tutorial/README.md): the same node, then a pair and a witness with failover, a hot standby and a database, as scripts.
 - [WRITING_APPS.md](WRITING_APPS.md): write your own app with `paddock-sdk`.
-- [MANIFEST.md](MANIFEST.md): every manifest field, capabilities and operator policy.
-- [`examples/`](../examples/): `counter`, `ping-pong` (calls, links and monitors between apps) and `chaos` (fails on purpose).
+- [MANIFEST.md](MANIFEST.md): every manifest field, capabilities, node configuration and operator policy.
+- [OPERATIONS.md](OPERATIONS.md): running nodes and pairs.
+- [`examples/`](../examples/): `ping-pong` (calls, links and monitors between apps), `chaos` (fails on purpose), and the apps the README lists.

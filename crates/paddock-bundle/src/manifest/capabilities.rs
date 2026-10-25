@@ -28,7 +28,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::manifest::bytesize::ByteSize;
 use crate::manifest::sections::LogLevel;
-use crate::manifest::unenforced::Phase;
 use crate::manifest::validate::Validator;
 
 /// A host interface an app must declare before importing it.
@@ -109,24 +108,11 @@ impl Capability {
         Self::ALL.iter().copied().find(|c| c.key() == key)
     }
 
-    /// The phase in which the host starts enforcing this capability, or
-    /// `None` if Phase 1 enforces it.
+    /// Whether the host enforces this capability; the others parse and
+    /// validate only.
     #[must_use]
-    pub const fn phase(self) -> Option<Phase> {
-        match self {
-            Self::Logging
-            | Self::Config
-            | Self::KeyValue
-            | Self::Filesystem
-            | Self::Groups
-            | Self::HttpIncoming
-            | Self::Secrets
-            | Self::Sql
-            | Self::Metrics
-            | Self::HttpOutgoing
-            | Self::Sockets => None,
-            Self::Supervisor | Self::Admin => Some(Phase::Later),
-        }
+    pub const fn enforced(self) -> bool {
+        !matches!(self, Self::Supervisor | Self::Admin)
     }
 
     /// The WIT package this capability covers and, if it covers only some of

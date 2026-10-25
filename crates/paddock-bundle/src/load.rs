@@ -82,7 +82,7 @@ fn check_world(world: &str, spec: &AppSpec) -> Result<(), (&'static str, String)
     Ok(())
 }
 
-/// The variant Phase 1 deploys.
+/// The variant a node deploys.
 const VARIANT: &str = "release";
 
 /// The archive directory whose files an app sees read-only at `/priv`.

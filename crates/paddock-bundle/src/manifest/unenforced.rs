@@ -1,4 +1,4 @@
-//! Fields the data model accepts but Phase 1 does not enforce yet.
+//! Fields the data model accepts but the host does not enforce.
 //!
 //! The manifest model is complete so bundles written today stay valid later.
 //! A field the node ignores could mislead an operator (a `placement.spread`
@@ -12,45 +12,21 @@ use serde::Serialize;
 use crate::manifest::AppSpec;
 use crate::manifest::sections::{NameScope, PlacementMode};
 
-/// When a field starts being enforced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Phase {
-    /// Phase 2 (clustering).
-    Phase2,
-    /// Phase 3.
-    Phase3,
-    /// Not yet scheduled.
-    Later,
-}
-
-impl fmt::Display for Phase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Phase2 => "Phase 2",
-            Self::Phase3 => "Phase 3",
-            Self::Later => "a later phase",
-        })
-    }
-}
-
-/// A field a manifest sets that the node does not enforce yet.
+/// A field a manifest sets that the node does not enforce.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UnenforcedField {
     /// Dotted path of the field within the `appserver` section.
     pub path: String,
-    /// When it will be enforced.
-    pub phase: Phase,
 }
 
 impl fmt::Display for UnenforcedField {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} is not enforced until {}", self.path, self.phase)
+        write!(f, "{} is not enforced", self.path)
     }
 }
 
 impl AppSpec {
-    /// Fields this manifest sets that Phase 1 does not enforce, in manifest
+    /// Fields this manifest sets that the host does not enforce, in manifest
     /// order. Empty when every field set is enforced.
     #[must_use]
     pub fn unenforced_fields(&self) -> Vec<UnenforcedField> {
@@ -65,11 +41,11 @@ impl AppSpec {
     fn unenforced_runtime(&self, out: &mut Fields) {
         for (i, name) in self.registered_names.iter().enumerate() {
             if name.scope == NameScope::Global {
-                out.add(format!("registered_names[{i}].scope"), Phase::Phase2);
+                out.add(format!("registered_names[{i}].scope"));
             }
         }
-        out.add_if(self.instances.min.is_some(), "instances.min", Phase::Later);
-        out.add_if(self.instances.max.is_some(), "instances.max", Phase::Later);
+        out.add_if(self.instances.min.is_some(), "instances.min");
+        out.add_if(self.instances.max.is_some(), "instances.max");
         let limits = &self.limits;
         let later_limits = [
             ("fuel_per_message", limits.fuel_per_message.is_some()),
@@ -81,15 +57,15 @@ impl AppSpec {
             ),
         ];
         for (field, set) in later_limits {
-            out.add_if(set, format!("limits.{field}"), Phase::Later);
+            out.add_if(set, format!("limits.{field}"));
         }
     }
 
-    /// Whole capabilities and the scope fields Phase 1 ignores.
+    /// Whole capabilities the host does not enforce.
     fn unenforced_capabilities(&self, out: &mut Fields) {
         for capability in self.capabilities.declared() {
-            if let Some(phase) = capability.phase() {
-                out.add(format!("capabilities.{}", capability.key()), phase);
+            if !capability.enforced() {
+                out.add(format!("capabilities.{}", capability.key()));
             }
         }
     }
@@ -97,38 +73,17 @@ impl AppSpec {
     /// `config`, `upgrade`, `placement` and `observability`. Of `placement`, a node with `[failover]` enforces
     /// `singleton` and `hot-standby`; the rest needs a scheduler.
     fn unenforced_sections(&self, out: &mut Fields) {
-        out.add_if(
-            !self.config.secrets.is_empty(),
-            "config.secrets",
-            Phase::Phase2,
-        );
+        out.add_if(!self.config.secrets.is_empty(), "config.secrets");
         if let Some(p) = &self.placement {
-            out.add_if(
-                p.mode == PlacementMode::AllNodes,
-                "placement.mode",
-                Phase::Phase3,
-            );
-            out.add_if(
-                !p.required_labels.is_empty(),
-                "placement.required_labels",
-                Phase::Phase3,
-            );
-            out.add_if(
-                !p.preferred_labels.is_empty(),
-                "placement.preferred_labels",
-                Phase::Phase3,
-            );
-            out.add_if(p.spread.is_some(), "placement.spread", Phase::Phase3);
+            out.add_if(p.mode == PlacementMode::AllNodes, "placement.mode");
+            out.add_if(!p.required_labels.is_empty(), "placement.required_labels");
+            out.add_if(!p.preferred_labels.is_empty(), "placement.preferred_labels");
+            out.add_if(p.spread.is_some(), "placement.spread");
         }
-        out.add_if(
-            self.observability.metrics,
-            "observability.metrics",
-            Phase::Phase2,
-        );
+        out.add_if(self.observability.metrics, "observability.metrics");
         out.add_if(
             self.observability.trace_sampling != 0.0,
             "observability.trace_sampling",
-            Phase::Phase2,
         );
     }
 }
@@ -137,16 +92,13 @@ impl AppSpec {
 struct Fields(Vec<UnenforcedField>);
 
 impl Fields {
-    fn add(&mut self, path: impl Into<String>, phase: Phase) {
-        self.0.push(UnenforcedField {
-            path: path.into(),
-            phase,
-        });
+    fn add(&mut self, path: impl Into<String>) {
+        self.0.push(UnenforcedField { path: path.into() });
     }
 
-    fn add_if(&mut self, set: bool, path: impl Into<String>, phase: Phase) {
+    fn add_if(&mut self, set: bool, path: impl Into<String>) {
         if set {
-            self.add(path, phase);
+            self.add(path);
         }
     }
 }

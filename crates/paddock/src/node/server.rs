@@ -193,7 +193,7 @@ fn check_socket_path(path: &std::path::Path) -> std::io::Result<()> {
 pub async fn serve(_node: Arc<Node>, _shutdown: impl Future<Output = ()>) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "the admin API needs Unix domain sockets; Windows support is not in Phase 1",
+        "the admin API needs Unix domain sockets, so a node runs on Linux or macOS",
     ))
 }
 

@@ -126,9 +126,7 @@ Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run i
 
 Docs known to be out of date, cleared by W1:
 
-- README and GETTING_STARTED were not reviewed as Tracks D, E, F and H landed.
 - DESIGN.md places SQL datasources in Phase 3; E5 is now in stage 5.
-- GETTING_STARTED does not mention `paddock shell`, `paddock events` or `logs --follow`.
 - DESIGN.md's roadmap section repeats parts of this plan.
 
 ## Phase 3

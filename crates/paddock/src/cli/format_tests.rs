@@ -52,7 +52,7 @@ fn detail____failed_app____shows_reason_and_denied() {
         granted: vec!["wasi:logging".into()],
         denied: vec!["wasi:keyvalue".into()],
         stubbed: vec![],
-        warnings: vec!["messaging_acl is not enforced until Phase 2".into()],
+        warnings: vec!["observability.metrics is not enforced".into()],
         restarts: 3,
         instance_list: vec![],
         listeners: vec![],
@@ -62,7 +62,7 @@ fn detail____failed_app____shows_reason_and_denied() {
 
     assert!(out.contains("reason:    crashed: max restart intensity"));
     assert!(out.contains("denied:    wasi:keyvalue"));
-    assert!(out.contains("warning:   messaging_acl"));
+    assert!(out.contains("warning:   observability.metrics"));
 }
 
 #[test]

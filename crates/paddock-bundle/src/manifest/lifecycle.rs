@@ -258,7 +258,7 @@ impl From<Routing> for String {
 }
 
 /// The `instances` section: a fixed `count`, or a `min`/`max` range for
-/// scaling (not supported in Phase 1).
+/// scaling (not enforced).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Instances {
@@ -318,8 +318,8 @@ pub enum UpgradeMode {
     /// Stop the old version gracefully and start the new one from `init`.
     #[default]
     Restart,
-    /// Start new instances beside the old, move the registered name, drain
-    /// the old. Not supported in Phase 1.
+    /// Start the new version beside the old and move traffic to it in steps,
+    /// then stop the old; no state moves between them.
     BlueGreen,
 }
 

@@ -320,14 +320,11 @@ fn unenforced_fields____design_example____lists_later_phase_fields() {
         .map(ToString::to_string)
         .collect();
 
-    assert_eq!(
-        fields,
-        vec!["config.secrets is not enforced until Phase 2",]
-    );
+    assert_eq!(fields, vec!["config.secrets is not enforced",]);
 }
 
 #[test]
-fn unenforced_fields____every_later_section____listed_with_phase() {
+fn unenforced_fields____every_unenforced_field____listed() {
     let spec = AppSpec::from_json_value(&json!({
         "registered_names": [{ "name": "g", "scope": "global" }],
         "instances": { "min": 1, "max": 3 },
@@ -342,28 +339,28 @@ fn unenforced_fields____every_later_section____listed_with_phase() {
     }))
     .unwrap();
 
-    let fields: Vec<(String, Phase)> = spec
+    let fields: Vec<String> = spec
         .unenforced_fields()
         .into_iter()
-        .map(|f| (f.path, f.phase))
+        .map(|f| f.path)
         .collect();
 
     assert_eq!(
         fields,
         vec![
-            ("registered_names[0].scope".into(), Phase::Phase2),
-            ("instances.min".into(), Phase::Later),
-            ("instances.max".into(), Phase::Later),
-            ("limits.fuel_per_message".into(), Phase::Later),
-            ("limits.storage_quota".into(), Phase::Later),
-            ("limits.open_files".into(), Phase::Later),
-            ("limits.outbound_connections".into(), Phase::Later),
-            ("capabilities.paddock:admin".into(), Phase::Later),
-            ("placement.mode".into(), Phase::Phase3),
-            ("placement.required_labels".into(), Phase::Phase3),
-            ("placement.spread".into(), Phase::Phase3),
-            ("observability.metrics".into(), Phase::Phase2),
-            ("observability.trace_sampling".into(), Phase::Phase2),
+            "registered_names[0].scope".to_string(),
+            "instances.min".to_string(),
+            "instances.max".to_string(),
+            "limits.fuel_per_message".to_string(),
+            "limits.storage_quota".to_string(),
+            "limits.open_files".to_string(),
+            "limits.outbound_connections".to_string(),
+            "capabilities.paddock:admin".to_string(),
+            "placement.mode".to_string(),
+            "placement.required_labels".to_string(),
+            "placement.spread".to_string(),
+            "observability.metrics".to_string(),
+            "observability.trace_sampling".to_string(),
         ]
     );
 }

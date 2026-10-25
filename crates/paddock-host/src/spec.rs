@@ -107,7 +107,7 @@ impl InstanceSpec {
     /// capability granted (narrow it with [`InstanceSpec::with_granted`]).
     /// `lifecycle.start_args` is passed to `init` as JSON; absent args are an
     /// empty list. Every name in `registered_names` may be registered on this
-    /// node; global scope is not enforced until Phase 2. `wasi:config`
+    /// node; global scope is not enforced. `wasi:config`
     /// returns the manifest's `config.defaults` (merge node overrides into
     /// `services.config.values`). Preopens need
     /// [`InstanceSpec::resolve_preopens`].

@@ -23,8 +23,7 @@ pub struct Limits {
     /// killed with reason `timeout`. Time spent in host calls (waiting on
     /// another instance) does not count.
     pub callback_deadline_ms: u64,
-    /// Fuel budget per message, for deterministic metering. Not enforced in
-    /// Phase 1.
+    /// Fuel budget per message, for deterministic metering. Not enforced.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fuel_per_message: Option<u64>,
     /// Most messages waiting in one instance's mailbox. When full, casts are
@@ -32,14 +31,15 @@ pub struct Limits {
     pub mailbox_max: u32,
     /// Largest message body accepted.
     pub message_max_bytes: ByteSize,
-    /// Total storage quota across the app's buckets and volumes. Not enforced
-    /// in Phase 1; per-bucket quotas under `capabilities` are.
+    /// Total storage quota across the app's buckets and volumes. Not
+    /// enforced; per-bucket quotas under `capabilities` are.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_quota: Option<ByteSize>,
-    /// Most open files. Not enforced in Phase 1.
+    /// Most open files. Not enforced.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_files: Option<u32>,
-    /// Most concurrent outbound connections. Not enforced in Phase 1.
+    /// Most concurrent outbound connections. Not enforced (`wasi:sockets`
+    /// has `max_sockets`, HTTP egress `max_concurrent`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outbound_connections: Option<u32>,
     /// Most pending `send-after` timers per instance. Unset uses the node's

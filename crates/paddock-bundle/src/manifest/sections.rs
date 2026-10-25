@@ -29,8 +29,8 @@ pub enum LogLevel {
     Critical,
 }
 
-/// The `api` section: the app's message catalog. Documentation in Phase 1;
-/// messages are not checked against it yet.
+/// The `api` section: the app's message catalog. Documentation only:
+/// messages are not checked against it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Api {
@@ -120,7 +120,7 @@ pub enum NameScope {
     /// On the local node.
     #[default]
     Local,
-    /// Unique across the cluster. Not supported until Phase 2.
+    /// Unique across the cluster. Not enforced (global names are parked).
     Global,
 }
 
@@ -190,8 +190,8 @@ pub struct ConfigSpec {
     /// Default values, overridable by node configuration.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub defaults: BTreeMap<String, String>,
-    /// Names of secrets the app reads. Never secret values. Not enforced
-    /// until Phase 2.
+    /// Names of secrets the app reads. Never secret values. Not enforced:
+    /// `capabilities."paddock:secrets"` declares the secrets an app reads.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub secrets: Vec<String>,
 }
@@ -205,7 +205,8 @@ impl ConfigSpec {
     }
 }
 
-/// The `placement` section. Not enforced until Phase 3.
+/// The `placement` section. `mode` `singleton` and `hot-standby` are
+/// enforced; `all-nodes`, the labels and `spread` are not.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Placement {
@@ -234,8 +235,8 @@ impl Placement {
     }
 }
 
-/// Where an app's instances run across the cluster. Not enforced until
-/// Phase 3.
+/// Where an app's instances run across the cluster. `AllNodes` is not
+/// enforced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PlacementMode {
@@ -327,9 +328,10 @@ impl Health {
 pub struct Observability {
     /// Default log level for the app's records.
     pub log_level: LogLevel,
-    /// Export the app's metrics. Not enforced until Phase 2.
+    /// Export the app's metrics. Not enforced: `paddock:metrics` exports an
+    /// app's metrics.
     pub metrics: bool,
-    /// Fraction of traces sampled, 0.0 to 1.0. Not enforced until Phase 2.
+    /// Fraction of traces sampled, 0.0 to 1.0. Not enforced.
     pub trace_sampling: f64,
 }
 

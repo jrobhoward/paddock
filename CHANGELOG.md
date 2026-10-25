@@ -50,6 +50,11 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `paddock status` warns that a manifest field "is not enforced" instead
+  of naming the phase that would enforce it: Phases 2 and 3 are done, and
+  what is left (global names, `all-nodes` placement and labels, the
+  unenforced limits) is parked or unscheduled. `paddock_bundle::Phase` is
+  gone; `Capability::enforced` replaces `Capability::phase`.
 - `baseline` prints idle memory per instance proportionally (PSS) as well
   as resident: resident memory counts the component's memory image once
   per instance, which made the Pi's idle instance look like 109 KiB

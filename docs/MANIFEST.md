@@ -6,7 +6,7 @@ An app's manifest is the `paddock.toml` next to its source. `paddock bundle` tur
 
 Unknown fields are errors, so a typo is refused, not ignored. `paddock bundle` and `paddock deploy` report every broken rule at once, with its path (`appserver.limits.memory_max`).
 
-Fields marked *not enforced* parse and validate, but Phase 1 does not act on them. `paddock status` lists them under `warnings`, so a manifest written for a later phase still deploys.
+Fields marked *not enforced* parse and validate, but the node does not act on them. `paddock status` lists each one a manifest sets under `warnings` ("`placement.spread` is not enforced"), so a manifest that sets them still deploys.
 
 Durations are integers in milliseconds (`*_ms`). Sizes are strings: a whole number and a unit, such as `"64MiB"`, `"512KiB"` or `"1GiB"`. The binary units are `KiB`, `MiB`, `GiB` and `TiB`, the decimal ones `KB`, `MB`, `GB` and `TB`, and a number with no unit (or `B`) counts bytes.
 
@@ -87,7 +87,7 @@ log_level = "info"
 | --- | --- | --- |
 | `kind` | `"wasm-component"` | `"native-process"`: a native program run as a process (see "Native-process apps" below). |
 | `native` | | For `kind = "native-process"` only: `program = "library"` (default; a rustbridge plugin) or `"executable"`. |
-| `registered_names` | `[]` | Names the app may register with `ctx.register`. Each is a string (local name), or `{ name, scope = "global" }` (*not enforced*, Phase 2). Registering an unlisted name is refused. |
+| `registered_names` | `[]` | Names the app may register with `ctx.register`. Each is a string (local name), or `{ name, scope = "global" }` (*not enforced*: global names are parked). Registering an unlisted name is refused. |
 | `dependencies` | `[]` | `{ app, version }` pairs (`version` is a semver requirement, such as `"^2"`). The app starts after its dependencies, in list order, and stops before them. It fails to start if one is not running, and a dependency cannot be removed while needed. |
 
 ### `lifecycle`
@@ -168,7 +168,7 @@ Each key requests one host interface, with the scope that narrows it. Importing 
 
 Always available, with no declaration: `paddock:runtime/process` and `types`, `paddock:io` (readiness of a pollable as the host event `io-ready`; see `wasi:sockets`), `wasi:clocks`, `wasi:random`, `wasi:io` and `wasi:cli` (stdout and stderr become log records).
 
-| Key | Scope fields | Phase 1 |
+| Key | Scope fields | Status |
 | --- | --- | --- |
 | `wasi:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted; it can only lower the node's `[limits] log_records_per_sec` (default 1000), and captured stdout and stderr lines count against the same budget. Control characters in the text are escaped, so a record stays on one line. | enforced |
 | `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
@@ -181,7 +181,7 @@ Always available, with no declaration: `paddock:runtime/process` and `types`, `p
 | `wasi:http/outgoing-handler` | `allow`: what the app may reach, each entry a scheme, host and port: `https://api.example.com` (port 443), `http://plc.internal:8080`, a bare `api.example.com` (HTTPS), `*.internal` (any host under `internal`, HTTPS, 443), or an address, `http://10.0.0.5:8080`, `https://[fd00::1]` (reached only as written, never through a name). No path, query or user. `methods` (upper case; empty for any). `max_concurrent`: requests in flight at once across the app's instances (default: the node's `[egress] max_concurrent`, 64); past it a request fails at once with `connection-limit-reached`. Anything else is refused with `HTTP-request-denied`, and a name that resolves only to loopback or link-local addresses with `destination-IP-prohibited`, unless node config sets `allow_loopback`. Node config's `[egress] allow` is a ceiling: a deploy asking for more is refused. Cargo feature `egress` (on by default); `paddock_sdk::http_client` is the SDK's client. | enforced |
 | `paddock:sql` | `datasources.<name>.max_connections` (default 4): the SQL datasources the app uses, and how many connections its instances hold on each at once, transactions included. Each name needs a `[datasources.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`datasources = [...]`); using an ungranted one returns `access-denied`. A call that cannot get a connection within the datasource's `acquire_timeout_ms` returns `limit-reached`. Postgres only; see `wit/sql/sql.wit` for what values carry. | enforced |
 | `wasi:sockets` | `connect = [{ cidr, ports }]`: where the app may connect TCP and send UDP (`ports` is `"1883"` or `"8000-8100"`; unset for any). `bind = [{ cidr, ports }]`: what it may bind; the unspecified address with port 0, the bind before every connect, needs no rule. `listen` (default `false`): whether it may listen on a bound TCP address, accept connections and take UDP datagrams from any peer (without it, datagrams only from `connect` addresses). `max_sockets` (default 16): sockets open at once across the app's instances, TCP and UDP, accepted ones included; past it, creating or accepting one fails with `new-socket-limit`. Loopback, link-local (`169.254.0.0/16`, cloud metadata) and unspecified destinations are reached only through a rule whose block lies inside that range (`127.0.0.1/32` reaches loopback; `0.0.0.0/0` does not). Name lookups are allowed only with `connect` rules; the addresses they return are checked like any other. Anything else fails with `access-denied` (a refused name lookup as `permanent-resolver-failure`). Node config's `[sockets]` is a ceiling: a deploy asking for more is refused. Sockets close when the instance exits or is upgraded, and an instance holding one is not passivated. `paddock_sdk::net` is the SDK's TCP client and listener; it waits for bytes with `paddock:io` instead of blocking the instance. | enforced |
-| `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* (later) |
+| `paddock:runtime/supervisor`, `paddock:admin` | as documented in `paddock_bundle::manifest` | *not enforced* |
 | `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
 
 `extensions` declares packages served by host services built into a node from outside Paddock (extensions; see [`examples/greeter`](../examples/greeter/README.md)). The key is the WIT package, `namespace:package`, outside the reserved `wasi` and `paddock` namespaces; an import from any interface of that package needs the declaration:
@@ -199,7 +199,7 @@ A node built without the extension links deny stubs for the package, as for any 
 | --- | --- | --- |
 | `defaults` | `{}` | String key-value pairs the app reads through `wasi:config`. The node's `[config.<app>]` table overrides them per key. |
 | `schema` | none | Path of a JSON Schema in the bundle; documentation only. |
-| `secrets` | `[]` | Secret names; *not enforced* (Phase 2). |
+| `secrets` | `[]` | Secret names; *not enforced*. `capabilities."paddock:secrets"` declares the secrets an app reads. |
 
 ### `upgrade`
 
@@ -216,7 +216,7 @@ An upgrade that adds capabilities needs `paddock upgrade --approve`. `--batch`, 
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `log_level` | `"info"` | The app's log level when `wasi:logging` sets no `max_level`. An operator can override either at run time with `paddock log-level <app> <level>` (and `reset`). |
-| `metrics`, `trace_sampling` | `false`, `0.0` | *Not enforced* (Phase 2). |
+| `metrics`, `trace_sampling` | `false`, `0.0` | *Not enforced*. `capabilities."paddock:metrics"` exports an app's metrics. |
 
 ### `listeners`
 
@@ -259,7 +259,7 @@ A component exporting `wasi:http/incoming-handler` (any 0.2 version; the `wasi:h
 | Section | Status |
 | --- | --- |
 | `api.messages` | The app's message catalog (`name`, `pattern` = `call` or `cast`, `content_type`, `request_schema`, `response_schema`, `description`). Documentation; messages are not checked against it. |
-| `placement` | `required_labels`, `preferred_labels`, `spread` (a node label to spread instances across), and `mode`: `any` (default; as many instances as `instances` asks for, on any eligible nodes), `singleton` (one instance across the cluster, moved when its node fails; `instances` may not ask for more than one), `all-nodes` (one on every eligible node), or `hot-standby` (one on every eligible node, one of which leads and each told its role through a `host-event`). On a node with `[failover]`, `singleton` runs on the pair's primary only, and its instances run guest code only while the node's lease is current: out of lease a message waits, and a callback running when the lease ends is ended with `crashed: lease_ended`; `hot-standby` runs on both nodes, each told `host-event("failover-role", "primary" \| "standby" \| "down")`. *Not enforced* (Phase 3): `all-nodes`, labels and `spread`. |
+| `placement` | `required_labels`, `preferred_labels`, `spread` (a node label to spread instances across), and `mode`: `any` (default; as many instances as `instances` asks for, on any eligible nodes), `singleton` (one instance across the cluster, moved when its node fails; `instances` may not ask for more than one), `all-nodes` (one on every eligible node), or `hot-standby` (one on every eligible node, one of which leads and each told its role through a `host-event`). On a node with `[failover]`, `singleton` runs on the pair's primary only, and its instances run guest code only while the node's lease is current: out of lease a message waits, and a callback running when the lease ends is ended with `crashed: lease_ended`; `hot-standby` runs on both nodes, each told `host-event("failover-role", "primary" \| "standby" \| "down")`. *Not enforced*: `all-nodes`, labels and `spread` (placement across many nodes is parked). |
 
 ## Operator side
 
@@ -278,6 +278,7 @@ max_processes = 20000                  # all instances, passivated ones too; def
 memory_profile = "standard"            # or "dense": 128 MiB cap per instance, many more instances
 keep_resident = "16MiB"                # per free Store slot: pages kept, zeroed, for the next instance; default 16MiB, 0 with "dense"
 epoch_tick_ms = 2                      # granularity of callback deadlines and preemption
+log_format = "text"                    # the node's own log on stderr; or "json", one object per line
 
 [volumes]
 orders-data = "/srv/paddock/orders"    # backs manifest preopens with volume = "orders-data"; give it a filesystem quota
@@ -347,6 +348,10 @@ tls = [                                # HTTPS (cargo feature `tls`, on by defau
   { cert = "/etc/paddock/shop.pem", key = "/etc/paddock/shop.key", hosts = ["shop.example", "*.shop.example"] },
 ]
 tls_reload_s = 60                      # default 60: reload when the files change (0: only SIGHUP or `paddock reload-tls`)
+partner_url = "https://node2.example:8443"  # with [failover]: the partner's listener, as clients reach it
+standby = "redirect"                   # with [failover], a request for a singleton running on the partner:
+                                       # "redirect" (307 to partner_url), "forward" (over the cluster to the
+                                       # primary's app) or "refuse" (503); default redirect with partner_url, else refuse
 
 [config.orders]
 currency = "USD"                       # overrides the app's config.defaults
@@ -377,6 +382,12 @@ replication = true                     # run replication for apps' "replicated" 
 replication_log_max = "64MiB"          # with replication: the replicated log keeps at most this
 replication_log_age_s = 3600           # and no entry older; a partner back within both catches up
                                        # from the log, past them from a snapshot
+
+[witness]                              # on the witness instead (cluster role "witness"): the pair it arbitrates
+pair = [1, 2]                          # the pair's node ids
+first = 1                              # the node primary at epoch 1
+lease_ms = 3000                        # as the pair's lease_ms and margin_ms (defaults 3000 and 500)
+margin_ms = 500
 
 [limits]                               # host objects per instance; the value for apps that
 timers_max = 10000                     # set none, and the most a manifest may ask for (a
