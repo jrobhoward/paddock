@@ -89,3 +89,31 @@ fn describe____cbor_map____cbor() {
         ("cbor", Some(json!({ "a": 1 })))
     );
 }
+
+#[test]
+fn describe____map_key_is_map____hex_of_key_encoding() {
+    // {{1: 2}: 3}
+    let d = describe("0.1.1", &[0xa1, 0xa1, 0x01, 0x02, 0x03]);
+
+    assert_eq!(
+        (d.format.as_str(), d.value),
+        ("cbor", Some(json!({ "a10102": 3 })))
+    );
+}
+
+#[test]
+fn describe____deeply_nested_map_keys____linear_key_size() {
+    // Fuzz input (state_view timeout): maps nested ~40 deep, each the key
+    // of the one above. Escaped JSON keys doubled per level.
+    let bytes = [
+        191, 1, 42, 51, 42, 45, 54, 161, 45, 54, 161, 1, 42, 161, 161, 161, 161, 161, 161, 161,
+        161, 161, 161, 161, 161, 161, 1, 42, 161, 161, 161, 161, 161, 161, 161, 161, 161, 161, 161,
+        161, 161, 161, 161, 161, 161, 161, 161, 161, 48, 45, 54, 57, 0, 128, 128, 128, 128, 128,
+        128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 42,
+        49, 42, 57, 49, 37, 57, 49, 37, 45, 51, 0, 255,
+    ];
+
+    let d = describe("0.1.1", &bytes);
+
+    assert!(serde_json::to_string(&d).unwrap().len() < 100 * bytes.len());
+}

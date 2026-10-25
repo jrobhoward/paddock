@@ -81,16 +81,29 @@ fn to_json(value: &ciborium::Value) -> Json {
         C::Map(entries) => Json::Object(
             entries
                 .iter()
-                .map(|(k, v)| {
-                    let key = match k {
-                        C::Text(s) => s.clone(),
-                        other => to_json(other).to_string(),
-                    };
-                    (key, to_json(v))
-                })
+                .map(|(k, v)| (key_string(k), to_json(v)))
                 .collect(),
         ),
         _ => Json::Null,
+    }
+}
+
+/// A map key as a JSON object key. Array and map keys become the hex of
+/// their CBOR encoding: rendering them as JSON text would escape each
+/// nesting level again, doubling the key's length per level.
+fn key_string(key: &ciborium::Value) -> String {
+    use ciborium::Value as C;
+    match key {
+        C::Text(s) => s.clone(),
+        C::Tag(_, inner) => key_string(inner),
+        C::Array(_) | C::Map(_) => {
+            let mut encoded = Vec::new();
+            match ciborium::into_writer(key, &mut encoded) {
+                Ok(()) => encoded.iter().map(|b| format!("{b:02x}")).collect(),
+                Err(_) => String::new(),
+            }
+        }
+        other => to_json(other).to_string(),
     }
 }
 
