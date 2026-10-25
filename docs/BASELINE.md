@@ -1674,10 +1674,25 @@ A tokio sleep rounds its deadline up to the timer's next 1 ms tick (`deadline_to
 
 The floor rises from 65.0 MiB at 10 s to 66.4 MiB by minute 30 and stays within 8 KiB of that for the last 90 minutes: no creep. The highs are instances holding memory from `alloc` commands (39 samples above 68.4 MiB, the last at minute 119); each returns to the floor when its instance exits. The summary line's growth, +1.2 MiB (65.1 to 66.4 MiB, from the first sample after a minute to the last), is the first half hour's warm-up. The drive watcher paused nothing: NVMe at most 44 C, CPU at most 54 C.
 
+## 2026-10-25: the QUIC floor between two machines (B11)
+
+`quic_floor 4 connect HOST:4433` against `quic_floor 4 serve 0.0.0.0:4433` on the other machine: the Raspberry Pi 5 and the 16-core machine on the same wired gigabit Ethernet LAN, both idle (load under 1). Bare quinn, TLS 1.3, 64-byte frames, one in flight; `udp` is a bare UDP echo of the same 64 bytes through tokio. `ping` (ICMP, 50 packets) averages 0.162 to 0.163 ms either way. Two runs each way, p50 (p99) in µs:
+
+| Client to server | Two writes | One write | Client on current thread | UDP |
+|---|---|---|---|---|
+| 16-core to Pi | 238.8 to 239.7 (304 to 305) | 230.5 to 241.5 (300 to 307) | 197.4 to 199.5 (241 to 246) | 144.0 to 148.7 (198 to 199) |
+| Pi to 16-core | 221.2 to 223.8 (267 to 271) | 222.9 to 223.5 (270) | 200.2 to 201.1 (248 to 249) | 138.1 to 140.6 (184) |
+| Pi, loopback | 54.8 (61.3) | 54.7 (61.1) | 30.2 (39.0) | 16.4 (19.7) |
+
+- **The network.** A UDP round trip through tokio on both ends takes about 140 µs, close to `ping`'s 162 µs average: that is the wire, two kernels' network stacks and the switch. No packet was lost.
+- **QUIC on top.** QUIC adds 80 to 97 µs to that with 4 workers and 50 to 60 µs with the client on one thread: encryption, quinn's own tasks and, with workers, wakes across threads on both machines. On the Pi's loopback the same costs come to about 38 µs (one machine doing both ends' work without the wire). The Pi as the server is 7 to 18 µs slower at p50 than as the client.
+- **What it means for a call between nodes.** On loopback a call between two nodes took about 106 µs against a 50 µs QUIC floor (2026-10-07, 16-core machine). Across this LAN the floor alone is 220 to 240 µs, so a call between the Pi and the 16-core machine is expected near 300 µs; `cluster_throughput` between the two machines will measure it.
+- The 16-core machine's own loopback figure moved between 53 and 97 µs at p50 with 4 workers across runs this session (30.6 to 32.3 µs on one thread), so it is not tabled.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
-- Calls, casts and replicated writes between two machines (every cluster figure is on loopback).
+- Calls, casts and replicated writes between two machines: only bare QUIC is measured between the Pi and the 16-core machine (2026-10-25); every Paddock cluster figure is on loopback.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.
 - Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).

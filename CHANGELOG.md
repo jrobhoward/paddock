@@ -27,6 +27,9 @@ All notable changes are recorded here. The format follows
   10 s: `memory.csv` in the soak directory has every sample, and each
   run's summary line the largest growth after a process's first minute
   (ROADMAP B11).
+- `quic_floor` runs its server and client on two machines (`serve
+  ADDR:PORT`, `connect HOST:PORT`), and adds a bare UDP echo as the floor
+  under QUIC (ROADMAP B11).
 - The chaos fixture's `timed`, `lateness`, `clock` and `ballast` commands,
   for those benchmarks; its snapshot carries the ballast after a marker,
   and reads snapshots without one as before.
