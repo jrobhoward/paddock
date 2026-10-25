@@ -1727,10 +1727,30 @@ The loopback row is this session's run of the unchanged one-process mode (load 2
 - **On disk.** Not compared: a synced write on the 16-core machine takes 0.9 to 2.5 ms (its disk bucket, 2026-10-18 and this session's loopback runs: 413 to 855/s; a 4 KiB `fsync` there, 2.5 ms at p50 today), several times what the network adds. Its root filesystem was 99% full (25 GB free of 1.8 TB) during these runs.
 - **The handover.** The two processes hand over through the replicated bucket: the primary writes `bench-go` when its runs are done; the standby then runs its writer, writes `bench-done` and shuts its transport down, and the primary runs alone.
 
+## 2026-10-25: replicated writes between two machines on disk (B11)
+
+The section before's runs with both nodes' databases on each machine's NVMe instead of tmpfs: on the 16-core machine the root filesystem (ext4 on the Samsung 970 EVO Plus, 81% full), on the Pi `/home` (ext4 on an Inland TN320, 8% full). A 4 KiB write with `O_DSYNC` (`dd`, 500 writes) takes 2.5 ms on the 16-core machine and 0.59 ms on the Pi, so here the Pi has the faster disk. Same build, keys and processes as the section before; both machines idle (load under 1.5); the Pi's swap on and unused (40 KiB), its drive watched by its temperature and error monitor throughout (peak 49 °C, no errors). Two runs each way, three on the 16-core machine's loopback, one on the Pi's; writes/s and p50 (p99) in µs:
+
+| | Primary on the 16-core machine, standby on the Pi | Primary on the Pi, standby on the 16-core machine | Loopback, 16-core | Loopback, Pi |
+|---|---|---|---|---|
+| Disk bucket, one writer (no network) | 383 to 963/s, 922 to 2,485 (4,021 to 5,982) | 2,082 to 2,115/s, 437 to 444 (825 to 829) | 979 to 1,037/s, 861 to 911 (2,760 to 4,036) | 2,068/s, 446 (848) |
+| Replicated, one writer on the primary | 341 to 406/s, 2,234 to 2,268 (5,356 to 6,075) | 399 to 401/s, 2,255 to 2,284 (5,367 to 5,407) | 361 to 362/s, 2,386 to 2,395 (6,844 to 7,446) | 528/s, 1,834 (2,608) |
+| Replicated, one writer on the standby | 350 to 351/s, 2,785 to 2,803 (5,889 to 5,915) | 351/s, 2,741 to 2,750 (5,854 to 5,864) | 145 to 204/s, 5,857 to 7,154 (8,855 to 11,580) | 443/s, 2,234 (2,781) |
+| Replicated, 16 writers | 2,738 to 2,742/s | 2,274 to 2,526/s | 1,549 to 1,657/s | 2,610/s |
+| Replicated, 64 writers | 6,383 to 6,386/s | 5,965 to 6,280/s | 4,785 to 4,937/s | 5,640/s |
+| Replicated, alone, one writer | 694 to 695/s, 1,254 to 1,261 (4,345 to 4,372) | 1,100 to 1,102/s, 874 to 876 (1,311 to 1,314) | 266 to 597/s, 1,264 to 3,387 (4,634 to 6,809) | 1,097/s, 879 (1,311) |
+| Replicated, alone, 16 writers | 3,085 to 3,184/s | 5,258 to 5,280/s | 1,306 to 3,149/s | 5,188/s |
+
+- **One writer.** A replicated write takes 2.23 to 2.28 ms at p50 across the LAN whichever machine is the primary, against 0.87 to 0.89 ms on tmpfs: the 16-core machine's synced write is in the path either way, as the primary's or as the standby's. The network's 135 to 205 µs (the section before) is now under a tenth of a write. With the Pi as the primary a write takes 0.42 to 0.45 ms more than on the Pi's loopback (1.83 ms), the standby's slower disk.
+- **Concurrent writers.** 64 writers reach 5,965 to 6,386/s across the LAN, more than on either machine's loopback (4,785 to 4,937 and 5,640/s), and 16 writers likewise on the 16-core machine: on loopback both nodes sync to one drive, across the LAN each to its own.
+- **Writes on the standby.** Forwarded writes take 2.74 to 2.80 ms across the LAN, 0.5 ms over a write on the primary, but 5.9 to 7.2 ms on the 16-core machine's loopback. Not attributed; the two nodes share one drive there, and the Pi's loopback, with the faster drive, shows 0.4 ms.
+- **Alone.** The primary writes at its own disk's pace: the Pi at 874 to 879 µs on the LAN and on loopback alike, the 16-core machine at 1.25 to 1.26 ms on the LAN and 1.26 to 3.39 ms on its loopback, where the standby's process was just shutting down on the same drive.
+- **The 16-core machine's disk varies.** Its disk bucket ran at 383/s (p50 2.5 ms) in one run and 963 to 1,037/s in the other four, matching 2026-10-18's 0.9 to 2.5 ms per synced write. A pair with a slow-syncing node runs at that node's pace whichever side is primary, network or not.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
-- Replicated writes between two machines on a synced disk (2026-10-25's runs are on tmpfs). What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
+- What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate. Why a write on the standby takes 5.9 to 7.2 ms on the 16-core machine's loopback on disk, against 2.7 to 2.8 ms between machines.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.
 - Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).
