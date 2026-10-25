@@ -42,7 +42,7 @@ exclude = ["spikes", "fuzz"]
 version = "0.3.0"
 edition = "2024"
 # The current stable rustc: dependencies resolve to their newest releases
-# (resolver 3 picks versions that build on rust-version). wasmtime 49 needs 1.96.0.
+# (resolver 3 picks versions that build on rust-version). wasmtime 50 needs 1.97.0.
 rust-version = "1.99.0"
 license = "MIT OR Apache-2.0"
 authors = ["James Howard <jrobhoward@gmail.com>"]
@@ -51,20 +51,20 @@ repository = "https://github.com/jrobhoward/paddock"
 # Versions pinned by spike S3 (spikes/S3-wasi-target.md). The wasmtime crates are
 # released together and move as a group.
 [workspace.dependencies]
-wasmtime = { version = "49", default-features = false }
-wasmtime-wasi = { version = "49", default-features = false }
-wasmtime-wasi-config = "49"
+wasmtime = { version = "50", default-features = false }
+wasmtime-wasi = { version = "50", default-features = false }
+wasmtime-wasi-config = "50"
 # HTTP egress: our own sender, so no default-send-request
 # (webpki-roots) and no p3.
-wasmtime-wasi-http = { version = "49", default-features = false, features = ["p2"] }
-wit-bindgen = "0.62"
+wasmtime-wasi-http = { version = "50", default-features = false, features = ["p2"] }
+wit-bindgen = "0.63"
 # The SDK's HTTP client (`paddock_sdk::http_client`): wasi:http bindings.
 wasip2 = "1"
-# Same wit-parser line as wit-bindgen 0.62, so the graph carries one copy.
-wit-parser = "0.259"
-# Same wasmparser line as wit-parser and wasmtime 49, so the graph carries one
-# copy.
-wasmparser = { version = "0.259", default-features = false, features = ["component-model", "std"] }
+# wit-parser and wasmparser on wasmtime 50's line, so host builds carry one
+# copy. wit-bindgen 0.63's macro is a line ahead (0.262); that copy is built
+# only for the guests' proc-macro.
+wit-parser = "0.261"
+wasmparser = { version = "0.261", default-features = false, features = ["component-model", "std"] }
 # 1.54: the current line (`AsyncFd::register`, which the serial tty uses, is 1.53.3 on).
 tokio = "1.54"
 # MIT OR Apache-2.0. Client (polling) and server (serving registers) over TCP.

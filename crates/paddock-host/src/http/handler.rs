@@ -16,7 +16,7 @@
 //!   after the headers, the body stream is cut (the connection closes
 //!   without the last chunk). A handler that drops its body without
 //!   finishing it and returns normally ends the body cleanly: wasmtime 49
-//!   does not tell the two apart.
+//!   and 50 do not tell the two apart.
 //! - **Limits:** the route's `max_body` bounds the request body as it is
 //!   read; the guest sees a body-size error past it.
 //! - **Upgrades** apply to new requests; requests in flight finish on the

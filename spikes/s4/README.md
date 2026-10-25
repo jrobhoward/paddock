@@ -6,6 +6,8 @@
 
 Run on 2026-10-05 with wasmtime 49.0.2, wasmtime-wasi 49.0.2 (p2), wit-bindgen 0.62, rustc 1.99.
 
+Rerun on 2026-10-25 with wasmtime 50.0.0 (wit-bindgen 0.63): the same results, except finding 3: `define_unknown_imports_as_traps` after the WASI linker now instantiates, and each missing import traps when called. Not checked on 49.0.4 (`docs/BASELINE.md`, Y1).
+
 ## How to run
 
 ```sh

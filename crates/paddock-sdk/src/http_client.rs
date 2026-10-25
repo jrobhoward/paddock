@@ -325,9 +325,10 @@ pub fn send(request: &Request) -> Result<Response, HttpError> {
     })
 }
 
-/// The error a response body's stream failed with. wasmtime 49 hands the
-/// guest no error code for a failure inside a response body (the host's
-/// `http-error-code` answers none), so a timeout is recognised by its text.
+/// The error a response body's stream failed with. wasmtime 49 and 50
+/// hand the guest no error code for a failure inside a response body (the
+/// host's `http-error-code` answers none), so a timeout is recognised by its
+/// text.
 fn body_error(e: &wasip2::io::error::Error) -> HttpError {
     if let Some(code) = wasip2::http::types::http_error_code(e) {
         return code.into();

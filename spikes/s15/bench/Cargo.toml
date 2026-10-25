@@ -12,6 +12,6 @@ hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 paddock-host = { path = "../../../crates/paddock-host" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
-wasmtime = { version = "49", default-features = false, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator"] }
-wasmtime-wasi = { version = "49", features = ["p2"] }
-wasmtime-wasi-http = "49"
+wasmtime = { version = "50", default-features = false, features = ["component-model", "async", "cranelift", "runtime", "std", "pooling-allocator"] }
+wasmtime-wasi = { version = "50", features = ["p2"] }
+wasmtime-wasi-http = "50"

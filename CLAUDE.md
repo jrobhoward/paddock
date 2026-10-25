@@ -397,7 +397,7 @@ test binaries that build the same set share a directory.
 the node refuses a longer `admin_socket` with a message saying so, and tests
 keep data directories short.
 
-**wasmtime 49 has its own `wasmtime::Error`, not `anyhow::Error`.** Use
+**wasmtime 50 has its own `wasmtime::Error`, not `anyhow::Error`.** Use
 `wasmtime::Result` at the wasmtime boundary and convert into this crate's
 `thiserror` types (S1).
 

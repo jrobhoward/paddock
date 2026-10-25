@@ -1747,6 +1747,24 @@ The section before's runs with both nodes' databases on each machine's NVMe inst
 - **Alone.** The primary writes at its own disk's pace: the Pi at 874 to 879 µs on the LAN and on loopback alike, the 16-core machine at 1.25 to 1.26 ms on the LAN and 1.26 to 3.39 ms on its loopback, where the standby's process was just shutting down on the same drive.
 - **The 16-core machine's disk varies.** Its disk bucket ran at 383/s (p50 2.5 ms) in one run and 963 to 1,037/s in the other four, matching 2026-10-18's 0.9 to 2.5 ms per synced write. A pair with a slow-syncing node runs at that node's pace whichever side is primary, network or not.
 
+## 2026-10-25: wasmtime 49 to 50 (Y1)
+
+`baseline` (1 and 4 workers, standard; 1 worker, dense) and `pool_load` (1, 4 and 16 workers), wasmtime 49.0.4 (commit 11539d1, a worktree) against wasmtime 50.0.0 (the same tree with Y1's dependency update), alternated, three rounds each, on the 16-core machine, idle (load under 1 before the runs; `pool_load` raises it to about 5 itself).
+
+| | wasmtime 49 | wasmtime 50 |
+|---|---|---|
+| Empty call, 1 worker, p50 | 2.29 to 2.40 µs | 2.30 to 2.35 µs |
+| 1 KiB echo, 1 worker, p50 | 4.35 to 4.43 µs | 4.38 to 4.43 µs |
+| Empty call, 4 workers, p50 | 3.24 to 3.94 µs | 3.24 to 3.97 µs |
+| Casts handled, 1 worker | 696,748 to 727,499/s | 708,683 to 724,429/s |
+| Instantiate to first reply, 1 worker, p50 | 84.3 to 85.4 µs | 83.4 to 84.6 µs |
+| Idle memory per instance (standard, dense) | 64 to 68 KiB | 64 to 68 KiB |
+| `pool_load 4`, empty, pool of 16, 64 clients | 579,253 to 597,429 calls/s | 570,142 to 587,769 calls/s |
+| `pool_load 4`, `busy:20000`, pool of 16, 64 clients | 105,711 to 106,434 calls/s | 105,646 to 105,976 calls/s |
+
+- **No change beyond noise.** Every row's ranges overlap but two: on 1 worker, `pool_load` with empty calls runs 1 to 2% fewer calls/s on 50 with a pool of 4 (399,151 to 406,484 against 408,709 to 409,805) and with a pool of 16 and one client (359,645 to 369,051 against 370,682 to 377,159). The 16-worker rows vary by up to 40% from run to run on either version.
+- **Spikes.** S1's eight experiments and its poisoned-Store check (`REUSE_AFTER_DROP`) pass on 50 as on 49; E3's spinner is killed at 702 to 704 ms on both versions (its README says about 500 ms). S4's results match its README, except that `define_unknown_imports_as_traps` after the WASI linker now instantiates (the missing imports trap when called); whether 49.0.4 already did is not checked.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.

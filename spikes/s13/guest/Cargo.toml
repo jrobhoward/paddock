@@ -12,4 +12,4 @@ crate-type = ["cdylib"]
 v2 = []
 
 [dependencies]
-wit-bindgen = "0.62"
+wit-bindgen = "0.63"

@@ -6,6 +6,8 @@
 
 Run on 2026-10-05 with wasmtime 49.0.2, wasmtime-wasi 49.0.2 (p2 only), wit-bindgen 0.62, rustc 1.99, Linux x86_64.
 
+Rerun on 2026-10-25 with wasmtime 49.0.4 and with 50.0.0 (wit-bindgen 0.63): the same results, except that E3's spinner is killed at 702 to 704 ms on both versions, not about 500 ms (`docs/BASELINE.md`, Y1).
+
 ## How to run
 
 ```sh

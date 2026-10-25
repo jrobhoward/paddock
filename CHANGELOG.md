@@ -44,6 +44,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- wasmtime 50 (with `wasmtime-wasi` and `wasmtime-wasi-http`), wasmparser
+  and wit-parser 0.261 (wasmtime 50's line), and wit-bindgen 0.63 for
+  guests and the SDK; the spikes workspace moves with them (ROADMAP Y1).
 - A call no longer arms a timer when its reply arrives before the caller
   next runs: `InstanceHandle::call` yields once first, then waits on a
   timer at the same deadline. About 8% off an empty call (ROADMAP B12).

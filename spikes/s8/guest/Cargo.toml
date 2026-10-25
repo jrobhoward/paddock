@@ -8,5 +8,5 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "0.62"
+wit-bindgen = "0.63"
 s8-kernels = { path = "../kernels" }
