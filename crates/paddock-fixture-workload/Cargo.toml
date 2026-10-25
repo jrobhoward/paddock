@@ -1,0 +1,20 @@
+[package]
+name = "paddock-fixture-workload"
+version.workspace = true
+description = "Benchmark fixture: paddock-workload's workloads as an app"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paddock-sdk = { workspace = true }
+paddock-workload = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "paddock-workload"
+version.workspace = true
+description = "Benchmark workloads of ordinary app code (JSON, regex, Markdown, maps), the same source native and in Wasm"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# `extern "C"` exports, for a core module without imports
+# (`--crate-type cdylib --target wasm32-unknown-unknown`; see `app_cost`).
+exports = []
+
+[dependencies]
+pulldown-cmark = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

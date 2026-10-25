@@ -13,12 +13,14 @@ members = [
     "crates/paddock-fixture-plugin",
     "crates/paddock-fixture-sdk",
     "crates/paddock-fixture-services",
+    "crates/paddock-fixture-workload",
     "crates/paddock-host",
     "crates/paddock-modbus",
     "crates/paddock-native",
     "crates/paddock-sdk",
     "crates/paddock-sdk-macros",
     "crates/paddock-soak",
+    "crates/paddock-workload",
     "examples/board",
     "examples/counter",
     "examples/ping-pong",
@@ -122,6 +124,7 @@ paddock-modbus = { path = "crates/paddock-modbus" }
 paddock-native = { path = "crates/paddock-native", default-features = false }
 paddock-sdk = { path = "crates/paddock-sdk" }
 paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
+paddock-workload = { path = "crates/paddock-workload" }
 # rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2
 # components, manifest extensions, trusted-key verification, signed file
 # checksums). Cargo.lock pins the commit. Move to a crates.io release once one
@@ -139,6 +142,9 @@ anyprobe = { git = "https://github.com/jrobhoward/anyprobe", branch = "main", de
 minisign = "0.10"
 
 # Test-only
+# Ordinary app code for the `app_cost` benchmark (paddock-workload).
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+regex = "1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi", "json"] }
 proptest = "1"
 rstest = "0.28"

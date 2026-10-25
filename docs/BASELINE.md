@@ -67,7 +67,7 @@ cargo run --release -p paddock-host --example pool_load -- 1    # and 4, 16
 - An epoch check is a load, a compare and a branch at every function entry and loop back edge.
 - When a loop body is a long dependency chain (the LCG multiply), the check costs nothing measurable.
 - In short loops dominated by memory stores (the sieve's marking loop), it costs about 20%.
-- Rust code from spike S8 ran with epoch interruption on at 1.02x native (software SHA-256), so for that code the checks cost at most about 2%.
+- Rust code from spike S8 ran with epoch interruption on at 1.02x native (software SHA-256), so for that code the checks cost at most about 2%. On ordinary app code they cost 1.19 to 1.71 times (2026-10-25, "ordinary app code in Wasm").
 - These kernels are an upper bound for check-dense code, not a typical app. Paddock has no setting to turn the checks off: preemption and the callback deadline depend on them.
 
 ### Concurrent clients against a pool
@@ -1784,9 +1784,47 @@ The section before's runs with both nodes' databases on each machine's NVMe inst
 - **Alone** is steady on redb 4 (1.22 to 1.56 ms, 3,661 to 3,776/s with 16 writers) where redb 3's runs spread by more than two times.
 - **The rest** is within this disk's variation: one writer on the primary at 2.35 ms in two runs and 3.77 ms in one; synced disk-bucket writes 5 to 7% fewer per second on redb 4, less than the spread between runs this morning (383 to 1,037/s in that section).
 
+## 2026-10-25: ordinary app code in Wasm (B11)
+
+`app_cost.rs` (`scripts/bench.sh app`) runs `paddock-workload`'s five workloads of ordinary app code over generated inputs: `json-typed` (400 orders, 172 KB, parsed into structs with serde derive, totals recomputed, serialized back), `json-value` (the same document through `serde_json::Value`), `regex` (a capturing pattern over a 282 KB access log), `markdown` (123 KB rendered to HTML with `pulldown-cmark`) and `map` (10,000 keys counted in a `BTreeMap<String, u64>`, looked up and ranked). Each runs the same number of times, chosen so the native run takes about 50 ms, on four sides: native in the benchmark's process; in Paddock, as one call to `paddock-fixture-workload` on a default `Runtime`; and the same crate built as a core module with no imports (`wasm32-unknown-unknown`) on two wasmtime engines that differ only in epoch interruption, the epoch side ticked every 2 ms with a yield on each tick, as `epoch_cost` does. Every side's checksum matches the native one. Median of 7 samples per side, alternated; three runs on each machine, idle (load under 1). Commit dcb11d4 with the benchmark added; wasmtime 50.0.0, rustc 1.99.0; native code built for generic x86-64 and aarch64.
+
+Ratios, the range over the three runs:
+
+| Workload | In Paddock / native, 16-core | Pi | Epoch off / native, 16-core | Pi | Epoch on / off, 16-core | Pi |
+| --- | --- | --- | --- | --- | --- | --- |
+| json-typed | 1.98 to 2.14 | 1.76 | 1.53 to 1.65 | 1.35 | 1.24 to 1.26 | 1.30 |
+| json-value | 1.71 to 1.72 | 1.42 to 1.43 | 1.33 to 1.34 | 1.05 to 1.06 | 1.26 to 1.29 | 1.36 to 1.37 |
+| regex | 1.94 to 1.98 | 1.60 to 1.61 | 1.49 to 1.52 | 1.37 to 1.38 | 1.27 to 1.29 | 1.17 to 1.19 |
+| markdown | 2.50 to 2.53 | 2.28 to 2.30 | 2.05 to 2.09 | 1.89 to 1.92 | 1.19 to 1.20 | 1.20 |
+| map | 2.54 to 2.55 | 2.18 to 2.20 | 1.44 to 1.47 | 1.46 to 1.47 | 1.68 to 1.71 | 1.56 to 1.57 |
+
+- **App code runs at 1.4 to 2.6 times native in Paddock**, closer to native on the Pi (1.4 to 2.3) than on the 16-core machine (1.7 to 2.6). Native times were 33 to 49 ms per sample.
+- **Epoch checks cost 1.19 to 1.71 times the unchecked time** on this code, on both machines, against at most 2% on S8's Rust kernels and 0 to 23% on `epoch_cost`'s WAT kernels on the 16-core machine (up to 1.5 times on the Pi's tight loop). With the ticker stopped, so the deadline is never reached and the guest never yields, the ratios are the same (16-core, one run): the cost is the checks in the compiled code, not the yields. For `map`, and for `json-value` on the Pi, the checks cost more than the rest of the gap to native. Which code pays is not attributed yet (ROADMAP B13).
+- **The guest is the core module with checks on.** Paddock's call takes 0.95 to 1.03 times the core module's time with epochs on in every run (one round trip, about 2 µs, against 45 to 116 ms of work), so the app world, the `wasm32-wasip2` build and the pooling allocator add nothing measurable to compute.
+- The 2026-10-07 note on S8 above ("for that code the checks cost at most about 2%") holds for those kernels only.
+
+`target/release/examples/app_cost`, first run on each machine (16-core: 12.48 s wall, 17.37 s user, 151 MiB peak RSS; Pi: 12.15 s wall, 17.31 s user, 102 MiB):
+
+```text
+16-core
+| json-typed | 44 | 42.20 ms | 90.39 ms | 2.14x | 69.75 ms | 87.78 ms | 1.259 |
+| json-value | 21 | 46.50 ms | 79.94 ms | 1.72x | 62.20 ms | 80.07 ms | 1.287 |
+| regex | 19 | 37.98 ms | 75.04 ms | 1.98x | 56.70 ms | 72.58 ms | 1.280 |
+| markdown | 48 | 46.07 ms | 115.68 ms | 2.51x | 95.72 ms | 114.44 ms | 1.196 |
+| map | 8 | 43.48 ms | 110.70 ms | 2.55x | 63.12 ms | 107.95 ms | 1.710 |
+Pi
+| json-typed | 28 | 38.87 ms | 68.36 ms | 1.76x | 52.37 ms | 68.21 ms | 1.302 |
+| json-value | 11 | 36.14 ms | 51.47 ms | 1.42x | 38.06 ms | 51.71 ms | 1.359 |
+| regex | 17 | 45.19 ms | 72.81 ms | 1.61x | 62.41 ms | 73.98 ms | 1.185 |
+| markdown | 34 | 42.03 ms | 96.87 ms | 2.30x | 80.59 ms | 96.42 ms | 1.196 |
+| map | 6 | 42.37 ms | 93.14 ms | 2.20x | 62.41 ms | 97.49 ms | 1.562 |
+```
+
+Columns: workload, runs per sample, native, in Paddock, ratio, core module epoch off, epoch on, epoch ratio.
+
 ## Not measured yet
 
-- Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
+- Which code pays for the epoch checks on app code (1.19 to 1.71 times; ROADMAP B13).
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.

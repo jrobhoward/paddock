@@ -8,6 +8,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `app_cost` (`paddock-host` example, `bench.sh app`): ordinary app code
+  (serde JSON, a regex scan, Markdown rendering, a `BTreeMap`) from the new
+  `paddock-workload` crate, run natively, in Paddock
+  (`paddock-fixture-workload`) and as a core module with epoch checks off
+  and on. In Paddock it runs at 1.4 to 2.6 times native; the epoch checks
+  alone cost 1.19 to 1.71 times (BASELINE.md; ROADMAP B11, B13).
 - `docs/GLOSSARY.md`: the terms the docs and code use, with the two
   meanings of "epoch" (the wasmtime epoch tick and the failover epoch) kept
   apart.

@@ -21,6 +21,7 @@ BENCHES=(
   "baseline|call, cast, instantiate, idle memory (1 and 4 workers, dense)|R/examples/baseline 1 1000 standard; R/examples/baseline 4 1000 standard; R/examples/baseline 1 5000 dense"
   "pool_load|concurrent clients against a pool (1, 4, 16 workers)|R/examples/pool_load 1; R/examples/pool_load 4; R/examples/pool_load 16"
   "epoch|epoch-check overhead|R/examples/epoch_cost"
+  "app|ordinary app code (serde JSON, regex, Markdown, a BTreeMap) native, in Paddock, and as a core module with epoch checks off and on|R/examples/app_cost"
   "log|guest log records|R/examples/log_cost"
   "admin|admin API latency (1 and 4 workers)|R/examples/admin_latency 1; R/examples/admin_latency 4"
   "watch|keyvalue writes with watchers, memory and disk buckets|R/examples/watch_cost 4; R/examples/watch_cost 4 disk"
@@ -76,7 +77,19 @@ fi
 [ -x /usr/bin/time ] || { echo "bench: needs GNU time at /usr/bin/time" >&2; exit 1; }
 
 echo "bench: building (release)"
-cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures
+cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-chaos -p paddock-fixture-workload \
+  --target-dir target/fixtures
+# app_cost's core module: paddock-workload with no imports.
+app_core=0
+if wanted app; then
+  if rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then
+    cargo rustc -q --release -p paddock-workload --features exports --crate-type cdylib \
+      --target wasm32-unknown-unknown --target-dir target/fixtures
+    app_core=1
+  else
+    echo "bench: app skipped (rustup target add wasm32-unknown-unknown)" >&2
+  fi
+fi
 cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-sdk -p paddock-fixture-counter \
   -p paddock-fixture-http -p paddock-fixture-echo -p paddock-fixture-chaos -p example-chaos \
   -p example-scada-points -p example-scada-control
@@ -116,6 +129,7 @@ mem=$(awk '/MemTotal/ { printf "%.0f GiB", $2 / 1048576 }' /proc/meminfo)
 for b in "${BENCHES[@]}"; do
   IFS='|' read -r name what commands <<<"$b"
   wanted "$name" || continue
+  [ "$name" = app ] && [ "$app_core" = 0 ] && continue
   if [ "$name" = beam ] && ! command -v escript >/dev/null; then
     echo "bench: beam skipped (no escript on the PATH)" >&2
     continue
