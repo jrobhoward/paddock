@@ -1,8 +1,8 @@
 # Paddock: Security
 
-2026-10-10 · Draft; W1 finishes it · Companion to [ARCHITECTURE.md](ARCHITECTURE.md)
+2026-10-25 · Companion to [ARCHITECTURE.md](ARCHITECTURE.md)
 
-The threat model as built: what Paddock protects, whom it trusts, each boundary between trusted and untrusted parts with the controls on it and the gaps found, and the fuzz targets. Findings are numbered S1 and on; their fixes are ROADMAP stage 3 items.
+The threat model as built: what Paddock protects, whom it trusts, each boundary between trusted and untrusted parts with the controls on it and the gaps found, and the fuzz targets. Findings are numbered S1 and on; each is fixed, and a new one would be a ROADMAP item. First drafted in the 2026-10-10 review and kept current as Phases 2 and 3 added boundaries.
 
 ## Reporting a vulnerability
 
@@ -25,6 +25,7 @@ Report it privately through the repository's Security tab ("Report a vulnerabili
 | An app | use what it was granted | reach other apps' data, the host, or other apps' messages beyond what routing allows |
 | A cluster member (a node whose key is in the peers file) | what its own instances could do on the node: call, cast, link and send exit signals within the messaging ACLs, as its stamp on each frame says; call an app by name from its host, as a standby's ingress does to forward an HTTP request (not subject to messaging ACLs, as host calls are not); take part in failover | speak for another node's instances (a frame whose sender pid is on another node is dropped); its stamps are trusted, so a member that lies about its senders' apps passes ACLs it should not |
 | The witness | arbitrate its pair | — |
+| An extension (host code built into the node by its operator: the Modbus extension, `examples/greeter`) | everything the node process can do; it runs as part of the node | — (apps reach it only through its package's declaration and grant, which the extension enforces itself) |
 | HTTP clients, listener clients, Modbus masters | nothing | anything beyond the routes, handlers and tables they reach |
 | Modbus devices polled | return register values | crash or stall the node |
 
@@ -87,6 +88,11 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 - **Devices** are polled with a timeout per request; responses are parsed by tokio-modbus.
 - **The server** answers only masters in `server.allow` (loopback by default): Modbus has no authentication of its own.
 - **Gaps.** None found; S4 is fixed. At most `server.max_connections` masters (default 32) are connected at once.
+
+### The metrics endpoint
+
+- **Controls.** Off unless node config sets `[metrics] address`; it serves `GET /metrics` only, read-only, the Prometheus text the admin API's `GET /v1/metrics` also gives.
+- **Gaps.** No authentication and no TLS: anyone who reaches the address reads every app's name, its instance counts, exit reasons, traffic and its own metrics' names and labels. Bind it to loopback or a management network.
 
 ### Liveness, membership and failover
 

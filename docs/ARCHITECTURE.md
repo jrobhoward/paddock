@@ -1,6 +1,6 @@
 # Paddock: Architecture
 
-2026-10-23 · Companion to [DESIGN.md](DESIGN.md)
+2026-10-25 · Companion to [DESIGN.md](DESIGN.md)
 
 A map of the code as built: the crates, the paths a call, a deploy, a failover, a replicated write and a release take through them, the threads and tasks that run, and where state lives. DESIGN.md says why; this file says where.
 
@@ -48,8 +48,8 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 
 | Area | Modules | Role |
 | --- | --- | --- |
-| Engine | `runtime`, `config`, `bindings`, `deny`, `compiled` | `Runtime` and its `RuntimeInner`: the wasmtime engine with a pooling allocator sized by `max_instances`, the epoch ticker, the linker (WASI p2 with the socket functions redefined, `paddock:runtime`, `paddock:io`, services, extensions), deny stubs for ungranted imports, compiled components kept on disk |
-| Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `instance_native`, `state`, `process`, `ready`, `delivery`, `lifecycle`, `output`, `health` | Instances, their mailboxes and callback loop (a Store, or a native process), passivation, the per-instance host state and `process` functions, readiness waits, pid routing, links and monitors, health checks |
+| Engine | `runtime`, `config`, `bindings`, `deny`, `compiled` | `Runtime` and its `RuntimeInner`: the wasmtime engine with a pooling allocator sized by `max_instances` (a freed slot keeps up to `keep_resident` of its written pages for the next instance), the epoch ticker, the linker (WASI p2 with the socket functions redefined, `paddock:runtime`, `paddock:io`, services, extensions), deny stubs for ungranted imports, compiled components kept on disk |
+| Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `instance_native`, `state`, `process`, `ready`, `delivery`, `acl`, `lifecycle`, `output`, `health` | Instances, their mailboxes and callback loop (a Store, or a native process), passivation, the per-instance host state and `process` functions, readiness waits, pid routing, messaging ACLs (checked on the target's node), links and monitors, health checks |
 | Orchestration | `apps`, `pool`, `supervisor`, `upgrade`, `spec` | App sets in dependency order, a root supervisor per app, pools with routing and a blue-green second side, snapshot, restart and blue-green upgrades |
 | Services | `services::{config, keyvalue, groups, logging, secrets, metrics, egress, sockets, sql, extension}`, `metrics` | Guest-facing interfaces on the `Service` pattern; extensions from other crates |
 | I/O | `http` (`http::tls`, `http::handler`), `listener` | The HTTP ingress (a request is a call to a pool), HTTP handlers (an instance per request) and listeners (an instance per connection) |
@@ -91,7 +91,7 @@ The caller waits with its timeout; a reply after the timeout is dropped. A guest
 A guest calls `process.call`. The host function (`process`) hands it to `delivery::call`, and the time the caller waits counts as host time.
 
 - **Local:** the target's mailbox, as above.
-- **Remote:** a `Frame::Call` with an id goes to the target's node over the transport, and the caller waits on `pending_calls`. The receiving node runs `delivery::call` in a task of its own and answers with `Frame::Reply`. A session that ends meanwhile fails the call with `noconnection`. Calls from one peer handled at once are capped (`incoming_calls_per_peer`); past it they are answered `overloaded`.
+- **Remote:** a `Frame::Call` with an id goes to the target's node over the transport, and the caller waits on `pending_calls`. The receiving node runs `delivery::call` in a task of its own and answers with `Frame::Reply`. A session that ends meanwhile fails the call with `noconnection`. Calls from one peer handled at once are capped (`[cluster] incoming_calls_max`, `RuntimeConfig::incoming_calls_per_peer`); past it they are answered `overloaded`.
 
 Casts follow the same routes without a reply; a full mailbox drops the cast and counts it. A congested link drops casts and fails calls with `overloaded` past `send_buffer_bytes`, as a full mailbox does.
 
@@ -349,9 +349,11 @@ A guest's state lives only in its Store (or its process). A crash or restart sta
 ├── compiled/<app>/<version>/  compiled components (<checksum>.cwasm) and native programs (.native)
 ├── kv/                        disk buckets and the replicated log with its replicated buckets (one redb file)
 ├── tmp/                       uploads being verified
+├── creation                   raised on every start; part of every pid
 ├── failover-epoch             the highest epoch reached; written and synced before acting
 ├── witness-state              a witness's epoch, promoted node and record; synced before a grant or record change
 ├── node.lock                  held while a node has the directory open
+├── admin.sock                 the admin API, unless admin_socket names another path
 └── audit.log                  one JSON object per line
 ```
 
