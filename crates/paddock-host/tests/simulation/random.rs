@@ -135,6 +135,11 @@ struct Run {
     /// Sessions ended: (operation during which it was seen, observer, node).
     /// Those seen after the last operation carry `OPS`.
     downs: Vec<(usize, u32, u32)>,
+    /// Nodes found reachable again: (operation during which it was seen,
+    /// observer, node). An operation that takes time, a call, can send
+    /// before or after the observer stops refusing frames (seeds 19274 and
+    /// 19494).
+    reachables: Vec<(usize, u32, u32)>,
     links: Vec<Link>,
     monitors: Vec<Monitor>,
     /// Each live instance's notices at the end.
@@ -160,7 +165,13 @@ impl Run {
     fn cut_at(&self, x: u32, y: u32, op: usize) -> bool {
         x != y
             && (self.cut_before[op].contains(&pair(x, y))
-                || self.unreachable_before[op].contains(&(x, y)))
+                || (self.unreachable_before[op].contains(&(x, y)) && !self.cleared(x, y, op)))
+    }
+
+    /// Whether `x` found `y` reachable again during operation `op`: frames
+    /// it sent then may have been refused or not.
+    fn cleared(&self, x: u32, y: u32, op: usize) -> bool {
+        self.reachables.contains(&(op, x, y))
     }
 
     /// Whether `x` saw its session with `y` end during operation `op`
@@ -180,16 +191,21 @@ impl Run {
     /// Whether it may: also when the session ended during `op` itself,
     /// before or after the operation took effect, or frames can be lost.
     fn cut_maybe(&self, x: u32, y: u32, op: usize) -> bool {
-        x != y && (self.cut_certain(x, y, op) || self.down(x, y, op, true) || self.drops)
+        x != y
+            && (self.cut_certain(x, y, op)
+                || self.down(x, y, op, true)
+                || self.cleared(x, y, op)
+                || self.drops)
     }
 
     /// Whether frames between `x` and `y` might be held or refused when
-    /// operation `op` ran, without `x` refusing them itself.
+    /// operation `op` ran, without `x` certainly refusing them itself.
     fn shaky(&self, x: u32, y: u32, op: usize) -> bool {
         x != y
             && (self.stalled_before[op].contains(&(x, y))
                 || self.stalled_before[op].contains(&(y, x))
                 || self.unreachable_before[op].contains(&(y, x))
+                || self.cleared(x, y, op)
                 || self.down(x, y, op, true)
                 || self.down(y, x, op, true)
                 || self.drops)
@@ -207,6 +223,7 @@ impl Run {
                     }
                     NodeEvent::Reachable { node } => {
                         self.unreachable.remove(&(observer, node));
+                        self.reachables.push((op, observer, node));
                     }
                     _ => {}
                 }
@@ -262,6 +279,7 @@ async fn scenario(sim: Sim, seed: u64, drops: bool) -> Run {
         unreachable: BTreeSet::new(),
         unreachable_before: Vec::new(),
         downs: Vec::new(),
+        reachables: Vec::new(),
         links: Vec::new(),
         monitors: Vec::new(),
         infos: BTreeMap::new(),

@@ -44,6 +44,11 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- toml 1 (manifest, node config and policy parsing), rustyline 19
+  (`paddock shell`), wasip2 2 (`paddock_sdk::http_client`, the HTTP
+  fixtures) and rstest 0.28. toml already read TOML 1.1 and still does,
+  with the same errors for duplicate keys and bad digit separators;
+  wasip2 2 binds the same WASI 0.2.12 interfaces (ROADMAP Y4).
 - minisign 0.10, here and in rustbridge-bundle, so bundles still verify
   with one copy. Keys and signatures are unchanged: existing signing keys
   and signed bundles work as they are (ROADMAP Y3).
@@ -94,6 +99,11 @@ All notable changes are recorded here. The format follows
   native program's file mode and the admin client compiled Unix- or
   Linux-only APIs there. Native apps stay Linux only; elsewhere a deploy's
   instances fail to start with a message saying so.
+- The random distribution simulation no longer fails a call that succeeds
+  while its node stops refusing frames to the target: a call takes
+  simulated time, and a heal just before it can let a heartbeat clear the
+  node's unreachable mark before the call is sent (nightly seeds 19274
+  and 19494). The model was wrong, not the runtime.
 
 ## [0.3.0] - 2026-10-23
 

@@ -59,7 +59,7 @@ wasmtime-wasi-config = "50"
 wasmtime-wasi-http = { version = "50", default-features = false, features = ["p2"] }
 wit-bindgen = "0.63"
 # The SDK's HTTP client (`paddock_sdk::http_client`): wasi:http bindings.
-wasip2 = "1"
+wasip2 = "2"
 # wit-parser and wasmparser on wasmtime 50's line, so host builds carry one
 # copy. wit-bindgen 0.63's macro is a line ahead (0.262); that copy is built
 # only for the guests' proc-macro.
@@ -106,13 +106,13 @@ rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"]
 http-body-util = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
-rustyline = { version = "18", default-features = false, features = ["with-file-history"] }
+rustyline = { version = "19", default-features = false, features = ["with-file-history"] }
 anyhow = "1"
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 semver = { version = "1", features = ["serde"] }
-toml = "0.9"
+toml = "1"
 
 paddock = { path = "crates/paddock", default-features = false }
 paddock-bundle = { path = "crates/paddock-bundle" }
@@ -141,7 +141,7 @@ minisign = "0.10"
 # Test-only
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi", "json"] }
 proptest = "1"
-rstest = "0.26"
+rstest = "0.28"
 # Safe system calls: the effective uid for the compiled-component cache's
 # owner check (paddock-host, unix only).
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
