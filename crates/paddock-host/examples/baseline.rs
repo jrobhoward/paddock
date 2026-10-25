@@ -9,7 +9,11 @@
 //! ```
 //!
 //! Defaults: 1 tokio worker, 1,000 instances, the standard memory profile,
-//! the chaos fixture under `target/fixtures`. Linux only for the memory figures (`/proc/self/statm`).
+//! the chaos fixture under `target/fixtures`. Linux only for the memory figures (`/proc/self/statm`,
+//! `/proc/self/smaps_rollup`). Resident memory counts a page shared by
+//! several instances (the component's memory image) once for each; the
+//! proportional figure (PSS) divides it among them, so it is what an
+//! instance costs where the image is mapped in larger windows (aarch64).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -169,8 +173,21 @@ fn memory() -> Option<(u64, u64)> {
     Some((rss * 4, virt * 4))
 }
 
+/// Proportional set size of this process, in KiB.
+fn pss() -> Option<u64> {
+    let rollup = std::fs::read_to_string("/proc/self/smaps_rollup").ok()?;
+    rollup
+        .lines()
+        .find_map(|l| l.strip_prefix("Pss:"))?
+        .trim()
+        .trim_end_matches(" kB")
+        .parse()
+        .ok()
+}
+
 async fn instantiate(rt: &Runtime, app: &LoadedApp, n: usize) {
     let before = memory();
+    let pss_before = pss();
     let mut handles = Vec::with_capacity(n);
     let mut samples = Vec::with_capacity(n);
     let started = Instant::now();
@@ -185,6 +202,7 @@ async fn instantiate(rt: &Runtime, app: &LoadedApp, n: usize) {
     let total = started.elapsed();
     tokio::time::sleep(Duration::from_millis(200)).await;
     let after = memory();
+    let pss_after = pss();
     samples.sort();
     println!(
         "instantiate to first reply ({n} instances): p50 {}, p99 {}, mean {}",
@@ -200,6 +218,12 @@ async fn instantiate(rt: &Runtime, app: &LoadedApp, n: usize) {
             virt1.saturating_sub(virt0) / n,
             rss1 / 1024,
             virt1 / 1024 / 1024,
+        );
+    }
+    if let (Some(p0), Some(p1)) = (pss_before, pss_after) {
+        println!(
+            "idle memory per instance, proportional: {} KiB (shared pages divided among their users)",
+            p1.saturating_sub(p0) / n as u64,
         );
     }
     for h in &handles {

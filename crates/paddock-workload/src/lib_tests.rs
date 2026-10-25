@@ -1,4 +1,6 @@
 #![allow(non_snake_case)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
 
 use super::*;
 

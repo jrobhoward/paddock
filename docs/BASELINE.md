@@ -691,7 +691,7 @@ Against the 16-core machine (the 2026-10-15 suite unless marked; the Pi's run in
 
 - A call costs about 1.5 times the 16-core machine's on one worker; instantiation costs the same.
 - Epoch checks cost more on the Pi in loop-heavy code: a tight loop runs at 1.5 times its unchecked time, against no measurable cost on the 16-core machine. The sieve, which is memory-bound, pays almost nothing.
-- An idle live instance takes about 110 KiB resident on the Pi against 58 to 63 KiB, with the same page size and transparent huge pages set to `madvise` on both. The cause has not been looked into. A passivated instance costs the same on both.
+- An idle live instance takes about 110 KiB resident on the Pi against 58 to 63 KiB, with the same page size and transparent huge pages set to `madvise` on both. The cause has not been looked into. (2026-10-25, B13: shared image pages counted once per instance; 57 KiB proportionally.) A passivated instance costs the same on both.
 - The replicated write and the disk bucket (2,105 writes/s, p50 441 µs, against about 960/s) run faster than on the 16-core machine. They are bound by the drive's fsync, and the drives differ; they do not compare the CPUs.
 - Modbus on the Pi: 64 devices polled every millisecond store 7,767 updates/s (971k points/s) with a pool of 4 on 4 workers, 6,317 with a pool of 8 on 8 workers (more workers than cores).
 
@@ -1822,10 +1822,24 @@ Pi
 
 Columns: workload, runs per sample, native, in Paddock, ratio, core module epoch off, epoch on, epoch ratio.
 
+## 2026-10-25: where epoch checks cost, and G2's open questions (B13)
+
+The core module of "ordinary app code in Wasm" above, compiled by wasmtime 50.0.0 with epoch interruption off and on (default `Config` otherwise, as `paddock-host` builds it), profiled with `perf` (wasmtime's perf map) and disassembled; a scratch driver calls `workload_run` without ever advancing the epoch, so only the checks run. The 16-core machine for timings unless named; the Pi for the idle-memory runs.
+
+**Epoch checks on app code.** A check is a load of the epoch counter, a compare and a branch to a cold block that calls `wasmtime_builtin_new_epoch`, at every function entry and loop header. The call costs more than the check: its clobbers shape register allocation for the whole function, even though it is never taken.
+
+- A function that was a leaf gains a stack-limit check and saves callee-saved registers: 152 of the module's 1,936 functions gain a stack check, callee-saved register saves rise by 25%, and the compiled code by 24% (2.04 to 2.54 MB).
+- In tight loops, values move between caller- and callee-saved registers, or to the stack, on every iteration. The guest's `memcmp` (compiler-builtins' byte loop; wasi-libc's in the app is the same loop) keeps both pointers on the stack with checks on: three more loads and two stores per byte compared, against a 12-instruction loop held in registers without them.
+- `map` (a `BTreeMap<String, u64>`) spends about 72% of its added time in `memcmp`: 0.90 s of 3.15 s with checks off, 2.51 s of 5.39 s with them on. A `memcmp` comparing 8 bytes per step (built into the workload for the test) takes `map` from 108 to 72 ms with checks on and 63.5 to 49.7 ms off (epoch ratio 1.70 to 1.45); the other four workloads change by under 5% either way.
+- In `json-typed` no function stands out: the added time spreads over serde's functions in proportion to their share.
+
+**Tight loops on the Pi (1.5 times).** The same pattern, `epoch_cost`'s LCG loop compiled for aarch64: 12 instructions per iteration without checks, 21 with them (the epoch load, compare and branch, and six register moves that shuttle the accumulator, counter and cached deadline between registers). On x86-64 the loop goes from 7 to 17 instructions and shows no cost on the 16-core machine; likely because Zen 1 eliminates register moves at rename and issues wider, so the moves fit under the 4-cycle multiply-add chain, where the Cortex-A76 cannot hide them (not measured with counters).
+
+**Compiled-code files on aarch64.** wasmtime aligns `.text` and `.rodata.wasm` to 64 KiB on aarch64 (4 KiB on x86-64): the echo fixture's file is 271,240 bytes for aarch64 against 62,336 for x86-64, cross-compiled on the 16-core machine, with 32 KiB of x86-64 code becoming a 64 KiB section and 4 KiB of read-only data another 64 KiB. A fixed padding of about 200 KB per file, on disk; pages of padding are never touched, so they cost no memory.
+
+**Idle memory on the Pi.** The Pi's 109 KiB per idle instance is resident memory counting the component's memory image once per instance: by mapping, 64 KiB per instance of `memfd:wasm-memory-image` on the Pi against 12 KiB here, with the malloc heap (36 to 37 KiB) and the pool's share (4 KiB) the same on both. Measured proportionally (PSS, the image's pages divided among the instances that map them), an idle instance costs 57 KiB on the Pi (standard and dense profiles) and 56 KiB here. `baseline` now prints both figures. The larger window is likely the same 64 KiB alignment on aarch64, with the kernel's fault-around mapping it whole on the first read (not checked further).
+
 ## Not measured yet
 
-- Which code pays for the epoch checks on app code (1.19 to 1.71 times; ROADMAP B13).
-- Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.
-- Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).

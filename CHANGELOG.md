@@ -50,6 +50,10 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `baseline` prints idle memory per instance proportionally (PSS) as well
+  as resident: resident memory counts the component's memory image once
+  per instance, which made the Pi's idle instance look like 109 KiB
+  against 57 KiB proportionally (BASELINE.md; ROADMAP B13).
 - toml 1 (manifest, node config and policy parsing), rustyline 19
   (`paddock shell`), wasip2 2 (`paddock_sdk::http_client`, the HTTP
   fixtures) and rstest 0.28. toml already read TOML 1.1 and still does,
