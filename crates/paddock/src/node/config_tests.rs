@@ -11,6 +11,7 @@ fn NodeConfig____minimal____defaults_filled_in() {
     assert_eq!(config.node, 0);
     assert_eq!(config.max_instances, 1_000);
     assert_eq!(config.memory_profile, MemoryProfile::Standard);
+    assert_eq!(config.keep_resident, None);
     assert_eq!(
         config.socket(),
         PathBuf::from("/var/lib/paddock/admin.sock")
@@ -28,6 +29,7 @@ admin_socket = "/run/p.sock"
 trusted_keys = ["RWQ1"]
 policy = "/etc/p.toml"
 memory_profile = "dense"
+keep_resident = "2MiB"
 
 [volumes]
 orders-data = "/srv/v/orders"
@@ -41,6 +43,7 @@ orders-data = "/srv/v/orders"
     assert_eq!(config.node, 3);
     assert_eq!(config.socket(), PathBuf::from("/run/p.sock"));
     assert_eq!(config.memory_profile, MemoryProfile::Dense);
+    assert_eq!(config.keep_resident, Some(ByteSize::mib(2)));
     assert_eq!(
         config.volumes["orders-data"],
         PathBuf::from("/srv/v/orders")

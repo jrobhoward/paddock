@@ -47,6 +47,18 @@ All notable changes are recorded here. The format follows
   pending-reply map holds only callers left waiting by `noreply`. 3 to 8%
   more empty calls per second across a pool (ROADMAP B12).
 - `call_split allocs` counts heap allocations per call.
+- Components compile on every core (wasmtime's `parallel-compilation`):
+  release components 2.6 to 3 times faster on a Raspberry Pi 5 and 7 to 9
+  times on a 16-core machine, for about 25% more CPU in all (ROADMAP B10).
+  New dependencies: `rayon`, `rayon-core`, `crossbeam-deque` and
+  `crossbeam-epoch` (MIT OR Apache-2.0).
+- A freed Store slot keeps the pages its last instance wrote, zeroed, up to
+  `keep_resident` (node config; `RuntimeConfig::keep_resident`, default
+  `MemoryProfile::keep_resident`: 16 MiB with the standard profile, none
+  with dense), so the next instance on it takes no page faults for them.
+  Waking a passivated instance with 1 MiB of state and an upgrade with
+  1 MiB take less than half as long; free slots hold that memory
+  (ROADMAP B10).
 - The minimum Rust version is 1.99.0 (was 1.96.0), so dependencies resolve
   to current releases; the lock files of the workspace, fuzz and spikes are
   updated within semver.

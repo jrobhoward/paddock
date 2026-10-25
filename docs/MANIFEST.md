@@ -139,6 +139,8 @@ The app's root supervisor, with OTP semantics.
 | `pending_calls_max` | node's `[limits]` (10000) | Most calls answered `noreply` and not yet replied to. One more crashes the instance with `pending_call_limit`, and its waiting callers get `exited`. |
 | `fuel_per_message`, `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
 
+A `send-after` timer or a guest sleep (`wasi:clocks`) never fires early, and on an idle node fires 1 to 2 ms late: the host's timers have a 1 ms grain and round a deadline up to it, then round the wait up to it again. A busy node adds up to an epoch tick, or more when every worker is busy (`docs/BASELINE.md`, 2026-10-24: `send-after` 1.0 to 1.2 ms late at p50 and about 2 ms at p99, idle, on a 16-core machine and on a Raspberry Pi 5).
+
 ### `messaging_acl`
 
 Which apps this app's instances may send to, and which may send to them, by app name. A call, cast, `process.exit` or link from an instance of app A to one of app B passes when A's `may_call` lists B and B's `accept_from` lists A; an empty or missing list allows any. Instances of the same app always pass, and senders that are not instances (the admin API, the HTTP ingress, health checks, extensions) are not checked; neither are monitors. The check runs on the target's node, against the sender's app as its node stamps it, so it holds across nodes. A refused call fails with `access-denied`; a refused cast or exit signal is dropped; a refused link answers at once with an exit `noproc`, as a dead pid does. An upgrade's lists apply from the swap.
@@ -274,6 +276,7 @@ policy = "/etc/paddock/policy.toml"    # without one, only the always-available 
 max_instances = 1000                   # instances holding a Store at once (each reserves address space)
 max_processes = 20000                  # all instances, passivated ones too; default max_instances
 memory_profile = "standard"            # or "dense": 128 MiB cap per instance, many more instances
+keep_resident = "16MiB"                # per free Store slot: pages kept, zeroed, for the next instance; default 16MiB, 0 with "dense"
 epoch_tick_ms = 2                      # granularity of callback deadlines and preemption
 
 [volumes]

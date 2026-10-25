@@ -9,7 +9,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use wasmtime::component::{HasSelf, Linker};
-use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
+use wasmtime::{Config, Enabled, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
 
 use crate::apps::{self, AppDeployment, Apps};
 use crate::bindings::{PaddockApp, PaddockAppPre};
@@ -864,6 +864,16 @@ fn engine_config(config: &RuntimeConfig) -> Config {
         // Each live Store holds a fiber stack (S2).
         .total_stacks(n)
         .max_memory_size(usize::try_from(config.memory_profile.memory_max()).unwrap_or(usize::MAX));
+    let keep = config
+        .keep_resident
+        .unwrap_or_else(|| config.memory_profile.keep_resident());
+    if keep > 0 {
+        // Zero only the pages the guest wrote (Linux 6.7's PAGEMAP_SCAN,
+        // where the kernel has it), so a slot holds what its last instance
+        // used rather than `keep` bytes of its memory.
+        pool.linear_memory_keep_resident(usize::try_from(keep).unwrap_or(usize::MAX))
+            .pagemap_scan(Enabled::Auto);
+    }
     let mut wasm = Config::new();
     wasm.epoch_interruption(true)
         .allocation_strategy(InstanceAllocationStrategy::Pooling(pool));

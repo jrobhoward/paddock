@@ -33,6 +33,18 @@ impl MemoryProfile {
             Self::Dense => 128 << 20,
         }
     }
+
+    /// Bytes of a freed Store slot's linear memory kept resident, zeroed,
+    /// for the next instance when [`RuntimeConfig::keep_resident`] is
+    /// unset: 16 MiB for `Standard`, none for `Dense`, where many small
+    /// instances would each hold it.
+    #[must_use]
+    pub const fn keep_resident(self) -> u64 {
+        match self {
+            Self::Standard => 16 << 20,
+            Self::Dense => 0,
+        }
+    }
 }
 
 /// Most host objects one instance may hold. These live in host memory,
@@ -231,6 +243,15 @@ pub struct RuntimeConfig {
     pub max_processes: Option<u32>,
     /// Address-space reservation per linear memory.
     pub memory_profile: MemoryProfile,
+    /// Bytes of a freed Store slot's linear memory kept resident for the
+    /// next instance; `None` is the profile's
+    /// ([`MemoryProfile::keep_resident`]). A free slot holds the pages its
+    /// last instance wrote, up to this, zeroed; pages past it are returned
+    /// to the kernel. An instance starting, waking or upgrading on the slot
+    /// then takes no page fault for them, which is most of a wake's cost
+    /// (about 1 ms per MiB of state without it, `docs/BASELINE.md`,
+    /// 2026-10-24).
+    pub keep_resident: Option<u64>,
     /// Epoch tick: the granularity of deadlines and of preemption between
     /// instances. A busy instance can keep its tokio worker for up to one
     /// tick, so the tick also bounds how long other tasks on that worker
@@ -376,6 +397,7 @@ impl Default for RuntimeConfig {
             max_instances: 1_000,
             max_processes: None,
             memory_profile: MemoryProfile::Standard,
+            keep_resident: None,
             epoch_tick: Duration::from_millis(2),
             data_dir: None,
             heartbeat_interval: Duration::from_secs(1),

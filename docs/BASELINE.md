@@ -1616,6 +1616,51 @@ Raspberry Pi 5, idle; the previous section's tree (items 2 and 3) against the ch
 - An empty call makes 6 heap allocations of 195 bytes in all, against 2 for the bare tokio round trip (`call_split 1 allocs`, 16-core machine): the caller's envelope (content type and body), the reply channel, and the reply's content type and body lifted out of guest memory. The map made none (its capacity is kept). Fewer would take a change to `Envelope`, which owns its content type.
 - B12 in all, comparing the first section's "before" with this one's "after" (different sessions on the same idle Pi, so read the figures loosely): an empty call 3.55 to 3.67 µs to 3.08 to 3.17 µs on 1 worker (about 14%) and 4.33 to 4.63 µs to 3.73 to 3.89 µs on 4 (about 14%); `pool_load 4` empty calls 800k to 813k to 924k to 940k on a pool of 4 and 662k to 670k to 816k to 818k on a pool of 16. A gen_server call on the Pi is 2.44 µs (OTP 27): 1.5 times before, 1.3 times after on 1 worker.
 
+## 2026-10-24: compiling on every core, slots kept resident, timer lateness (B10)
+
+The three leads from B9. Each A/B ran alternated rounds on an idle machine (the 16-core machine, then the Raspberry Pi 5); Pi logs under `~/pi-runs/b10-parcomp-2026-10-24/` and `~/pi-runs/b10-resident-2026-10-24/`.
+
+### Parallel compilation
+
+wasmtime's `parallel-compilation` feature compiles a component's functions on rayon's pool, one thread per core. `compile_cost`, two rounds each, medians of 5 loads:
+
+| Component | 16-core before | 16-core after | Pi before | Pi after |
+| --- | --- | --- | --- | --- |
+| echo, 17 KiB | 21.8 to 22.0 ms | 13.9 to 15.2 ms | 25.7 to 26.0 ms | 12.5 to 12.9 ms |
+| chaos, 150 KiB | 179.6 to 180.3 ms | 25.9 to 28.0 ms | 199.7 to 201.1 ms | 69.8 to 70.5 ms |
+| SDK fixture, 543 KiB | 570.8 to 573.3 ms | 62.1 to 62.9 ms | 641.1 to 646.6 ms | 222.9 to 228.1 ms |
+| scada `control`, 488 KiB | 517.5 to 517.7 ms | 52.4 to 54.4 ms | 587.9 to 588.1 ms | 203.8 to 209.6 ms |
+| SDK fixture debug, 5.4 MiB | 1055.5 to 1058.3 ms | 120.1 to 124.4 ms | 1151.9 to 1152.9 ms | 383.4 to 385.6 ms |
+
+- The whole run takes about 25% more CPU (16-core machine: 23.5 s to 28.6 s user; Pi: 26.1 to 26.2 s to 32.5 to 32.8 s) and 15 to 43 MB more peak memory. Cache files and cached loads are unchanged, except the echo fixture's cached load on the 16-core machine, 0.32 to 0.54 ms.
+- A deploy now uses every core for a shorter time. Nothing was measured of a compile next to a loaded node.
+
+### Waking, upgrading and restarting: page faults
+
+A scratch harness woke one instance holding `ballast:<mib>` over and over, with page faults and user and system time from `/proc/self/stat` (16-core machine): every wake took 512 minor faults per MiB of state, two per 4 KiB page, and about three quarters of its time was system time (16 MiB: 15.3 ms, of which 11.5 to 12 ms system). The state is touched twice in fresh memory: the canonical ABI's copy of the snapshot into guest memory, then the fixture's own copy out of it (an SDK app's decode does the same). A freed pool slot returns its pages to the kernel (`madvise`), so the next instance faults each one in again. Faulting in fresh memory costs the same natively (`heap_cost`'s native column, about 1.5 µs per page here), so the copies are not what costs; neither can go from the host side.
+
+wasmtime's `linear_memory_keep_resident` keeps a freed slot's pages, zeroed, up to a size, and `pagemap_scan` (Linux 6.7's `PAGEMAP_SCAN`) limits that to the pages the guest wrote. Without the scan, a free slot holds the guest's whole accessible memory up to the size (1.13 MiB after an idle chaos instance against 0.08 MiB), and restarts are about 15 µs slower. The change: both, at 16 MiB per slot for the standard profile and none for dense (`MemoryProfile::keep_resident`, node config `keep_resident`). `heap_cost 1`, `restart_cost 1` and `baseline 1 5000`, two rounds each:
+
+| Measure | 16-core before | 16-core after | Pi before | Pi after |
+| --- | --- | --- | --- | --- |
+| Wake, 1 MiB state | 1152 to 1192 µs | 411 to 418 µs | 1320 to 1565 µs | 654 to 676 µs |
+| Wake, 16 MiB state | 14.5 to 15.4 ms | 9.8 to 10.1 ms | 17.5 to 20.6 ms | 12.3 to 13.5 ms |
+| Upgrade with 1 MiB, to first reply | 882 to 884 µs | 389 to 412 µs | 2307 to 2636 µs | 1452 to 1571 µs |
+| Upgrade with 16 MiB, to first reply | 20.9 ms | 16.5 to 16.6 ms | 28.3 to 29.7 ms | 25.0 to 26.7 ms |
+| Kill to the restarted instance's first reply, p50 | 64.4 µs | 56.3 to 56.9 µs | 73.3 to 74.3 µs | 62.9 to 64.6 µs |
+| Crash to the restarted instance's first reply, p50 | 113.4 to 114.3 µs | 105.8 to 106.3 µs | 136.3 to 137.0 µs | 125.5 to 127.3 µs |
+| Instantiate on a reused slot, 0 MiB heap | 74.3 to 76.4 µs | 61.6 to 62.2 µs | 89.7 to 93.8 µs | 63.5 to 66.9 µs |
+| Resident per free slot after a 0 / 1 / 16 MiB heap | 0.06 / 0 / 0 MiB | 0.08 / 1.00 / 14.98 MiB | 0.05 / 0 / 0 MiB | 0.12 / 0.96 / 14.98 MiB |
+| `baseline`, empty call p50 | 2.29 to 2.40 µs | 2.25 to 2.30 µs | 3.09 to 3.20 µs | 3.00 to 3.08 µs |
+
+- State larger than half the kept size still faults for the rest: a 16 MiB wake needs about 32 MiB, and a 64 MiB heap is past 16 MiB (0 MiB held after exit).
+- A crash's restart p99 moves between about 115 and 210 µs from run to run on the 16-core machine, before and after alike (three more rounds of each).
+- `instantiate to first reply` in `baseline` starts 5,000 instances on fresh slots, so it does not change.
+
+### Timer lateness
+
+A tokio sleep rounds its deadline up to the timer's next 1 ms tick (`deadline_to_tick` adds 999,999 ns), and the worker then parks in `epoll_wait`, whose timeout mio rounds up to whole milliseconds again: 1 to 2 ms late, 1.2 ms at p50 (B9's `timer_cost`). `send-after` and guest sleeps are tokio sleeps. A thread's `park_timeout` of 1 or 10 ms, which a timer thread of Paddock's own would use, is 54 to 61 µs late at p50 and under 100 µs at max on both machines (a scratch program, 200 sleeps each). Not built: MANIFEST.md states the lateness to expect, and the timer thread is parked in ROADMAP.md.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.

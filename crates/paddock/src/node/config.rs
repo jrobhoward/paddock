@@ -9,6 +9,7 @@
 //! max_instances = 1000           # instances holding a Store at once
 //! max_processes = 20000          # all instances, passivated ones too
 //! memory_profile = "standard"   # or "dense"
+//! keep_resident = "16MiB"       # per free instance slot; profile's default
 //!
 //! [volumes]
 //! orders-data = "/srv/paddock/volumes/orders-data"
@@ -152,6 +153,10 @@ pub struct NodeConfig {
     /// Address-space profile.
     #[serde(default)]
     pub memory_profile: MemoryProfile,
+    /// Memory a free instance slot keeps resident for the next instance;
+    /// unset: 16 MiB with the standard profile, none with dense.
+    #[serde(default)]
+    pub keep_resident: Option<ByteSize>,
     /// Epoch tick, in milliseconds.
     #[serde(default = "default_tick")]
     pub epoch_tick_ms: u64,

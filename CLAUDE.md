@@ -325,13 +325,15 @@ next entry traps with `cannot enter component instance`. Killing an instance
 means dropping the future and discarding the Store; supervisors rebuild from
 `init`, never resume (S1).
 
-**`callback_deadline_ms` measures guest execution only.** The Store's call
-hook times every host import (`CallHook::CallingHost` to
-`ReturningFromHost`, wasmtime's `call-hook` feature) and the epoch callback
-subtracts that time, so waiting on another instance, a timer or I/O is not
-runaway code. Host functions do not time themselves. The epoch callback
-yields every tick for fairness (S1). The hook costs nothing measurable in
-`baseline` (BASELINE.md).
+**`callback_deadline_ms` counts the time a callback runs, not the time it
+waits.** The callback clock (`PollTime`, in `state.rs`) times the instance
+task's polls of the callback from `killable()`, and the epoch callback
+checks that total against the deadline. Waiting on another instance, a
+timer or I/O, or for a worker after an epoch yield, is not runaway code;
+host work that does not wait counts with the guest's. Host functions do
+not time themselves, and there is no Store call hook: it cost about 5% of
+an empty call (B12, BASELINE.md, 2026-10-24). The epoch callback yields
+every tick for fairness (S1).
 
 **The epoch tick bounds how long a busy instance holds a worker.** Receiving
 from a non-empty mailbox never suspends, so an instance draining a full

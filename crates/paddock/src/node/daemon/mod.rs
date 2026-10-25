@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use crate::api::Done;
 use paddock_bundle::OperatorPolicy;
-use paddock_bundle::manifest::Durability;
+use paddock_bundle::manifest::{ByteSize, Durability};
 use paddock_host::failover::FailoverHandle;
 use paddock_host::services::{Extension, StartedExtensions};
 use paddock_host::transport::quic::QuicTransport;
@@ -184,6 +184,7 @@ impl Node {
                     MemoryProfile::Standard => HostProfile::Standard,
                     MemoryProfile::Dense => HostProfile::Dense,
                 },
+                keep_resident: config.keep_resident.map(ByteSize::bytes),
                 epoch_tick: Duration::from_millis(config.epoch_tick_ms.max(1)),
                 data_dir: Some(store.kv_dir()),
                 heartbeat_interval: Duration::from_millis(config.cluster.heartbeat_interval_ms),
