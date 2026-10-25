@@ -1661,10 +1661,23 @@ wasmtime's `linear_memory_keep_resident` keeps a freed slot's pages, zeroed, up 
 
 A tokio sleep rounds its deadline up to the timer's next 1 ms tick (`deadline_to_tick` adds 999,999 ns), and the worker then parks in `epoll_wait`, whose timeout mio rounds up to whole milliseconds again: 1 to 2 ms late, 1.2 ms at p50 (B9's `timer_cost`). `send-after` and guest sleeps are tokio sleeps. A thread's `park_timeout` of 1 or 10 ms, which a timer thread of Paddock's own would use, is 54 to 61 µs late at p50 and under 100 µs at max on both machines (a scratch program, 200 sleeps each). Not built: MANIFEST.md states the lateness to expect, and the timer thread is parked in ROADMAP.md.
 
+## 2026-10-25: resident memory over two hours (B11)
+
+`scripts/soak.sh --hours 2.2 --only chaos --chaos-minutes 120` on the Raspberry Pi 5 (2026-10-24 23:37 to 2026-10-25 01:37, idle apart from the run; swap on and unused). One node runs the chaos example under random commands (traps, timeouts, spins, `alloc:<mib>`, log bursts): 243,511 calls in 2 hours, 198,683 answered with an error. The node's resident memory, sampled every 10 s (720 samples), by half hour:
+
+| Minutes | Lowest | Highest |
+|---|---|---|
+| 0 to 30 | 65.0 MiB | 77.4 MiB |
+| 30 to 60 | 66.4 MiB | 80.4 MiB |
+| 60 to 90 | 66.4 MiB | 79.4 MiB |
+| 90 to 120 | 66.4 MiB | 80.4 MiB |
+
+The floor rises from 65.0 MiB at 10 s to 66.4 MiB by minute 30 and stays within 8 KiB of that for the last 90 minutes: no creep. The highs are instances holding memory from `alloc` commands (39 samples above 68.4 MiB, the last at minute 119); each returns to the floor when its instance exits. The summary line's growth, +1.2 MiB (65.1 to 66.4 MiB, from the first sample after a minute to the last), is the first half hour's warm-up. The drive watcher paused nothing: NVMe at most 44 C, CPU at most 54 C.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
 - Calls, casts and replicated writes between two machines (every cluster figure is on loopback).
-- Resident memory over hours of load (`scripts/soak.sh` samples it since 2026-10-24; no long run yet).
+- Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.
 - Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).
