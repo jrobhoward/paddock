@@ -1666,5 +1666,5 @@ A tokio sleep rounds its deadline up to the timer's next 1 ms tick (`deadline_to
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
 - Calls, casts and replicated writes between two machines (every cluster figure is on loopback).
-- Resident memory over hours of load (`scripts/soak.sh` does not sample it).
+- Resident memory over hours of load (`scripts/soak.sh` samples it since 2026-10-24; no long run yet).
 - Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).

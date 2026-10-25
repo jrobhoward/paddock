@@ -5,6 +5,7 @@ pub(crate) mod check;
 pub(crate) mod cluster;
 pub(crate) mod events;
 pub(crate) mod failover;
+pub(crate) mod memory;
 pub(crate) mod node;
 pub(crate) mod proxy;
 pub(crate) mod replication;
@@ -12,7 +13,7 @@ pub(crate) mod rng;
 pub(crate) mod scada;
 pub(crate) mod time;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -291,6 +292,33 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
     }
 }
 
+impl Command {
+    /// The run's directory; `None` for `check`, which runs no nodes.
+    fn run_dir(&self) -> Option<&Path> {
+        match self {
+            Self::Failover { run, .. }
+            | Self::Replication { run, .. }
+            | Self::Scada { run, .. }
+            | Self::Cluster { run, .. }
+            | Self::Chaos { run, .. } => Some(&run.dir),
+            Self::Check { .. } => None,
+        }
+    }
+}
+
+/// `execute`, with the nodes' resident memory sampled into the run's
+/// directory ([`memory`]).
+async fn sampled(command: Command) -> anyhow::Result<bool> {
+    let Some(dir) = command.run_dir().map(Path::to_path_buf) else {
+        return execute(command).await;
+    };
+    std::fs::create_dir_all(&dir)?;
+    let sampler = memory::Sampler::start(&dir);
+    let result = execute(command).await;
+    sampler.finish()?;
+    result
+}
+
 /// `run`, unless SIGINT or SIGTERM comes first: dropping it then kills
 /// the nodes it started, so none outlive the run.
 async fn interruptible(run: impl Future<Output = anyhow::Result<bool>>) -> anyhow::Result<bool> {
@@ -315,7 +343,7 @@ pub(crate) fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(interruptible(execute(cli.command))) {
+    match runtime.block_on(interruptible(sampled(cli.command))) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(e) => {

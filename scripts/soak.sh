@@ -53,7 +53,11 @@
 #
 # Each run gets a directory named <round>-<kind>-<seed> with its seed, logs
 # and result; a run that passed is removed unless --keep. summary.txt in
-# --dir lists every run. Rerun a failover, replication, scada, cluster or
+# --dir lists every run, with the largest growth in a node process's
+# resident memory after its first minute; memory.csv in --dir has every
+# sample (run, seconds into the run, node, pid, KiB), taken every 10 s.
+# Each run starts its own nodes, so creep over hours needs one long run
+# (--only chaos --chaos-minutes 120, say). Rerun a failover, replication, scada, cluster or
 # chaos run
 # with the same seed:
 #   target/release/paddock-soak failover --dir DIR --seed SEED
@@ -117,6 +121,8 @@ esac
 [ -n "$dir" ] || dir=target/soak/$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$dir"
 summary=$dir/summary.txt
+memory=$dir/memory.csv
+[ -f "$memory" ] || echo "run,at_s,node,pid,rss_kib" > "$memory"
 
 echo "soak: building (release)"
 # paddock with Modbus, for the scada runs.
@@ -175,13 +181,16 @@ while [ "$(now)" -lt "$deadline" ]; do
         esac
         status=$?
         took=$(( $(now) - start ))
+        rss=""
+        if [ -f "$run/memory.txt" ]; then rss="  $(head -n 1 "$run/memory.txt")"; fi
+        if [ -f "$run/memory.csv" ]; then sed "s|^|$round-$kind-$seed,|" "$run/memory.csv" >> "$memory"; fi
         if [ "$status" = 0 ]; then
             passed=$((passed + 1))
-            line=$(printf 'pass  %-8s seed %-12s %6ss' "$kind" "$seed" "$took")
+            line=$(printf 'pass  %-8s seed %-12s %6ss%s' "$kind" "$seed" "$took" "$rss")
             [ "$keep" = 1 ] || rm -rf "$run"
         else
             failed=$((failed + 1))
-            line=$(printf 'FAIL  %-8s seed %-12s %6ss  %s' "$kind" "$seed" "$took" "$run")
+            line=$(printf 'FAIL  %-8s seed %-12s %6ss  %s%s' "$kind" "$seed" "$took" "$run" "$rss")
         fi
         echo "$line" | tee -a "$summary"
         seed=$((seed + 1))

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::events::{EventLog, What};
+use super::memory::rss_kib;
 use super::node::{ADMIN_TIMEOUT, Node, bundle, socket_path};
 use super::rng::Rng;
 
@@ -234,16 +235,4 @@ async fn finish(node: &mut Node, tally: &mut Tally) {
     tally
         .problems
         .push("the app did not answer `echo:end` at the end".into());
-}
-
-/// A process's resident memory in KiB, from `/proc` (Linux).
-fn rss_kib(pid: u32) -> Option<u64> {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    status
-        .lines()
-        .find_map(|l| l.strip_prefix("VmRSS:"))?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
 }

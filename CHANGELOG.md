@@ -23,6 +23,10 @@ All notable changes are recorded here. The format follows
 - `call_split` (`paddock-host` example, `bench.sh call_split`): where an
   empty call's time goes, as wall time, on-CPU time, context switches and
   time inside the callback, against a bare tokio request and reply.
+- `scripts/soak.sh` samples each node process's resident memory every
+  10 s: `memory.csv` in the soak directory has every sample, and each
+  run's summary line the largest growth after a process's first minute
+  (ROADMAP B11).
 - The chaos fixture's `timed`, `lateness`, `clock` and `ballast` commands,
   for those benchmarks; its snapshot carries the ballast after a marker,
   and reads snapshots without one as before.
