@@ -44,6 +44,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- minisign 0.10, here and in rustbridge-bundle, so bundles still verify
+  with one copy. Keys and signatures are unchanged: existing signing keys
+  and signed bundles work as they are (ROADMAP Y3).
 - redb 4 (disk buckets and the replicated log). The file format is unchanged:
   a node's existing `kv/` file opens as it is, and a build on redb 3 still
   opens a file redb 4 has written to (OPERATIONS.md; ROADMAP Y2).

@@ -134,9 +134,11 @@ rustbridge = { git = "https://github.com/jrobhoward/rustbridge", branch = "exper
 # USDT probes (paddock-host's `probes` feature). Pre-release; Cargo.lock pins
 # the commit of `main`. Move to a crates.io release once there is one.
 anyprobe = { git = "https://github.com/jrobhoward/anyprobe", branch = "main", default-features = false }
+# Signs bundles (`paddock bundle`) and test fixtures; same major as
+# rustbridge-bundle's, so bundles verify with one copy.
+minisign = "0.10"
 
 # Test-only
-minisign = "0.9"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi", "json"] }
 proptest = "1"
 rstest = "0.26"

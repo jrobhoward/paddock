@@ -1533,9 +1533,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "minisign"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aefd422a7a8b5efced01cd7cdf3771e62ebecbc90e3d27695002d3af6af94586"
+checksum = "3062dbbf4d8f57899e2252804f7512a4fd89c8211c58fa6c786d38794a0c809d"
 dependencies = [
  "ct-codecs",
  "getrandom 0.4.3",
@@ -2184,7 +2184,7 @@ dependencies = [
 [[package]]
 name = "rustbridge-bundle"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#8f4c343b7c288d434c941788420e61b95a202fbd"
 dependencies = [
  "hex",
  "minisign",

@@ -826,7 +826,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1584,6 +1584,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "minisign"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3062dbbf4d8f57899e2252804f7512a4fd89c8211c58fa6c786d38794a0c809d"
+dependencies = [
+ "ct-codecs",
+ "getrandom 0.4.3",
+ "rpassword",
+ "scrypt",
+]
+
+[[package]]
 name = "mio"
 version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2052,7 +2064,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2234,7 +2246,7 @@ name = "rustbridge-bundle"
 version = "1.0.1"
 dependencies = [
  "hex",
- "minisign",
+ "minisign 0.10.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2249,7 +2261,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dca74676e3f86bc60b9792910dbdc6541e585b7008210393cbe6cb835c2d274"
 dependencies = [
  "hex",
- "minisign",
+ "minisign 0.9.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2260,10 +2272,10 @@ dependencies = [
 [[package]]
 name = "rustbridge-bundle"
 version = "1.0.1"
-source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#0b24d24601198aec3d0b52b71fe6ac485b3ee16c"
+source = "git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm#8f4c343b7c288d434c941788420e61b95a202fbd"
 dependencies = [
  "hex",
- "minisign",
+ "minisign 0.10.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2386,7 +2398,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2986,7 +2998,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3929,7 +3941,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
