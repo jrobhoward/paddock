@@ -34,6 +34,10 @@ All notable changes are recorded here. The format follows
   `serve DIR ADDR:PORT`, `connect DIR ADDR:PORT SEED:PORT`), and counts
   casts handled against an instance's count before the burst, so one
   `serve` takes several runs (ROADMAP B11).
+- `replication_cost` runs the pair on two machines (`keys DIR`, `primary
+  DIR NODE1:PORT WITNESS:PORT`, `standby DIR NODE2:PORT WITNESS:PORT`),
+  the two processes handing over through the replicated bucket (ROADMAP
+  B11).
 - The chaos fixture's `timed`, `lateness`, `clock` and `ballast` commands,
   for those benchmarks; its snapshot carries the ballast after a marker,
   and reads snapshots without one as before.

@@ -1708,10 +1708,29 @@ The loopback row is this session's run of the unchanged one-process mode (load 2
 - **One node on each machine.** The same run's one-node figures: sequential calls 3.4 to 6.3 µs at p50 on the 16-core machine and 3.8 to 4.9 µs on the Pi; 16 callers 663,000 to 698,000 calls/s here and 875,000 to 887,000 on the Pi.
 - **Two fixes to the benchmark on the way.** The first Pi-to-16-core run failed reading the casts' counts: the call that reads them came back `Overloaded` while the queue still held casts, so `count` now retries that. A run started straight after another failed its first call with `Noconnection` while node 2 still held the earlier node 1, so node 1 now retries its first calls for up to 30 s.
 
+## 2026-10-25: replicated writes between two machines (B11)
+
+`replication_cost 4 primary` (node 1 and the witness, node 3) on one machine against `replication_cost 4 standby` (node 2) on the other, keys from `replication_cost keys` copied to both: the Raspberry Pi 5 and the 16-core machine on the wired gigabit LAN of the sections before, each idle but for the runs. Both nodes' databases are on tmpfs (`/dev/shm`), where a sync costs nothing, so the difference from loopback is the network's. The loopback rows run the same two processes on one machine, also on tmpfs. Two runs each way, writes/s and p50 (p99) in µs:
+
+| | Primary on the 16-core machine, standby on the Pi | Primary on the Pi, standby on the 16-core machine | Loopback, 16-core | Loopback, Pi |
+|---|---|---|---|---|
+| Disk bucket, one writer (no network) | 7,193 to 7,606/s, 132 to 152 (189 to 192) | 9,770 to 10,101/s, 90 to 97 (142) | 6,977/s, 153 (189) | 9,943/s, 96 (133) |
+| Replicated, one writer on the primary | 1,124 to 1,141/s, 873 to 893 (982 to 1,003) | 1,142 to 1,146/s, 872 to 875 (968 to 990) | 1,450/s, 688 (803) | 1,356/s, 737 (828) |
+| Replicated, one writer on the standby | 731 to 745/s, 1,339 to 1,358 (1,483 to 1,663) | 755 to 760/s, 1,306 to 1,315 (1,544 to 1,557) | 921/s, 1,080 (1,245) | 918/s, 1,074 (1,519) |
+| Replicated, 16 writers | 6,445 to 6,452/s | 6,710 to 6,729/s | 7,180/s | 6,420/s |
+| Replicated, 64 writers | 9,551/s | 9,639 to 9,746/s | 10,252/s | 9,902/s |
+| Replicated, alone, one writer | 2,593 to 2,631/s, 380 to 384 (440 to 445) | 2,948 to 3,023/s, 329 to 337 (370 to 378) | 2,537/s, 393 (472) | 3,013/s, 329 (371) |
+
+- **One writer.** A replicated write takes 872 to 893 µs at p50 across the LAN against 688 to 737 µs on loopback: 135 to 205 µs more, about one round trip between the machines less a loopback one (280 against 107 µs for a call, the section before). It takes the same time whichever machine is the primary. A write on the standby, forwarded to the primary, adds 230 to 280 µs.
+- **Concurrent writers.** Writes arriving together share a log append, so the network hardly shows: 16 writers reach 6,445 to 6,729/s and 64 writers 9,551 to 9,746/s, within 10% of loopback's either way.
+- **Alone.** With the standby gone the primary writes at its loopback rate, the network out of the path.
+- **On disk.** Not compared: a synced write on the 16-core machine takes 0.9 to 2.5 ms (its disk bucket, 2026-10-18 and this session's loopback runs: 413 to 855/s; a 4 KiB `fsync` there, 2.5 ms at p50 today), several times what the network adds. Its root filesystem was 99% full (25 GB free of 1.8 TB) during these runs.
+- **The handover.** The two processes hand over through the replicated bucket: the primary writes `bench-go` when its runs are done; the standby then runs its writer, writes `bench-done` and shuts its transport down, and the primary runs alone.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
-- Replicated writes between two machines: calls, casts and bare QUIC are measured between the Pi and the 16-core machine (2026-10-25); `replication_cost` runs on loopback only. What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
+- Replicated writes between two machines on a synced disk (2026-10-25's runs are on tmpfs). What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.
 - Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).
