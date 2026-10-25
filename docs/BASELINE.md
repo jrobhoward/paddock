@@ -1689,10 +1689,29 @@ The floor rises from 65.0 MiB at 10 s to 66.4 MiB by minute 30 and stays within 
 - **What it means for a call between nodes.** On loopback a call between two nodes took about 106 µs against a 50 µs QUIC floor (2026-10-07, 16-core machine). Across this LAN the floor alone is 220 to 240 µs, so a call between the Pi and the 16-core machine is expected near 300 µs; `cluster_throughput` between the two machines will measure it.
 - The 16-core machine's own loopback figure moved between 53 and 97 µs at p50 with 4 workers across runs this session (30.6 to 32.3 µs on one thread), so it is not tabled.
 
+## 2026-10-25: calls between nodes on two machines (B11)
+
+`cluster_throughput 4 connect` (node 1, the caller) on one machine against `cluster_throughput 4 serve` (node 2 and its 16 chaos-fixture instances) on the other, keys from `cluster_throughput keys` copied to both: the Raspberry Pi 5 and the 16-core machine on the wired gigabit LAN of the section before, each idle but for the runs (vmstat 99% idle between runs). Each direction run three times (the first Pi-to-16-core run stopped after its casts, below). "One node" is node 1 calling its own 16 instances in the same run.
+
+| Node 1 to node 2 | Sequential call p50 (p99) | 16 callers | 64 callers | Casts handled/s (refused of 400,000) | 1 KiB, 16 callers | 64 KiB, 16 callers |
+|---|---|---|---|---|---|---|
+| 16-core to Pi | 271 to 284 µs (317 to 325) | 38,300 to 39,100/s | 44,700 to 46,000/s | 236,000 to 247,000 (78,000 to 133,000) | 27,300/s, 27 MiB/s | 1,625 to 1,734/s, 102 to 108 MiB/s |
+| Pi to 16-core | 281 to 283 µs (320 to 322) | 40,400 to 42,900/s | 37,400 to 38,800/s | 256,000 to 270,000 (147,000 to 157,000) | 28,300 to 29,100/s, 28 MiB/s | 1,723 to 1,771/s, 108 to 111 MiB/s |
+| Loopback, 16-core | 107.5 µs (138) | 57,100/s | 49,700/s | 163,000 (115,000) | 48,400/s, 47 MiB/s | 4,359/s, 272 MiB/s |
+
+The loopback row is this session's run of the unchanged one-process mode (load 2.8, from the builds before it), in line with 2026-10-07's 106 µs.
+
+- **Latency.** A call to the other machine takes 271 to 284 µs at p50, 30 to 61 µs over the QUIC floor between the same machines (220 to 240 µs, the section before). Over loopback Paddock adds about 57 µs to its 50 µs floor, so what Paddock adds per call between nodes is about the same with a network under it; the network adds about 170 µs.
+- **Concurrency.** 16 callers reach 11 to 12 times the sequential rate, and 64 callers no more: 37,000 to 46,000 calls/s, 67 to 75% of loopback's rate with 16 callers and 75 to 93% with 64. Latency alone would allow more (16 in flight at 280 µs is 57,000/s), so something along the one connection limits it; not attributed.
+- **Bulk.** 64 KiB bodies move 102 to 111 MiB/s each way at once, about 900 Mbit/s: the gigabit link is the limit.
+- **Casts.** The per-peer send queue's frame cap (65,536 frames) refuses 19 to 39% of a 400,000-cast burst, against 29% on loopback; every cast accepted is handled. The Pi as the sender handles about 10% more per second than the 16-core machine does.
+- **One node on each machine.** The same run's one-node figures: sequential calls 3.4 to 6.3 µs at p50 on the 16-core machine and 3.8 to 4.9 µs on the Pi; 16 callers 663,000 to 698,000 calls/s here and 875,000 to 887,000 on the Pi.
+- **Two fixes to the benchmark on the way.** The first Pi-to-16-core run failed reading the casts' counts: the call that reads them came back `Overloaded` while the queue still held casts, so `count` now retries that. A run started straight after another failed its first call with `Noconnection` while node 2 still held the earlier node 1, so node 1 now retries its first calls for up to 30 s.
+
 ## Not measured yet
 
 - Epoch-check overhead on compiled Rust apps beyond S8's kernels, and a real app as a guest against the same code native.
 - Why an idle live instance takes about 110 KiB on the Pi against 58 to 67 KiB here, and why epoch checks cost up to 1.5 times in tight loops there.
-- Calls, casts and replicated writes between two machines: only bare QUIC is measured between the Pi and the 16-core machine (2026-10-25); every Paddock cluster figure is on loopback.
+- Replicated writes between two machines: calls, casts and bare QUIC are measured between the Pi and the 16-core machine (2026-10-25); `replication_cost` runs on loopback only. What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.
 - Why aarch64 compiled-code cache files are several times larger for small components (264 KiB for the 17 KiB echo fixture on the Pi, against 60 KiB here).

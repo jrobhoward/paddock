@@ -30,6 +30,10 @@ All notable changes are recorded here. The format follows
 - `quic_floor` runs its server and client on two machines (`serve
   ADDR:PORT`, `connect HOST:PORT`), and adds a bare UDP echo as the floor
   under QUIC (ROADMAP B11).
+- `cluster_throughput` runs its two nodes on two machines (`keys DIR`,
+  `serve DIR ADDR:PORT`, `connect DIR ADDR:PORT SEED:PORT`), and counts
+  casts handled against an instance's count before the burst, so one
+  `serve` takes several runs (ROADMAP B11).
 - The chaos fixture's `timed`, `lateness`, `clock` and `ballast` commands,
   for those benchmarks; its snapshot carries the ballast after a marker,
   and reads snapshots without one as before.
