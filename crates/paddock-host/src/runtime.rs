@@ -77,6 +77,9 @@ pub(crate) struct RuntimeInner {
     /// instance that may be passivated is, at once. Waiters are woken in
     /// the order they began waiting, so the one idle longest goes first.
     pub(crate) slot_wanted: tokio::sync::Notify,
+    /// When Store slots were last taken, and their memory released
+    /// ([`crate::pool_memory`]).
+    pub(crate) pool_memory: crate::pool_memory::PoolMemory,
     /// Instance exits and supervisor restarts, for whoever listens
     /// ([`Runtime::instance_events`]).
     pub(crate) instance_events: tokio::sync::broadcast::Sender<InstanceEvent>,
@@ -112,6 +115,11 @@ impl RuntimeInner {
     /// How the node runs native-process apps.
     pub(crate) fn native_config(&self) -> &NativeConfig {
         &self.config.native
+    }
+
+    /// The runtime's configuration.
+    pub(crate) fn config(&self) -> &RuntimeConfig {
+        &self.config
     }
 
     /// The transport to other nodes, once set.
@@ -302,6 +310,7 @@ impl Runtime {
                 usize::try_from(config.max_instances).unwrap_or(usize::MAX),
             )),
             slot_wanted: tokio::sync::Notify::new(),
+            pool_memory: crate::pool_memory::PoolMemory::default(),
             instance_events: tokio::sync::broadcast::channel(1024).0,
             next_id: AtomicU64::new(crate::pid::instance_id(config.creation, 1)),
             config,
@@ -770,7 +779,17 @@ impl Runtime {
     /// Every app's metrics and the host's, in the Prometheus text format.
     #[must_use]
     pub fn render_metrics(&self) -> String {
-        self.inner.metrics.render(&self.instances())
+        let mut out = self.inner.metrics.render(&self.instances());
+        crate::pool_memory::render(&self.inner, &mut out);
+        out
+    }
+
+    /// Give free Store slots' kept pages back to the kernel now, as
+    /// [`RuntimeConfig::release_idle_after`] does once starts are quiet.
+    /// Starts wait while it runs. Returns the bytes released (0 if a slot
+    /// was taken or freed as it began).
+    pub async fn release_idle_memory(&self) -> u64 {
+        crate::pool_memory::release(&self.inner).await
     }
 
     /// Number of live instances, passivated or not.
@@ -828,6 +847,7 @@ impl Runtime {
                 Some(pid) => HostError::StillRunning(pid),
                 None => HostError::InstanceLimit(processes),
             })?;
+        crate::pool_memory::start_once(&self.inner);
         tokio::spawn(task.run(self.inner.clone(), app.clone(), spec));
         Ok(handle)
     }

@@ -313,6 +313,7 @@ async fn serve(rt: &Arc<RuntimeInner>, shared: &Shared, stream: TcpStream, peer:
     };
     // A Store slot, as an instance holds; none free ends the connection,
     // as a full pooling allocator would.
+    rt.pool_memory.taken();
     let Ok(_slot) = rt.slots.clone().try_acquire_owned() else {
         finish(
             rt,

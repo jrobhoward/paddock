@@ -1279,6 +1279,7 @@ impl InstanceTask {
         within: Duration,
     ) -> Result<OwnedSemaphorePermit, NoSlot> {
         let slots: &Arc<Semaphore> = &rt.slots;
+        rt.pool_memory.taken();
         if let Ok(slot) = slots.clone().try_acquire_owned() {
             return Ok(slot);
         }

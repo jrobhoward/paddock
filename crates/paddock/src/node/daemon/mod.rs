@@ -185,6 +185,8 @@ impl Node {
                     MemoryProfile::Dense => HostProfile::Dense,
                 },
                 keep_resident: config.keep_resident.map(ByteSize::bytes),
+                release_idle_after: (config.release_idle_after_s > 0)
+                    .then(|| Duration::from_secs(config.release_idle_after_s)),
                 epoch_tick: Duration::from_millis(config.epoch_tick_ms.max(1)),
                 data_dir: Some(store.kv_dir()),
                 heartbeat_interval: Duration::from_millis(config.cluster.heartbeat_interval_ms),

@@ -10,6 +10,8 @@
 //! max_processes = 20000          # all instances, passivated ones too
 //! memory_profile = "standard"   # or "dense"
 //! keep_resident = "16MiB"       # per free instance slot; profile's default
+//! release_idle_after_s = 300    # give those pages back after this long with no
+//!                               # instance start; 0: never
 //!
 //! [volumes]
 //! orders-data = "/srv/paddock/volumes/orders-data"
@@ -157,6 +159,11 @@ pub struct NodeConfig {
     /// unset: 16 MiB with the standard profile, none with dense.
     #[serde(default)]
     pub keep_resident: Option<ByteSize>,
+    /// Seconds with no Store taken (a start, wake, upgrade, connection or
+    /// HTTP handler request) after which free slots' kept pages go back to
+    /// the kernel; 0 never.
+    #[serde(default = "default_release_idle_after_s")]
+    pub release_idle_after_s: u64,
     /// Epoch tick, in milliseconds.
     #[serde(default = "default_tick")]
     pub epoch_tick_ms: u64,
@@ -496,6 +503,10 @@ impl Default for ClusterConfig {
             send_buffer_bytes: default_send_buffer_bytes(),
         }
     }
+}
+
+fn default_release_idle_after_s() -> u64 {
+    300
 }
 
 fn default_heartbeat_ms() -> u64 {

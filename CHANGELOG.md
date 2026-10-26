@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Free Store slots give their kept pages back to the kernel once no
+  instance has started for `release_idle_after_s` (node config, 300 by
+  default, 0 never; `RuntimeConfig::release_idle_after`), and on request
+  (`Runtime::release_idle_memory`). Starts wait during a release instead of
+  finding the pool full. Metrics: `paddock_pool_live_memories`,
+  `paddock_pool_warm_slots`, `paddock_pool_resident_bytes`,
+  `paddock_pool_released_bytes_total`. A wake after a release costs the
+  page faults `keep_resident` saves (BASELINE.md). wasmtime 50 releases
+  nothing on Linux before 6.13 when more than one slot is warm.
 - Tutorial chapters 5 and 6 (`examples/tutorial`): the board on a
   replicated bucket, kept through the primary's loss with no change to
   the app, and a hot upgrade of the counter (v1 to v2 with its state, a

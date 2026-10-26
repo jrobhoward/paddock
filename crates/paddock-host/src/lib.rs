@@ -42,6 +42,7 @@ mod native;
 mod output;
 pub mod pid;
 mod pool;
+mod pool_memory;
 mod probe;
 mod process;
 mod ready;

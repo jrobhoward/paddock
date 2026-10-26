@@ -48,7 +48,7 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 
 | Area | Modules | Role |
 | --- | --- | --- |
-| Engine | `runtime`, `config`, `bindings`, `deny`, `compiled` | `Runtime` and its `RuntimeInner`: the wasmtime engine with a pooling allocator sized by `max_instances` (a freed slot keeps up to `keep_resident` of its written pages for the next instance), the epoch ticker, the linker (WASI p2 with the socket functions redefined, `paddock:runtime`, `paddock:io`, services, extensions), deny stubs for ungranted imports, compiled components kept on disk |
+| Engine | `runtime`, `config`, `bindings`, `deny`, `compiled` | `Runtime` and its `RuntimeInner`: the wasmtime engine with a pooling allocator sized by `max_instances` (a freed slot keeps up to `keep_resident` of its written pages for the next instance, given back once starts have been quiet for `release_idle_after`, `pool_memory`), the epoch ticker, the linker (WASI p2 with the socket functions redefined, `paddock:runtime`, `paddock:io`, services, extensions), deny stubs for ungranted imports, compiled components kept on disk |
 | Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `instance_native`, `state`, `process`, `ready`, `delivery`, `acl`, `lifecycle`, `output`, `health` | Instances, their mailboxes and callback loop (a Store, or a native process), passivation, the per-instance host state and `process` functions, readiness waits, pid routing, messaging ACLs (checked on the target's node), links and monitors, health checks |
 | Orchestration | `apps`, `pool`, `supervisor`, `upgrade`, `spec` | App sets in dependency order, a root supervisor per app, pools with routing and a blue-green second side, snapshot, restart and blue-green upgrades |
 | Services | `services::{config, keyvalue, groups, logging, secrets, metrics, egress, sockets, sql, extension}`, `metrics` | Guest-facing interfaces on the `Service` pattern; extensions from other crates |
@@ -264,6 +264,7 @@ A node runs one tokio multi-threaded runtime, one worker per core by default. No
 | Thread or task | Count | Started by | Ends |
 | --- | --- | --- | --- |
 | `paddock-epoch` OS thread | 1 per runtime | `Runtime::new` | runtime drop |
+| Pool memory release | 1 per runtime, once an instance starts (unless `release_idle_after` is unset) | `pool_memory::start_once` | runtime drop |
 | tokio workers | 1 per core | `node::run` | process exit |
 | blocking pool | on demand | bundle verify and compile, `disk` bucket transactions (redb), secret file reads | per job |
 | Instance task (callback loop) | 1 per instance | `Runtime::spawn` | instance exit |

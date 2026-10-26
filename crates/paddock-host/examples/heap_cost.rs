@@ -87,6 +87,8 @@ async fn run(workers: usize, component: Vec<u8>) {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: u32::try_from(INSTANCES + 4).unwrap(),
         max_processes: Some(u32::try_from(INSTANCES * 2).unwrap()),
+        // Released by hand, between the warm and the cold wakes.
+        release_idle_after: None,
         ..RuntimeConfig::default()
     })
     .unwrap();
@@ -149,6 +151,17 @@ async fn heap(rt: &Runtime, app: &LoadedApp, mib: usize) {
     );
 }
 
+/// The median time, in µs, of a call that wakes each of `all`.
+async fn wake_all(all: &[InstanceHandle]) -> f64 {
+    let mut wake = Vec::with_capacity(all.len());
+    for h in all {
+        let t = Instant::now();
+        ask(h, "echo:up").await;
+        wake.push(t.elapsed());
+    }
+    median(wake)
+}
+
 async fn passivated(rt: &Runtime, app: &LoadedApp, mib: usize) {
     let mut spec = spec();
     spec.passivate_after = Some(IDLE);
@@ -163,16 +176,21 @@ async fn passivated(rt: &Runtime, app: &LoadedApp, mib: usize) {
     while all.iter().any(|h| h.state() != LifecycleState::Passive) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let mut wake = Vec::with_capacity(INSTANCES);
-    for h in &all {
-        let t = Instant::now();
-        ask(h, "echo:up").await;
-        wake.push(t.elapsed());
+    let wake = wake_all(&all).await;
+    // Passivated again, with the free slots' kept pages given back first:
+    // the wake after `release_idle_after` has done its work.
+    while all.iter().any(|h| h.state() != LifecycleState::Passive) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    let released = rt.release_idle_memory().await;
+    let cold = wake_all(&all).await;
     println!(
-        "{mib:>3} MiB state, passivated: snapshot {} KiB held by the host; call that wakes it {:.0} µs",
+        "{mib:>3} MiB state, passivated: snapshot {} KiB held by the host; call that wakes it {:.0} µs, \
+         {:.0} µs after releasing {} MiB of free slots' pages",
         snapshot >> 10,
-        median(wake),
+        wake,
+        cold,
+        released >> 20,
     );
     for h in &all {
         h.kill();

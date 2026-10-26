@@ -252,6 +252,13 @@ pub struct RuntimeConfig {
     /// (about 1 ms per MiB of state without it, `docs/BASELINE.md`,
     /// 2026-10-24).
     pub keep_resident: Option<u64>,
+    /// Give free Store slots' kept pages back to the kernel once no Store
+    /// has been taken (a start, wake, upgrade, connection or HTTP handler
+    /// request) for this long; `None` never does. The next instance on such
+    /// a slot takes page faults again, about 1 ms per MiB it touches. Five
+    /// minutes by default, so a node whose instances wake every minute or
+    /// so keeps them.
+    pub release_idle_after: Option<Duration>,
     /// Epoch tick: the granularity of deadlines and of preemption between
     /// instances. A busy instance can keep its tokio worker for up to one
     /// tick, so the tick also bounds how long other tasks on that worker
@@ -398,6 +405,7 @@ impl Default for RuntimeConfig {
             max_processes: None,
             memory_profile: MemoryProfile::Standard,
             keep_resident: None,
+            release_idle_after: Some(Duration::from_secs(300)),
             epoch_tick: Duration::from_millis(2),
             data_dir: None,
             heartbeat_interval: Duration::from_secs(1),

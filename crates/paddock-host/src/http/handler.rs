@@ -110,6 +110,7 @@ mod serving {
         req: Request<Incoming>,
         failed: Arc<dyn Fn() + Send + Sync>,
     ) -> Reply {
+        rt.pool_memory.taken();
         let Ok(slot) = rt.slots.clone().try_acquire_owned() else {
             let mut r = status(StatusCode::SERVICE_UNAVAILABLE, "overloaded");
             r.headers_mut()

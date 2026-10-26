@@ -1839,6 +1839,21 @@ The core module of "ordinary app code in Wasm" above, compiled by wasmtime 50.0.
 
 **Idle memory on the Pi.** The Pi's 109 KiB per idle instance is resident memory counting the component's memory image once per instance: by mapping, 64 KiB per instance of `memfd:wasm-memory-image` on the Pi against 12 KiB here, with the malloc heap (36 to 37 KiB) and the pool's share (4 KiB) the same on both. Measured proportionally (PSS, the image's pages divided among the instances that map them), an idle instance costs 57 KiB on the Pi (standard and dense profiles) and 56 KiB here. `baseline` now prints both figures. The larger window is likely the same 64 KiB alignment on aarch64, with the kernel's fault-around mapping it whole on the first read (not checked further).
 
+## 2026-10-25: giving free slots' pages back
+
+A freed Store slot keeps up to `keep_resident` (16 MiB on the standard profile) of the pages its instance wrote, so the next instance on it takes no page faults for them (B10). Since 2026-10-25 a node gives them back once no Store has been taken for `release_idle_after_s` (300 by default), through wasmtime 50's `Engine::release_idle_pool_memory`. `heap_cost`'s passivation step now wakes its 16 passivated instances twice: warm, as before, then after they passivate again and the free slots' pages are released (`Runtime::release_idle_memory`). Raspberry Pi 5 (Linux 7.0), idle (load under 0.6), three runs; medians of 16 wakes:
+
+| State | Released | Wake, warm slot | Wake, after release |
+| --- | --- | --- | --- |
+| 0 MiB | 0 | 49 to 50 µs | 51 to 52 µs |
+| 1 MiB | 32 MiB | 0.60 to 0.73 ms | 1.30 to 1.31 ms |
+| 16 MiB | 256 MiB | 12.4 to 12.8 ms | 16.5 to 19.2 ms |
+| 64 MiB | 208 to 224 MiB | 61.6 to 73.1 ms | 67.6 to 85.4 ms |
+
+- **What a release costs a wake:** about twice the warm wake at 1 MiB and 30 to 50% more at 16 MiB, the page faults B10 removed. At 64 MiB the slot kept only 16 MiB of the state's pages anyway, and the difference is within the run-to-run spread.
+- **Hence the default of five minutes:** a node whose passivated instances wake every minute or two keeps its warm slots; one that had a burst and went quiet gets its memory back within about five minutes.
+- **Linux before 6.13 releases nothing when more than one slot is warm.** wasmtime 50 decommits several slots with one `process_madvise` call on `PIDFD_SELF`, which Linux has from 6.13; the 16-core machine's 6.8 answers EBADF, which wasmtime does not treat as "unsupported" (it falls back to `madvise` only for ENOSYS, EINVAL and EPERM), so the release returns 0 and the slots are left as they were (seen with `strace`, 2026-10-25). One warm slot takes the `madvise` path and is released. Paddock then tries once per quiet period rather than at every check.
+
 ## Not measured yet
 
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
