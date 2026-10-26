@@ -60,6 +60,9 @@ struct Port {
     stdout: ChildStdout,
     logs: Arc<Mutex<Vec<(Level, String)>>>,
     stderr: Arc<Mutex<Vec<String>>>,
+    /// Copies the runner's stderr into `stderr`; done once the runner has
+    /// exited and the pipe is drained.
+    stderr_copy: std::thread::JoinHandle<()>,
 }
 
 impl Port {
@@ -75,7 +78,7 @@ impl Port {
         let stderr = Arc::new(Mutex::new(Vec::new()));
         let lines = child.stderr.take().unwrap();
         let sink = stderr.clone();
-        std::thread::spawn(move || {
+        let stderr_copy = std::thread::spawn(move || {
             for line in BufReader::new(lines).lines().map_while(Result::ok) {
                 sink.lock().unwrap().push(line);
             }
@@ -86,6 +89,7 @@ impl Port {
             child,
             logs: Arc::default(),
             stderr,
+            stderr_copy,
         };
         assert_eq!(port.next(), FromApp::Hello { version: VERSION });
         port
@@ -140,9 +144,13 @@ impl Port {
         }
     }
 
+    /// Wait for the runner to exit, and for every line it wrote to stderr
+    /// to reach `stderr`.
     fn exit_code(mut self) -> Option<i32> {
         drop(self.stdin);
-        self.child.wait().unwrap().code()
+        let code = self.child.wait().unwrap().code();
+        self.stderr_copy.join().unwrap();
+        code
     }
 }
 

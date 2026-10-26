@@ -17,6 +17,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+mod common;
+
 use std::future::{Ready, ready};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -468,7 +470,7 @@ impl Process {
         std::fs::write(&path, toml).unwrap();
         let log = dir.join(format!("node-{n}.log"));
         let out = std::fs::File::create(&log).unwrap();
-        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
             .args(["node", "--config"])
             .arg(&path)
             .stdout(out.try_clone().unwrap())
@@ -476,12 +478,7 @@ impl Process {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        for _ in 0..400 {
-            if socket.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+        common::wait_for_socket(&mut child, &socket, &log).await;
         Self {
             _child: child,
             socket,

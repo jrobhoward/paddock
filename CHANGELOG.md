@@ -118,6 +118,13 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Two tests that failed once each under `scripts/check.sh`'s load. The
+  native runner test now waits for every stderr line before checking them
+  (`Port::exit_code` joins the thread that copies them). The board, SCADA
+  and failover tests that start `paddock node` processes wait up to 30 s
+  for the admin socket instead of 10, and fail at once with the node's log
+  if it exits first (`common::wait_for_socket`), instead of a later error
+  with no cause.
 - The workspace builds on macOS and Windows again: the native-app code,
   `paddock-runner` and the native test fixture, the serial pty, the
   native program's file mode and the admin client compiled Unix- or

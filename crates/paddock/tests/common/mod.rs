@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
@@ -438,4 +438,29 @@ pub fn counter_manifest(from: Option<&str>) -> serde_json::Value {
         m["upgrade"] = json!({ "mode": "snapshot", "snapshot_version": 1 });
     }
     m
+}
+
+/// Wait for a `paddock node` process to create its admin socket. Panics
+/// with the node's log if the process exits first, or if the socket is not
+/// there within 30 s (a node starts in well under a second, but a machine
+/// running the whole test suite can stall it for several).
+pub async fn wait_for_socket(child: &mut tokio::process::Child, socket: &Path, log: &Path) {
+    for _ in 0..1200 {
+        if socket.exists() {
+            return;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!(
+                "node exited ({status}) before creating {}; its log:\n{}",
+                socket.display(),
+                std::fs::read_to_string(log).unwrap_or_default()
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!(
+        "no admin socket at {} after 30 s; the node's log:\n{}",
+        socket.display(),
+        std::fs::read_to_string(log).unwrap_or_default()
+    );
 }

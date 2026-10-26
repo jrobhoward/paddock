@@ -185,12 +185,13 @@ impl Process {
             ),
         )
         .unwrap();
+        let log_path = dir.join(format!("node-{n}.log"));
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(dir.join(format!("node-{n}.log")))
+            .open(&log_path)
             .unwrap();
-        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
             .arg("node")
             .arg("--config")
             .arg(&path)
@@ -199,12 +200,7 @@ impl Process {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        for _ in 0..400 {
-            if socket.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+        common::wait_for_socket(&mut child, &socket, &log_path).await;
         Self {
             child,
             client: paddock::api::Client::new(&socket),

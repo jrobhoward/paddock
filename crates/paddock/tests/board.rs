@@ -275,8 +275,9 @@ impl Process {
         let _ = std::fs::remove_file(&socket);
         let path = dir.join(format!("node-{n}.toml"));
         std::fs::write(&path, toml).unwrap();
-        let log = std::fs::File::create(dir.join(format!("node-{n}.log"))).unwrap();
-        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
+        let log_path = dir.join(format!("node-{n}.log"));
+        let log = std::fs::File::create(&log_path).unwrap();
+        let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_paddock"))
             .args(["node", "--config"])
             .arg(&path)
             .stdout(log.try_clone().unwrap())
@@ -284,12 +285,7 @@ impl Process {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        for _ in 0..400 {
-            if socket.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+        common::wait_for_socket(&mut child, &socket, &log_path).await;
         Self { child, socket }
     }
 
