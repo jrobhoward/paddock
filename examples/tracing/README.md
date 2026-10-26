@@ -35,7 +35,7 @@ sudo bpftrace -p <node pid> examples/tracing/bt/lifecycle.bt
 | `bt/callbacks.bt` | Failed callbacks as they happen, and on Ctrl-C guest execution time per instance (host time excluded). |
 | `bt/everything.bt` | Every probe, one line each. |
 
-Instance ids are the middle number of a pid (`0.<id>.<incarnation>`); the demo deploys `pong` as id 1, `ping` as 2 and `chaos` as 3.
+A pid reads `node.serial.incarnation@creation`; the probes give an instance's whole id, whose low 40 bits are the serial `ps` shows (`arg0 & 0xffffffffff` in bpftrace) and whose high bits are the node's creation. The demo deploys `pong` as serial 1, `ping` as 2 and `chaos` as 3.
 
 Attaching needs no restart and no change to the node: with no tracer attached each probe costs one enabled check. The scripts use `-p`, which lets bpftrace find the probes in the running process and switch them on.
 

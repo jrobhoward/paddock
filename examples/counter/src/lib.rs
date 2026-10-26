@@ -1,5 +1,5 @@
-//! A stateful counter, written with `paddock-sdk`: the Phase 1 upgrade
-//! example.
+//! A stateful counter, written with `paddock-sdk`: the upgrade example
+//! (docs/GETTING_STARTED.md, tutorial chapter 6).
 //!
 //! - v1 keeps a count.
 //! - v2 (`--features v2`) also keeps the last three values, and migrates v1

@@ -9,7 +9,7 @@ The single plan for remaining work: what is left, in what order, and which part 
 - **Stages** run in order. Items inside a stage can run in parallel unless one names another. An item found while working on another goes into the stage where it fits, not into the current change.
 - **Finishing an item** removes it from this file, adds a CHANGELOG entry, and updates DESIGN.md if a decision changed. A partly done item keeps only what is left.
 - **Checks** are one command, `scripts/check.sh` (`--quick` while working); CLAUDE.md's Definition of Done lists what it runs.
-- **Interface docs** change with the code: CHANGELOG.md, MANIFEST.md (manifest and node config), OBSERVABILITY.md (probe and metric names) and OPERATIONS.md (paths, variables, signals). Narrative docs (README, GETTING_STARTED, WRITING_APPS, DESIGN prose, ARCHITECTURE, the tutorial) may fall behind: a change that leaves one wrong adds a line to "Doc debt" below, and W1 clears the list once, near the end.
+- **Interface docs** change with the code: CHANGELOG.md, MANIFEST.md (manifest and node config), OBSERVABILITY.md (probe and metric names) and OPERATIONS.md (paths, variables, signals). Narrative docs (README, GETTING_STARTED, WRITING_APPS, DESIGN prose, ARCHITECTURE, the tutorial) may fall behind: a change that leaves one wrong adds a line to "Doc debt" below, for a later docs pass to clear (W1 and W2 cleared it on 2026-10-25).
 - **Reviews (stage 2)** produce items for stage 3 and decisions for DESIGN.md. A finding is fixed during the review only if the fix is a line or two.
 - **Failover changes** follow the verification rule in V1.
 - **Sizes** are relative: S = days, M = about a week, L = more than a week.
@@ -22,7 +22,7 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | --- | --- | --- |
 | 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Met on 2026-10-18 (G2, the Pi's baselines) |
 | 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | Met: the rest on 2026-10-15, the serial line criterion on 2026-10-16 (F5) |
-| 3: application server | One real workload runs a full release cycle with zero downtime | Met on 2026-10-22 (X2); the docs pass left (see "Phase 3") |
+| 3: application server | One real workload runs a full release cycle with zero downtime | Met on 2026-10-22 (X2); its docs pass on 2026-10-25 |
 
 The failover pair and witness run over QUIC between `paddock node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
@@ -30,8 +30,9 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
-1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `paddock-soak scada` under faults passed. N1, guest sockets, on 2026-10-23. S19, N2's spike, the same day: a port; N2 itself the same day. Next: the docs pass for Phase 3.
-2. W1 (Phase 2's docs), now unblocked; H5 and E4b only for a user who needs them.
+1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `paddock release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `paddock release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `paddock-soak scada` under faults passed. N1, guest sockets, on 2026-10-23. S19, N2's spike, the same day: a port; N2 itself the same day. Its docs pass (W2) with Phase 2's (W1) on 2026-10-25.
+2. The docs passes for Phases 2 and 3 (W1, W2), done on 2026-10-25.
+3. Open: B14 (cheaper preemption, when wasmtime ships MMU-based interruption), G5 and G1 (dedicated workers; a large machine), syn 3, and stage 5's smaller items; H5 and E4b only for a user who needs them.
 
 ## Order
 
@@ -120,12 +121,11 @@ Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run i
 
 ## Stage 7: Docs (M)
 
-- [ ] **W1 Docs against the code.** Check every doc against what was built, rewrite where needed, and clear "Doc debt". Finish `docs/ARCHITECTURE.md` (R1) and `docs/SECURITY.md` (R3). Add a platform capabilities overview (each service, its manifest section and node config, or a section of MANIFEST.md), and a guest development guide (WRITING_APPS.md refreshed: SDK features, testing an app, bundles). Check [GLOSSARY.md](GLOSSARY.md) (drafted 2026-10-24) against the code with the rest. Tutorial chapter: a hot upgrade (counter v1 to v2 with state, a broken v3 reverted, `rollback --restart`; today this is covered only by tests). `docs/REVIEW_HAPPLIANCE_OTP.md` leaves the tree (git keeps it): its adopted items are in DESIGN.md and this plan. HAppliance is a private project, so W1 also removes the description of its design and code from the rest of the tree (DESIGN.md, this plan, CHANGELOG.md, `docs/tla`, `spikes/s10` and `spikes/s16`): what Paddock adopted is stated as Paddock's own design. Done when `git grep -i happliance` matches only a one-line prior-art entry in DESIGN.md.
+Done on 2026-10-25: W1 and W2, every doc checked against the code for Phases 2 and 3. README and GETTING_STARTED (rerun end to end), MANIFEST (every node config key against its parser; capabilities at a glance), OPERATIONS (the remote admin API), OBSERVABILITY, WRITING_APPS (testing at three levels), ARCHITECTURE and SECURITY finished (R1, R3), GLOSSARY, DESIGN (phase labels replaced by what is built; its roadmap section gives way to this plan), tutorial chapters 5 (replicated buckets) and 6 (a hot upgrade), and the example READMEs and crate docs. Doc debt cleared. `paddock status` warns that a field "is not enforced" instead of naming a finished phase.
 
 ## Doc debt
 
-Docs known to be out of date, cleared by W1: none left (2026-10-25).
-
+Narrative docs a change left out of date, to fix in a later docs pass: none (2026-10-25).
 
 ## Phase 3
 
@@ -145,7 +145,6 @@ Decided 2026-10-16: the pair and its witness are the target topology, and genera
 
 Order: X1 first, so the app drives the rest; K3 next, on K2's machinery; N1 alongside K, since it shares no code; M1 after K3; L1 after M1; U1 after L1; U2 after U1; N2's spike whenever there is room, its implementation after; X2 last.
 
-- [ ] **W2 Phase 3's docs.** A docs pass for Phase 3, as W1 for Phase 2.
 
 Parked from Phase 3 (2026-10-16): placement across many nodes (labels, spread, `all-nodes`); opt-in global names (Raft); more guest SDKs; fuel metering.
 

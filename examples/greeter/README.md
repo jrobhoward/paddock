@@ -19,7 +19,8 @@ cargo test -p example-greeter-node
    - `package()`: the package name, which is also the manifest key and the policy grant.
    - `instance(app)`: per-instance state from the app's scope table (`app.scope`) and whether it was granted (`app.granted`). Every instance gets state, including apps that do not declare the extension.
    - `link(linker)`: call the generated `add_to_linker::<StoreData, ExtensionCtx<State>>(linker, extension_ctx::<State>)`.
-4. Implement the generated `Host` traits for `ServiceCtx<'_, State>`. `ctx.state()` is the instance's state; `ctx.app()` and `ctx.pid()` say who is calling. Time spent in a host function does not count against the callback deadline.
+   - `start(node)`, optional: work on the extension's own schedule (polling devices, serving a port), started once the node's apps are up. It gets the node's `[extensions."<package>"]` table, a way to cast to apps by name, and whether this node runs singletons (on an HA pair, the primary). `crates/paddock-modbus` is an extension that does.
+4. Implement the generated `Host` traits for `ServiceCtx<'_, State>`. `ctx.state()` is the instance's state; `ctx.app()` and `ctx.pid()` say who is calling. Time a host function spends waiting does not count against the callback deadline; work it does without waiting does.
 5. Run a node with it: `paddock::node::run(&config, vec![Arc::new(MyService::default())])`.
 
 ## Using it from an app

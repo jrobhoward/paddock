@@ -31,9 +31,11 @@ timeout + lease + 2 margins, plus a few heartbeats: 3.4 s in three runs on
 2026-10-09 (16-core Linux machine, loaded by other work). With the default
 timings (1 s, 5 s, 3 s, 500 ms) the same bound is about 9 to 10 s.
 
-The counter restarts from `init` on node 2 (`count=0`): a singleton's state
-does not cross nodes. Apps recover it from their sources or from `disk`
-buckets.
+The counter restarts from `init` on node 2 (`count=0`): a singleton's memory
+does not cross nodes in a failover. Apps keep what must survive in a
+replicated bucket, kept on both nodes of the pair (tutorial chapter 5), or
+recover it from their sources; a `disk` bucket stays on the node that
+failed.
 
 `examples/tutorial` is the longer version: an app with state over HTTP,
 paused between steps, with the primary killed by hand.

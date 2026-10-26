@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Tutorial chapters 5 and 6 (`examples/tutorial`): the board on a
+  replicated bucket, kept through the primary's loss with no change to
+  the app, and a hot upgrade of the counter (v1 to v2 with its state, a
+  refusing v3 reverted, a refused rollback, `rollback --restart`).
+- Docs checked against the code for Phases 2 and 3 (ROADMAP W1, W2):
+  capabilities at a glance in MANIFEST.md, the remote admin API in
+  OPERATIONS.md, testing an app at three levels in WRITING_APPS.md,
+  ARCHITECTURE.md and SECURITY.md finished, DESIGN.md's phase labels
+  replaced by what is built.
 - `app_cost` (`paddock-host` example, `bench.sh app`): ordinary app code
   (serde JSON, a regex scan, Markdown rendering, a `BTreeMap`) from the new
   `paddock-workload` crate, run natively, in Paddock

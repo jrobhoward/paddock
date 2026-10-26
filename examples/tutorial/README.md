@@ -1,7 +1,9 @@
 # Tutorial: state that survives failures
 
 One small app, a counter on a bulletin board, run through the failures
-Paddock handles: a crash, a node restart, and the loss of a whole node.
+Paddock handles: a crash, a node restart, and the loss of a whole node,
+with its state kept in four places; then a counter that keeps its state in
+memory, carried through a hot upgrade.
 Each chapter is a script that starts the nodes, prints the commands to
 try, and pauses between steps; it stops everything at the end or on
 Ctrl-C. Run the scripts from the repository root. They need the
@@ -13,6 +15,8 @@ examples/tutorial/01-one-node.sh
 examples/tutorial/02-failover.sh
 examples/tutorial/03-hot-standby.sh
 examples/tutorial/04-database.sh             # needs Postgres's server programs
+examples/tutorial/05-replicated.sh
+examples/tutorial/06-hot-upgrade.sh
 AUTO=1 examples/tutorial/02-failover.sh    # no pauses: kills node 1 itself
 ```
 
@@ -110,10 +114,11 @@ backend board
     server node2 127.0.0.1:8082 check inter 500ms fall 2 rise 2
 ```
 
-Cloud load balancers work the same way. A virtual IP that moves with the
-primary (as VRRP would) is planned as a separate agent driven by the
-node's leadership. It stays outside `paddock node`, which
-then needs no network privileges.
+Cloud load balancers work the same way. For a virtual IP that moves with
+the primary (as VRRP would), [`examples/systemd/paddock-vip.sh`](../systemd/paddock-vip.sh)
+is an agent driven by the node's leadership (`paddock failover --watch`;
+OPERATIONS.md). It stays outside `paddock node`, which then needs no
+network privileges.
 
 What this shows: failover moves where an app runs, not its state. The next
 chapters move the state too.
@@ -194,8 +199,81 @@ its own replication or a managed service, which Paddock does not do. Its
 calls cost a round trip to the database each, and a transaction holds one
 of the app's connections until it commits.
 
-## Chapter 5 (later): replicated buckets
+## Chapter 5: replicated buckets
 
-The board becomes a bucket replicated between the pair (`scope =
-"cluster"`, Phase 3), and the app goes back to plain reads and writes, as in
-chapter 1, with state that survives the loss of a node.
+`05-replicated.sh` is chapter 2 with one change in node config: the
+`board` bucket is a cluster bucket, kept whole on both nodes of the pair
+through a replicated log (`scope = "cluster"` under `[buckets.board]`, and
+`replication = true` under `[failover]` on both nodes). The app is the same
+singleton as in chapter 2, unchanged: it reads and writes its board as in
+chapter 1. Each write now returns once the standby has it on disk too.
+
+Kill the primary with `kill -9`, and node 2 serves the board a few seconds
+later, at the same count:
+
+```text
+$ curl -s http://127.0.0.1:8082/board
+{"count":3,"pid":"<2.1.1@1>"}
+$ paddock --socket ... failover
+role:       primary
+outdated:   the partner lacks replicated writes; it is not promoted until it catches up
+replicated: board (commit 5, last 5, log 1 KiB, partner at 0, 5 behind, committing alone)
+```
+
+Node 2 started the app from `init`, as in chapter 2, but the board was
+already there. With node 1 gone, node 2 commits alone, once the witness
+has recorded node 1 as out of date: the witness would not promote node 1
+now, since it lacks writes node 2 answered. When node 1 comes back it
+rejoins as the standby, catches up from node 2's log, and the record
+clears (`partner at 6, 0 behind`). Unlike chapter 2, node 1 holds no stale
+board.
+
+What this shows: a replicated bucket moves state with the app and keeps
+both copies current, with no code in the app and no database to run. Each
+write costs a round trip to the standby and a sync to its disk (about 2.2
+to 2.8 ms on NVMe; BASELINE.md), so it suits state, such as counts, point
+tables and settings, more than streams. A singleton in `snapshot` upgrade
+mode can also take its in-memory state along in a planned switchover
+(`paddock failover switchover`; OPERATIONS.md).
+
+## Chapter 6: a hot upgrade
+
+`06-hot-upgrade.sh` starts one node and builds [`examples/counter`](../counter)
+in three versions: v1 keeps a count in its own memory, v2 also keeps the
+last three values and reads v1's state, and v3 is v2 refusing every
+snapshot. All three use `upgrade.mode = "snapshot"`.
+
+```text
+$ paddock call counter get
+1.0.0 count=3
+$ paddock upgrade counter counter-2.rbp
+1.0.0 -> 2.0.0 (snapshot), 1 instance(s), longest pause 344 µs
+$ paddock call counter get
+2.0.0 count=3 history=
+$ paddock upgrade counter counter-3.rbp
+Error: rollout stopped and reverted: instance-1: load-snapshot failed: v3 refuses snapshots from 2.0.0; ...
+$ paddock rollback counter
+Error: rollout stopped and reverted: instance-1: load-snapshot failed: cannot read snapshot format 2 ...
+$ paddock rollback counter --restart
+2.0.0 -> 1.0.0 (restart), 1 instance(s)
+$ paddock call counter get
+1.0.0 count=0
+```
+
+The upgrade to v2 paused the instance's mailbox between two messages, took
+v1's `save-snapshot`, started v2 with `load-snapshot` and resumed it: the
+same pid, registered name and queued messages, and the count. v3's
+`load-snapshot` failed, so the node kept v2 running with its state. A
+rollback is an upgrade to the previous version, in that version's mode, so
+v1 would have to read v2's snapshot, the downgrade half of OTP's
+`code_change`; it cannot, so the rollback is refused too. `--restart`
+moves the instances by restart instead, from `init`, discarding the state,
+and the audit log records `"restart_requested": true`.
+
+What this shows: code changes without stopping the app or losing what it
+holds in memory, and a version that cannot take the state over is refused
+rather than run without it. Writing the snapshot functions is the app's
+part: `paddock-sdk`'s `#[derive(Snapshot)]` versions the format and hands
+older ones to a `migrate` function (WRITING_APPS.md, "State across
+upgrades"). An app whose state lives outside the instance, as the board's
+does, needs none of this and upgrades in `restart` or `blue-green` mode.
