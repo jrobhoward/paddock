@@ -1,6 +1,6 @@
 # Paddock: Design
 
-2026-10-05
+2026-10-05 · kept current through Phase 3 (reviewed against the code 2026-10-25)
 
 
 ## Summary
@@ -114,37 +114,38 @@ A second world serves connections instead of messages: `paddock:connection/conne
 
 ## App manifest and capability model
 
-The manifest describes everything the server needs to place, limit, wire and upgrade an app. The data model is complete now; enforcement ships in phases (column 3). Field names follow `.rbp` style so the manifest can live in a rustbridge bundle as an extra section.
+The manifest describes everything the server needs to place, limit, wire and upgrade an app. The data model covers more than the node enforces; the last column says which parts it does (MANIFEST.md marks the rest *not enforced*). Field names follow `.rbp` style so the manifest can live in a rustbridge bundle as an extra section.
 
-In a bundle, the `appserver` section holds every section below except three that the `.rbp` manifest already carries: `app` comes from `plugin`, `component` from the `wasm32-wasip2` variant, and `provenance` from `build_info`, the SBOM and the operator key that verified the signature. `paddock_bundle::manifest` models the section (`AppSpec`) and the combined result (`AppManifest`). Unknown fields are rejected with the path of the field, and a node logs a warning for each field a manifest sets that the current phase does not enforce.
+In a bundle, the `appserver` section holds every section below except three that the `.rbp` manifest already carries: `app` comes from `plugin`, `component` from the `wasm32-wasip2` variant, and `provenance` from `build_info`, the SBOM and the operator key that verified the signature. `paddock_bundle::manifest` models the section (`AppSpec`) and the combined result (`AppManifest`). Unknown fields are rejected with the path of the field, and a node logs a warning for each field a manifest sets that it does not enforce.
 
-| Section | Fields | Enforced in |
+| Section | Fields | Enforced |
 | --- | --- | --- |
-| `app` | name, version (semver), description, authors, license, repository | Phase 1 |
-| `kind` | `wasm-component` or `native-process` (a rustbridge `.so` or an executable, run out of process through `paddock-runner`) | Phase 1 wasm; native Phase 3 |
-| `component` | path, sha256, WIT world and version, exported interfaces | Phase 1 |
-| `api` | message types: name, content type, request/response schema, call or cast | Phase 1 (docs), validation later |
-| `dependencies` | other apps required (name + version range), start order; like OTP `applications` and WildFly module deps | Phase 1 |
-| `registered_names` | names the app may register, local or global; registration of other names is refused | Phase 1 local, Phase 2 global |
-| `lifecycle` | restart (permanent, transient, temporary), shutdown timeout, init timeout, start args | Phase 1 |
-| `supervision` | children (for supervisor apps): strategy, intensity, period | Phase 1 |
-| `instances` | count or min/max, pool routing (round-robin, hash key) | Phase 1 count; scaling later |
-| `limits` | memory_max, table_max, callback_deadline_ms, fuel_per_message, mailbox_max, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, storage quota, open files, outbound connections | Phase 1 memory/deadline/mailbox; host objects in Phase 2a; rest later |
-| `capabilities` | requested host interfaces with scopes (table below) | Phase 1 subset |
-| `messaging_acl` | which apps may call, cast, link or send exit signals to this app, and which it may | Phase 2 |
-| `config` | schema for config keys, defaults, secret references (never secret values) | Phase 1 |
-| `upgrade` | snapshot format version, supported from-versions, upgrade mode (snapshot or restart) | Phase 1 |
-| `placement` | node labels required or preferred, spread label, mode (`any`, `singleton`, `all-nodes`, `hot-standby`) | Phase 2: `singleton` and `hot-standby` on a node with `[failover]`; the rest Phase 3 |
-| `health` | interval and failure threshold of the host's health check calls | Phase 2 |
-| `observability` | log level default, metrics enabled, trace sampling | Phase 1 level only |
-| `provenance` | inherited from `.rbp`: build info, git commit, SBOM, signature, signer key | Phase 1 verify signature |
+| `app` | name, version (semver), description, authors, license, repository | yes |
+| `kind` | `wasm-component` or `native-process` (a rustbridge `.so` or an executable, run out of process through `paddock-runner`) | yes; native processes on Linux |
+| `component` | path, sha256, WIT world and version, exported interfaces | yes |
+| `api` | message types: name, content type, request/response schema, call or cast | documentation only |
+| `dependencies` | other apps required (name + version range), start order; like OTP `applications` and WildFly module deps | yes |
+| `registered_names` | names the app may register, local or global; registration of other names is refused | local names; global names are parked |
+| `lifecycle` | restart (permanent, transient, temporary), shutdown timeout, init timeout, start args | yes |
+| `supervision` | children (for supervisor apps): strategy, intensity, period | yes |
+| `instances` | count or min/max, pool routing (round-robin, hash key), passivation | count, routing and passivation; not min/max |
+| `limits` | memory_max, table_max, callback_deadline_ms, fuel_per_message, mailbox_max, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, groups_max, watches_max, storage quota, open files, outbound connections | all but fuel, storage quota, open files and outbound connections |
+| `capabilities` | requested host interfaces with scopes (table below) | all but `paddock:runtime/supervisor` and `paddock:admin` |
+| `messaging_acl` | which apps may call, cast, link or send exit signals to this app, and which it may | yes |
+| `config` | schema for config keys, defaults, secret references (never secret values) | defaults; the schema is documentation; secrets are declared under `paddock:secrets` instead |
+| `upgrade` | snapshot format version, supported from-versions, upgrade mode (snapshot, restart or blue-green) | yes |
+| `placement` | node labels required or preferred, spread label, mode (`any`, `singleton`, `all-nodes`, `hot-standby`) | `any`; `singleton` and `hot-standby` on an HA pair; `all-nodes`, labels and spread are parked |
+| `health` | interval and failure threshold of the host's health check calls | yes |
+| `observability` | log level default, metrics enabled, trace sampling | the log level (`paddock:metrics` exports metrics) |
+| `listeners` | for a connection handler: listener names, idle timeout, connection cap | yes |
+| `provenance` | inherited from `.rbp`: build info, git commit, SBOM, signature, signer key | the signature, against operator keys |
 
 **Capabilities.** A component can call only what it imports, so its import list is the upper bound of its permissions. The manifest narrows each import with scopes, and the operator's deployment policy narrows further. Effective permission = imports ∩ manifest request ∩ operator grant. An import not granted is linked to a stub that returns `access-denied`, so an app can degrade instead of failing to load.
 
 | Capability | Interface | Scope fields |
 | --- | --- | --- |
 | Messaging | `paddock:runtime/process` | always granted; `messaging_acl` narrows it |
-| Spawn and supervise | `paddock:runtime/supervisor` | max children, allowed child apps |
+| Spawn and supervise | `paddock:runtime/supervisor` | max children, allowed child apps (not enforced) |
 | Logging | `wasi:logging` | max level, rate limit |
 | Config | `wasi:config` | key prefixes |
 | Secrets | `paddock:secrets` | named secret refs |
@@ -157,9 +158,9 @@ In a bundle, the `appserver` section holds every section below except three that
 | Sockets | `wasi:sockets` | allowed CIDRs and ports for connect and bind, listen yes/no, `max_sockets` |
 | SQL pool | `paddock:sql` | named datasource, max connections |
 | Metrics | `paddock:metrics` | metric name prefix |
-| Admin | `paddock:admin` | read-only or control; for operator tooling apps only |
+| Admin | `paddock:admin` | read-only or control; for operator tooling apps only (not enforced) |
 
-A capability key covers a whole WIT package (`wasi:keyvalue` covers `store`, `atomics` and `batch`) except where noted by interface: `wasi:http/types` is covered by either HTTP key, and `paddock:runtime/supervisor` is the only `paddock:runtime` interface that needs declaring. An import that no capability covers and that is not always granted fails the deploy. In Phase 1, operator policy grants or withholds whole capabilities; the scope the manifest requests is used as written.
+A capability key covers a whole WIT package (`wasi:keyvalue` covers `store`, `atomics` and `batch`) except where noted by interface: `wasi:http/types` is covered by either HTTP key, and `paddock:runtime/supervisor` is the only `paddock:runtime` interface that needs declaring. An import that no capability covers and that is not always granted fails the deploy. Operator policy grants or withholds whole capabilities, and names the shared buckets, secrets and datasources each app may use; other scopes the manifest requests are used as written, inside the node config's ceilings (`[egress] allow`, `[sockets]`).
 
 ## Isolation and resource limits
 
@@ -168,7 +169,7 @@ Every instance gets its own wasmtime `Store`, linear memory and limits, and sees
 | Resource | Mechanism | Notes |
 | --- | --- | --- |
 | Memory | `ResourceLimiter` / `StoreLimits` per Store: memory_max, table_max | Growth past the cap fails or traps. Use the pooling allocator for fast instantiation. |
-| CPU, wall clock | Epoch interruption: a deadline per callback (callback_deadline_ms), 2 ms tick | About 2% on S8's Rust kernels; up to about 20% on short store-bound loops (BASELINE.md). The tick also bounds how long a busy instance holds a worker. A blown deadline kills the instance with reason `timeout`. |
+| CPU, wall clock | Epoch interruption: a deadline per callback (callback_deadline_ms), 2 ms tick | The checks cost 1.19 to 1.71 times the unchecked time on ordinary app code, mostly from register allocation around the check's cold call, about 2% on S8's Rust kernels (BASELINE.md, 2026-10-25; ROADMAP B14 tracks wasmtime's cheaper MMU-based interruption). The tick also bounds how long a busy instance holds a worker. A blown deadline kills the instance with reason `timeout`. |
 | CPU, deterministic | Fuel per message (optional) | Costs more. Use for untrusted tenants or metering. |
 | Threads | Host-owned tokio pool; instances are single-threaded | Wasm threads support in WASI is unsettled, so don't depend on it. Scale with instance pools. |
 | Mailbox | mailbox_max per instance; message_max_bytes | When full: cast is dropped and counted, call fails fast with `overloaded`. |
@@ -196,7 +197,7 @@ The host detects every failure, converts it to an exit reason, and propagates it
 | Callback runs too long (loop, deadlock in guest) | Epoch deadline | `timeout` |
 | `init` fails or times out | Return value or init timeout | `crashed(...)`; supervisor counts it as a restart |
 | Health check fails N times in a row (manifest `health`: a `paddock/health` call, answered by `App::health` in the SDK) | Host timer | `crashed("unhealthy")` |
-| Mailbox stays full past threshold | Host metric | Alarm only by default; kill is a policy option |
+| Mailbox full | `DROPPED` in `paddock ps`, `paddock_mailbox_depth` and `paddock_mailbox_dropped_total` | None: casts are dropped and calls refused, and the instance runs on (an alarm or a kill policy is not built) |
 | Native-process plugin exits or stops answering pings | Pipe EOF, ping timeout | `crashed(...)` or `timeout` |
 | Remote node lost | QUIC idle timeout or connection close | `noconnection` for every remote link and monitor through that node |
 
@@ -217,16 +218,16 @@ This is stronger than BEAM in one way: BEAM cannot stop a NIF stuck in a loop, w
 - Supervisors are host-native, not Wasm. They are trusted, cheap, and can't crash from guest bugs.
 - Strategies: `one_for_one`, `one_for_all`, `rest_for_one`. A dynamic `simple_one_for_one` covers instance pools.
 - Restart types per child: `permanent`, `transient`, `temporary`.
-- Intensity and period, for example 5 restarts in 10 s. Past it, the supervisor gives up and escalates to its parent. At the top, the app is marked `failed` and an alert fires.
+- Intensity and period, for example 5 restarts in 10 s. Past it, the supervisor gives up and escalates to its parent. At the top, the app is marked `failed`, with the reason in `paddock status`.
 - Restart backoff with jitter is an addition beyond OTP, to avoid hot crash loops against a failing dependency.
-- Each app gets a root supervisor. Apps that declare the `supervisor` capability can start their own children within manifest limits.
+- Each app gets a root supervisor. Dynamic children started by an app (the `paddock:runtime/supervisor` capability, within manifest limits) are designed but not built: the manifest key parses and is not enforced, and the WIT has no supervisor interface yet.
 - Unlike an OTP permanent application, a Paddock app whose root supervisor gives up does not stop the node: the app is marked `failed`, its dependents are not started, and other apps keep running. A node-level watchdog (OTP's `heart`) is a separate concern.
 - The root supervisor runs `instances.count` instances of the app, then any `supervision.children` (instances of other deployed apps, with optional restart, shutdown and start-argument overrides). Under `simple_one_for_one`, `supervision.children[0]` is the pool template and `instances.count` copies start from it.
 - A restarted instance keeps its id with the next incarnation. Siblings stopped by a group restart stop gracefully in reverse start order and start again in start order.
 - Escalation exits with `crashed`, naming the supervisor, the intensity and the last child exit, so `paddock status` shows why an app failed.
 - Apps start in dependency order and stop in reverse. An app counts as started once every instance is `Active`. An app that fails to start is marked `failed`, and apps depending on it are not started; unrelated apps still start.
 
-**Instance pools.** An app's running instances form a pool; `whereis` on the app's name, when no instance has registered that name, returns a member round-robin. With `routing = "hash:<key>"`, host-side routing reads the top-level field `<key>` from a JSON or CBOR map body. Strings, integers and byte strings hash to the same member in either encoding. Other bodies, or a missing field, fall back to round-robin. Positions in the pool survive restarts, so a key keeps its member while the pool size is unchanged. Guests address pids, so guest-side hash routing needs a WIT addition; Phase 1 offers round-robin to guests.
+**Instance pools.** An app's running instances form a pool; `whereis` on the app's name, when no instance has registered that name, returns a member round-robin. With `routing = "hash:<key>"`, host-side routing reads the top-level field `<key>` from a JSON or CBOR map body. Strings, integers and byte strings hash to the same member in either encoding. Other bodies, or a missing field, fall back to round-robin. Positions in the pool survive restarts, so a key keeps its member while the pool size is unchanged. Guests address pids, so guest-side hash routing needs a WIT addition; `whereis` gives guests round-robin.
 
 **Calls during failure.** A `call` to a dead or unknown pid returns `noproc` immediately. If the target dies mid-call, the caller gets its exit reason. Otherwise the caller gets `timeout`. A late reply after a timeout is dropped, so callers never see stale replies.
 
@@ -264,9 +265,9 @@ An upgrade swaps an instance's component between messages, carrying state throug
 | --- | --- | --- |
 | `snapshot` | Protocol above | Stateful apps |
 | `restart` | Terminate v1 gracefully, start v2 from `init` | Stateless apps, or state lives in term storage |
-| `blue-green` | Start v2 instances beside v1, move the registered name, drain v1 | Apps serving HTTP or long calls |
+| `blue-green` | Start v2 beside v1, move traffic to it in steps, then drain and stop v1 (below) | Pools whose state lives in buckets or a database, serving HTTP or long calls |
 
-**Phase 1 details.**
+**Snapshot and restart details.**
 - An instance upgrade runs `save-snapshot` on the old Store, then instantiates the new component in a fresh Store and calls `load-snapshot`; `init` does not run.
 - What belongs to the instance rather than the Store moves across: callers awaiting deferred replies and pending timers. The pid, links, monitors and registered names never change.
 - Guest-held resources (open buckets) do not move; the new version reopens them. Deferred call references survive only if the app puts them in its snapshot.
@@ -315,7 +316,7 @@ An upgrade swaps an instance's component between messages, carrying state throug
 
 **Terminate I/O and protocols in the host; decide in guests.** Spikes S14 and S15 measured the split:
 - Host-terminated HTTP calling a pooled instance keeps about 75% of native throughput; a guest that owns its socket is capped at one core.
-- A host call costs about 0.15 µs and a message about 1.3 to 2.3 µs; guest compute runs at 1.0 to 2.4x native (S8).
+- A host call costs about 0.15 µs and a message about 1.3 to 2.3 µs; guest compute runs at 1.0 to 2.4x native on S8's kernels and 1.4 to 2.6x on ordinary app code (`app_cost`).
 
 So high-rate work with little logic stays native and multi-core, and logic that benefits from isolation, supervision and hot upgrade runs in guests:
 
@@ -329,7 +330,7 @@ So high-rate work with little logic stays native and multi-core, and logic that 
 
 **Throughput comes from batching and cores, not clock rate.** A message costs about the same whatever it carries, so high-rate data moves in batches (many point updates per cast). Scale up adds cores to tokio's worker pool and instances to pools; past 16 cores this is not yet measured, and two-socket machines may need a runtime per socket or several nodes per machine (ROADMAP G1, tabled until such a machine is available). Until then, designs must not be inherently single-core: no global lock or single task on a message or I/O path that every request crosses, listeners with several accept tasks, and pools rather than single instances for high-rate apps.
 
-**Nodes for availability first.** When nodes are added for availability rather than load, failover comes before a general cluster: `placement.mode = "singleton"` or `"hot-standby"`, with apps recovering state from their sources (a SCADA app re-polls its field devices) or from restored storage until replicated storage exists.
+**Nodes for availability first.** When nodes are added for availability rather than load, failover comes before a general cluster: `placement.mode = "singleton"` or `"hot-standby"`, with apps recovering state from their sources (a SCADA app re-polls its field devices) or from replicated buckets (below).
 
 **Two nodes cannot break a tie alone.** With a primary and a standby joined only by the network, a partition looks like node loss to both sides, and both promote. Failover does not need consensus (OTP's distributed applications fail over by node-down and a priority list, with no Raft or Paxos); it needs independent evidence that the partner is dead, and one place that orders promotions. Paddock uses an HA pair plus a witness, model-checked in TLA+, rather than Raft, whose symmetric quorum makes every write wait on the witness's WAN link while one HA node is down:
 
@@ -344,9 +345,9 @@ On a node, `[failover]` names the partner and the arbiter, and each app is deplo
 
 **A planned switchover** (`paddock failover switchover`) hands the singletons over on purpose, for maintenance or to swap roles. The primary stops its singletons gracefully (each runs `terminate`) while its lease still holds, then steps down and beats `Down`, yielding. The standby, hearing the yield, asks the witness at once instead of after a node timeout, and does not stand down for its partner's `Down`; once its step down is published, the old primary sends the witness `Release` at its epoch (rule R14), and the witness grants the standby's request at once instead of waiting the lease and margin out since the standby's last confirmation (R3). The witness takes a release only from the node it last promoted at its epoch, keeps it in memory only, and clears it with every grant, a resume included, so a release cannot outlive the lease it gave up; frames between a node and the witness arrive in order, so a release is never read after a later request of the same node. A release that is lost, or reaches a witness that restarted, leaves the usual wait. The singletons are stopped for a few heartbeats (about 200 ms with 100 ms beats; with the release lost, about a lease and its margins, 3.5 to 4 s with the defaults, against 9 to 10 s for a primary that dies). A yielding node rejoins the new primary as its standby; if nobody takes over (the standby cannot reach the witness), it may ask to resume a lease later than a down node would, which gives the standby's request time to reach the witness first. A switchover is refused, with nothing stopped, unless the node is a primary with a lease, its arbiter is a witness and it hears its partner as a confirming standby. Layer 2 of the TLA+ model has the action (`Switchover`) and a configuration that must reach a handover (`L2_Switchover_Reach`).
 
-**Moving a singleton with its state** (spike S17's questions, settled 2026-10-20). On a pair that runs replication, a singleton in `snapshot` upgrade mode is not stopped but moved in a planned switchover: between callbacks its instance writes its snapshot and handles nothing more, and the old primary writes the snapshot, with the version that wrote it, to a reserved replicated bucket (`@handover`, a key per app) while its lease holds. The node that next starts the singleton loads it with `load-snapshot(version, ...)` in place of `init`, under the same `from_versions` rule as an upgrade; a refusal or a trap ends that instance, and its supervisor's restart runs `init`. Every start of such a singleton first deletes its record, and waits for the delete to commit, so a record that is present was written after the last start: whichever node starts the singleton next, after a switchover, a refused one, a resume or a failover in between, loads the state the singleton last stopped with or none. The record travels in the replicated log rather than straight to the partner because only the log carries that fence: a direct message could be loaded after the old primary had resumed and run on, which only the witness could tell. The singleton waits for replication to have the node's copy current (R5) before it starts, as one with replicated buckets does, so the record it reads is current. No failover rule changes, so the TLA+ models are unchanged. The moved instance has a new pid (pids name their node); the old one exits `normal`, so its links do not carry the exit, and its monitors see `normal`; links, monitors and registered names are not moved, and messages left in its mailbox are dropped (callers get `noproc` or time out). Apps reach the singleton by app name, as before. The singleton is still stopped for about a lease (no failover rule changed); the hand-over that shortens that is a separate item. A singleton in `restart` mode, or on a pair without replication, starts from `init` as before.
+**Moving a singleton with its state** (spike S17's questions, settled 2026-10-20). On a pair that runs replication, a singleton in `snapshot` upgrade mode is not stopped but moved in a planned switchover: between callbacks its instance writes its snapshot and handles nothing more, and the old primary writes the snapshot, with the version that wrote it, to a reserved replicated bucket (`@handover`, a key per app) while its lease holds. The node that next starts the singleton loads it with `load-snapshot(version, ...)` in place of `init`, under the same `from_versions` rule as an upgrade; a refusal or a trap ends that instance, and its supervisor's restart runs `init`. Every start of such a singleton first deletes its record, and waits for the delete to commit, so a record that is present was written after the last start: whichever node starts the singleton next, after a switchover, a refused one, a resume or a failover in between, loads the state the singleton last stopped with or none. The record travels in the replicated log rather than straight to the partner because only the log carries that fence: a direct message could be loaded after the old primary had resumed and run on, which only the witness could tell. The singleton waits for replication to have the node's copy current (R5) before it starts, as one with replicated buckets does, so the record it reads is current. No failover rule changes, so the TLA+ models are unchanged. The moved instance has a new pid (pids name their node); the old one exits `normal`, so its links do not carry the exit, and its monitors see `normal`; links, monitors and registered names are not moved, and messages left in its mailbox are dropped (callers get `noproc` or time out). Apps reach the singleton by app name, as before. The singleton is stopped only for the switchover's few heartbeats, since the old primary's `Release` lets the witness grant at once (above). A singleton in `restart` mode, or on a pair without replication, starts from `init` as before.
 
-**Scaling down.** On a small machine (a Raspberry Pi 5: 4 cores, 8 GB) the same node runs fewer, smaller apps: the dense memory profile, a 4-worker runtime, and compiled components cached in the deploy store so restarts do not recompile. wasmtime and anyprobe support aarch64 Linux; Paddock has no numbers there yet.
+**Scaling down.** On a small machine (a Raspberry Pi 5: 4 cores, 8 GB) the same node runs fewer, smaller apps: the dense memory profile, a 4-worker runtime, and compiled components cached in the deploy store so restarts do not recompile. wasmtime and anyprobe support aarch64 Linux, and BASELINE.md has a Raspberry Pi 5's figures beside the 16-core machine's (calls, instances, memory, epoch checks, app code, replicated writes across a LAN).
 
 ## Distribution
 
@@ -366,13 +367,13 @@ SCTP only wins on controlled telecom networks, so it is not worth a second trans
 
 **Streams and ordering**
 
-- One control stream per node pair: membership, link and monitor tables, registry updates, heartbeats.
-- One stream per sender→receiver pid pair, opened lazily and closed when idle. This keeps per-pair ordering without one large message blocking unrelated traffic.
-- Large messages (above a threshold such as 1 MiB) are chunked with a size cap from `message_max_bytes`.
+- One QUIC connection per pair of nodes, with two ordered streams: control (heartbeats, membership, failover) and data (messages, links, monitors, replication). Heartbeats never wait behind a large message, and frames between a pair keep their order within each stream.
+- A frame is at most 64 MiB; a message is already bounded by the target's `message_max_bytes`, so nothing is chunked.
+- Per-pid streams, so that one large message would not delay unrelated ones on the data stream, were planned and not built.
 
 **Discovery and membership**
 
-- Phase 2: a static seed list in node config, like Erlang hostnames. A joining node sends a join to a seed; the seed answers with every member it knows and passes the newcomer on, and each node joins any member it had not met, so every pair is connected (Erlang's `connect_all`). Every ten heartbeats each node also sends every member it knows to each member it reaches, and a join to each peer it watches that is not yet a member, so a lost join or answer is sent again (found by the replication soak, 2026-10-17 and 18: a restarted node that missed either never met its partner, which as the higher id does not dial). Members carry their node id, creation, address and role (`member`, or `witness`: a node that runs no apps and takes part in failover decisions). Membership and liveness are separate: a member that stops answering stays a member, with its session ended, until it answers or leaves.
+- A static seed list in node config, like Erlang hostnames. A joining node sends a join to a seed; the seed answers with every member it knows and passes the newcomer on, and each node joins any member it had not met, so every pair is connected (Erlang's `connect_all`). Every ten heartbeats each node also sends every member it knows to each member it reaches, and a join to each peer it watches that is not yet a member, so a lost join or answer is sent again (found by the replication soak, 2026-10-17 and 18: a restarted node that missed either never met its partner, which as the higher id does not dial). Members carry their node id, creation, address and role (`member`, or `witness`: a node that runs no apps and takes part in failover decisions). Membership and liveness are separate: a member that stops answering stays a member, with its session ended, until it answers or leaves.
 - Every start of a node has a creation number, kept in its data directory and raised on each start, as Erlang's `creation`. Frames carry the sender's creation and the receiver's creation as the sender knows it, so a peer that restarted ends its old sessions everywhere and frames from or for an earlier start are discarded. The creation is also the high 24 bits of every instance id (the low 40 are a serial number), so a pid an app kept from before a node restarted never names a later instance; pids print as `node.serial.incarnation@creation`.
 - Later: DNS SRV and Kubernetes headless services. mDNS for development.
 - Node identity is a pinned public key, as WireGuard does, replacing Erlang's shared cookie (decided 2026-10-09, to avoid running a certificate authority). Each node holds an Ed25519 key (`paddock cluster keygen`), and a peers file on every node lists each node's public key against its id. The QUIC handshake is TLS 1.3 with raw public keys (RFC 7250): each side proves it holds its key and accepts the other only if its key is listed; after the handshake, each side's hello names its node id and the other checks the key belongs to that node. Nothing expires. Rotating a key lists the new key beside the old at every peer, then switches the node, then drops the old; adding a node adds its key to every peers file. Both files are reloaded on change, SIGHUP or `paddock reload-tls`. A certificate authority would make rotation a single step; with a pair and a witness, three peers files are less to run than a CA, and a CA mode can be added if a site needs one.
@@ -381,11 +382,11 @@ SCTP only wins on controlled telecom networks, so it is not worth a second trans
 
 **Registry**
 
-| Scope | Mechanism | Consistency | Phase |
+| Scope | Mechanism | Consistency | Status |
 | --- | --- | --- | --- |
-| Local names | Per-node map | Strong (single node) | 1 |
-| Process groups | Each node owns its members and gossips them, like OTP `pg` | Eventual; never blocks | 2 |
-| Global unique names | Raft (openraft) on a small set of voter nodes | Strong; unavailable in a minority partition | 3, opt-in |
+| Local names | Per-node map | Strong (single node) | built (Phase 1) |
+| Process groups | Each node owns its members and gossips them, like OTP `pg` | Eventual; never blocks | built (Phase 2) |
+| Global unique names | Raft (openraft) on a small set of voter nodes | Strong; unavailable in a minority partition | parked; opt-in if built |
 
 Apps should prefer process groups. Erlang's `global` shows that global locks during partitions cause most distribution pain, so unique global names stay opt-in.
 
@@ -412,15 +413,15 @@ Not covered by the rules above: an app's snapshot formats and messages while its
 
 ## Host services
 
-The server provides OTP's runtime services and JBoss's managed resources as WIT interfaces. Standard WASI interfaces are used where they exist, so apps stay portable; `paddock:*` covers the rest.
+The server provides OTP's runtime services and JBoss's managed resources as WIT interfaces. Standard WASI interfaces are used where they exist, so apps stay portable; `paddock:*` covers the rest. The last column is the phase that built each (2a and 2b are Phase 2's platform and cluster halves).
 
-| Service | Interface | OTP analogue | JBoss analogue | Phase |
+| Service | Interface | OTP analogue | JBoss analogue | Built in |
 | --- | --- | --- | --- | --- |
 | Deploy, start, stop, upgrade, rollback | Admin API (not guest-facing) | `application`, `release_handler` | Deployment scanner, management CLI | 1 |
 | Messaging, timers | `paddock:runtime/process` | `gen_server`, `send_after` | JMS (loosely) | 1 |
 | Supervision | Host-native; `paddock:runtime/supervisor` for dynamic children | `supervisor` | — | 1 |
 | Failure detection | Host-native | Links, `heart` | Health checks | 1 |
-| Registry | `process` (local); groups and global later | `register`, `pg`, `global` | JNDI | 1–3 |
+| Registry | `process` (local); groups below; global names parked | `register`, `pg`, `global` | JNDI | 1 |
 | Process groups and publish | `paddock:groups`: join, leave, members, and `publish`, which the host fans out to every member; members leave when they exit. Each node owns its members and sends a snapshot per session and every join and leave to the others; a publish sends one copy per node with members, which fans it out under the messaging ACLs | `pg`, `gen_event` | JMS topics (loosely) | 2a (local), 2b (cluster) |
 | Shared buckets and watches | `wasi:keyvalue` buckets bound in node config and granted to several apps; `paddock:watch` for revisioned change notices and compare-and-swap on revision | ETS (public tables), `mnesia:subscribe` | Infinispan listeners | 2a |
 | Logging | `wasi:logging`; host adds app, version, pid, node, trace id | `logger` | Logging subsystem | 1 |
@@ -429,22 +430,22 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 | Clocks, random | `wasi:clocks`, `wasi:random` | `erlang:monotonic_time` | — | 1 |
 | In-memory term storage | `wasi:keyvalue` bucket, durability `memory`; host-owned so it outlives instance crashes | ETS (with `heir`) | Infinispan local cache | 1 |
 | Persistent term storage | `wasi:keyvalue`, durability `disk` (redb) | DETS | — | 1 |
-| Replicated storage | `wasi:keyvalue`, durability `replicated` (protocol chosen in Phase 3); every node reads its local copy and delivers watches from it | Mnesia, Khepri | Infinispan distributed | 3 |
-| Files | `wasi:filesystem`: read-only `/priv` from the bundle, writable `/data` per app | `code:priv_dir` | — | 1 |
-| HTTP ingress | Node-level ingress delivering each request on an app's routes (`wasi:http/incoming-handler` scope) as a call; host terminates HTTP (TLS next) and routes by host/path (see "HTTP ingress") | Cowboy, inets | Undertow web container | 2 |
+| Replicated storage | `wasi:keyvalue`, durability `replicated`, and `cluster` shared buckets: synchronous within the HA pair (below); every node reads its local copy and delivers watches from it | Mnesia, Khepri | Infinispan distributed | 3 |
+| Files | `wasi:filesystem`: read-only `/priv` from the bundle, and preopens of volumes the operator binds | `code:priv_dir` | — | 1 |
+| HTTP ingress | Node-level ingress delivering each request on an app's routes (`wasi:http/incoming-handler` scope) as a call; host terminates HTTP and TLS and routes by host/path (see "HTTP ingress") | Cowboy, inets | Undertow web container | 2 |
 | HTTP egress | `wasi:http/outgoing-handler` through the host's filter and connection pool | `httpc` | — | 2 |
 | Sockets | `wasi:sockets` with allow-list; readiness as messages (`paddock:io`) | `gen_tcp`, `gen_udp` (`{active, once}`) | — | 3 |
-| Database pools | `paddock:sql` against named datasources | — | JDBC datasources | 3 |
+| Database pools | `paddock:sql` against named datasources (Postgres) | — | JDBC datasources | 2 |
 | Metrics and tracing | `paddock:metrics` (per-app counters, gauges, histograms) and host counters, exported as Prometheus text (`[metrics]`, `/v1/metrics`); OTLP push later | `telemetry` | Metrics subsystem | 2 |
 | Introspection | Admin API: apps, pids, mailbox depth, memory, restarts; message trace through USDT probes (OBSERVABILITY.md) | `observer`, `recon`, `dbg` | Management console | 1 (probes, `ps`); 2 (cluster-wide) |
-| Placement and failover | Cluster controller | `dist_ac`, takeover | HA singleton | 3 |
+| Placement and failover | Singletons and hot standbys on an HA pair with a witness; moved with their state in a switchover | `dist_ac`, takeover | HA singleton | 2b; moves 3 |
 | Distributed transactions | Not provided | — | JTA | Never |
 
-**Node and admin API (Phase 1).**
+**Node and admin API.**
 - The node (`paddock node`) keeps a deploy store under its data directory: each app's signed bundles by version (the current one and one previous, for rollback), extracted `priv/` files, a desired-state file, the keyvalue database, and an append-only JSON-lines audit log.
 - On restart the node verifies every bundle again against its current trusted keys and policy, then starts the apps that were running, in deploy order. An app that no longer verifies is reported as failed.
-- The admin API is JSON over HTTP/1.1 on a Unix socket created with mode 0600. Access to the socket is the authorization; there is no other authentication in Phase 1. Routes are under `/v1`.
-- Besides the planned operations, the API has `call`, which sends a message to an app through its pool's routing, for operators and integration tests. Windows has no Unix sockets, so its admin API (a named pipe) is deferred.
+- The admin API is JSON over HTTP/1.1 on a Unix socket created with mode 0600, where access to the socket is the authorization, and optionally over TLS with pinned operator keys ("Operating a node"). Routes are under `/v1`.
+- Besides the planned operations, the API has `call`, which sends a message to an app through its pool's routing, for operators and integration tests. Windows has no Unix sockets, so a node does not run there (a named pipe was deferred); the remote admin API serves operators on any platform.
 - A deploy runs the deployment checks in order: signature against trusted keys, checksums (component and `priv/` files), world, `appserver` section, imports against declared capabilities, then the effective grant under operator policy. The resulting grants, denials, deny-stubbed imports and unenforced fields are recorded in the audit log and shown by `paddock status`.
 
 **Term storage notes.** Keys are strings and values are bytes, matching `wasi:keyvalue`. Buckets are per app and namespaced by the host, so apps can't read each other's data. Sharing data between apps goes through messages or a shared bucket granted to each ("Shared buckets and watches" below). Atomic increment and compare-and-swap come from `wasi:keyvalue/atomics`.
@@ -456,7 +457,7 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 - `wasi:config` returns `io("access-denied")`; that interface has no denial case.
 - `wasi:keyvalue` returns `access-denied`, as does opening a bucket the manifest does not list.
 - `wasi:filesystem` sees no preopens.
-- An imported interface no host implements (`wasi:http` and `paddock:*` services before their phase, or anything unknown) gets deny stubs: functions return their error type's `access-denied` case (or `permission-denied`, `access`, `HTTP-request-denied`), or trap when they have no error channel.
+- An imported interface no host implements (a service a node was built without, such as `wasi:http/outgoing-handler` without the `egress` feature, or anything unknown) gets deny stubs: functions return their error type's `access-denied` case (or `permission-denied`, `access`, `HTTP-request-denied`), or trap when they have no error channel.
 
 **Host service pattern.** Each guest-facing service other than `process` is a module under `paddock-host`'s `services`, with the same shape:
 - A capability and the WIT interfaces it links. Imports of those interfaces are never deny-stubbed.
@@ -476,7 +477,7 @@ Linking happens once per engine, so a host call is a direct call on the service'
 - Named resources (buckets, datasources) are declared in the manifest and bound in node configuration.
 - Usage is limited per app (rate limits, quotas, connection caps), and each operation is a probe point.
 
-**Host service details (Phase 1).**
+**Host service details.**
 - Log records and captured stdout (info) and stderr (warn) go to the `paddock::guest` target, each tagged with app, version and pid. Records below the app's level are dropped. A token bucket per app, shared by its instances, enforces `rate_limit_per_sec` and reports how many records it dropped.
 - Keyvalue counters (`increment`) are decimal strings, as in wasmtime's host. Each batch call is one transaction and passes or fails its quota check as a whole. `list-keys` pages 256 keys at a time.
 - Disk buckets share one redb file under the node's data directory. Writes run on tokio's blocking pool (they fsync); reads run on the calling worker, usually from redb's page cache, because the hop to the blocking pool costs about 20 µs (S14). Either way the time counts as host time, not against the callback deadline.
@@ -486,7 +487,7 @@ Linking happens once per engine, so a host call is a direct call on the service'
 A shared bucket is the bulletin board between apps: the role of a public ETS table on one node, and of a Mnesia table read from a local copy in a cluster. Reading it is a host call (2.4 µs for a 16-byte read from a `disk` bucket on the 16-core development machine, 2026-10-07), not a message to another instance, and a write is seen by every reader at once.
 
 - Shared buckets are named and bound in node configuration (`[buckets.<name>]`), like volumes and datasources. An app's manifest lists the shared buckets it uses (`wasi:keyvalue`'s `shared`), each read-only or read-write, and operator policy grants each one (`buckets`). Writes check the bucket's quota as for app buckets; the quota covers every app writing it.
-- Each bucket has a `scope`: `node` (one node's copy) now, `cluster` (replicated) later. Apps written against a `node` bucket keep working when the operator moves it to `cluster`; only the consistency and failure rules below change.
+- Each bucket has a `scope`: `node` (one node's copy) or `cluster` (replicated on an HA pair). Apps written against a `node` bucket keep working when the operator moves it to `cluster`; only the consistency and failure rules below change (a bucket that changes scope starts empty).
 - Every write gives the key a new revision, a number that increases per bucket. Compare-and-swap takes an expected revision (as etcd's transactions do), so a writer can update a value without a lock and without comparing the value's bytes.
 - A watch subscribes an instance to a key or a key prefix. The host delivers `host-event("kv-changed", …)` with the bucket, key and revision, not the value; the subscriber reads the current value. Notices are conflated per key: while a notice for a key is waiting in the subscriber's mailbox, later writes to that key update its revision instead of adding notices. A slow subscriber misses intermediate values but always sees the latest, and watch notices never count as dropped casts.
 - A subscriber that restarts can resume from the last revision it handled; if the bucket no longer keeps changes that old, the host says so and the subscriber rereads the keys it watches. Watches end when the instance exits, like monitors.
@@ -497,7 +498,7 @@ A shared bucket is the bulletin board between apps: the role of a public ETS tab
 
 This is the platform's job rather than an app's: an app holding the board would serialize every read through one instance on one core, lose the board when it crashes, and turn every subscriber into a message across the network.
 
-For a `cluster` bucket (Phase 3), replication is synchronous between the HA pair, with the witness breaking ties (decided 2026-10-16, modelled in spike S20): the leader is the failover primary at its epoch, so writes stay on the LAN while one node is down, and the model and its leases extend what failover already verified. Raft (openraft) was the alternative; with a pair and a witness across a WAN, every write would wait on the WAN while one HA node is down. Clusters of many nodes are later work. The guest interface above fits either. Spike S20's model (2026-10-17) fixed the rules: an entry commits once the standby has written it to disk, or on the primary alone once the witness has recorded, at the primary's epoch, that the standby is out of date; the witness then refuses to promote the standby until the primary reports it caught up, which it does only after returning to synchronous mode. A promotion clears the record and the new primary starts in synchronous mode, so a pair that never commits alone never has a record standing, and failover on a pair that does not replicate is unchanged. Replication runs only where configured (`[failover] replication`, or a `cluster` bucket), because a primary running it alone gets its standby recorded out of date even with no data to replicate, and a standby so recorded cannot be promoted until it catches up. One log carries every `cluster` bucket of the pair and every app's own `replicated` bucket (as `<app>/<bucket>`), in the same redb file as the node's disk buckets. A new primary appends a no-op and serves linearizable reads only after committing an entry of its own epoch, and only while it holds its lease. Writes need no lease for safety (a stale primary gets no acks and no record) but are refused without one anyway. A standby catches up from the log, or from a snapshot that keeps the entries after it the standby already holds; how much log to keep is a performance choice. Writes from any node are forwarded to the leader and commit once replicated: a network round trip plus an fsync, so a replicated write costs more than a cast, and the board suits state (point tables, configuration, leadership) rather than streams. Every node applies the log to a full local copy. Reads come from that copy by default (they may trail the leader slightly), and a read can ask to be linearizable (`paddock:watch`'s `get-linearizable`), which goes through the leader. Watches are delivered by each node from its own copy as it applies changes, so a notice never crosses the network per subscriber. In a minority partition, reads keep working and writes fail with an `unavailable` error, so apps can degrade. Two later options: keys owned by a pid (etcd leases, ZooKeeper ephemeral nodes), removed when the owner exits or its node is lost, for presence and election; and a `mirrored` durability, replicated asynchronously from the leader like Redis, for high-rate data whose last few updates may be lost on failover because the app re-reads its sources (a SCADA app re-polls its devices).
+For a `cluster` bucket, replication is synchronous between the HA pair, with the witness breaking ties (decided 2026-10-16, modelled in spike S20): the leader is the failover primary at its epoch, so writes stay on the LAN while one node is down, and the model and its leases extend what failover already verified. Raft (openraft) was the alternative; with a pair and a witness across a WAN, every write would wait on the WAN while one HA node is down. Clusters of many nodes are later work. The guest interface above fits either. Spike S20's model (2026-10-17) fixed the rules: an entry commits once the standby has written it to disk, or on the primary alone once the witness has recorded, at the primary's epoch, that the standby is out of date; the witness then refuses to promote the standby until the primary reports it caught up, which it does only after returning to synchronous mode. A promotion clears the record and the new primary starts in synchronous mode, so a pair that never commits alone never has a record standing, and failover on a pair that does not replicate is unchanged. Replication runs only where configured (`[failover] replication`, or a `cluster` bucket), because a primary running it alone gets its standby recorded out of date even with no data to replicate, and a standby so recorded cannot be promoted until it catches up. One log carries every `cluster` bucket of the pair and every app's own `replicated` bucket (as `<app>/<bucket>`), in the same redb file as the node's disk buckets. A new primary appends a no-op and serves linearizable reads only after committing an entry of its own epoch, and only while it holds its lease. Writes need no lease for safety (a stale primary gets no acks and no record) but are refused without one anyway. A standby catches up from the log, or from a snapshot that keeps the entries after it the standby already holds; how much log to keep is a performance choice. Writes from any node are forwarded to the leader and commit once replicated: a network round trip plus an fsync, so a replicated write costs more than a cast, and the board suits state (point tables, configuration, leadership) rather than streams. Every node applies the log to a full local copy. Reads come from that copy by default (they may trail the leader slightly), and a read can ask to be linearizable (`paddock:watch`'s `get-linearizable`), which goes through the leader. Watches are delivered by each node from its own copy as it applies changes, so a notice never crosses the network per subscriber. In a minority partition, reads keep working and writes fail with an `unavailable` error, so apps can degrade. Two later options: keys owned by a pid (etcd leases, ZooKeeper ephemeral nodes), removed when the owner exits or its node is lost, for presence and election; and a `mirrored` durability, replicated asynchronously from the leader like Redis, for high-rate data whose last few updates may be lost on failover because the app re-reads its sources (a SCADA app re-polls its devices).
 
 A bridge to an external Redis or etcd is an extension for sites that run one already, not the platform's board.
 
@@ -552,7 +553,7 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mutua
 
 Decided in the structure review (2026-10-10); stage 3 carried them out (2026-10-11); [OPERATIONS.md](OPERATIONS.md) is the operator's view.
 
-- **Build features.** A default build has the node, the HTTP ingress with TLS, probes and SQL datasources (idle without a datasource in node config). Modbus is a cargo feature, off by default: it adds a network server with no authentication of its own (`docs/SECURITY.md`, S4), and about 0.8 MB and 8 crates, to a node that may never use it. CI builds four sets: the default, all features, the node with no optional features, and the CLI without the node.
+- **Build features.** A default build has the node, the HTTP ingress with TLS and the remote admin API, HTTP egress, probes and SQL datasources (idle without a datasource in node config). Modbus is a cargo feature, off by default: it adds a network server with no authentication of its own (`docs/SECURITY.md`, S4), and about 0.8 MB and 8 crates, to a node that may never use it. CI builds four sets: the default, all features, the node with no optional features, and the CLI without the node.
 - **Layout.** One directory per node holds everything the node writes: `data_dir` (`/var/lib/paddock` by convention) with the deploy store, buckets, failover state, the audit log, the admin socket (as now) and compiled components under `compiled/`. One directory is simple to back up, move or wipe, and assumes no service manager. Configuration, keys and policy stay where the operator puts them (`/etc/paddock` by convention). An upgrade keeps the current and previous bundle of an app and removes older ones, as now.
 - **Logging.** A node writes to stderr and leaves keeping and rotating the output to journald or the container runtime; Paddock keeps no log files. A JSON format is an option for collectors. Each app's volume is bounded by its logging rate limit, which captured stdout and stderr also count against (S3).
 - **Privileges.** A node runs as its own unprivileged user. The example systemd unit grants only `CAP_NET_BIND_SERVICE`, for ingress ports below 1024; serial devices are reached through the `dialout` group; attaching bpftrace to the probes still needs root, for observation only; the virtual-IP agent is a separate process with its own capabilities.
@@ -561,7 +562,7 @@ Decided in the structure review (2026-10-10); stage 3 carried them out (2026-10-
 
 ## rustbridge integration
 
-Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and extend them. A `.rbp` bundle gains a `wasm` platform and an `appserver` manifest section. The same plugin source can then ship as a native library for Java/C#/Python hosts and as a Wasm app for the server.
+Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and extends them. A `.rbp` bundle gains a `wasm32-wasip2` platform and an `appserver` manifest section. The same plugin source can then ship as a native library for Java/C#/Python hosts and as a Wasm app for the server.
 
 **What maps directly**
 
@@ -576,7 +577,7 @@ Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and
 | Logging callback | Routed to `wasi:logging` |
 | Concurrency limits and backpressure | Mailbox limits and `overloaded` |
 
-**Proposed extensions** (bundle version 1.2)
+**Extensions** (bundle format 1.2, on rustbridge's `experiment/wasm` branch until a release includes it)
 
 ```json
 {
@@ -612,10 +613,9 @@ Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and
 
 **Code changes in rustbridge**
 
-- A guest adapter crate: a `Plugin` implementation compiled to `wasm32-wasip2` that exports the `paddock:runtime/app` world. `handle_request(type_tag, payload)` maps to `handle-call`/`handle-cast`; the adapter adds `handle-info` and snapshot defaults.
-- An optional `Server` trait beside `Plugin` for apps that want links, monitors, timers and outbound calls through a `ProcessContext`.
-- `rustbridge bundle create` accepts a `.wasm` component and an `appserver` section, and validates imports against declared capabilities.
-- A native-process runner: a small host binary that loads a `.so` from the bundle and speaks the envelope protocol over stdin/stdout or a Unix socket. The server supervises it like any instance.
+- Done on the `experiment/wasm` branch: format 1.2 (the `wasm32-wasip2` platform, a variant's `component.world`, extension sections kept, trusted-key verification, a signed checksum map for data files).
+- Not started: a guest adapter crate, a `Plugin` implementation compiled to `wasm32-wasip2` that exports the `paddock:runtime/app` world (`handle_request(type_tag, payload)` mapping to `handle-call`/`handle-cast`, with `handle-info` and snapshot defaults); and an optional `Server` trait beside `Plugin` for apps that want links, monitors, timers and outbound calls.
+- Built in Paddock instead: bundling (`paddock bundle` accepts a component or a native program and an `appserver` section, and checks imports against declared capabilities), and the native-process runner (`paddock-runner`, which loads a plugin through `rustbridge-consumer` or executes a program, over pipes; spike S19).
 
 **What stays out of rustbridge.** The server, distribution, registry and supervision live in a separate project. rustbridge remains a packaging and plugin-ABI library with no dependency on the server.
 
@@ -623,16 +623,16 @@ Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and
 
 - **S1 (callback model): confirmed.** Async host imports with a synchronous guest ABI let a guest wait in `call` without holding a thread. Epoch interruption with a per-tick `Yield` gives fair preemption (1 ms worst probe latency on one worker thread while a guest spins). `callback_deadline_ms` measures guest execution time, excluding time inside host imports. Killing an instance means dropping its call future and discarding the Store; a dropped Store is poisoned and must never be reused. Host instances on tokio's multi-threaded runtime, not `current_thread` + `LocalSet`. Details: `spikes/s1/README.md`.
 - **S3 (WASI target): WASI 0.2.** wasmtime 49 compiles WASI 0.3 in by default but still calls component-model async very incomplete, and Rust has no `wasm32-wasip3` target. `paddock:runtime@0.1.0` stays synchronous on WASI 0.2; a later `@0.2.0` world can add async. Details: `spikes/S3-wasi-target.md`.
-- **S4 (capabilities): confirmed, with Paddock's own stubs.** `component_type().imports()` lists every import at deploy time; undeclared `paddock:*` imports are refused. Ungranted capabilities get typed deny stubs built with `func_new` from the function's type. wasmtime's `define_unknown_imports_as_traps` breaks WASI resource types and must not be used. WASI is always linked and narrowed through `WasiCtx` (preopens, socket checks, env). Socket policy needs separate bind and connect rules, because Rust std binds `0.0.0.0:0` before every connect. Details: `spikes/s4/README.md`.
+- **S4 (capabilities): confirmed, with Paddock's own stubs.** `component_type().imports()` lists every import at deploy time; undeclared `paddock:*` imports are refused. Ungranted capabilities get typed deny stubs built with `func_new` from the function's type. wasmtime's `define_unknown_imports_as_traps` is not used: a trap stub kills the instance on the first call where a typed stub returns `access-denied` (on wasmtime 49 it also broke WASI resource types; fixed in 50). WASI is always linked and narrowed through `WasiCtx` (preopens, socket checks, env). Socket policy needs separate bind and connect rules, because Rust std binds `0.0.0.0:0` before every connect. Details: `spikes/s4/README.md`.
 - **S5 (snapshot upgrade): confirmed.** An upgrade is a mailbox message handled between callbacks, so senders keep the same pid and nothing is lost. 4,000 of 4,000 concurrent messages applied exactly once across three upgrades; each swap paused the instance 0.2 to 0.35 ms with pre-compiled components; a failing `load-snapshot` reverted with state intact. Details: `spikes/s5/README.md`.
 - **S11 (passivation): works, as a host feature off by default.** An idle instance runs `save-snapshot` and drops its Store, keeping its pid, mailbox, links, names, timers and services' state host-side; a call, cast, timer or trapped exit signal wakes it with its state (`load-snapshot` with its own version) in about 64 to 101 µs at p50, against 6 to 10 µs for a live call. A passivated instance holds no Store slot, so a node holds far more instances than the address space allows Stores: 100,000 on 1,000 slots, about 25 KiB of RSS each against 69 KiB live. Calls that wake instances need eviction under pressure: an instance waiting for a slot has the instance idle longest passivate at once (idle timers alone capped them at slots ÷ idle time). An instance stays live while its app has not opted in, a caller waits on a deferred reply, or its guest holds a host resource. Measured on 2026-10-15. Apps opt in with `instances.passivate_after_ms`; a deploy is refused when the instances that never passivate would hold every Store slot, and a start or wake that finds no slot within its `init_timeout` fails rather than waiting for good. Details: `spikes/s11/README.md`.
 - **S2 (instance cost): cheap.** About 35 µs to instantiate (pooling) and 30–40 KiB resident per idle instance; 0.57 µs per host→guest call; 1.1 µs per same-worker actor round trip. The limit is virtual address space: about 4–8 GiB reserved per instance by default (about 15,000 instances per node), about 260 MiB with 128 MiB reservations (20,000 tested). Pooling needs `total_stacks` sized to the instance count, because each live Store holds a fiber stack. Details: `spikes/s2/README.md`.
 - **S6 (bundles): reusable with upstream changes.** `rustbridge-bundle` 1.0.1 works as a library but rejects bundle version 1.2 and the `wasm32-wasip2` platform, and drops unknown sections such as `appserver`. Its signature check defaults to a key carried inside the bundle; Paddock always verifies against operator-trusted keys. Seven rustbridge changes are listed in `spikes/s6/README.md`.
 - **S7 (WASI hosts):** use wasmtime's crates for core WASI, `wasi:config` and `wasi:http`. `wasmtime-wasi-keyvalue` is a demo (writes don't persist past a bucket handle), and there is no `wasi:logging` host, so Paddock writes both. Details: `spikes/S7-wasi-host-crates.md`. (Paddock also writes its own `wasi:config` host, two functions, because the crate's host cannot deny access.)
-- **S8 (guest versus native speed): 1.0x to 2.4x for compute; about 2 µs per call.** Measured through `paddock-host` with identical source compiled both ways. Plain integer code matches native (software SHA-256 at 1.02x, fannkuch-redux 1.56x). The gaps come from CPU features wasm lacks: native SHA-256 with SHA extensions is about 6.8x faster, and n-body runs at 2.35x scalar and 1.82x with wasm `simd128`. A call into an instance costs 2 µs on the same worker and 4.8 µs across threads, so Paddock suits messages carrying more than tens of microseconds of work. Message bodies are copied in and out through the canonical ABI at about one `memcpy` each (about 28 µs per MiB). Against languageshootout.com's figures, guest compute sits between the JVM and Node and is 5–15x faster than BEAM; the methods differ, so that comparison is rough. Details: `spikes/s8/README.md`.
+- **S8 (guest versus native speed): 1.0x to 2.4x for compute; about 2 µs per call.** Measured through `paddock-host` with identical source compiled both ways. Plain integer code matches native (software SHA-256 at 1.02x, fannkuch-redux 1.56x). The gaps come from CPU features wasm lacks: native SHA-256 with SHA extensions is about 6.8x faster, and n-body runs at 2.35x scalar and 1.82x with wasm `simd128`. A call into an instance costs 2 µs on the same worker and 4.8 µs across threads, so Paddock suits messages carrying more than tens of microseconds of work. Message bodies are copied in and out through the canonical ABI at about one `memcpy` each (about 28 µs per MiB). Against languageshootout.com's figures, guest compute sits between the JVM and Node and is 5–15x faster than BEAM; the methods differ, so that comparison is rough. Details: `spikes/s8/README.md`. On ordinary app code (serde JSON, regex, Markdown, a `BTreeMap`) guests run at 1.4 to 2.6 times native, much of it epoch checks (BASELINE.md, 2026-10-25).
 - **S13 (host-owned listeners, connections as guest streams): works at native throughput.** One listener with several accept tasks hands each connection to a new instance as `wasi:io` streams; this matched native hyper from 4 to 64 connections, a new connection costs about 40–65 µs more (instantiation), a trapping guest loses only its connection, and swapping the component under load lost no requests. A connection handler needs its own world and timeout rules. Details: `spikes/s13/README.md`.
 - **S15 (HTTP in the guest versus the host): terminate protocols in the host.** Host hyper calling a pooled instance per request keeps about 75% of native throughput (115k against 152k requests/s, 32 connections); `wasi:http` with a new instance per request about 15%; a guest that owns its socket matches native latency on one connection but is capped at one core. `wasi:http` egress costs what a native new-connection request costs, because wasmtime's sender does not pool connections. Details: `spikes/s15/README.md`.
-- **S14 (storage and host calls): host services are cheap to call; I/O and scheduling dominate.** A host import round trip costs about 140 ns; a small keyvalue read through the whole path about 1.2 µs more than native redb, once the service stops sending reads to tokio's blocking pool (today about 20 µs per read). Moving a 64 KiB value through the keyvalue path costs 10–22 µs, mostly allocations and copies around the canonical ABI copy. redb runs inside a guest (1.0–1.5x native in memory), but on files every write is a WASI call (unsynced writes 4–6x native), so durable storage stays a host service. Details: `spikes/s14/README.md`.
+- **S14 (storage and host calls): host services are cheap to call; I/O and scheduling dominate.** A host import round trip costs about 140 ns; a small keyvalue read through the whole path about 1.2 µs more than native redb, once the service stops sending reads to tokio's blocking pool (it did then, about 20 µs per read; reads now run on the calling worker). Moving a 64 KiB value through the keyvalue path costs 10–22 µs, mostly allocations and copies around the canonical ABI copy. redb runs inside a guest (1.0–1.5x native in memory), but on files every write is a WASI call (unsynced writes 4–6x native), so durable storage stays a host service. Details: `spikes/s14/README.md`.
 - **S16 (failover): a lease keeps one runner.** A TLA+ model of an HA pair and a witness: with a lease renewed through the partner or the witness (only at the witness's epoch), and promotions granted only once the old primary's lease is gone, no reachable state runs a singleton on two nodes under crashes, restarts, and network, serial, WAN and witness failures. Without the lease, network and serial cut together while both nodes live gives two runners; with a serial line that fails only with a node, the lease is not needed. Each of the four lease guards is needed. Details: `spikes/s16/README.md`.
 - **S20 (replication within the pair): a Raft-shaped log plus a record at the witness.** A TLA+ model of a replicated bucket on the failover pair, on S16's layer: with seven rules (commit on the standby's ack, or alone once the witness records the standby out of date; back to sync before clearing the record; disk before ack; a no-op per epoch; a read barrier and the lease for reads; catch-up by entries or a snapshot, resent on a timeout; a snapshot that keeps the suffix it matches), no committed write is lost or replaced and every linearizable read sees exactly the committed history, with one failure at a time and planned switchovers, exhaustive to about 2.2 billion states. Each rule switched off gives a counterexample, two of them with no failure at all. Writes need no lease; reads do, once three links fail at once. The log's length is a performance choice. The implementation changed two rules for availability, both checked in the model: a promotion clears the record and the new primary starts in sync mode, and an alone primary returns to sync mode while writes continue. Details: `spikes/s20/README.md`.
 - **S19 (ports or nodes for native processes): a port.** A rustbridge plugin run by a runner the node spawns, over stdin and stdout, answers a call in about 37 µs at p50 (a call between nodes over QUIC takes 106 µs, within a node 3.5 µs), reaches about 400,000 calls/s with calls in flight on one thread, starts in 1.9 ms and holds 3.8 MiB; the node sees a crash through the pipe in about 0.3 ms once the runner is non-dumpable (a core dump piped to apport held it for a second). Only a process the node spawns can be limited and stopped by it (Landlock in the runner before the plugin loads, a cgroup with `memory.max` and `pids.max` under a delegated subtree, rlimits, the parent-death signal), and a cluster member's stamps are trusted, so a plugin joined as a node would pass the messaging ACLs on its own word. Gaps: Landlock restricts TCP by port, not address, and before Linux 6.12 cannot stop signals to the node. Details: `spikes/s19/README.md`.
@@ -640,7 +640,7 @@ Paddock reuses rustbridge's bundle format, signing, lifecycle and transport, and
 
 ## WASI 0.2 to 0.3 migration
 
-Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover. Phase 1 targets WASI 0.2 with a synchronous guest ABI (`paddock:runtime@0.1.0`); see Spike findings.
+Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover. Paddock targets WASI 0.2 with a synchronous guest ABI (`paddock:runtime@0.1.0`); see Spike findings.
 
 **Why migration is feasible**
 
@@ -653,25 +653,25 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 **Rules that keep it cheap**
 
 1. **No 0.2-specific types in `paddock:runtime`.** WASI 0.2 models async I/O with `wasi:io` pollables and stream resources; 0.3 replaces them with native `stream<T>` and `future<T>`. The world uses only plain values (strings, records, `list<u8>` envelopes) so it never depends on either model.
-2. **Apps use `paddock-sdk`, not raw bindings.** Rust apps go through the `App` trait and `ProcessContext`, so a WASI change is absorbed inside the SDK and most apps migrate by bumping it.
-3. **The host selects its linker per world version** from Phase 1 on, even while only one version exists. Adding the 0.3 linker is then additive.
+2. **Apps use `paddock-sdk`, not raw bindings.** Rust apps go through the `App` trait and `Ctx`, so a WASI change is absorbed inside the SDK and most apps migrate by bumping it.
+3. **The host selects its linker per world version** from the start, even while only one version exists. Adding the 0.3 linker is then additive.
 4. **CI covers mixed versions** once 0.3 is usable: a 0.2 app and a 0.3 app calling each other, and a 0.2 to 0.3 snapshot upgrade.
 
 **Limits**
 
-- 0.3's final shape may still change before it stabilizes. That is why Phase 1 waits.
+- 0.3's final shape may still change before it stabilizes. That is why Paddock waits.
 - Async inside guests is a semantic change. If `@0.2.0` allows several in-flight calls per instance, apps that opt in must handle concurrent access to their state. It is opt-in, not part of migration.
 - wasmtime will eventually deprecate 0.2, likely years out. The per-app upgrade path is how the fleet gets off it.
-- **Revisit trigger:** wasmtime drops the "very incomplete" note on component-model async, or Rust adds a `wasm32-wasip3` target. Check at each phase review.
+- **Revisit trigger:** wasmtime drops the "very incomplete" note on component-model async, or Rust adds a `wasm32-wasip3` target. Check at each wasmtime major upgrade (wasmtime 50, 2026-10-25: still so).
 
 ## Risks
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | WASI churn (0.2 to 0.3 async, proposals still moving) | Guest ABI breaks; wasmCloud went through large rewrites for this reason | Version the `paddock` world; host supports two world versions at once; keep custom interfaces small; see WASI 0.2 to 0.3 migration |
-| Distributed semantics (partitions, false node-down, name conflicts) | Hard bugs, lost trust | Erlang-level guarantees only; global names opt-in behind Raft; partition tests (e.g. with toxiproxy) in CI |
+| Distributed semantics (partitions, false node-down, name conflicts) | Hard bugs, lost trust | Erlang-level guarantees only; failover and replication model-checked in TLA+; deterministic simulation with random faults in CI and nightly; fault-injection soaks against node processes; global names parked |
 | Upgrade developer experience | Teams avoid upgrades or ship broken snapshots | SDK-derived snapshots, automatic revert, canary rollouts, `restart` mode as the easy default |
-| Small-team maintenance (Lunatic stalled) | Project dies | Build on wasmtime, quinn, rustls, redb, openraft; minimal custom runtime code; keep scope phased |
+| Small-team maintenance (Lunatic stalled) | Project dies | Build on wasmtime, quinn, rustls, redb; minimal custom runtime code; keep scope phased |
 | Host API attack surface | Sandbox escape through a host function | Small import set, fuzz host functions, policy check on every call |
 | Guest language support beyond Rust | Narrow adoption | Rust first; JS and Python via componentize tools; Go via wit-bindgen-go; test each per release |
 | Address space at high instance counts | Instantiation failures | Pool sizing, guard-size tuning, alerts |
@@ -685,17 +685,13 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 - [ ] Is selective receive needed, or are call refs plus deferred reply enough?
 - [x] Messaging ACL by app name, by registered name, or by capability token? By app name, through routes declared in the manifest (`messaging_acl.may_call`, `accept_from`), checked against the sender identity the host stamps on every message, which a guest cannot forge. This follows Fuchsia's declared `use` and `expose` routes. Capability tokens (endpoint handles passed in messages, as seL4 does) are parked.
 - [x] Ship the server as a library (embedded in another binary) as well as a daemon? Yes, for host services: `paddock::node::run` and `Node::open_with` take extensions.
-- [ ] How far to go with native-process plugins before Phase 3?
+- [x] How far to go with native-process plugins? A port, not a node (spike S19): one restricted process per instance through `paddock-runner`, with the process functions over its pipe (Phase 3, N2).
 - [ ] Should a node that is still `Down` promote itself when its partner is lost? A node starts `Down` and becomes standby only once it hears a primary; a `Down` node rejoins a primary or resumes a role the witness gave it, and never asks to be promoted (FailoverL2.tla, `StepDownNode`). If the primary dies before its partner has become standby (both starting together, or the partner restarting just then), nobody runs the singletons until the primary returns, even with the witness up. Found with the tutorial's chapter 2 (`examples/tutorial`), by killing the primary 0.2 s after it was promoted. A change belongs in the model first: for example, a `Down` node that hears no primary for a lease could ask the witness as a standby would.
 - [ ] Should a member that stays silent be dropped from membership after a while? Today it stays a member, with its session ended, until it answers or leaves ("Membership"), so a node that crashed and never returns is listed forever and redialed (by the lower node id, or as a seed). Dropping it after a timeout would tidy the list and stop the redials, but a node back from a long outage would then have to rejoin through a seed instead of being redialed, and a too-short timeout would turn a network cut into a membership change. A clean leave is delivered reliably since 2026-10-09, so only crashed or retired nodes linger; an operator command to forget a node is the other option.
 
-## Roadmap
+## Phases
 
-The phases in outline; [ROADMAP.md](ROADMAP.md) is the plan, with tracks, order and status.
-
-1. **Phase 1: single node.** Deploy `.rbp` with a Wasm component; instances, mailboxes, call/cast, timers; links, monitors, host supervisors; memory, deadline and mailbox limits; logging, config, keyvalue (memory and disk), preopened files; snapshot upgrade with revert; admin CLI. *Exit: two sample apps survive kill, crash-loop and upgrade tests.*
-2. **Phase 2a: platform on one node.** Host-service pattern, I/O and protocols (host-owned listeners, extensions for protocols and serial lines), HTTP ingress and egress, secrets, metrics and tracing, introspection, scale and platform baselines. **Phase 2b: cluster.** Failover of singleton and hot-standby apps first; QUIC mesh with mTLS, static seeds; remote pids, links, monitors and `noconnection`; process groups; messaging ACLs. Phase 2a also adds coordination between apps on one node: host-object quotas, local process groups with publish, shared buckets and revisioned watches. *Exit: three-node cluster passes partition and node-loss tests.*
-3. **Phase 3: application server, for an HA pair and a witness** (planned 2026-10-16). Replicated buckets (synchronous within the pair, local reads, watches from the local copy), moving instances between the pair, releases across the pair, blue-green upgrades, guest sockets, native-process plugins. Placement across many nodes, global names, more guest SDKs and fuel metering are parked. *Exit: the SCADA reference app runs a full release cycle with zero downtime.*
+Phases 1 to 3 are done: a single node, then the platform on one node and a cluster with an HA pair and a witness, then replicated state and releases across the pair. [ROADMAP.md](ROADMAP.md) has each phase's scope and exit, what is left, and what is parked.
 
 ## Sources
 

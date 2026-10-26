@@ -124,10 +124,8 @@ Done on 2026-10-15: B7, `scripts/bench.sh`, the benchmark suite; its first run i
 
 ## Doc debt
 
-Docs known to be out of date, cleared by W1:
+Docs known to be out of date, cleared by W1: none left (2026-10-25).
 
-- DESIGN.md places SQL datasources in Phase 3; E5 is now in stage 5.
-- DESIGN.md's roadmap section repeats parts of this plan.
 
 ## Phase 3
 
