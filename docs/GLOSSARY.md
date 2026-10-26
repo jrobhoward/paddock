@@ -6,6 +6,7 @@ Two words have more than one meaning:
 
 - **Epoch:** the wasmtime epoch, which the epoch ticker advances (see "Epoch tick"), or a failover epoch, the HA pair's fencing token (see "Failover epoch"). They are unrelated. The docs write "epoch tick" or "epoch check" for the first and "failover epoch" for the second.
 - **Snapshot:** the bytes an app's `save-snapshot` writes (its state), or a copy of the replicated log's buckets sent to a partner that has fallen too far behind. The second is called a log snapshot.
+- **S and R numbers:** S1 to S20 are spikes, and S1 to S9 also the security findings in [SECURITY.md](SECURITY.md); R1 to R14 are the model-checked rules, and R1 to R5 also the 2026-10-10 review items in ROADMAP.md. The docs name the kind ("spike S8", "finding S4", "rule R6") where it is not clear from the file.
 
 ## Apps and instances
 
@@ -25,6 +26,8 @@ Two words have more than one meaning:
 - **Placement:** where an app's instances run in a cluster: `any`, `singleton` (one instance in the cluster; on an HA pair, on the primary only), `all-nodes`, or `hot-standby` (on both pair nodes, each told its role). [MANIFEST.md](MANIFEST.md).
 - **Singleton:** an app with `placement.mode = "singleton"`.
 - **Extension:** a host service from a crate outside `paddock-host` (`paddock-modbus`, the greeter example), linked into a node binary.
+- **Hot standby:** an app with `placement.mode = "hot-standby"`: an instance on both nodes of an HA pair, each told its role (`failover-role` host event), for an app that keeps a warm copy and takes over itself.
+- **Priv files:** files bundled with an app (`paddock bundle --priv`), read-only at `/priv` in a component, or in the directory `PADDOCK_PRIV` names for a native app.
 
 ## Messages
 
@@ -65,25 +68,29 @@ Two words have more than one meaning:
 - **Epoch tick:** the moment the host's epoch ticker (an OS thread, `paddock-epoch`) advances wasmtime's epoch counter, every `epoch_tick_ms` (2 ms by default; 10 ms before 2026-10-07). Compiled guest code checks the counter at every function entry and loop back edge (the epoch check). At each tick, a running guest yields its tokio worker so other instances run, and a guest past its callback deadline traps. The tick bounds how long a busy instance holds a worker. Measured cost: [BASELINE.md](BASELINE.md), "Epoch interruption".
 - **Epoch check:** the load, compare and branch that wasmtime compiles into guest code for epoch interruption.
 - **Call hook:** wasmtime's hook on every entry to and return from a host function. Paddock does not install one: the callback clock times the task's polls of a callback instead (2026-10-24; the hook cost about 5% of an empty call).
+- **Callback clock:** the guest time of the callback running now: the time the instance's task spends polling it, which stops while a host function waits. The epoch callback compares it with the callback deadline.
 - **Compiled-code cache:** compiled components kept on disk (`compiled/` under the data directory), so a restarted node deserializes them instead of compiling again. Read only if the file and its directory belong to the node's user and neither is writable by group or others.
 - **Deny stub:** a function that stands in for an import the operator did not grant and returns `access-denied`, so a component with an ungranted import still links.
 
 ## Capabilities and services
 
-- **Capability:** a named permission an app declares in its manifest (`wasi:keyvalue`, `http-egress`, a datasource and so on).
-- **Policy:** the operator's rules for what apps may be granted, in node config.
+- **Capability:** a host interface an app declares under `capabilities` in its manifest, with the scope that narrows it (`wasi:keyvalue` with its buckets, `wasi:http/outgoing-handler` with its `allow` list, `paddock:sql` with its datasources). [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance).
+- **Policy:** the operator's file of what apps may be granted (`policy` in node config names it): defaults, per app and per signer, plus the shared buckets, secrets and datasources each may use.
+- **Signer:** a minisign key whose bundles a node runs (`trusted_keys`); policy can grant by signer.
 - **Grant:** the capabilities an instance gets: what the manifest asks for, narrowed by policy (the effective grant). Imports outside it get deny stubs.
 - **Host service:** an interface the host implements for guests (config, keyvalue, groups, logging, secrets, metrics, egress, sockets, SQL), each on the `Service` pattern. [DESIGN.md](DESIGN.md), "Host services".
 - **Ingress:** the node's HTTP server: a request to a route becomes a call to the owning app's pool.
 - **HTTP handler:** a `wasi:http/proxy` component given a new instance per request, with no mailbox.
 - **Listener, connection handler:** a TCP port whose every accepted connection gets a new instance of a `paddock:connection` component.
 - **Egress:** outgoing HTTP from a guest through `wasi:http`, filtered by the manifest's `allow` and node config's ceiling, through the node's connection pool.
+- **Volume:** a host directory node config names (`[volumes]`), mapped into a guest path by a manifest preopen, read-only or read-write.
+- **Datasource:** a Postgres database node config binds (`[datasources.<name>]`), pooled, that granted apps query through `paddock:sql` by name.
 
 ## Storage
 
 - **Bucket:** a key-value namespace through `wasi:keyvalue`, an app's own or shared from node config's `[buckets]`. Durability: `memory` (survives instance crashes, not node restarts), `disk` (redb, synced) or `replicated` (kept whole on both nodes of an HA pair, through the replicated log). A shared bucket with `scope = "cluster"` is replicated the same way. [MANIFEST.md](MANIFEST.md).
 - **Watch:** a subscription to changes of a key or prefix in a bucket (`paddock:watch`); each change is delivered as a host event. Notices for a watcher that falls behind are conflated.
-- **Replicated log:** the HA pair's log of writes to replicated and cluster buckets, in the same redb file as the disk buckets. A write is acknowledged once both nodes have synced it.
+- **Replicated log:** the HA pair's log of writes to replicated and cluster buckets, in the same redb file as the disk buckets. A write is acknowledged once both nodes have synced it, or, with the standby gone, once the witness has recorded it out of date.
 - **Group commit:** writers arriving together sharing one synced append.
 - **Reserved buckets:** `@cluster` (the replicated buckets' namespace), `@handover` (snapshots of singletons moved in a switchover) and `@release` (the pair's formats version).
 
@@ -107,11 +114,15 @@ Two words have more than one meaning:
 - **Gate:** the node component that starts singletons when `may_run` is set and kills them when it drops.
 - **Promotion, switchover, override, bootstrap:** a standby becoming primary on the witness's grant; a planned handover from primary to standby; a promotion on an operator's confirmation when the witness cannot be reached; the first start of a pair, where the lower node id leads.
 - **Handover:** a singleton moved with its state in a switchover, through `@handover`.
+- **Out of date:** the witness's record that the standby lacks replicated writes the primary committed alone. While it stands, the witness grants that node no promotion, and a switchover to it is refused.
 - **Pair version (formats):** the version of what outlives a connection (the log, the `@cluster` records). It rises only by `paddock release finalize`.
+- **Release:** `paddock release`, an app upgraded on both nodes of a pair, standby first, each step gated on the app running at the new version; also the build-upgrade sequence that ends in `release finalize`. [OPERATIONS.md](OPERATIONS.md).
 
 ## Operations and project terms
 
 - **Admin API:** the node's JSON-over-HTTP API on its Unix socket (and over TLS with pinned keys), used by the `paddock` CLI.
+- **Operator:** whoever can use the admin API: the node's user on the socket, or an operator whose key the `[admin]` operators file lists, with the same rights.
+- **Contacts file:** the operator's list of nodes for `paddock shell` (`connect <name>`): each node's admin address and pinned key.
 - **Probe:** a USDT probe on the message path, for bpftrace and similar tracers. [OBSERVABILITY.md](OBSERVABILITY.md).
 - **Soak:** hours of fault injection against `paddock node` processes (`scripts/soak.sh`).
 - **Baseline:** the recorded benchmark figures in [BASELINE.md](BASELINE.md), from `scripts/bench.sh`.

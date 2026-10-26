@@ -84,7 +84,7 @@ sequenceDiagram
     Node-->>CLI: HTTP response
 ```
 
-The caller waits with its timeout; a reply after the timeout is dropped. A guest that exceeds its deadline traps at an epoch tick, and the instance exits with a reason its supervisor acts on. Guest time excludes host time: the Store's call hook stops the callback clock while a host function runs (`CallHook::CallingHost`) and starts it again on return, so a guest waiting in `process.call` or a keyvalue read is not charged for it.
+The caller waits with its timeout; a reply after the timeout is dropped. A guest that exceeds its deadline traps at an epoch tick, and the instance exits with a reason its supervisor acts on. Guest time excludes host time: the callback clock (`state::CallbackClock`) counts only the time the instance task spends polling the callback, so a guest waiting in `process.call` or a keyvalue read is not charged for it, and host work that does not wait is. wasmtime's call hook stays off (it cost about 5% of an empty call, B12).
 
 ### Between instances
 
