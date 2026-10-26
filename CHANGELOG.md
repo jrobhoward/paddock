@@ -127,6 +127,10 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- `connection____replaced_by_a_redial` (paddock-host's QUIC tests) waits
+  for node 1 to hold one connection to node 2 instead of checking at once:
+  it failed on a CI runner with none held for a moment after the redial
+  (ROADMAP, stage 5: cluster connections).
 - Two tests that failed once each under `scripts/check.sh`'s load. The
   native runner test now waits for every stderr line before checking them
   (`Port::exit_code` joins the thread that copies them). The board, SCADA
