@@ -8,6 +8,13 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `max_core_instances_per_component` in node config (default 8;
+  `RuntimeConfig::max_core_instances_per_component`): the most core module
+  instances a component may contain before it fails to load in the
+  pooling allocator. Python apps built with componentize-py need 14 (spike
+  S22). The pool's total of core instances is now this times
+  `max_instances` (was 4 times), so it never refuses an instance a free
+  slot could hold.
 - Free Store slots give their kept pages back to the kernel once no
   instance has started for `release_idle_after_s` (node config, 300 by
   default, 0 never; `RuntimeConfig::release_idle_after`), and on request

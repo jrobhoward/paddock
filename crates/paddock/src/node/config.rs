@@ -8,6 +8,7 @@
 //! policy = "/etc/paddock/policy.toml"
 //! max_instances = 1000           # instances holding a Store at once
 //! max_processes = 20000          # all instances, passivated ones too
+//! max_core_instances_per_component = 8   # 14 for componentize-py apps
 //! memory_profile = "standard"   # or "dense"
 //! keep_resident = "16MiB"       # per free instance slot; profile's default
 //! release_idle_after_s = 300    # give those pages back after this long with no
@@ -152,6 +153,11 @@ pub struct NodeConfig {
     /// `max_instances`.
     #[serde(default)]
     pub max_processes: Option<u32>,
+    /// Most core module instances one component may contain (the pooling
+    /// allocator's limit); at least 1. Python components built with
+    /// componentize-py need 14.
+    #[serde(default = "default_max_core_instances_per_component")]
+    pub max_core_instances_per_component: u32,
     /// Address-space profile.
     #[serde(default)]
     pub memory_profile: MemoryProfile,
@@ -966,6 +972,10 @@ fn default_max_instances() -> u32 {
     1_000
 }
 
+fn default_max_core_instances_per_component() -> u32 {
+    8
+}
+
 fn default_tick() -> u64 {
     2
 }
@@ -1168,6 +1178,11 @@ impl NodeConfig {
         {
             return Err(NodeError::Invalid(
                 "node config: max_processes must be at least max_instances".into(),
+            ));
+        }
+        if config.max_core_instances_per_component == 0 {
+            return Err(NodeError::Invalid(
+                "node config: max_core_instances_per_component must be at least 1".into(),
             ));
         }
         for (name, value) in [

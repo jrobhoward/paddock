@@ -673,7 +673,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 | Upgrade developer experience | Teams avoid upgrades or ship broken snapshots | SDK-derived snapshots, automatic revert, canary rollouts, `restart` mode as the easy default |
 | Small-team maintenance (Lunatic stalled) | Project dies | Build on wasmtime, quinn, rustls, redb; minimal custom runtime code; keep scope phased |
 | Host API attack surface | Sandbox escape through a host function | Small import set, fuzz host functions, policy check on every call |
-| Guest language support beyond Rust | Narrow adoption | Rust first; JS and Python via componentize tools; Go via wit-bindgen-go; test each per release |
+| Guest language support beyond Rust | Narrow adoption | Rust first; JS and Python via componentize tools; Go via wit-bindgen-go and TinyGo, which runs once the app frees each envelope and builds with `-scheduler=none` (spike S21); Python through componentize-py, with node config's `max_core_instances_per_component` at 14 (spike S22); JS through jco componentize, with `memory_max` near 96 MiB (spike S23); test each per release |
 | Address space at high instance counts | Instantiation failures | Pool sizing, guard-size tuning, alerts |
 | Split brain with two nodes | Primary and standby both promote during a partition and act on the same devices | Independent heartbeat paths (network and serial), witness-granted epochs as fencing tokens, a lease for singletons, or operator-confirmed promotion |
 | Host objects outside the memory cap | A guest creates timers, monitors or watches until the node runs out of memory | A quota per instance on every host object: timers, monitors, links, pending calls, group memberships and watches |

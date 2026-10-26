@@ -872,13 +872,15 @@ fn base_linker(
 
 fn engine_config(config: &RuntimeConfig) -> Config {
     let n = config.max_instances;
+    let core = config.max_core_instances_per_component;
     let mut pool = PoolingAllocationConfig::default();
-    // Per-component counts from S2's Rust guests, with headroom.
+    // Per-component counts from S2's Rust guests, with headroom; core
+    // instances from the node config (S22: componentize-py needs 14).
     pool.total_component_instances(n)
-        .total_core_instances(n.saturating_mul(4))
+        .total_core_instances(n.saturating_mul(core))
         .total_memories(n.saturating_mul(2))
         .total_tables(n.saturating_mul(4))
-        .max_core_instances_per_component(8)
+        .max_core_instances_per_component(core)
         .max_memories_per_component(4)
         .max_tables_per_component(8)
         // Each live Store holds a fiber stack (S2).

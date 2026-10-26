@@ -1,0 +1,22 @@
+// TinyGo's runtime imports wasi:cli (environment, exit, stdio) and friends,
+// so its world must include them beside the app world. The component still
+// imports only what the code calls.
+//
+// The app world is restated here, not included: wit-bindgen-go 0.7.0
+// re-emits an included world's `use types.{...}` without its package, and
+// the result does not resolve.
+package s21:go;
+
+world app {
+  include wasi:cli/imports@0.2.0;
+  import paddock:runtime/process@0.1.0;
+  use paddock:runtime/types@0.1.0.{call-ref, envelope, exit-reason, info, call-result};
+
+  export init: func(args: list<u8>) -> result<_, string>;
+  export handle-call: func(caller: call-ref, msg: envelope) -> call-result;
+  export handle-cast: func(msg: envelope);
+  export handle-info: func(msg: info);
+  export terminate: func(reason: exit-reason);
+  export save-snapshot: func() -> list<u8>;
+  export load-snapshot: func(from-version: string, snapshot: list<u8>) -> result<_, string>;
+}

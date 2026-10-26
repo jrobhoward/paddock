@@ -10,6 +10,7 @@ fn NodeConfig____minimal____defaults_filled_in() {
 
     assert_eq!(config.node, 0);
     assert_eq!(config.max_instances, 1_000);
+    assert_eq!(config.max_core_instances_per_component, 8);
     assert_eq!(config.memory_profile, MemoryProfile::Standard);
     assert_eq!(config.keep_resident, None);
     assert_eq!(
@@ -729,4 +730,21 @@ fn native____zero____refused(#[case] line: &str, #[case] path: &str) {
         .to_string();
 
     assert!(err.contains(path), "{err}");
+}
+
+#[test]
+fn NodeConfig____max_core_instances_per_component____read_or_refused_at_zero() {
+    let read =
+        NodeConfig::from_toml_str("data_dir = \"/d\"\nmax_core_instances_per_component = 16\n")
+            .unwrap();
+    let zero =
+        NodeConfig::from_toml_str("data_dir = \"/d\"\nmax_core_instances_per_component = 0\n")
+            .unwrap_err();
+
+    assert_eq!(read.max_core_instances_per_component, 16);
+    assert!(
+        zero.to_string()
+            .contains("max_core_instances_per_component must be at least 1"),
+        "{zero}"
+    );
 }

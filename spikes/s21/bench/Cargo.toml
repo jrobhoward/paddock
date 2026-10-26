@@ -1,0 +1,9 @@
+[package]
+name = "s21-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+paddock-host = { path = "../../../crates/paddock-host" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

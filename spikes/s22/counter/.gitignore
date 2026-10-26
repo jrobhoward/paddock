@@ -1,0 +1,3 @@
+gen/
+*.wasm
+__pycache__/

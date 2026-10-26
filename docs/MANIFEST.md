@@ -298,6 +298,7 @@ trusted_keys = ["RWQ..."]              # minisign public keys whose bundles are 
 policy = "/etc/paddock/policy.toml"    # without one, only the always-available interfaces are granted
 max_instances = 1000                   # instances holding a Store at once (each reserves address space)
 max_processes = 20000                  # all instances, passivated ones too; default max_instances
+max_core_instances_per_component = 8   # the pooling allocator's limit; 14 for componentize-py apps, which fail to load otherwise
 memory_profile = "standard"            # or "dense": 128 MiB cap per instance, many more instances
 keep_resident = "16MiB"                # per free Store slot: pages kept, zeroed, for the next instance; default 16MiB, 0 with "dense"
 release_idle_after_s = 300             # with no instance start this long, free slots give those pages back; 0: never

@@ -83,6 +83,42 @@ fn load____not_a_component____refused() {
 }
 
 #[test]
+fn load____more_core_instances_than_limit____refused() {
+    let rt = Runtime::new(RuntimeConfig {
+        max_instances: 1,
+        max_core_instances_per_component: 2,
+        ..RuntimeConfig::default()
+    })
+    .unwrap();
+
+    let result = rt.load(&fixture("paddock_fixture_chaos"));
+
+    assert!(
+        matches!(&result, Err(HostError::Load(m)) if m.contains("3 core module instances")),
+        "{result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spawn____core_instances_at_limit____runs_every_slot() {
+    let rt = Runtime::new(RuntimeConfig {
+        max_instances: 2,
+        max_core_instances_per_component: 3,
+        ..RuntimeConfig::default()
+    })
+    .unwrap();
+    let app = rt.load(&fixture("paddock_fixture_chaos")).unwrap();
+    let first = rt.spawn(&app, spec("")).unwrap();
+    let second = rt.spawn(&app, spec("")).unwrap();
+
+    let reply = second.call(text("echo:both"), LONG).await.unwrap();
+
+    assert_eq!(body(&reply), "both");
+    first.kill();
+    second.kill();
+}
+
+#[test]
 fn load____echo_fixture____links_against_host() {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 1,

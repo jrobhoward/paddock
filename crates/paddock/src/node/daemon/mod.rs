@@ -180,6 +180,7 @@ impl Node {
                 node: config.node,
                 max_instances: config.max_instances,
                 max_processes: config.max_processes,
+                max_core_instances_per_component: config.max_core_instances_per_component,
                 memory_profile: match config.memory_profile {
                     MemoryProfile::Standard => HostProfile::Standard,
                     MemoryProfile::Dense => HostProfile::Dense,

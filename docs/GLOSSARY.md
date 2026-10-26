@@ -6,7 +6,7 @@ Two words have more than one meaning:
 
 - **Epoch:** the wasmtime epoch, which the epoch ticker advances (see "Epoch tick"), or a failover epoch, the HA pair's fencing token (see "Failover epoch"). They are unrelated. The docs write "epoch tick" or "epoch check" for the first and "failover epoch" for the second.
 - **Snapshot:** the bytes an app's `save-snapshot` writes (its state), or a copy of the replicated log's buckets sent to a partner that has fallen too far behind. The second is called a log snapshot.
-- **S and R numbers:** S1 to S20 are spikes, and S1 to S9 also the security findings in [SECURITY.md](SECURITY.md); R1 to R14 are the model-checked rules, and R1 to R5 also the 2026-10-10 review items in ROADMAP.md. The docs name the kind ("spike S8", "finding S4", "rule R6") where it is not clear from the file.
+- **S and R numbers:** S1 to S23 are spikes, and S1 to S9 also the security findings in [SECURITY.md](SECURITY.md); R1 to R14 are the model-checked rules, and R1 to R5 also the 2026-10-10 review items in ROADMAP.md. The docs name the kind ("spike S8", "finding S4", "rule R6") where it is not clear from the file.
 
 ## Apps and instances
 
@@ -126,5 +126,5 @@ Two words have more than one meaning:
 - **Probe:** a USDT probe on the message path, for bpftrace and similar tracers. [OBSERVABILITY.md](OBSERVABILITY.md).
 - **Soak:** hours of fault injection against `paddock node` processes (`scripts/soak.sh`).
 - **Baseline:** the recorded benchmark figures in [BASELINE.md](BASELINE.md), from `scripts/bench.sh`.
-- **Spike (S1 to S20):** a throwaway program that answered one design question, under `spikes/`; its README has the answer.
+- **Spike (S1 to S23):** a throwaway program that answered one design question, under `spikes/`; its README has the answer.
 - **R1 to R14:** the failover and replication rules model-checked in TLA+. [tla/VERIFICATION.md](tla/VERIFICATION.md).

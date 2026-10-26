@@ -241,6 +241,13 @@ pub struct RuntimeConfig {
     /// instance starting or waking while every Store slot is taken waits
     /// for one (spike S11).
     pub max_processes: Option<u32>,
+    /// Most core module instances one component may contain; a component
+    /// with more fails to load. Rust components have 3, TinyGo 3,
+    /// componentize-js 4 and componentize-py 14 (spikes S21 to S23). The
+    /// pool's total is this times `max_instances`, so the total never
+    /// refuses an instance this limit allows. Both are counters in
+    /// wasmtime's pooling allocator, reserving no memory.
+    pub max_core_instances_per_component: u32,
     /// Address-space reservation per linear memory.
     pub memory_profile: MemoryProfile,
     /// Bytes of a freed Store slot's linear memory kept resident for the
@@ -403,6 +410,7 @@ impl Default for RuntimeConfig {
             node: 0,
             max_instances: 1_000,
             max_processes: None,
+            max_core_instances_per_component: 8,
             memory_profile: MemoryProfile::Standard,
             keep_resident: None,
             release_idle_after: Some(Duration::from_secs(300)),
