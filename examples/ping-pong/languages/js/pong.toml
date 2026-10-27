@@ -1,0 +1,21 @@
+# pong in JavaScript. Built by ../build.sh, deployed by ../demo.sh; see ../README.md.
+[app]
+name = "pong"
+version = "1.0.0"
+description = "Answers typed Ping calls (JavaScript, jco componentize)"
+license = "MIT OR Apache-2.0"
+
+[appserver]
+registered_names = ["pong"]
+
+# SpiderMonkey's heap grows to about 75 MiB before it collects, above the
+# 64 MiB default (spike S23).
+[appserver.limits]
+memory_max = "96MiB"
+
+# componentize-js imports both (for fetch, and wasi-libc's files) even when
+# the app uses neither. Declared with no allow list and no preopens, and not
+# granted, so the node links deny stubs.
+[appserver.capabilities."wasi:filesystem"]
+
+[appserver.capabilities."wasi:http/outgoing-handler"]

@@ -8,6 +8,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `examples/ping-pong/languages`: the ping-pong example's `pong` app in Go
+  (TinyGo), Python (componentize-py) and JavaScript (jco), with `build.sh`
+  and `demo.sh`, which upgrades one `pong` from Rust to each in turn while
+  the Rust `ping` calls it. WRITING_APPS.md gains "Apps in other languages".
+  Not in CI.
 - `max_core_instances_per_component` in node config (default 8;
   `RuntimeConfig::max_core_instances_per_component`): the most core module
   instances a component may contain before it fails to load in the
@@ -134,6 +139,12 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- `scripts/check.sh msrv` builds in its own target directory,
+  `target/msrv`. When the MSRV toolchain was the same rustc build as
+  stable, it shared artifact hashes with the other checks in `target/`,
+  and one could read the other's stale metadata (a field just added
+  reported as missing, or a crate not found by clippy) until `cargo clean
+  -p` on that crate.
 - `connection____replaced_by_a_redial` (paddock-host's QUIC tests) waits
   for node 1 to hold one connection to node 2 instead of checking at once:
   it failed on a CI runner with none held for a moment after the redial

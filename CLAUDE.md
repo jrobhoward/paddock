@@ -150,6 +150,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `examples/ledger` puts and gets text entries in a shared bucket, by
   `paddock call`: the example for `cluster` buckets, driven by
   `tests/examples.rs` and written through by the replication soak.
+  `examples/ping-pong/languages/` is `pong` in Go, Python and JavaScript,
+  built by its `build.sh` with each language's own toolchain (not in CI),
+  and a demo upgrading one `pong` across them; not a crate.
   `examples/failover/` is a demo script (a witness and a pair as three
   `paddock node` processes, the primary killed), not a crate.
   `examples/tracing/` is a demo script and bpftrace scripts for the

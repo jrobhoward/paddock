@@ -32,7 +32,8 @@
 #                wasm32-wasip2 target)
 #   doc          rustdoc with warnings as errors
 #   deny         cargo-deny: licences, bans, sources, advisories
-#   msrv         cargo check on the workspace's rust-version
+#   msrv         cargo check on the workspace's rust-version, in its own
+#                target directory (target/msrv)
 #   guests       every guest crate built for wasm32-wasip2, each checked with
 #                wasm-tools for the app world or the connection handler, and
 #                the bundle fixture test
@@ -174,7 +175,10 @@ check_msrv() {
     [ -n "$msrv" ] || { echo "no rust-version in Cargo.toml"; return 1; }
     rustup run "$msrv" rustc --version > /dev/null 2>&1 \
         || { echo "missing: toolchain $msrv (rustup toolchain install $msrv)"; return 1; }
-    cargo "+$msrv" check --workspace --all-targets --all-features --locked
+    # A target directory of its own: when the MSRV toolchain is the same rustc
+    # build as stable, the two share artifact hashes in target/ and one reads
+    # the other's stale metadata.
+    CARGO_TARGET_DIR=target/msrv cargo "+$msrv" check --workspace --all-targets --all-features --locked
 }
 
 check_guests() {

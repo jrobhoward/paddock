@@ -1,0 +1,14 @@
+# pong in Go. Built by ../build.sh, deployed by ../demo.sh; see ../README.md.
+[app]
+name = "pong"
+version = "1.0.0"
+description = "Answers typed Ping calls (Go, TinyGo)"
+license = "MIT OR Apache-2.0"
+
+[appserver]
+registered_names = ["pong"]
+
+# TinyGo's runtime imports wasi:filesystem even when the app opens no file.
+# Declared with no preopens, and not granted, so the node links deny stubs
+# and the app sees no files.
+[appserver.capabilities."wasi:filesystem"]

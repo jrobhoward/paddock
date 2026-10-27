@@ -1,0 +1,18 @@
+# pong in Python. Built by ../build.sh, deployed by ../demo.sh; see
+# ../README.md. The node needs `max_core_instances_per_component` of 14 or
+# more: componentize-py's component has 14 core module instances.
+[app]
+name = "pong"
+version = "1.0.0"
+description = "Answers typed Ping calls (Python, componentize-py)"
+license = "MIT OR Apache-2.0"
+
+[appserver]
+registered_names = ["pong"]
+
+# CPython on wasi-libc imports both even when the app uses neither. Declared
+# with no preopens and no socket rules, and not granted, so the node links
+# deny stubs and the app reaches neither files nor the network.
+[appserver.capabilities."wasi:filesystem"]
+
+[appserver.capabilities."wasi:sockets"]

@@ -303,6 +303,17 @@ An unmodified `wasi:http` component, built with any toolchain that targets the `
 - Nothing survives a request: keep state in an app (call it through `paddock:runtime/process`) or a keyvalue bucket.
 - A trap before the response's headers is a 500; after them, the client sees the stream cut.
 
+## Apps in other languages
+
+Any language whose tooling builds a WASI 0.2 component can implement `paddock:runtime/app` from [`wit/runtime.wit`](../wit/runtime.wit). Go (TinyGo), Python (componentize-py) and JavaScript (jco) are tried: [`examples/ping-pong/languages`](../examples/ping-pong/languages/README.md) has the `pong` app in each, called by the Rust `ping`, with a demo that upgrades one app across all four languages on a running node. Each language's runtime brings a requirement of its own:
+
+- **Go:** build with `-scheduler=none`, and free each string and list the host passes to an export, or every message leaks.
+- **Python:** node config's `max_core_instances_per_component` at 14 or more.
+- **JavaScript:** `limits.memory_max` of about 96 MiB.
+- **All three:** their runtimes import capabilities the app may not use (`wasi:filesystem`, and `wasi:sockets` or `wasi:http`). The manifest declares them, with no scope; ungranted, the node links deny stubs.
+
+These builds are not in CI. Spikes S21 to S23 measured what each costs next to Rust.
+
 ## Native-process apps
 
 Native code runs as a process the node spawns and supervises like an instance, an Erlang-style port: `kind = "native-process"` in the manifest. It has a pid, a mailbox, links, monitors and supervision, and handles one callback at a time; it can declare only `wasi:logging` for now. The node runs it through `paddock-runner`, which restricts it first: it reads only the system libraries, its own directory and the app's `priv/` files, executes nothing else, opens no sockets, and signals only itself. Linux only.
