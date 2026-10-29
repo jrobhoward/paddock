@@ -1,0 +1,18 @@
+[package]
+name = "s24-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# A workspace of its own, with its own lock file: wasmtime comes from the
+# branch of wasmtime PR #12990 (`50.0.0-dev`), which the spikes workspace's
+# wasmtime 50.0.0 must not be unified with.
+[workspace]
+
+[dependencies]
+paddock-workload = { path = "../../../crates/paddock-workload" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+wasmtime = { git = "https://github.com/erikrose/wasmtime", rev = "933d170c4c1073d77f916c8c053fb3c7810d73d7" }
+
+[profile.release]
+debug = 1

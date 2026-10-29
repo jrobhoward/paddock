@@ -1,0 +1,437 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index bb042a2..cac4984 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -53,12 +53,12 @@ repository = "https://github.com/jrobhoward/paddock"
+ # Versions pinned by spike S3 (spikes/S3-wasi-target.md). The wasmtime crates are
+ # released together and move as a group.
+ [workspace.dependencies]
+-wasmtime = { version = "50", default-features = false }
+-wasmtime-wasi = { version = "50", default-features = false }
+-wasmtime-wasi-config = "50"
++wasmtime = { git = "https://github.com/erikrose/wasmtime", rev = "933d170c4c1073d77f916c8c053fb3c7810d73d7", default-features = false }
++wasmtime-wasi = { git = "https://github.com/erikrose/wasmtime", rev = "933d170c4c1073d77f916c8c053fb3c7810d73d7", default-features = false }
++wasmtime-wasi-config = { git = "https://github.com/erikrose/wasmtime", rev = "933d170c4c1073d77f916c8c053fb3c7810d73d7" }
+ # HTTP egress: our own sender, so no default-send-request
+ # (webpki-roots) and no p3.
+-wasmtime-wasi-http = { version = "50", default-features = false, features = ["p2"] }
++wasmtime-wasi-http = { git = "https://github.com/erikrose/wasmtime", rev = "933d170c4c1073d77f916c8c053fb3c7810d73d7", default-features = false, features = ["p2"] }
+ wit-bindgen = "0.63"
+ # The SDK's HTTP client (`paddock_sdk::http_client`): wasi:http bindings.
+ wasip2 = "2"
+diff --git a/crates/paddock-host/Cargo.toml b/crates/paddock-host/Cargo.toml
+index 88c9790..cda21c5 100644
+--- a/crates/paddock-host/Cargo.toml
++++ b/crates/paddock-host/Cargo.toml
+@@ -64,7 +64,7 @@ rustls-native-certs = { workspace = true, optional = true }
+ tower-service = { workspace = true, optional = true }
+ 
+ [target.'cfg(unix)'.dependencies]
+-rustix = { workspace = true }
++rustix = { workspace = true, features = ["mm", "param"] }
+ 
+ [dev-dependencies]
+ rcgen = { workspace = true }
+diff --git a/crates/paddock-host/src/instance.rs b/crates/paddock-host/src/instance.rs
+index 153883f..8388dea 100644
+--- a/crates/paddock-host/src/instance.rs
++++ b/crates/paddock-host/src/instance.rs
+@@ -915,6 +915,11 @@ impl InstanceTask {
+                 };
+             }
+ 
++            // Spike S24: `PADDOCK_S24_RESET_DEADLINE=1` gives each callback
++            // a full epoch tick instead of the deadline its last yield set.
++            if !crate::runtime::mmu_interruption() && s24_reset_deadline() {
++                store.set_epoch_deadline(1);
++            }
+             let polls = store.data_mut().clock.start(spec.callback_deadline);
+             let kind = match &message {
+                 Message::Call { .. } => "call",
+@@ -1479,6 +1484,8 @@ impl InstanceTask {
+             instance.call_terminate(&mut *store, &wit_reason),
+         );
+         match killable(&self.kill, &self.control, Some(&polls), terminate).await {
++            // Spike S24: the deadline checked in `killable`.
++            Err(ExitReason::Timeout) => ExitReason::Killed,
+             Err(killed) => killed,
+             Ok(Err(_elapsed)) => ExitReason::Killed,
+             Ok(Ok(Err(_))) if store.data().clock.timed_out => ExitReason::Killed,
+@@ -1496,6 +1503,11 @@ impl InstanceTask {
+     }
+ }
+ 
++fn s24_reset_deadline() -> bool {
++    static RESET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *RESET.get_or_init(|| std::env::var_os("PADDOCK_S24_RESET_DEADLINE").is_some_and(|v| v == "1"))
++}
++
+ /// A Store with the instance's limits, deadline accounting and preemption.
+ pub(crate) fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Store<InstanceState> {
+     let mut store = Store::new(engine, state);
+@@ -1539,7 +1551,22 @@ async fn killable<F: Future>(
+             }));
+         }
+         match polls {
+-            Some(polls) => polls.poll(fut.as_mut(), cx),
++            Some(polls) => {
++                let out = polls.poll(fut.as_mut(), cx);
++                // Spike S24: under MMU interruption every interrupt yields
++                // and no epoch callback runs, so the deadline is checked
++                // here, after a poll that yielded, as is the lease.
++                if out.is_pending() && crate::runtime::mmu_interruption() {
++                    if polls.over_limit() {
++                        return Poll::Ready(Err(ExitReason::Timeout));
++                    }
++                    if !polls.within_lease() {
++                        // A8 in docs/tla/VERIFICATION.md.
++                        return Poll::Ready(Err(ExitReason::Crashed("lease_ended".into())));
++                    }
++                }
++                out
++            }
+             None => fut.as_mut().poll(cx),
+         }
+         .map(Ok)
+diff --git a/crates/paddock-host/src/lib.rs b/crates/paddock-host/src/lib.rs
+index 0935b7a..8488ed8 100644
+--- a/crates/paddock-host/src/lib.rs
++++ b/crates/paddock-host/src/lib.rs
+@@ -49,6 +49,7 @@ mod ready;
+ mod registry;
+ mod replication;
+ mod runtime;
++mod s24_interrupter;
+ pub mod services;
+ mod spec;
+ mod state;
+diff --git a/crates/paddock-host/src/runtime.rs b/crates/paddock-host/src/runtime.rs
+index f6317e5..1dc19e9 100644
+--- a/crates/paddock-host/src/runtime.rs
++++ b/crates/paddock-host/src/runtime.rs
+@@ -9,7 +9,9 @@ use std::thread::JoinHandle;
+ use std::time::{Duration, Instant};
+ 
+ use wasmtime::component::{HasSelf, Linker};
+-use wasmtime::{Config, Enabled, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
++use wasmtime::{
++    Config, Enabled, Engine, InstanceAllocationStrategy, PoolingAllocationConfig,
++};
+ 
+ use crate::apps::{self, AppDeployment, Apps};
+ use crate::bindings::{PaddockApp, PaddockAppPre};
+@@ -276,12 +278,28 @@ impl Runtime {
+                 )));
+             }
+         }
+-        let engine =
+-            Engine::new(&engine_config(&config)).map_err(|e| HostError::Engine(describe(&e)))?;
++        // Spike S24: `PADDOCK_S24_MMU=1` interrupts guests through MMU
++        // protection faults (wasmtime PR #12990) instead of epoch checks.
++        let wheel = if mmu_interruption() {
++            Some(Arc::new(
++                crate::s24_interrupter::Interrupter::from_env()
++                    .map_err(|e| HostError::Engine(format!("S24 interrupter: {e}")))?,
++            ))
++        } else {
++            None
++        };
++        let mut wasm_config = engine_config(&config);
++        if let Some(wheel) = &wheel {
++            wasm_config
++                .epoch_interruption(false)
++                .mmu_interruption(true)
++                .with_mmu_interrupter(wheel.as_dyn());
++        }
++        let engine = Engine::new(&wasm_config).map_err(|e| HostError::Engine(describe(&e)))?;
+         // Fail now, not at the first load, if the host interfaces cannot link.
+         base_linker(&engine, &extensions).map_err(|e| HostError::Engine(describe(&e)))?;
+         let services = services::Shared::new(&config)?;
+-        let ticker = Ticker::start(engine.clone(), config.epoch_tick)
++        let ticker = Ticker::start(engine.clone(), wheel, config.epoch_tick)
+             .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
+         let inner = Arc::new(RuntimeInner {
+             engine,
+@@ -870,6 +888,12 @@ fn base_linker(
+     Ok(linker)
+ }
+ 
++/// Spike S24: whether this process runs guests under MMU interruption.
++pub(crate) fn mmu_interruption() -> bool {
++    static MMU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *MMU.get_or_init(|| std::env::var_os("PADDOCK_S24_MMU").is_some_and(|v| v == "1"))
++}
++
+ fn engine_config(config: &RuntimeConfig) -> Config {
+     let n = config.max_instances;
+     let core = config.max_core_instances_per_component;
+@@ -919,7 +943,11 @@ struct Ticker {
+ }
+ 
+ impl Ticker {
+-    fn start(engine: Engine, tick: Duration) -> std::io::Result<Self> {
++    fn start(
++        engine: Engine,
++        wheel: Option<Arc<crate::s24_interrupter::Interrupter>>,
++        tick: Duration,
++    ) -> std::io::Result<Self> {
+         let stop = Arc::new(AtomicBool::new(false));
+         let flag = stop.clone();
+         let thread = std::thread::Builder::new()
+@@ -934,7 +962,16 @@ impl Ticker {
+                         std::thread::park_timeout(next - now);
+                         continue;
+                     }
+-                    engine.increment_epoch();
++                    match &wheel {
++                        // Spike S24: `PADDOCK_S24_NOTICK=1` never protects
++                        // a page, to separate mprotect's cost from the rest.
++                        Some(wheel) => {
++                            if std::env::var_os("PADDOCK_S24_NOTICK").is_none() {
++                                wheel.tick();
++                            }
++                        }
++                        None => engine.increment_epoch(),
++                    }
+                     next = now + tick;
+                 }
+             })?;
+diff --git a/crates/paddock-host/src/s24_interrupter.rs b/crates/paddock-host/src/s24_interrupter.rs
+new file mode 100644
+index 0000000..1087058
+--- /dev/null
++++ b/crates/paddock-host/src/s24_interrupter.rs
+@@ -0,0 +1,156 @@
++//! Spike S24: an `MmuInterrupter` with one interrupt page per thread and
++//! generation, so a fiber resume takes no lock, touches no shared atomic
++//! and allocates nothing.
++//!
++//! wasmtime's `TimingWheelInterrupter` locks a slot and bumps a shared
++//! refcount on every resume, which `pool_load` at 16 workers showed as a
++//! third of the empty-call throughput lost. This interrupter keeps the
++//! epoch ticker's meaning instead: every running guest is interrupted at
++//! the next tick.
++//!
++//! Two generations of `SLOTS` pages, contiguous. A store takes its thread's
++//! page in the current generation. A tick unprotects the other generation,
++//! makes it current, and protects the old one with a single `mprotect`. A
++//! store that still holds an old page when that generation is unprotected
++//! again (one in a long synchronous host call) is interrupted a tick later.
++
++use std::cell::Cell;
++use std::ffi::c_void;
++use std::ptr::NonNull;
++use std::sync::atomic::{AtomicUsize, Ordering};
++
++use rustix::mm::{MapFlags, MprotectFlags, ProtFlags, mmap_anonymous, mprotect, munmap};
++use wasmtime::{MmuInterrupter, PageHandle};
++
++/// Pages per generation; threads past this share pages, which is harmless.
++const SLOTS: usize = 256;
++
++thread_local! {
++    static SLOT: Cell<Option<usize>> = const { Cell::new(None) };
++    static CURRENT: Cell<usize> = const { Cell::new(0) };
++}
++
++pub(crate) struct PerThreadInterrupter {
++    base: NonNull<u8>,
++    page: usize,
++    generation: AtomicUsize,
++    next_slot: AtomicUsize,
++}
++
++// SAFETY: `base` is a mapping owned by this value and only read or
++// protected through syscalls, never dereferenced from Rust.
++unsafe impl Send for PerThreadInterrupter {}
++// SAFETY: as above; all mutable state is atomic.
++unsafe impl Sync for PerThreadInterrupter {}
++
++impl PerThreadInterrupter {
++    pub(crate) fn new() -> std::io::Result<Self> {
++        let page = rustix::param::page_size();
++        // SAFETY: a null hint lets the kernel choose the address.
++        let ptr = unsafe {
++            mmap_anonymous(
++                std::ptr::null_mut(),
++                2 * SLOTS * page,
++                ProtFlags::READ,
++                MapFlags::PRIVATE,
++            )
++        }?;
++        let base = NonNull::new(ptr.cast::<u8>()).ok_or(std::io::ErrorKind::Other)?;
++        Ok(Self {
++            base,
++            page,
++            generation: AtomicUsize::new(0),
++            next_slot: AtomicUsize::new(0),
++        })
++    }
++
++    fn range(&self, generation: usize) -> *mut c_void {
++        // SAFETY: inside the mapping: generation is 0 or 1.
++        unsafe { self.base.as_ptr().add(generation * SLOTS * self.page) }.cast()
++    }
++
++    fn protect(&self, generation: usize, flags: MprotectFlags) {
++        // SAFETY: the range is one generation of this value's own mapping.
++        if let Err(e) = unsafe { mprotect(self.range(generation), SLOTS * self.page, flags) } {
++            tracing::error!(%e, "S24: cannot change an interrupt page's protection");
++        }
++    }
++
++    /// Interrupt every store running now; called by the ticker thread only.
++    pub(crate) fn tick(&self) {
++        let old = self.generation.load(Ordering::Relaxed);
++        let new = 1 - old;
++        self.protect(new, MprotectFlags::READ);
++        self.generation.store(new, Ordering::Release);
++        self.protect(old, MprotectFlags::empty());
++    }
++}
++
++impl Drop for PerThreadInterrupter {
++    fn drop(&mut self) {
++        // SAFETY: the engine that loaded from these pages owned this value
++        // and is gone.
++        let _ = unsafe { munmap(self.base.as_ptr().cast(), 2 * SLOTS * self.page) };
++    }
++}
++
++/// Zero-sized, so the `Box` wasmtime asks for allocates nothing; the page
++/// is the one `acquire_page` chose on this thread, read back at once.
++struct Handle;
++
++impl PageHandle for Handle {
++    fn page_ptr(&self) -> NonNull<c_void> {
++        let addr = CURRENT.with(Cell::get);
++        NonNull::new(addr as *mut c_void).unwrap_or(NonNull::dangling())
++    }
++}
++
++impl MmuInterrupter for PerThreadInterrupter {
++    fn acquire_page(&self) -> Box<dyn PageHandle> {
++        let slot = SLOT.with(|s| {
++            s.get().unwrap_or_else(|| {
++                let n = self.next_slot.fetch_add(1, Ordering::Relaxed) % SLOTS;
++                s.set(Some(n));
++                n
++            })
++        });
++        let generation = self.generation.load(Ordering::Acquire);
++        let addr = self.base.as_ptr() as usize + (generation * SLOTS + slot) * self.page;
++        CURRENT.with(|c| c.set(addr));
++        Box::new(Handle)
++    }
++}
++
++/// The interrupter a spike engine runs with, and how the ticker drives it.
++pub(crate) enum Interrupter {
++    Wheel(std::sync::Arc<wasmtime::TimingWheelInterrupter>),
++    Thread(std::sync::Arc<PerThreadInterrupter>),
++}
++
++impl Interrupter {
++    /// `PADDOCK_S24_INTERRUPTER=thread` for [`PerThreadInterrupter`],
++    /// otherwise wasmtime's timing wheel ticked every tick.
++    pub(crate) fn from_env() -> std::io::Result<Self> {
++        Ok(
++            if std::env::var_os("PADDOCK_S24_INTERRUPTER").is_some_and(|v| v == "thread") {
++                Self::Thread(std::sync::Arc::new(PerThreadInterrupter::new()?))
++            } else {
++                Self::Wheel(std::sync::Arc::new(wasmtime::TimingWheelInterrupter::new(0)))
++            },
++        )
++    }
++
++    pub(crate) fn as_dyn(&self) -> std::sync::Arc<dyn MmuInterrupter> {
++        match self {
++            Self::Wheel(w) => w.clone(),
++            Self::Thread(t) => t.clone(),
++        }
++    }
++
++    pub(crate) fn tick(&self) {
++        match self {
++            Self::Wheel(w) => w.tick(),
++            Self::Thread(t) => t.tick(),
++        }
++    }
++}
+diff --git a/crates/paddock-host/src/state.rs b/crates/paddock-host/src/state.rs
+index b2866b6..3a3c64b 100644
+--- a/crates/paddock-host/src/state.rs
++++ b/crates/paddock-host/src/state.rs
+@@ -127,7 +127,7 @@ impl InstanceState {
+             wasi: wasi.build(),
+             table: ResourceTable::new(),
+             limiter: Limiter::new(spec.memory_max, spec.table_max, ctx.me.memory_counter()),
+-            clock: CallbackClock::default(),
++            clock: CallbackClock::with_lease(lease.clone()),
+             ctx,
+             registered_names: spec.registered_names.clone(),
+             current: None,
+@@ -365,6 +365,11 @@ pub(crate) struct PollTime {
+     /// When the poll running now started, nanoseconds after `base`, or
+     /// `NOT_POLLING`.
+     since: AtomicU64,
++    /// Spike S24: the callback's limit in nanoseconds, for `killable` to
++    /// check under MMU interruption, where no epoch callback runs.
++    limit: AtomicU64,
++    /// Spike S24: the instance's lease, for the same check.
++    lease: Option<watch::Receiver<RunUntil>>,
+ }
+ 
+ const NOT_POLLING: u64 = u64::MAX;
+@@ -389,6 +394,18 @@ impl PollTime {
+         out
+     }
+ 
++    /// Spike S24: whether guest code may run now (`within_lease`).
++    pub(crate) fn within_lease(&self) -> bool {
++        self.lease
++            .as_ref()
++            .is_none_or(|l| l.borrow().allows(tokio::time::Instant::now()))
++    }
++
++    /// Spike S24: whether the callback has used up its guest time.
++    pub(crate) fn over_limit(&self) -> bool {
++        self.total() > Duration::from_nanos(self.limit.load(Ordering::Relaxed))
++    }
++
+     fn total(&self) -> Duration {
+         let mut ns = self.done.load(Ordering::Relaxed);
+         let since = self.since.load(Ordering::Relaxed);
+@@ -406,6 +423,8 @@ impl Default for CallbackClock {
+                 base: Instant::now(),
+                 done: AtomicU64::new(0),
+                 since: AtomicU64::new(NOT_POLLING),
++                limit: AtomicU64::new(u64::MAX),
++                lease: None,
+             }),
+             limit: Duration::MAX,
+             timed_out: false,
+@@ -414,10 +433,23 @@ impl Default for CallbackClock {
+ }
+ 
+ impl CallbackClock {
++    /// Spike S24: a clock whose polls also see the instance's lease.
++    fn with_lease(lease: Option<watch::Receiver<RunUntil>>) -> Self {
++        let mut clock = Self::default();
++        if let Some(polls) = Arc::get_mut(&mut clock.polls) {
++            polls.lease = lease;
++        }
++        clock
++    }
++
+     /// Start timing a callback allowed `limit` of guest execution; its
+     /// future is polled through [`PollTime::poll`] of what this returns.
+     pub(crate) fn start(&mut self, limit: Duration) -> Arc<PollTime> {
+         self.polls.done.store(0, Ordering::Relaxed);
++        self.polls.limit.store(
++            u64::try_from(limit.as_nanos()).unwrap_or(u64::MAX),
++            Ordering::Relaxed,
++        );
+         self.limit = limit;
+         self.polls.clone()
+     }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["s1/host", "s1/guest", "s4/host", "s4/guest", "s5/host", "s5/guest", "s6", "s2", "s8/kernels", "s8/guest", "s8/bench", "s10", "s14/guest", "s14/bench", "s15/proxy", "s15/client", "s15/tcpserver", "s15/bench", "s13/guest", "s13/bench", "s19/plugin", "s19/runner", "s19/bench", "s21/bench"]
+exclude = ["s24"]
 
 [profile.release]
 debug = 1
