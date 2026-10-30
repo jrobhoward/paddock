@@ -127,3 +127,7 @@ pub use types::{CallError, CallRef, ExitReason, Info, MonitorRef, Pid, RegisterE
 pub mod __private {
     pub use crate::app::dispatch::*;
 }
+
+#[cfg(test)]
+#[path = "formats_tests.rs"]
+mod formats_tests;

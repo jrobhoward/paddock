@@ -151,3 +151,53 @@ fn parse_response____bad_status____none() {
 
     assert!(parse_response(&bytes).is_none());
 }
+
+const FORMATS: &str = include_str!("../../../docs/GUEST_FORMATS.md");
+
+/// The bytes of the ` ```cbor-hex <name> ` block in GUEST_FORMATS.md.
+fn documented(name: &str) -> Vec<u8> {
+    let fence = format!("```cbor-hex {name}\n");
+    let start = FORMATS
+        .find(&fence)
+        .unwrap_or_else(|| panic!("no example {name}"))
+        + fence.len();
+    let hex: String = FORMATS[start..start + FORMATS[start..].find("```").unwrap()]
+        .split_whitespace()
+        .collect();
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn request_envelope____documented_example____same_bytes() {
+    let mut headers = hyper::HeaderMap::new();
+    headers.insert("host", HeaderValue::from_static("localhost:8080"));
+    headers.insert("content-type", HeaderValue::from_static("text/plain"));
+    let request = RequestEnvelope {
+        scheme: "http",
+        method: "POST",
+        path: "/board/inc",
+        query: Some("by=2"),
+        headers: &headers,
+        body: b"hi",
+        key: Some("tenant-7".into()),
+    };
+
+    let env = request_envelope(&request);
+
+    assert_eq!(env.content_type, "application/cbor");
+    assert_eq!(env.schema.as_deref(), Some(REQUEST_SCHEMA));
+    assert_eq!(env.body, documented("http-request"));
+}
+
+#[test]
+fn parse_response____documented_example____status_header_and_body() {
+    let body = documented("http-response");
+
+    let response = parse_response(&body).unwrap();
+
+    assert_eq!(response.status(), 201);
+    assert_eq!(response.headers()["content-type"], "text/plain");
+}

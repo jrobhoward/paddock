@@ -312,7 +312,7 @@ Any language whose tooling builds a WASI 0.2 component can implement `paddock:ru
 - **JavaScript:** `limits.memory_max` of about 96 MiB.
 - **All three:** their runtimes import capabilities the app may not use (`wasi:filesystem`, and `wasi:sockets` or `wasi:http`). The manifest declares them, with no scope; ungranted, the node links deny stubs.
 
-These builds are not in CI. Spikes S21 to S23 measured what each costs next to Rust.
+These builds are not in CI. Spikes S21 to S23 measured what each costs next to Rust. [GUEST_FORMATS.md](GUEST_FORMATS.md) has the bodies an app in any language reads and writes beyond the WIT: snapshots, HTTP requests and responses, health checks, batches, hash routing and host events.
 
 ## Native-process apps
 

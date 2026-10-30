@@ -8,6 +8,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `docs/GUEST_FORMATS.md`: every body a guest exchanges with the host
+  beyond the WIT (SDK snapshots, HTTP requests and responses, health
+  checks, batches, hash routing keys, the `log-level`, `failover-role`,
+  `kv-changed` and `io-ready` host events, Modbus updates), with examples
+  that tests in `paddock-sdk`, `paddock-host` and `paddock-modbus` check
+  the code against (ROADMAP J1).
 - `examples/ping-pong/languages`: the ping-pong example's `pong` app in Go
   (TinyGo), Python (componentize-py) and JavaScript (jco), with `build.sh`
   and `demo.sh`, which upgrades one `pong` from Rust to each in turn while

@@ -88,3 +88,48 @@ fn Update____cbor____round_trips_with_device_at_top_level() {
         .map(|(_, v)| v.as_text().unwrap().to_string());
     assert_eq!(device.as_deref(), Some("pump-1"));
 }
+
+const FORMATS: &str = include_str!("../../../docs/GUEST_FORMATS.md");
+
+/// The bytes of the ` ```cbor-hex <name> ` block in GUEST_FORMATS.md.
+fn documented(name: &str) -> Vec<u8> {
+    let fence = format!("```cbor-hex {name}\n");
+    let start = FORMATS
+        .find(&fence)
+        .unwrap_or_else(|| panic!("no example {name}"))
+        + fence.len();
+    let hex: String = FORMATS[start..start + FORMATS[start..].find("```").unwrap()]
+        .split_whitespace()
+        .collect();
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn Update____documented_examples____same_bytes() {
+    let points = Update {
+        device: "pump-1".into(),
+        kind: Kind::Points,
+        full: false,
+        points: vec![Point {
+            table: Table::Holding,
+            address: 3,
+            value: 17,
+        }],
+        error: None,
+    };
+    let offline = Update {
+        device: "pump-1".into(),
+        kind: Kind::Offline,
+        full: false,
+        points: Vec::new(),
+        error: Some("connection refused".into()),
+    };
+
+    let (a, b) = (points.to_cbor(), offline.to_cbor());
+
+    assert_eq!(a, documented("modbus-points"));
+    assert_eq!(b, documented("modbus-offline"));
+}
