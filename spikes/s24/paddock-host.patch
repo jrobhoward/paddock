@@ -32,6 +32,60 @@ index 88c9790..cda21c5 100644
  
  [dev-dependencies]
  rcgen = { workspace = true }
+diff --git a/crates/paddock-host/examples/pool_load.rs b/crates/paddock-host/examples/pool_load.rs
+index 2319409..9670657 100644
+--- a/crates/paddock-host/examples/pool_load.rs
++++ b/crates/paddock-host/examples/pool_load.rs
+@@ -22,6 +22,7 @@ use paddock_host::{AppDeployment, Envelope, LoadedApp, Runtime, RuntimeConfig};
+ use serde_json::json;
+ 
+ const RUN: Duration = Duration::from_secs(1);
++// Spike S24: `S24_RUN_S` lengthens a row, for profiling.
+ const LONG: Duration = Duration::from_secs(10);
+ const WORK: [(&str, &str); 2] = [("empty", "echo:x"), ("busy:20000", "busy:20000")];
+ 
+@@ -115,6 +116,12 @@ async fn run(workers: usize, tick: Duration, component: Vec<u8>) {
+     }
+     for (label, body) in WORK {
+         for (i, &(pool, clients)) in configs.iter().enumerate() {
++            // Spike S24: `S24_ONLY=empty,1,64` runs one row, for profiling.
++            if let Ok(only) = std::env::var("S24_ONLY")
++                && only != format!("{label},{pool},{clients}")
++            {
++                continue;
++            }
+             let name = format!("load-{i}-{}", label.len());
+             let apps = rt
+                 .start_apps(vec![deployment(&name, &app, pool)])
+@@ -128,7 +135,8 @@ async fn run(workers: usize, tick: Duration, component: Vec<u8>) {
+                     .await
+                     .unwrap();
+             }
+-            let deadline = Instant::now() + RUN;
++            let run = std::env::var("S24_RUN_S").map_or(RUN, |s| Duration::from_secs(s.parse().unwrap()));
++            let deadline = Instant::now() + run;
+             let tasks: Vec<_> = (0..clients)
+                 .map(|_| {
+                     let handle = handle.clone();
+@@ -164,6 +172,18 @@ async fn run(workers: usize, tick: Duration, component: Vec<u8>) {
+                 us(quantile(&samples, 0.999)),
+             );
+             apps.stop().await;
++            let pending = paddock_host::S24_PENDING_POLLS.swap(0, std::sync::atomic::Ordering::Relaxed);
++            let ns = paddock_host::S24_PENDING_NS.swap(0, std::sync::atomic::Ordering::Relaxed);
++            println!(
++                "  s24: epoch callbacks {}, pending callback polls {pending}, until next poll {:.1} µs mean, {:.3} s in all",
++                paddock_host::S24_EPOCH_CALLBACKS.swap(0, std::sync::atomic::Ordering::Relaxed),
++                ns as f64 / pending.max(1) as f64 / 1e3,
++                ns as f64 / 1e9
++            );
++            println!(
++                "  s24: yields between callbacks {}",
++                paddock_host::S24_HOST_YIELDS.swap(0, std::sync::atomic::Ordering::Relaxed)
++            );
+         }
+     }
+ }
 diff --git a/crates/paddock-host/examples/s24_fairness.rs b/crates/paddock-host/examples/s24_fairness.rs
 new file mode 100644
 index 0000000..46b07e5
@@ -159,10 +213,18 @@ index 0000000..46b07e5
 +        .unwrap();
 +}
 diff --git a/crates/paddock-host/src/instance.rs b/crates/paddock-host/src/instance.rs
-index 153883f..8388dea 100644
+index 153883f..73eb8bd 100644
 --- a/crates/paddock-host/src/instance.rs
 +++ b/crates/paddock-host/src/instance.rs
-@@ -915,6 +915,11 @@ impl InstanceTask {
+@@ -896,6 +896,7 @@ impl InstanceTask {
+         instance: &mut PaddockApp,
+         spec: &mut InstanceSpec,
+     ) -> Result<Served, ExitReason> {
++        let mut seen = crate::runtime::S24_TICKS.load(Ordering::Relaxed);
+         loop {
+             match self.control.borrow_and_update().clone() {
+                 Control::Run => {}
+@@ -915,6 +916,36 @@ impl InstanceTask {
                  };
              }
  
@@ -171,10 +233,35 @@ index 153883f..8388dea 100644
 +            if !crate::runtime::mmu_interruption() && s24_reset_deadline() {
 +                store.set_epoch_deadline(1);
 +            }
++            // Spike S24: `PADDOCK_S24_TICK_YIELD=1`: under MMU interruption a
++            // tick between callbacks interrupts nobody, so the instance
++            // yields here once per tick, as an epoch's stale deadline makes
++            // it yield at its next callback.
++            if crate::runtime::mmu_interruption() && s24_tick_yield() {
++                let now = crate::runtime::S24_TICKS.load(Ordering::Relaxed);
++                if now != seen {
++                    seen = now;
++                    S24_HOST_YIELDS.fetch_add(1, Ordering::Relaxed);
++                    // As wasmtime's fiber yield does: wake at once, go
++                    // to the back of the run queue (`yield_now` defers
++                    // the wake until the worker has drained its queue).
++                    let mut yielded = false;
++                    std::future::poll_fn(|cx| {
++                        if yielded {
++                            Poll::Ready(())
++                        } else {
++                            yielded = true;
++                            cx.waker().wake_by_ref();
++                            Poll::Pending
++                        }
++                    })
++                    .await;
++                }
++            }
              let polls = store.data_mut().clock.start(spec.callback_deadline);
              let kind = match &message {
                  Message::Call { .. } => "call",
-@@ -1479,6 +1484,8 @@ impl InstanceTask {
+@@ -1479,6 +1510,8 @@ impl InstanceTask {
              instance.call_terminate(&mut *store, &wit_reason),
          );
          match killable(&self.kill, &self.control, Some(&polls), terminate).await {
@@ -183,10 +270,26 @@ index 153883f..8388dea 100644
              Err(killed) => killed,
              Ok(Err(_elapsed)) => ExitReason::Killed,
              Ok(Ok(Err(_))) if store.data().clock.timed_out => ExitReason::Killed,
-@@ -1496,6 +1503,11 @@ impl InstanceTask {
+@@ -1496,11 +1529,33 @@ impl InstanceTask {
      }
  }
  
++/// Spike S24: epoch callbacks run, and callback polls that returned
++/// `Pending`, process-wide.
++pub static S24_EPOCH_CALLBACKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++/// See [`S24_EPOCH_CALLBACKS`]: nanoseconds from a `Pending` poll to the next.
++pub static S24_PENDING_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++/// See [`S24_EPOCH_CALLBACKS`].
++pub static S24_PENDING_POLLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++/// See [`S24_EPOCH_CALLBACKS`]: yields between callbacks.
++pub static S24_HOST_YIELDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++fn s24_tick_yield() -> bool {
++    static YIELD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *YIELD.get_or_init(|| std::env::var_os("PADDOCK_S24_TICK_YIELD").is_some_and(|v| v == "1"))
++}
++
 +fn s24_reset_deadline() -> bool {
 +    static RESET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 +    *RESET.get_or_init(|| std::env::var_os("PADDOCK_S24_RESET_DEADLINE").is_some_and(|v| v == "1"))
@@ -195,13 +298,38 @@ index 153883f..8388dea 100644
  /// A Store with the instance's limits, deadline accounting and preemption.
  pub(crate) fn new_store(engine: &wasmtime::Engine, state: InstanceState) -> Store<InstanceState> {
      let mut store = Store::new(engine, state);
-@@ -1539,7 +1551,22 @@ async fn killable<F: Future>(
+     store.limiter(|s| &mut s.limiter);
+     store.epoch_deadline_callback(|mut ctx| {
++        S24_EPOCH_CALLBACKS.fetch_add(1, Ordering::Relaxed);
+         if ctx.data_mut().clock.expired() {
+             Ok(UpdateDeadline::Interrupt)
+         } else if !ctx.data().within_lease() {
+@@ -1528,7 +1583,14 @@ async fn killable<F: Future>(
+     fut: F,
+ ) -> Result<F::Output, ExitReason> {
+     let mut fut = std::pin::pin!(fut);
++    let mut pending_at: Option<std::time::Instant> = None;
+     std::future::poll_fn(|cx| {
++        if let Some(at) = pending_at.take() {
++            S24_PENDING_NS.fetch_add(
++                u64::try_from(at.elapsed().as_nanos()).unwrap_or(u64::MAX),
++                Ordering::Relaxed,
++            );
++        }
+         // Registered before the check, so a kill between the two still
+         // wakes this task, as one while `fut` waits in a host call does.
+         kill.waker.register(cx.waker());
+@@ -1539,7 +1601,26 @@ async fn killable<F: Future>(
              }));
          }
          match polls {
 -            Some(polls) => polls.poll(fut.as_mut(), cx),
 +            Some(polls) => {
 +                let out = polls.poll(fut.as_mut(), cx);
++                if out.is_pending() {
++                    S24_PENDING_POLLS.fetch_add(1, Ordering::Relaxed);
++                    pending_at = Some(std::time::Instant::now());
++                }
 +                // Spike S24: under MMU interruption every interrupt yields
 +                // and no epoch callback runs, so the deadline is checked
 +                // here, after a poll that yielded, as is the lease.
@@ -220,7 +348,7 @@ index 153883f..8388dea 100644
          }
          .map(Ok)
 diff --git a/crates/paddock-host/src/lib.rs b/crates/paddock-host/src/lib.rs
-index 0935b7a..8488ed8 100644
+index 0935b7a..4fe4858 100644
 --- a/crates/paddock-host/src/lib.rs
 +++ b/crates/paddock-host/src/lib.rs
 @@ -49,6 +49,7 @@ mod ready;
@@ -231,8 +359,15 @@ index 0935b7a..8488ed8 100644
  pub mod services;
  mod spec;
  mod state;
+@@ -92,3 +93,6 @@ pub use upgrade::{UpgradeError, validate_blue_green, validate_upgrade};
+ /// The wasmtime this crate links against, for extensions' bindings
+ /// ([`services::extension`]).
+ pub use wasmtime;
++
++/// Spike S24 counters.
++pub use instance::{S24_EPOCH_CALLBACKS, S24_HOST_YIELDS, S24_PENDING_NS, S24_PENDING_POLLS};
 diff --git a/crates/paddock-host/src/runtime.rs b/crates/paddock-host/src/runtime.rs
-index f6317e5..1dc19e9 100644
+index f6317e5..b5cd95b 100644
 --- a/crates/paddock-host/src/runtime.rs
 +++ b/crates/paddock-host/src/runtime.rs
 @@ -9,7 +9,9 @@ use std::thread::JoinHandle;
@@ -278,10 +413,13 @@ index f6317e5..1dc19e9 100644
              .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
          let inner = Arc::new(RuntimeInner {
              engine,
-@@ -870,6 +888,12 @@ fn base_linker(
+@@ -870,6 +888,15 @@ fn base_linker(
      Ok(linker)
  }
  
++/// Spike S24: ticks so far, for instances to yield between callbacks.
++pub(crate) static S24_TICKS: AtomicU64 = AtomicU64::new(0);
++
 +/// Spike S24: whether this process runs guests under MMU interruption.
 +pub(crate) fn mmu_interruption() -> bool {
 +    static MMU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -291,7 +429,7 @@ index f6317e5..1dc19e9 100644
  fn engine_config(config: &RuntimeConfig) -> Config {
      let n = config.max_instances;
      let core = config.max_core_instances_per_component;
-@@ -919,7 +943,11 @@ struct Ticker {
+@@ -919,7 +946,11 @@ struct Ticker {
  }
  
  impl Ticker {
@@ -304,11 +442,12 @@ index f6317e5..1dc19e9 100644
          let stop = Arc::new(AtomicBool::new(false));
          let flag = stop.clone();
          let thread = std::thread::Builder::new()
-@@ -934,7 +962,16 @@ impl Ticker {
+@@ -934,7 +965,17 @@ impl Ticker {
                          std::thread::park_timeout(next - now);
                          continue;
                      }
 -                    engine.increment_epoch();
++                    S24_TICKS.fetch_add(1, Ordering::Relaxed);
 +                    match &wheel {
 +                        // Spike S24: `PADDOCK_S24_NOTICK=1` never protects
 +                        // a page, to separate mprotect's cost from the rest.
