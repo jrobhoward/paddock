@@ -37,7 +37,8 @@ use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{
-    Connection, Endpoint, ReadExactError, RecvStream, SendStream, TransportConfig, VarInt,
+    Connection, ConnectionError, Endpoint, ReadExactError, RecvStream, SendStream, TransportConfig,
+    VarInt,
 };
 use rustls::client::AlwaysResolvesClientRawPublicKeys;
 use rustls::crypto::ring::default_provider;
@@ -73,6 +74,12 @@ const ACCEPTED: &[u8] = b"accepted";
 
 /// Control frames queued before sends report the node unreachable.
 const QUEUE: usize = 4_096;
+
+/// The close code of a connection a newer one to the same node replaced.
+const REPLACED: u32 = 2;
+
+/// The first wait before a redial.
+const REDIAL_FIRST: Duration = Duration::from_millis(100);
 
 /// Data frames (messages and notices) queued before a send is refused as
 /// full ([`super::lane`]): the peer has stopped reading.
@@ -320,7 +327,7 @@ impl QuicTransport {
         match dial(inner, address).await {
             Ok(node) => Ok(node),
             Err(e) => {
-                tokio::spawn(redial(inner.clone(), address, None));
+                tokio::spawn(redial(inner.clone(), address, None, REDIAL_FIRST));
                 Err(HostError::Listen(format!("seed {address}: {e}")))
             }
         }
@@ -661,7 +668,7 @@ async fn establish(inner: &Arc<Inner>, conn: Connection, dialer: bool) -> Result
                 writers,
             },
         ) {
-            old.conn.close(VarInt::from_u32(2), b"replaced");
+            old.conn.close(VarInt::from_u32(REPLACED), b"replaced");
         }
     }
     let finished = Arc::new(AtomicU8::new(0));
@@ -771,6 +778,12 @@ async fn reader(
 /// lost with it, and the other side, having seen its own end of it close,
 /// has ended the session too (spike S12, R2). Only the current connection
 /// is forgotten and redialed.
+///
+/// The current connection closed by the peer as replaced means the peer
+/// already holds a newer one to this node, still being set up here: it
+/// lands within the setup's limit, so the redial waits that long first
+/// rather than dialing a third connection, which would replace the new
+/// one and end the session again.
 async fn watch_close(inner: Arc<Inner>, conn: Connection, node: u32) {
     let reason = conn.closed().await;
     let current = {
@@ -796,6 +809,11 @@ async fn watch_close(inner: Arc<Inner>, conn: Connection, node: u32) {
     }
     tracing::info!(node, %reason, "cluster connection lost");
     super::end_session(&rt, node);
+    let first = if replaced_by_peer(&reason) {
+        inner.config.idle_timeout
+    } else {
+        REDIAL_FIRST
+    };
     let address = rt
         .membership
         .list()
@@ -809,25 +827,32 @@ async fn watch_close(inner: Arc<Inner>, conn: Connection, node: u32) {
         .contains(&conn.remote_address());
     drop(rt);
     if seed {
-        tokio::spawn(redial(inner, conn.remote_address(), Some(node)));
+        tokio::spawn(redial(inner, conn.remote_address(), Some(node), first));
     } else if let Some(address) = address
         && inner.node < node
     {
-        tokio::spawn(redial(inner, address, Some(node)));
+        tokio::spawn(redial(inner, address, Some(node), first));
     }
 }
 
+/// Whether the peer closed the connection because a newer one replaced it.
+fn replaced_by_peer(reason: &ConnectionError) -> bool {
+    matches!(reason, ConnectionError::ApplicationClosed(close)
+        if close.error_code == VarInt::from_u32(REPLACED))
+}
+
 /// Dial `address` until it answers (as `node`, if given) or the transport
-/// stops, backing off from 100 ms to 5 s. Boxed: connections redial from
-/// inside the tasks a connection starts.
+/// stops, first after `first`, then backing off to 5 s. Boxed: connections
+/// redial from inside the tasks a connection starts.
 fn redial(
     inner: Arc<Inner>,
     address: SocketAddr,
     node: Option<u32>,
+    first: Duration,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
         let mut stop = inner.stop.subscribe();
-        let mut wait = Duration::from_millis(100);
+        let mut wait = first;
         loop {
             tokio::select! {
                 _ = stop.wait_for(|s| *s) => return,
@@ -887,7 +912,7 @@ async fn dial_new_members(
             .and_then(|m| m.address.parse::<SocketAddr>().ok());
         drop(rt);
         if let Some(address) = address {
-            tokio::spawn(redial(inner.clone(), address, Some(node)));
+            tokio::spawn(redial(inner.clone(), address, Some(node), REDIAL_FIRST));
         }
     }
 }

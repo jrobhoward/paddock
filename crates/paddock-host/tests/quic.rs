@@ -367,16 +367,17 @@ async fn connection____replaced_by_a_redial____session_ends_and_the_new_one_carr
     )
     .await;
 
-    // Node 1, the lower id, may dial too once the session ends; the two
-    // connections settle on its dial, and node 1 can be without one for a
-    // moment while they do (seen once on a CI runner, 2026-10-25).
+    // Node 2 may close the old connection before node 1 has set up the
+    // new one: node 1 is then without one for a moment, and waits for the
+    // new one rather than dialing a third (which would end the session
+    // again; seen on a CI runner, 2026-10-25).
     until("one connection to node 2", || {
         n1.quic.connected() == vec![2]
     })
     .await;
 
     assert!(downs.contains("noconnection"), "{downs}");
-    assert!(n1.rt.peer_status(2).unwrap().session > before);
+    assert_eq!(n1.rt.peer_status(2).unwrap().session, before + 1);
     assert_eq!(call, "ok:still-here");
     watcher.kill();
     target.kill();

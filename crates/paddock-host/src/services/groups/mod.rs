@@ -249,6 +249,14 @@ impl Shared {
     /// Send this node's snapshot to every reachable peer whose session or
     /// creation changed since it last had one. Called every heartbeat
     /// round.
+    ///
+    /// A snapshot that cannot be sent (the peer is reachable but has no
+    /// connection for the moment: lost or being replaced) is sent again the
+    /// next round. It does not end the session as an unsent notice does
+    /// (S12's R1): the peer replaces what it knows of this node's members
+    /// with each snapshot, and forgets them when its own session ends.
+    /// Ending it here would end every new session as it began, each round,
+    /// until the connection was back.
     pub(crate) fn sync(&self, rt: &RuntimeInner) {
         let _sending = self.sending.lock().unwrap_or_else(PoisonError::into_inner);
         let due: Vec<(u32, Snapshot)> = {
@@ -273,7 +281,9 @@ impl Shared {
             due
         };
         for (node, groups) in due {
-            transport::send_notice(rt, node, Frame::GroupSync { groups });
+            if transport::try_send(rt, node, Frame::GroupSync { groups }).is_err() {
+                self.lock().synced.remove(&node);
+            }
         }
     }
 

@@ -26,6 +26,7 @@ fn runtime(release_idle_after: Option<Duration>) -> (Runtime, LoadedApp) {
 }
 
 /// The value of metric `name` (no labels) in the runtime's metrics.
+#[cfg(target_os = "linux")]
 fn metric(rt: &Runtime, name: &str) -> u64 {
     rt.render_metrics()
         .lines()
@@ -42,6 +43,10 @@ async fn burst(rt: &Runtime, app: &LoadedApp, mib: u32) {
     h.wait().await;
 }
 
+// Slots keep pages only on Linux: wasmtime's `linear_memory_keep_resident`
+// does nothing elsewhere, where a freed slot decommits at once and there is
+// nothing to release.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn release_idle_memory____slot_freed_after_a_burst____pages_given_back_and_slot_reused() {
     let (rt, app) = runtime(None);
@@ -61,6 +66,7 @@ async fn release_idle_memory____slot_freed_after_a_burst____pages_given_back_and
     assert_eq!(reused, "up");
 }
 
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn release_idle_after____starts_quiet____released_on_its_own() {
     let (rt, app) = runtime(Some(Duration::from_millis(200)));

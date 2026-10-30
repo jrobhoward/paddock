@@ -89,7 +89,7 @@ With a cluster transport, also, labelled `node` (the other node): `paddock_clust
 
 On a pair node with `cluster` buckets, gauges for the replicated log: `paddock_replication_commit_index` (the last entry applied to this node's copy) and `paddock_replication_last_index` (the last entry in its log); on the primary, `paddock_replication_partner_lag_entries` (entries the standby has not acknowledged) and `paddock_replication_alone` (1 while it commits without the standby, which the witness has recorded out of date).
 
-The Store slot pool, node-wide (no labels): `paddock_pool_live_memories` (gauge: linear memories in use, one per instance holding a Store), `paddock_pool_warm_slots` (gauge: free slots keeping pages resident for the next instance, `keep_resident`), `paddock_pool_resident_bytes` (gauge: the bytes they keep) and `paddock_pool_released_bytes_total` (counter: bytes given back to the kernel, by `release_idle_after_s` or `Runtime::release_idle_memory`).
+The Store slot pool, node-wide (no labels): `paddock_pool_live_memories` (gauge: linear memories in use, one per instance holding a Store), `paddock_pool_warm_slots` (gauge: free slots keeping pages resident for the next instance, `keep_resident`), `paddock_pool_resident_bytes` (gauge: the bytes they keep) and `paddock_pool_released_bytes_total` (counter: bytes given back to the kernel, by `release_idle_after_s` or `Runtime::release_idle_memory`). Slots keep pages on Linux only; elsewhere the last three stay at 0.
 
 Gauges are read when the metrics are rendered; counters are kept per app from the node's start, and a counter's series starts once the app's first instance starts.
 

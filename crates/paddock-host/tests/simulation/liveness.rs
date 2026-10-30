@@ -195,3 +195,31 @@ fn stall____healed_after_timeout____held_casts_not_delivered() {
     // Only this call: the casts belonged to the session that ended.
     assert_eq!(count, "1");
 }
+
+#[test]
+fn partition____peer_still_reachable____session_ends_once_not_each_round() {
+    let (before, early, late) = simulate(28, 2, |sim| async move {
+        pass(50).await;
+        let session = || sim.node(1).rt.peer_status(2).unwrap().session;
+        let before = session();
+
+        // Sends fail at once; heartbeats still count the peer reachable
+        // until the node timeout. The groups' snapshot, due in the new
+        // session, cannot be sent meanwhile, and must not end it again.
+        sim.mesh.partition(1, 2);
+        pass(400).await;
+        let early = session();
+        let reachable = sim.node(1).rt.peer_status(2).unwrap().reachable;
+        assert!(reachable, "still within the node timeout");
+        pass(300).await;
+
+        (before, early, session())
+    });
+
+    assert_eq!(early, before + 1);
+    assert_eq!(
+        late,
+        before + 2,
+        "and once more when the timeout finds it silent"
+    );
+}

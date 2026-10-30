@@ -139,6 +139,16 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Cluster connections: a node whose peer replaced their connection (a
+  redial) could see the old one closed before the new one was set up on
+  its side, and then dial a third connection 100 ms later, which replaced
+  the new one and ended the session again. It now waits for the new one
+  (up to the idle timeout) before redialing. And while a peer was still
+  reachable by heartbeats but had no connection, the process groups'
+  snapshot, which could not be sent, ended the session at every heartbeat
+  until the node timeout: links, monitors and calls made meanwhile ended
+  with `noconnection`, and `NodeEvent::Down` repeated. An unsent snapshot
+  is now sent again the next round instead.
 - `scripts/check.sh msrv` builds in its own target directory,
   `target/msrv`. When the MSRV toolchain was the same rustc build as
   stable, it shared artifact hashes with the other checks in `target/`,
