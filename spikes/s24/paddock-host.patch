@@ -32,6 +32,132 @@ index 88c9790..cda21c5 100644
  
  [dev-dependencies]
  rcgen = { workspace = true }
+diff --git a/crates/paddock-host/examples/s24_fairness.rs b/crates/paddock-host/examples/s24_fairness.rs
+new file mode 100644
+index 0000000..46b07e5
+--- /dev/null
++++ b/crates/paddock-host/examples/s24_fairness.rs
+@@ -0,0 +1,120 @@
++//! Spike S24: how long an instance draining a full mailbox holds its
++//! worker, under epoch and MMU interruption.
++//!
++//! One tokio worker. Instance A's mailbox is kept full of casts of
++//! `busy:<n>`; meanwhile instance B is called (`echo:x`) back to back, and
++//! each call's latency is what B waited for the worker A held. Rows by the
++//! size of A's callbacks.
++//!
++//! ```sh
++//! PADDOCK_S24_MMU=0|1 [PADDOCK_S24_INTERRUPTER=thread] \
++//!     cargo run --release -p paddock-host --example s24_fairness
++//! ```
++
++#![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
++
++use std::sync::Arc;
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::time::{Duration, Instant};
++
++use paddock_host::{CallError, Envelope, InstanceSpec, Runtime, RuntimeConfig};
++
++const RUN: Duration = Duration::from_secs(2);
++const LONG: Duration = Duration::from_secs(10);
++const GRAINS: [u64; 5] = [0, 2_000, 20_000, 200_000, 2_000_000];
++
++fn text(s: &str) -> Envelope {
++    Envelope::new("text/plain", s.to_string())
++}
++
++fn us(d: Duration) -> String {
++    format!("{:.0}", d.as_secs_f64() * 1e6)
++}
++
++async fn run(component: Vec<u8>) {
++    let rt = Runtime::new(RuntimeConfig::default()).unwrap();
++    let app = rt.load(&component).unwrap();
++    let spec = |name: &str| InstanceSpec {
++        mailbox_max: 4096,
++        callback_deadline: Duration::from_secs(5),
++        ..InstanceSpec::new(name, "0.1.0")
++    };
++    println!(
++        "one tokio worker; mmu {}; {} s per row",
++        std::env::var("PADDOCK_S24_MMU").unwrap_or_default(),
++        RUN.as_secs()
++    );
++    println!("| A's cast | A casts/s | B calls | B p50 µs | B p99 µs | B max µs |");
++    println!("| --- | --- | --- | --- | --- | --- |");
++    for grain in GRAINS {
++        let a = rt.spawn(&app, spec("a")).unwrap();
++        let b = rt.spawn(&app, spec("b")).unwrap();
++        a.call(text("echo:up"), LONG).await.unwrap();
++        b.call(text("echo:up"), LONG).await.unwrap();
++        let stop = Arc::new(AtomicBool::new(false));
++        let sent = Arc::new(AtomicU64::new(0));
++        let body = format!("busy:{grain}");
++        let filler = {
++            let (a, stop, sent) = (a.clone(), stop.clone(), sent.clone());
++            tokio::spawn(async move {
++                while !stop.load(Ordering::Relaxed) {
++                    match a.cast(text(&body)) {
++                        Ok(()) => {
++                            sent.fetch_add(1, Ordering::Relaxed);
++                        }
++                        Err(CallError::Overloaded) => tokio::task::yield_now().await,
++                        Err(e) => panic!("{e}"),
++                    }
++                }
++            })
++        };
++        // Let the mailbox fill.
++        tokio::time::sleep(Duration::from_millis(100)).await;
++        let started = Instant::now();
++        let before = sent.load(Ordering::Relaxed);
++        let mut samples = Vec::new();
++        while started.elapsed() < RUN {
++            let t = Instant::now();
++            b.call(text("echo:x"), LONG).await.unwrap();
++            samples.push(t.elapsed());
++        }
++        let casts = sent.load(Ordering::Relaxed) - before;
++        stop.store(true, Ordering::Relaxed);
++        filler.await.unwrap();
++        samples.sort();
++        let q = |f: f64| {
++            #[allow(
++                clippy::cast_possible_truncation,
++                clippy::cast_sign_loss,
++                clippy::cast_precision_loss
++            )]
++            samples[((samples.len() - 1) as f64 * f).round() as usize]
++        };
++        #[allow(clippy::cast_precision_loss)]
++        let rate = casts as f64 / started.elapsed().as_secs_f64();
++        println!(
++            "| busy:{grain} | {rate:.0} | {} | {} | {} | {} |",
++            samples.len(),
++            us(q(0.5)),
++            us(q(0.99)),
++            us(*samples.last().unwrap())
++        );
++        a.kill();
++        b.kill();
++    }
++}
++
++fn main() {
++    let path = concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/../../target/fixtures/wasm32-wasip2/release/paddock_fixture_chaos.wasm"
++    );
++    let component = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
++    tokio::runtime::Builder::new_multi_thread()
++        .worker_threads(1)
++        .enable_all()
++        .build()
++        .unwrap()
++        .block_on(async move { tokio::spawn(run(component)).await })
++        .unwrap();
++}
 diff --git a/crates/paddock-host/src/instance.rs b/crates/paddock-host/src/instance.rs
 index 153883f..8388dea 100644
 --- a/crates/paddock-host/src/instance.rs
