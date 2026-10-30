@@ -4,6 +4,7 @@ members = [
     "crates/paddock",
     "crates/paddock-bundle",
     "crates/paddock-fixture-chaos",
+    "crates/paddock-fixture-conformance",
     "crates/paddock-fixture-conn",
     "crates/paddock-fixture-counter",
     "crates/paddock-fixture-echo",

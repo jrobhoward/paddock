@@ -2002,6 +2002,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "paddock-fixture-conformance"
+version = "0.3.0"
+dependencies = [
+ "paddock-sdk",
+ "serde",
+]
+
+[[package]]
 name = "paddock-fixture-conn"
 version = "0.3.0"
 dependencies = [

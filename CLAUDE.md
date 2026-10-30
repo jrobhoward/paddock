@@ -160,6 +160,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/paddock-fixture-chaos`: a guest that traps, spins, allocates or
   fails on request, and drives every `process` function; the host's tests
   run against it.
+- `crates/paddock-fixture-conformance`: the Rust SDK's app for the
+  conformance suite (`paddock-host`'s `tests/conformance.rs`); its crate
+  docs are the command protocol every SDK's conformance app speaks, and
+  `PADDOCK_CONFORMANCE_APP=<component.wasm>` runs the suite against
+  another language's.
 - `crates/paddock-fixture-sdk`: a guest that uses `wasi:config`,
   `wasi:keyvalue`, `paddock:groups`, `wasi:http/outgoing-handler` and the
   other services through `paddock-sdk`'s wrappers (`config`, `kv`,

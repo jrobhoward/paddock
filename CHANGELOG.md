@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- A conformance suite for guest SDKs (`paddock-host`'s
+  `tests/conformance.rs`): 31 cases covering init, calls and casts,
+  replies, timers, names, links, monitors and exits, snapshots, upgrade and
+  rollback, limits, health checks, log levels, keyvalue, watches and
+  groups, against an app that speaks the command protocol of
+  `paddock-fixture-conformance` (the Rust SDK's app, run in CI).
+  `PADDOCK_CONFORMANCE_APP=<component.wasm>` runs it against another
+  language's app. WRITING_APPS.md has the table of cases each SDK passes
+  (ROADMAP J2).
 - `docs/GUEST_FORMATS.md`: every body a guest exchanges with the host
   beyond the WIT (SDK snapshots, HTTP requests and responses, health
   checks, batches, hash routing keys, the `log-level`, `failover-role`,

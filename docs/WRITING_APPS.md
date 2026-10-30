@@ -314,6 +314,30 @@ Any language whose tooling builds a WASI 0.2 component can implement `paddock:ru
 
 These builds are not in CI. Spikes S21 to S23 measured what each costs next to Rust. [GUEST_FORMATS.md](GUEST_FORMATS.md) has the bodies an app in any language reads and writes beyond the WIT: snapshots, HTTP requests and responses, health checks, batches, hash routing and host events.
 
+### Conformance
+
+An SDK shows what it supports by passing the conformance suite, `paddock-host`'s [`tests/conformance.rs`](../crates/paddock-host/tests/conformance.rs). Its cases drive an app that speaks a small text command protocol (`echo:<text>`, `link:<pid>`, `kv-set:<bucket>:<key>:<value>` ...), given in full in [`paddock-fixture-conformance`](../crates/paddock-fixture-conformance/src/lib.rs), the Rust SDK's app. An SDK in another language builds the same app with its own API, and the suite runs against it:
+
+```bash
+PADDOCK_CONFORMANCE_APP=path/to/app.wasm cargo test -p paddock-host --test conformance
+```
+
+A relative path is taken from the workspace root. Without the variable, the suite runs against the Rust app, as in CI. The snapshot the app writes is GUEST_FORMATS.md's `[1, state]` with a state the protocol fixes, so the snapshot cases also check that an SDK writes that format.
+
+| Cases (tests named) | What | Rust |
+| --- | --- | --- |
+| `init____*` | Init arguments, an init error, a trap in init | yes |
+| `call____*`, `cast____*`, `reply____*`, `self____*`, `guest_call_and_cast____*` | Calls and casts both ways, envelopes kept, `noreply`, deferred and in-callback replies, the instance's pid | yes |
+| `timers____*` | Timers fire in order; a cancelled one never does | yes |
+| `register____*` | Names listed in the manifest; taken and unlisted names | yes |
+| `link____*`, `unlink____*`, `monitor____*`, `exit_signal____*`, `terminate____*` | Links with and without trapped exits, monitors and demonitor, exit signals, `terminate` on a graceful stop | yes |
+| `snapshot____*`, `upgrade____*`, `rollback____*` | The snapshot format, a snapshot upgrade that keeps state and deferred callers, a refused snapshot, a rollback | yes |
+| `trap____*`, `memory_max____*`, `callback_deadline____*` | A trap, `memory_max` (128 MiB here) and the callback deadline end the instance with the right reason | yes |
+| `health____*` | Health checks answered, and a failing one kills the instance | yes |
+| `log_level____*` | Records reach the host at their level; the app follows the `log-level` event | yes |
+| `keyvalue____*`, `watch____*` | Keyvalue operations, an unlisted bucket, a watch's change notices | yes |
+| `groups____*` | Join, members, publish and leave, an unlisted group | yes |
+
 ## Native-process apps
 
 Native code runs as a process the node spawns and supervises like an instance, an Erlang-style port: `kind = "native-process"` in the manifest. It has a pid, a mailbox, links, monitors and supervision, and handles one callback at a time; it can declare only `wasi:logging` for now. The node runs it through `paddock-runner`, which restricts it first: it reads only the system libraries, its own directory and the app's `priv/` files, executes nothing else, opens no sockets, and signals only itself. Linux only.
