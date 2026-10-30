@@ -1889,11 +1889,53 @@ A quarter of `pool_load`'s samples on the Pi fell in the `__aarch64_cas*` and `_
 
 - **A woken instance waits for its waker's next epoch tick, with idle workers beside it.** Behind a waker that keeps running for 1 ms or more, B is handled about 1.1 ms later at p50, and behind 5 ms or more 2.1 to 2.3 ms at p99: spread evenly up to one tick (2 ms). With the LIFO slot off, B is handled about 100 µs after the control on the 16-core machine and level with it on the Pi. The same with 16 workers and with 4.
 - **Replies wait the same way.** A reply wakes its caller into the replying instance's worker; if the instance has more messages queued, the caller waits for it to yield: about 1 ms at p50 and 2 ms at p99 against a few µs. Every caller of a busy instance pays it: other instances, the HTTP ingress, the admin API.
-- **The 2 to 10 ms p99 under oversubscription** (2026-10-07, "Concurrent clients against a pool"), put down there to instances draining full mailboxes, is likely in large part this: clients' replies held in the LIFO slot of a worker whose instance keeps running. Not checked against `pool_load` yet.
+- **The 2 to 10 ms p99 under oversubscription** (2026-10-07, "Concurrent clients against a pool"), put down there to instances draining full mailboxes, looked likely to be in large part this. It is not: with the fix (next section), `pool_load`'s p99 at 256 clients is unchanged.
 - **The LIFO slot pays for itself on an idle round trip:** without it the idle call takes 5 to 7 µs instead of 2 to 4, and the idle cast case 15 to 54 µs more at p50 on the 16-core machine. Turning it off everywhere is not free; ROADMAP B15 compares that with a yield only when a callback woke someone and more messages wait.
 - **Not measured:** a waker that keeps running inside one callback (a cast, then work in the same callback), bounded the same way by the tick; and behaviour with MMU interruption (B14), under which instances yield less often (S24).
 
+## 2026-10-30: moving a woken task off the LIFO slot (B15)
+
+After a callback that woke another task (a cast, a reply, an exit signal, a publish), with messages still queued, the instance spawns an empty task: tokio schedules it into the worker's LIFO slot and moves the woken task to the run queue, where an idle worker takes it, while the instance goes on draining its mailbox. Not on a runtime with one worker, where no idle worker could take it. Raspberry Pi 5, at nice 10; the two builds alternated, three rounds each; load 0.4 at the start and 1.8 at the end, from the build before; drive at most 41 °C. Commit 25dd672, before and with the change.
+
+Three ways of doing it were compared first, alternated in one session (load 0.6 at the start, 2.5 at the end; 4 workers; `pool_load` calls/s, `wake_cost` p50 / p99 in µs):
+
+| | Before | LIFO slot off (`disable_lifo_slot`) | Yield once (a self-wake) | Spawn an empty task |
+| --- | --- | --- | --- | --- |
+| Woken behind 5 ms of work | 1,111 to 1,135 / 2,125 to 2,226 | 116 / 133 to 329 | 103 to 106 / 132 to 134 | 106 to 108 / 122 to 131 |
+| Reply with 5 ms queued | 1,014 to 1,066 / 1,890 to 2,029 | 13 to 15 / 19 to 20 | 4 to 5 / 5 to 11 | 10 / 14 to 26 |
+| `baseline 4`: sequential empty calls/s | 238,757 to 249,057 | 168,790 to 181,786 | 244,734 to 254,511 | 220,531 to 246,200 |
+| `pool_load 4`: empty, pool 1, 64 clients | 348k to 354k | 335k to 348k | 150k to 162k | 295k to 299k |
+| `pool_load 4`: empty, pool 4, 64 clients | 919k to 927k | 958k to 986k | 742k to 761k | 794k to 822k |
+| `pool_load 4`: empty, pool 16, 1 client | 190k to 206k | 125k to 127k | 199k to 213k | 202k to 207k |
+
+- **Turning the LIFO slot off** helps loaded pools a little and costs a third of sequential and single-client calls; it is also a tokio unstable API.
+- **Yielding** gives the shortest waits, but an instance answering many callers yields after every message and loses its batches: 55% of a single hot instance's throughput.
+- **Spawning** fixes the waits and costs only where an instance answers empty calls from many callers. On one worker it made the 256-client tails worse (p99 16.7 to 18.5 ms against 11.2 to 11.8), since no idle worker could take the task: hence not with one worker. Adopted (decided 2026-10-30).
+
+The adopted change, against before:
+
+| Measure, 4 workers | Before | After |
+| --- | --- | --- |
+| `wake_cost`: woken behind 1 ms of work, p50 / p99 µs | 1,071 to 1,093 / 1,159 to 1,289 | 102 to 106 / 115 to 131 |
+| `wake_cost`: woken behind 5 ms | 1,116 to 1,169 / 2,107 to 2,157 | 106 to 108 / 126 to 311 |
+| `wake_cost`: woken behind 20 ms | 1,107 to 1,136 / 2,120 to 2,155 | 109 to 112 / 134 to 268 |
+| `wake_cost`: reply with 5 ms queued | 999 to 1,062 / 2,024 to 2,045 | 9 to 10 / 14 to 33 |
+| `wake_cost`: control, reply with nothing queued | 3 / 3 to 9 | 3 to 6 / 4 to 11 |
+| `baseline 4`: empty call p50, sequential calls/s | 4.17 to 4.32 µs, 251,134 to 255,864 | 4.39 to 4.52 µs, 243,597 to 249,411 |
+| `baseline 4`: casts/s | 471,138 to 489,857 | 461,992 to 468,507 |
+| `pool_load 4`: empty, pool 1, 64 clients | 339k to 362k, p99 203 to 253 µs | 283k to 296k, p99 265 to 330 µs |
+| `pool_load 4`: empty, pool 4, 64 clients | 900k to 930k | 786k to 826k |
+| `pool_load 4`: empty, pool 16, 256 clients | 800k to 835k, p99 1.6 to 1.8 ms | 733k to 753k, p99 2.1 ms |
+| `pool_load 4`: busy, every row | | the same within the runs' spread |
+
+- **A woken task waits about 0.1 ms instead of up to a tick.** The remaining time is the woken instance's own start on another worker (the control's floor).
+- **Messages that do work cost nothing measurable.** With 31 µs of guest work per call every `pool_load` row matches, as do the 1-worker runs (`wake_cost 1`, `pool_load 1`, `baseline 1`: unchanged, as designed).
+- **Empty calls from many callers to few instances lose 9 to 17%,** and sequential empty calls about 3%: the spawn per message and the woken callers' moves to other workers.
+- **`pool_load`'s tails under oversubscription are not this.** The busy rows' p99 at 256 clients (12.3 to 12.7 ms) did not move: those are queues, as Little's law predicts.
+- **Not measured:** the 16-core machine (busy with other work this session); work after a cast inside one callback, which still waits for the tick; MMU interruption (B14).
+
 ## Not measured yet
 
+- B15's fix on the 16-core machine.
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.

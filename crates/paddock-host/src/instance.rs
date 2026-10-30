@@ -176,6 +176,9 @@ struct Shared {
     /// their number is bounded by links and monitors.
     signals: mpsc::UnboundedSender<Info>,
     trap_exits: AtomicBool,
+    /// Whether the callback running now sent something that woke another
+    /// task (a cast, a reply, an exit signal, a publish).
+    woke: AtomicBool,
     /// Bytes of linear memory, as the Store's limiter last allowed it to
     /// grow.
     memory: Arc<AtomicU64>,
@@ -552,6 +555,18 @@ impl InstanceHandle {
         self.shared.trap_exits.store(on, Ordering::Relaxed);
     }
 
+    /// Note that this instance's callback sent a message that woke another
+    /// task, which the instance then moves off its worker's LIFO slot
+    /// (ROADMAP B15).
+    pub(crate) fn woke_others(&self) {
+        self.shared.woke.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether the callback just run woke another task, clearing it.
+    fn take_woke(&self) -> bool {
+        self.shared.woke.swap(false, Ordering::Relaxed)
+    }
+
     /// Queue a notification for `handle-info`.
     pub(crate) fn signal(&self, info: Info) {
         // Fails only once the instance has exited, when nobody needs it.
@@ -663,6 +678,7 @@ pub(crate) fn prepare(
             ops: ops_tx,
             signals: signals_tx,
             trap_exits: AtomicBool::new(false),
+            woke: AtomicBool::new(false),
             memory: Arc::new(AtomicU64::new(0)),
             last_exit: std::sync::Mutex::new(None),
         }),
@@ -969,6 +985,16 @@ impl InstanceTask {
             if let Err(err) = outcome {
                 tracing::debug!(error = %describe(&err), "callback failed");
                 return Err(classify(&err, store.data()));
+            }
+            // The last task this callback woke waits in this worker's LIFO
+            // slot, which idle workers do not steal from; with messages
+            // still queued, this task would keep the worker, and the woken
+            // task with it, until its next epoch tick (BASELINE.md,
+            // 2026-10-30). A spawned task takes the slot and pushes the
+            // woken one to the run queue, where an idle worker takes it,
+            // while this task drains its mailbox.
+            if self.me.take_woke() && !self.mailbox.is_empty() {
+                release_woken();
             }
         }
     }
@@ -1545,6 +1571,23 @@ async fn killable<F: Future>(
         .map(Ok)
     })
     .await
+}
+
+/// Move the task in this worker's LIFO slot to its run queue, where idle
+/// workers steal from: tokio schedules a task spawned from a worker into the
+/// slot and moves the one there to the run queue, waking a parked worker.
+/// The spawned task does nothing. Measured against yielding (which cost a
+/// busy instance its batches) and tokio's `disable_lifo_slot` (unstable, and
+/// slower round trips) in ROADMAP B15.
+///
+/// With one worker there is no idle worker to take it, and the move would
+/// only put the woken task behind the rest of the queue.
+fn release_woken() {
+    let several =
+        tokio::runtime::Handle::try_current().is_ok_and(|rt| rt.metrics().num_workers() > 1);
+    if several {
+        drop(tokio::spawn(async {}));
+    }
 }
 
 /// Set once with the first kill, after the control channel says

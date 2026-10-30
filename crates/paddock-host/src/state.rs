@@ -214,15 +214,20 @@ impl InstanceState {
     }
 
     /// The caller waiting on `call_ref`'s reply, if it has not been answered
-    /// yet.
+    /// yet. Taking it marks the instance as having woken another task, since
+    /// the caller is woken by the reply.
     pub(crate) fn take_reply(&mut self, call_ref: u64) -> Option<oneshot::Sender<Envelope>> {
-        match self.current.take() {
+        let waiting = match self.current.take() {
             Some((r, waiting)) if r == call_ref => Some(waiting),
             other => {
                 self.current = other;
                 self.pending.remove(&call_ref)
             }
+        };
+        if waiting.is_some() {
+            self.ctx.me.woke_others();
         }
+        waiting
     }
 
     /// `handle-call` returned `noreply`: its caller, if not answered yet,

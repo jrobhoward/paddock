@@ -166,6 +166,13 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A caller woken by a reply, or an instance woken by a cast, no longer
+  waits up to an epoch tick (1 to 2 ms) while the instance that woke it
+  goes on with its queued messages: the instance moves the woken task off
+  its worker's LIFO slot, where idle workers could not take it. About
+  0.1 ms instead of up to 2 ms on the Raspberry Pi 5; empty calls from many
+  callers to a few instances lose 9 to 17% of their rate (ROADMAP B15,
+  BASELINE.md).
 - Cluster connections: a node whose peer replaced their connection (a
   redial) could see the old one closed before the new one was set up on
   its side, and then dial a third connection 100 ms later, which replaced

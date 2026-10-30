@@ -467,6 +467,7 @@ impl groups::Host for ServiceCtx<'_, Instance> {
             return Ok(Err(groups::Error::AccessDenied));
         }
         let msg = Envelope::from(msg);
+        state.me.woke_others();
         let me = Origin::Local(&state.me);
         let mut delivered = state
             .shared

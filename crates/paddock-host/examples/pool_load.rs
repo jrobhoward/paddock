@@ -25,6 +25,8 @@ const RUN: Duration = Duration::from_secs(1);
 const LONG: Duration = Duration::from_secs(10);
 const WORK: [(&str, &str); 2] = [("empty", "echo:x"), ("busy:20000", "busy:20000")];
 
+// `tokio_unstable` is set only for B15's comparison build.
+#[allow(unexpected_cfgs)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let workers: usize = args.first().map_or(1, |a| a.parse().expect("workers"));
@@ -38,9 +40,16 @@ fn main() {
         "/../../target/fixtures/wasm32-wasip2/release/paddock_fixture_chaos.wasm"
     );
     let component = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(workers)
-        .enable_all()
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.worker_threads(workers).enable_all();
+    // Built with `--cfg tokio_unstable`, `WAKE_NO_LIFO=1` turns tokio's
+    // LIFO slot off, for ROADMAP B15's comparison.
+    #[cfg(tokio_unstable)]
+    if std::env::var_os("WAKE_NO_LIFO").is_some() {
+        builder.disable_lifo_slot();
+        println!("LIFO slot disabled");
+    }
+    builder
         .build()
         .unwrap()
         .block_on(async move { tokio::spawn(run(workers, tick, component)).await })

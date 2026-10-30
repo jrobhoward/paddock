@@ -358,6 +358,20 @@ at 10 ms, p99 under oversubscription was 10.7 ms; at the 2 ms default it is
 over half the throughput. Rerun `pool_load` and `baseline` before changing
 the tick or the instance loop (0.5, `docs/BASELINE.md`).
 
+**A task an instance wakes is moved off its worker's LIFO slot.** tokio
+puts a task woken by a running task in that worker's LIFO slot, which idle
+workers do not steal from, so a caller woken by a reply, or an instance
+woken by a cast, waited up to an epoch tick behind an instance with more
+messages queued. After a callback that woke another task, with messages
+queued, the instance spawns an empty task that takes the slot (not with one
+worker). Every way a callback wakes another task calls
+`InstanceHandle::woke_others` (casts and exit signals in `delivery`,
+replies in `take_reply`, publishes in `groups`); a new one must too.
+Yielding instead cost a busy instance half its throughput, and tokio's
+`disable_lifo_slot` is unstable and slowed sequential calls by a third
+(B15, `docs/BASELINE.md`, 2026-10-30). `tests/messaging.rs` guards it;
+rerun `wake_cost` after a tokio upgrade.
+
 **A component imports only what its code calls.** An app that never calls a
 `process` function has no `process` import, so deploy-time checks treat an
 absent import as unused, not as an error.

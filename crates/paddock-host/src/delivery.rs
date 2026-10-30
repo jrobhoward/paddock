@@ -116,6 +116,9 @@ pub(crate) fn cast(
     to: Pid,
     msg: Envelope,
 ) -> Result<(), CallError> {
+    if let Origin::Local(me) = from {
+        me.woke_others();
+    }
     match route(rt, to) {
         Route::Local(target) if !permits(from, &target) => Err(CallError::AccessDenied),
         Route::Local(target) => target.cast_from(from.pid(), msg),
@@ -165,6 +168,9 @@ pub(crate) fn exit_signal(
     let Some(pid) = from.pid() else {
         return;
     };
+    if let Origin::Local(me) = from {
+        me.woke_others();
+    }
     match route(rt, to) {
         Route::Local(target) if !permits(from, &target) => {}
         Route::Local(target) => target.exit_signal(pid, reason, untrappable),

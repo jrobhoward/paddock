@@ -28,6 +28,8 @@ const CALLS: usize = 100_000;
 const CASTS: u64 = 200_000;
 const LONG: Duration = Duration::from_secs(10);
 
+// `tokio_unstable` is set only for B15's comparison build.
+#[allow(unexpected_cfgs)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let workers: usize = args.first().map_or(1, |a| a.parse().expect("workers"));
@@ -46,9 +48,16 @@ fn main() {
     });
     let component = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
 
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(workers)
-        .enable_all()
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.worker_threads(workers).enable_all();
+    // Built with `--cfg tokio_unstable`, `WAKE_NO_LIFO=1` turns tokio's
+    // LIFO slot off, for ROADMAP B15's comparison.
+    #[cfg(tokio_unstable)]
+    if std::env::var_os("WAKE_NO_LIFO").is_some() {
+        builder.disable_lifo_slot();
+        println!("LIFO slot disabled");
+    }
+    builder
         .build()
         .unwrap()
         // On a worker, as instance clients are: with one worker, a call and
