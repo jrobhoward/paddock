@@ -8,6 +8,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `wake_cost` (`paddock-host` example, `bench.sh wake`): how long an
+  instance woken by a cast, or a caller woken by a reply, waits while the
+  instance that woke it keeps running. About 1 ms at p50 and 2 ms at p99
+  on both machines, held in tokio's LIFO slot until the next epoch tick
+  (BASELINE.md; ROADMAP B15).
 - The Go SDK, `sdks/go` (TinyGo 0.43.0): the app callbacks, the process
   functions, envelopes with CBOR and JSON, snapshots in GUEST_FORMATS.md's
   format, HTTP requests and responses, and packages for keyvalue, watches,

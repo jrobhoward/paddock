@@ -35,6 +35,7 @@ BENCHES=(
   "modbus|Modbus points through the scada pool|R/examples/modbus_load 16 100 10 4 4; R/examples/modbus_load 64 125 1 4 4; R/examples/modbus_load 64 125 1 8 8"
   "call_split|where an empty call's time goes: wall, on-CPU time, context switches and time in the callback, against bare tokio|R/examples/call_split 1; R/examples/call_split 4"
   "timer|send-after and guest sleep lateness against a native tokio sleep, idle and loaded; clock reads|R/examples/timer_cost 4"
+  "wake|how long a woken instance or a caller waits while the instance that woke it keeps running (16 workers)|R/examples/wake_cost 16"
   "restart|crash and kill to the restarted instance's first reply; upgrades by state size|R/examples/restart_cost 1; R/examples/restart_cost 4"
   "heap|heap growth, memory held live and after exit, slot reuse, passivated state by size|R/examples/heap_cost 1"
   "compile|compile time by component size, and loads from the compiled-code cache|R/examples/compile_cost"

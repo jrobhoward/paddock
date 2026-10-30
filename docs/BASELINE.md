@@ -1871,6 +1871,28 @@ A quarter of `pool_load`'s samples on the Pi fell in the `__aarch64_cas*` and `_
 - **`cortex-a76` adds nothing beyond `+lse`.**
 - **Not the default:** a binary with LSE inline faults on ARMv8.0 CPUs (Raspberry Pi 4, Cortex-A72). OPERATIONS.md says how to build for a CPU that has them.
 
+## 2026-10-30: a woken instance waits for the instance that woke it
+
+`wake_cost` (`scripts/bench.sh wake`): instance A casts to instance B and then keeps running, or answers a call with more work queued behind it; how long B, or the caller, waits. tokio puts a task woken by a running task in that worker's LIFO slot, which other workers do not steal from, so the woken task waits for the waker to yield: at the end of its poll, or at its next epoch tick. A drains its queued messages in the same poll (a receive from a non-empty mailbox does not suspend), so the cases queue the work as a second message. Each case 200 rounds; times from the host's first message, in µs; the cast cases include B's trap and exit (the control). Compared with the same harness built with `--cfg tokio_unstable` and tokio's LIFO slot disabled (`WAKE_NO_LIFO=1`). Three runs each:
+
+- **16-core machine,** 16 workers, idle (load 0.8 to 1.1; a stopped disc-ripping program held no CPU), commit 0d8b654 plus the harness.
+- **Raspberry Pi 5,** 4 workers, idle but for the two builds just before (load 1.8 at the start, 1.5 at the end), at nice 10; drive at most 42 °C.
+
+| Case, p50 / p99 | 16-core | 16-core, no LIFO slot | Pi | Pi, no LIFO slot |
+| --- | --- | --- | --- | --- |
+| A casts to B, then idle (control) | 80 / 165 to 259 | 95 to 134 / 156 to 199 | 114 to 118 / 148 to 229 | 126 to 129 / 153 to 171 |
+| A casts to B, then runs 1 ms | 1,084 to 1,108 / 1,112 to 1,899 | 182 to 191 / 217 to 239 | 1,063 to 1,093 / 1,097 to 1,327 | 110 to 114 / 136 to 139 |
+| A casts to B, then runs 5 ms | 1,141 to 1,243 / 2,196 to 2,292 | 183 to 186 / 232 to 273 | 1,119 to 1,138 / 2,121 to 2,130 | 110 to 117 / 134 to 399 |
+| A casts to B, then runs 20 ms | 1,180 to 1,219 / 2,190 to 2,223 | 180 to 196 / 278 to 301 | 1,117 to 1,146 / 2,128 to 2,152 | 113 to 121 / 150 to 275 |
+| A answers a call, then idle | 2 to 4 / 4 to 7 | 6 to 7 / 15 to 19 | 3 / 4 | 5 / 11 to 12 |
+| A answers a call, 5 ms queued behind it | 997 to 1,091 / 1,988 to 2,042 | 10 to 11 / 34 to 36 | 1,023 to 1,039 / 2,015 to 2,026 | 12 to 14 / 18 to 65 |
+
+- **A woken instance waits for its waker's next epoch tick, with idle workers beside it.** Behind a waker that keeps running for 1 ms or more, B is handled about 1.1 ms later at p50, and behind 5 ms or more 2.1 to 2.3 ms at p99: spread evenly up to one tick (2 ms). With the LIFO slot off, B is handled about 100 µs after the control on the 16-core machine and level with it on the Pi. The same with 16 workers and with 4.
+- **Replies wait the same way.** A reply wakes its caller into the replying instance's worker; if the instance has more messages queued, the caller waits for it to yield: about 1 ms at p50 and 2 ms at p99 against a few µs. Every caller of a busy instance pays it: other instances, the HTTP ingress, the admin API.
+- **The 2 to 10 ms p99 under oversubscription** (2026-10-07, "Concurrent clients against a pool"), put down there to instances draining full mailboxes, is likely in large part this: clients' replies held in the LIFO slot of a worker whose instance keeps running. Not checked against `pool_load` yet.
+- **The LIFO slot pays for itself on an idle round trip:** without it the idle call takes 5 to 7 µs instead of 2 to 4, and the idle cast case 15 to 54 µs more at p50 on the 16-core machine. Turning it off everywhere is not free; ROADMAP B15 compares that with a yield only when a callback woke someone and more messages wait.
+- **Not measured:** a waker that keeps running inside one callback (a cast, then work in the same callback), bounded the same way by the tick; and behaviour with MMU interruption (B14), under which instances yield less often (S24).
+
 ## Not measured yet
 
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
