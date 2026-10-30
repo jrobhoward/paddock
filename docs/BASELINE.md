@@ -1854,6 +1854,23 @@ A freed Store slot keeps up to `keep_resident` (16 MiB on the standard profile) 
 - **Hence the default of five minutes:** a node whose passivated instances wake every minute or two keeps its warm slots; one that had a burst and went quiet gets its memory back within about five minutes.
 - **Linux before 6.13 releases nothing when more than one slot is warm.** wasmtime 50 decommits several slots with one `process_madvise` call on `PIDFD_SELF`, which Linux has from 6.13; the 16-core machine's 6.8 answers EBADF, which wasmtime does not treat as "unsupported" (it falls back to `madvise` only for ENOSYS, EINVAL and EPERM), so the release returns 0 and the slots are left as they were (seen with `strace`, 2026-10-25). One warm slot takes the `madvise` path and is released. Paddock then tries once per quiet period rather than at every check.
 
+## 2026-10-29: inline atomics on the Pi
+
+A quarter of `pool_load`'s samples on the Pi fell in the `__aarch64_cas*` and `__aarch64_ldadd*` helpers (S24's profiles): Rust on aarch64 Linux calls these for every atomic operation, so that one binary runs on ARMv8.0 CPUs, which lack the LSE atomic instructions. `paddock-host`'s examples built three ways: default; `-C target-feature=+lse` (atomics inline); `-C target-cpu=cortex-a76` (also the Pi's instruction scheduling). The flags went in `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS`. `pool_load` holds 13,804 helper calls by default against 13,708 inline LSE instructions with either flag; the 165 calls left are in the precompiled standard library. Raspberry Pi 5, Linux 7.0, idle (load 0.6 before the runs); three runs of each, alternating:
+
+| Measure | Default | `+lse` | `cortex-a76` |
+| --- | --- | --- | --- |
+| `call_split 1`: empty call | 3.20 to 3.27 µs | 2.96 to 3.09 µs | 3.04 to 3.12 µs |
+| `call_split 1`: bare tokio round trip | 0.46 to 0.47 µs | 0.43 to 0.44 µs | 0.43 to 0.45 µs |
+| `baseline 4`: sequential empty calls/s (median) | 227,632 | 247,081 | 243,488 |
+| `baseline 4`: instantiate p50 (median) | 95.8 µs | 88.8 µs | 92.3 µs |
+| `pool_load 4`: empty calls/s, against default | | 1.013 to 1.092 | 1.006 to 1.076 |
+| `pool_load 4`: busy calls/s, against default | | 0.996 to 1.015 | 0.990 to 1.009 |
+
+- **Inline atomics save 3 to 9% on message paths, and nothing on guest work.** Most of the helpers' share of the profile was the atomic operations themselves (cache lines shared between workers), not the calls.
+- **`cortex-a76` adds nothing beyond `+lse`.**
+- **Not the default:** a binary with LSE inline faults on ARMv8.0 CPUs (Raspberry Pi 4, Cortex-A72). OPERATIONS.md says how to build for a CPU that has them.
+
 ## Not measured yet
 
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
