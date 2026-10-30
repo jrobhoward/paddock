@@ -29,7 +29,7 @@ use paddock_bundle::manifest::{Bucket, Capability, Durability, GroupsScope, LogL
 use paddock_host::health::HealthCheck;
 use paddock_host::{
     AppDeployment, CallError, Envelope, ExitReason, InstanceHandle, InstanceSpec, LoadedApp,
-    Runtime, RuntimeConfig, UpgradeError, UpgradeOptions,
+    Runtime, RuntimeConfig, SecretSource, UpgradeError, UpgradeOptions,
 };
 use serde_json::json;
 use tracing::field::{Field, Visit};
@@ -49,13 +49,35 @@ fn component() -> Vec<u8> {
     }
 }
 
+/// The secret `token` the runtime binds, from a file written by `echo`.
+const TOKEN: &str = "s3cr3t";
+
+/// The directory holding the secrets' files, for the whole run.
+fn secrets_dir() -> &'static Path {
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("token"), format!("{TOKEN}\n")).unwrap();
+        dir
+    })
+    .path()
+}
+
 fn shared() -> &'static (Runtime, LoadedApp) {
     static SHARED: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
     SHARED.get_or_init(|| {
+        let dir = secrets_dir();
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 64,
             // componentize-py's apps hold 14 core instances.
             max_core_instances_per_component: 16,
+            secrets: BTreeMap::from([
+                ("token".to_string(), SecretSource::File(dir.join("token"))),
+                (
+                    "unbound".to_string(),
+                    SecretSource::File(dir.join("missing")),
+                ),
+            ]),
             ..RuntimeConfig::default()
         })
         .unwrap();
@@ -68,8 +90,9 @@ fn shared() -> &'static (Runtime, LoadedApp) {
 const MEMORY_MAX: u64 = 128 << 20;
 
 /// A spec for app `app` with every service the protocol uses granted: a
-/// memory bucket `data`, groups `g-*` to join and publish to, and logging
-/// at `info`. Tests share a runtime, so each uses its own app name.
+/// memory bucket `data`, the group `<app>-group` to join and publish to,
+/// logging at `info`, config `mode=fast`, the secrets `token` and
+/// `unbound`, and metrics under the prefix `conformance`. Tests share a runtime, so each uses its own app name.
 fn spec(app: &str, init_args: &str) -> InstanceSpec {
     let mut s = InstanceSpec {
         memory_max: MEMORY_MAX,
@@ -83,6 +106,9 @@ fn spec(app: &str, init_args: &str) -> InstanceSpec {
             Capability::KeyValue,
             Capability::Groups,
             Capability::Logging,
+            Capability::Config,
+            Capability::Secrets,
+            Capability::Metrics,
         ]
         .into(),
         ..InstanceSpec::new(app, "1.0.0")
@@ -98,6 +124,9 @@ fn spec(app: &str, init_args: &str) -> InstanceSpec {
         join: vec![format!("{app}-group")],
         publish: vec![format!("{app}-group")],
     };
+    s.services.config.values = BTreeMap::from([("mode".to_string(), "fast".to_string())]);
+    s.services.secrets.names = ["token".to_string(), "unbound".to_string()].into();
+    s.services.metrics.prefix = "conformance".into();
     s
 }
 
@@ -561,6 +590,31 @@ async fn callback_deadline____guest_spins____exits_timeout() {
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory____many_calls_and_casts____does_not_grow() {
+    // What the host passes each callback must be freed after it: an SDK
+    // whose runtime keeps it (TinyGo, spike S21) leaks 4 KiB a message here.
+    let h = up("c-leak", "").await;
+    let command = format!("echo:{}", "x".repeat(4096));
+    for _ in 0..1_000 {
+        ask(&h, &command).await;
+    }
+    let warm = h.memory_bytes();
+
+    for _ in 0..10_000 {
+        ask(&h, &command).await;
+        h.cast(text(&command)).unwrap();
+    }
+    ask(&h, "echo:done").await;
+    let after = h.memory_bytes();
+
+    assert!(
+        after <= warm + (2 << 20),
+        "grew from {warm} to {after} bytes"
+    );
+    h.kill();
+}
+
 // --- health checks -------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -742,4 +796,57 @@ async fn groups____join_publish_leave____members_receive_casts() {
     assert_eq!(denied, "err:access-denied");
     a.kill();
     b.kill();
+}
+
+// --- config, secrets and metrics ---------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn config____set_and_missing_keys____value_or_none() {
+    let h = up("c-config", "").await;
+
+    let set = ask(&h, "config:mode").await;
+    let missing = ask(&h, "config:nope").await;
+
+    assert_eq!(set, "fast");
+    assert_eq!(missing, "none");
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn secrets____bound_unbound_and_unlisted____value_or_error() {
+    let h = up("c-secret", "").await;
+
+    let token = ask(&h, "secret:token").await;
+    let unbound = ask(&h, "secret:unbound").await;
+    let unlisted = ask(&h, "secret:other").await;
+
+    assert_eq!(token, TOKEN);
+    assert!(unbound.starts_with("err:"), "{unbound}");
+    assert_eq!(unlisted, "err:access-denied");
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics____counter_gauge_histogram____rendered_for_the_app() {
+    let (rt, _) = shared();
+    let h = up("c-metrics", "").await;
+
+    let made = [
+        ask(&h, "counter:c_orders_total:2").await,
+        ask(&h, "counter:c_orders_total:3").await,
+        ask(&h, "gauge:c_queue:7").await,
+        ask(&h, "histogram:c_latency:5").await,
+    ];
+    let text = rt.render_metrics();
+
+    assert_eq!(made, ["ok", "ok", "ok", "ok"].map(String::from));
+    for line in [
+        r#"conformance_c_orders_total{app="c-metrics"} 5"#,
+        r#"conformance_c_queue{app="c-metrics"} 7"#,
+        r#"conformance_c_latency_bucket{app="c-metrics",le="10"} 1"#,
+        r#"conformance_c_latency_bucket{app="c-metrics",le="1"} 0"#,
+    ] {
+        assert!(text.contains(line), "{line} not in {text}");
+    }
+    h.kill();
 }

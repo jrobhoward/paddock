@@ -1,0 +1,37 @@
+# A manifest for an app on the Go SDK. Copy it beside the app, set its
+# name, and declare what the app uses; MANIFEST.md has every section.
+[app]
+name = "my-app"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[appserver]
+
+[appserver.upgrade]
+# The SDK writes snapshots in GUEST_FORMATS.md's format: give Def a
+# LoadSnapshot and an upgrade keeps the state.
+mode = "snapshot"
+snapshot_version = 1
+
+# TinyGo's runtime imports wasi:filesystem even when the app opens no file,
+# and the node refuses a component that imports a capability its manifest
+# does not declare. Declared with no preopens and not granted, the node
+# links deny stubs and the app sees no files.
+[appserver.capabilities."wasi:filesystem"]
+
+# Uncomment what the app uses (the SDK package in brackets). MANIFEST.md's
+# capability table has each section's keys.
+# [appserver.capabilities."wasi:logging"]                     # (log)
+# max_level = "info"
+# [appserver.capabilities."wasi:keyvalue".buckets]            # (kv, watch)
+# data = { durability = "disk" }
+# [appserver.capabilities."wasi:config"]                      # (config)
+# [appserver.capabilities."paddock:secrets"]                  # (secrets)
+# secrets = ["api-token"]
+# [appserver.capabilities."paddock:metrics"]                  # (metrics)
+# prefix = "my_app"
+# [appserver.capabilities."paddock:groups"]                   # (groups)
+# join = ["prices"]
+# publish = ["prices"]
+# [appserver.capabilities."paddock:sql".datasources]          # (sql)
+# main = {}

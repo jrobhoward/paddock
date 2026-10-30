@@ -1,6 +1,6 @@
 # Writing an app
 
-A Paddock app is a WebAssembly component that implements the `paddock:runtime/app` world ([`wit/runtime.wit`](../wit/runtime.wit)). In Rust, `paddock-sdk` hides the bindings: you implement the `App` trait and export it with `app!`. Apps in other languages implement the WIT directly; only the Rust SDK ships. Native code that cannot be a component (a vendor library, a driver) runs as a native-process app instead (below).
+A Paddock app is a WebAssembly component that implements the `paddock:runtime/app` world ([`wit/runtime.wit`](../wit/runtime.wit)). In Rust, `paddock-sdk` hides the bindings: you implement the `App` trait and export it with `app!`. Go has an SDK of its own ([`sdks/go`](../sdks/go/README.md)); apps in other languages implement the WIT directly. Native code that cannot be a component (a vendor library, a driver) runs as a native-process app instead (below).
 
 ## The model
 
@@ -305,9 +305,11 @@ An unmodified `wasi:http` component, built with any toolchain that targets the `
 
 ## Apps in other languages
 
+Go apps use the Go SDK, [`sdks/go`](../sdks/go/README.md), built with TinyGo: the same callbacks, process functions, envelopes, snapshot format and services as `paddock-sdk`, with S21's two fixes inside it (it frees what the host passes, and its `build.sh` sets `-scheduler=none`) and a manifest template that declares what TinyGo's runtime imports.
+
 Any language whose tooling builds a WASI 0.2 component can implement `paddock:runtime/app` from [`wit/runtime.wit`](../wit/runtime.wit). Go (TinyGo), Python (componentize-py) and JavaScript (jco) are tried: [`examples/ping-pong/languages`](../examples/ping-pong/languages/README.md) has the `pong` app in each, called by the Rust `ping`, with a demo that upgrades one app across all four languages on a running node. Each language's runtime brings a requirement of its own:
 
-- **Go:** build with `-scheduler=none`, and free each string and list the host passes to an export, or every message leaks.
+- **Go:** without the SDK, build with `-scheduler=none`, and free each string and list the host passes to an export, or every message leaks.
 - **Python:** node config's `max_core_instances_per_component` at 14 or more.
 - **JavaScript:** `limits.memory_max` of about 96 MiB.
 - **All three:** their runtimes import capabilities the app may not use (`wasi:filesystem`, and `wasi:sockets` or `wasi:http`). The manifest declares them, with no scope; ungranted, the node links deny stubs.
@@ -324,19 +326,23 @@ PADDOCK_CONFORMANCE_APP=path/to/app.wasm cargo test -p paddock-host --test confo
 
 A relative path is taken from the workspace root. Without the variable, the suite runs against the Rust app, as in CI. The snapshot the app writes is GUEST_FORMATS.md's `[1, state]` with a state the protocol fixes, so the snapshot cases also check that an SDK writes that format.
 
-| Cases (tests named) | What | Rust |
-| --- | --- | --- |
-| `init____*` | Init arguments, an init error, a trap in init | yes |
-| `call____*`, `cast____*`, `reply____*`, `self____*`, `guest_call_and_cast____*` | Calls and casts both ways, envelopes kept, `noreply`, deferred and in-callback replies, the instance's pid | yes |
-| `timers____*` | Timers fire in order; a cancelled one never does | yes |
-| `register____*` | Names listed in the manifest; taken and unlisted names | yes |
-| `link____*`, `unlink____*`, `monitor____*`, `exit_signal____*`, `terminate____*` | Links with and without trapped exits, monitors and demonitor, exit signals, `terminate` on a graceful stop | yes |
-| `snapshot____*`, `upgrade____*`, `rollback____*` | The snapshot format, a snapshot upgrade that keeps state and deferred callers, a refused snapshot, a rollback | yes |
-| `trap____*`, `memory_max____*`, `callback_deadline____*` | A trap, `memory_max` (128 MiB here) and the callback deadline end the instance with the right reason | yes |
-| `health____*` | Health checks answered, and a failing one kills the instance | yes |
-| `log_level____*` | Records reach the host at their level; the app follows the `log-level` event | yes |
-| `keyvalue____*`, `watch____*` | Keyvalue operations, an unlisted bucket, a watch's change notices | yes |
-| `groups____*` | Join, members, publish and leave, an unlisted group | yes |
+| Cases (tests named) | What | Rust | Go |
+| --- | --- | --- | --- |
+| `init____*` | Init arguments, an init error, a trap in init | yes | yes |
+| `call____*`, `cast____*`, `reply____*`, `self____*`, `guest_call_and_cast____*` | Calls and casts both ways, envelopes kept, `noreply`, deferred and in-callback replies, the instance's pid | yes | yes |
+| `timers____*` | Timers fire in order; a cancelled one never does | yes | yes |
+| `register____*` | Names listed in the manifest; taken and unlisted names | yes | yes |
+| `link____*`, `unlink____*`, `monitor____*`, `exit_signal____*`, `terminate____*` | Links with and without trapped exits, monitors and demonitor, exit signals, `terminate` on a graceful stop | yes | yes |
+| `snapshot____*`, `upgrade____*`, `rollback____*` | The snapshot format, a snapshot upgrade that keeps state and deferred callers, a refused snapshot, a rollback | yes | yes |
+| `trap____*`, `memory_max____*`, `callback_deadline____*` | A trap, `memory_max` (128 MiB here) and the callback deadline end the instance with the right reason | yes | yes |
+| `memory____*` | 10,000 calls and casts leave memory where it was: what the host passes each callback is freed | yes | yes |
+| `health____*` | Health checks answered, and a failing one kills the instance | yes | yes |
+| `log_level____*` | Records reach the host at their level; the app follows the `log-level` event | yes | yes |
+| `keyvalue____*`, `watch____*` | Keyvalue operations, an unlisted bucket, a watch's change notices | yes | yes |
+| `groups____*` | Join, members, publish and leave, an unlisted group | yes | yes |
+| `config____*`, `secrets____*`, `metrics____*` | Config values, bound, unbound and unlisted secrets, counters, gauges and histograms as the node renders them | yes | yes |
+
+The Go column is from a local run (Linux x86-64, TinyGo 0.43.0, 2026-10-30); CI runs the Rust app only until ROADMAP J5.
 
 ## Native-process apps
 

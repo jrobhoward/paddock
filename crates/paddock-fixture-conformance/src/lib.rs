@@ -72,6 +72,12 @@
 //! - `join:<group>`, `leave:<group>`: `ok`. `members:<group>`: the
 //!   members' pids, sorted, joined by `,`. `publish:<group>:<command>`:
 //!   cast `<command>` to every member; how many took it.
+//! - `config:<key>`: the value, or `none`.
+//! - `secret:<name>`: the secret as text, one trailing newline removed;
+//!   `err:not-found` when the node binds none.
+//! - `counter:<name>:<n>`, `gauge:<name>:<n>`, `histogram:<name>:<n>`:
+//!   make the metric (no labels; a histogram's buckets are 1 and 10), then
+//!   add, set or observe `<n>`; `ok`.
 //!
 //! Health checks (`paddock/health`) are answered as GUEST_FORMATS.md says.
 //! The snapshot is GUEST_FORMATS.md's `[1, state]`, the state a CBOR map
@@ -83,6 +89,8 @@
 use std::time::Duration;
 
 use paddock_sdk::log::{self, Level};
+use paddock_sdk::metrics::{Counter, Gauge, Histogram, MetricsError};
+use paddock_sdk::secrets::{self, SecretError};
 use paddock_sdk::watch::{self, Change, WatchError};
 use paddock_sdk::{
     App, CallError, CallRef, Ctx, Envelope, ExitReason, Info, MonitorRef, Pid, RegisterError,
@@ -256,6 +264,39 @@ fn group_error(e: &groups::GroupError) -> String {
     }
 }
 
+fn config(key: &str) -> String {
+    match paddock_sdk::config::get(key) {
+        Ok(value) => value.unwrap_or_else(|| "none".into()),
+        Err(paddock_sdk::config::ConfigError::Denied) => "err:access-denied".into(),
+        Err(e) => format!("err:{e}"),
+    }
+}
+
+fn secret(name: &str) -> String {
+    match secrets::get_string(name) {
+        Ok(value) => value,
+        Err(SecretError::AccessDenied) => "err:access-denied".into(),
+        Err(SecretError::NotFound) => "err:not-found".into(),
+        Err(e) => format!("err:{e}"),
+    }
+}
+
+fn metric(kind: &str, arg: &str) -> String {
+    let (name, n) = arg.split_once(':').unwrap_or((arg, "0"));
+    let n: f64 = n.parse().unwrap_or(0.0);
+    let help = "A conformance metric.";
+    let made = match kind {
+        "counter" => Counter::new(name, help, &[]).map(|c| c.add(n)),
+        "gauge" => Gauge::new(name, help, &[]).map(|g| g.set(n)),
+        _ => Histogram::new(name, help, &[], &[1.0, 10.0]).map(|h| h.observe(n)),
+    };
+    match made {
+        Ok(()) => "ok".into(),
+        Err(MetricsError::AccessDenied) => "err:access-denied".into(),
+        Err(e) => format!("err:{e}"),
+    }
+}
+
 /// What a command does with the call.
 enum Outcome {
     Reply(Envelope),
@@ -403,6 +444,9 @@ impl Conformance {
             "join" | "leave" | "members" | "publish" => {
                 reply(group_command(verb, arg).unwrap_or_else(|e| group_error(&e)))
             }
+            "config" => reply(config(arg)),
+            "secret" => reply(secret(arg)),
+            "counter" | "gauge" | "histogram" => reply(metric(verb, arg)),
             _ => reply(format!("unknown command '{command}'")),
         }
     }

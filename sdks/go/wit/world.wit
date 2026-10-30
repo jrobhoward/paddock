@@ -1,0 +1,33 @@
+// The world the Go SDK and its apps build against: Paddock's app world, the
+// interfaces of the services the SDK wraps, and wasi:cli's imports, which
+// TinyGo's runtime needs. A component imports only what its code calls, so
+// an app that uses no service imports none.
+//
+// The app world is restated rather than included: wit-bindgen-go 0.7.0
+// re-emits an included world's `use types.{...}` without its package, and
+// the result does not resolve (spike S21).
+package paddock:go-sdk;
+
+world app {
+  include wasi:cli/imports@0.2.0;
+  import paddock:runtime/process@0.1.0;
+  import wasi:logging/logging@0.1.0-draft;
+  import wasi:keyvalue/store@0.2.0-draft;
+  import wasi:keyvalue/atomics@0.2.0-draft;
+  import wasi:keyvalue/batch@0.2.0-draft;
+  import paddock:watch/watch@0.1.0;
+  import paddock:groups/groups@0.1.0;
+  import wasi:config/store@0.2.0-rc.1;
+  import paddock:secrets/store@0.1.0;
+  import paddock:metrics/metrics@0.1.0;
+  import paddock:sql/sql@0.1.0;
+  use paddock:runtime/types@0.1.0.{call-ref, envelope, exit-reason, info, call-result};
+
+  export init: func(args: list<u8>) -> result<_, string>;
+  export handle-call: func(caller: call-ref, msg: envelope) -> call-result;
+  export handle-cast: func(msg: envelope);
+  export handle-info: func(msg: info);
+  export terminate: func(reason: exit-reason);
+  export save-snapshot: func() -> list<u8>;
+  export load-snapshot: func(from-version: string, snapshot: list<u8>) -> result<_, string>;
+}

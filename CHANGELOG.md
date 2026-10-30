@@ -8,11 +8,18 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- The Go SDK, `sdks/go` (TinyGo 0.43.0): the app callbacks, the process
+  functions, envelopes with CBOR and JSON, snapshots in GUEST_FORMATS.md's
+  format, HTTP requests and responses, and packages for keyvalue, watches,
+  logging, config, secrets, metrics, groups and SQL. It frees what the
+  host passes and its `build.sh` sets `-scheduler=none` (spike S21), and
+  `template/paddock.toml` declares what TinyGo's runtime imports. Passes
+  the conformance suite (ROADMAP J3).
 - A conformance suite for guest SDKs (`paddock-host`'s
-  `tests/conformance.rs`): 31 cases covering init, calls and casts,
+  `tests/conformance.rs`): 35 cases covering init, calls and casts,
   replies, timers, names, links, monitors and exits, snapshots, upgrade and
-  rollback, limits, health checks, log levels, keyvalue, watches and
-  groups, against an app that speaks the command protocol of
+  rollback, limits, memory kept flat over many messages, health checks,
+  log levels, keyvalue, watches, groups, config, secrets and metrics, against an app that speaks the command protocol of
   `paddock-fixture-conformance` (the Rust SDK's app, run in CI).
   `PADDOCK_CONFORMANCE_APP=<component.wasm>` runs it against another
   language's app. WRITING_APPS.md has the table of cases each SDK passes
