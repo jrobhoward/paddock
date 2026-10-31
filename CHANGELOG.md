@@ -217,6 +217,13 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- On a `read_concurrency` memory bucket, `bulkhead:watch`'s `get` and
+  `scan` read a key's value and its revision in two lookups, so a write
+  between them returned the old value with the new revision: a mirror
+  kept by revisions then skipped that write for good, and a
+  compare-and-swap after such a `get` could overwrite a write it never
+  saw. Each value is now read with its revision in one load (ROADMAP Q16,
+  found by spike S28).
 - An upgraded instance that passivates now wakes on the version it was
   upgraded to. It woke on the version it was started with, given the new
   version's snapshot, while `ps` showed the new version, so a release of

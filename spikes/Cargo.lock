@@ -179,6 +179,91 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulkhead-bundle"
+version = "0.3.0"
+dependencies = [
+ "rustbridge-bundle 1.0.1 (git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm)",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "thiserror 2.0.21",
+ "toml",
+ "wasmparser 0.261.0",
+]
+
+[[package]]
+name = "bulkhead-host"
+version = "0.3.0"
+dependencies = [
+ "arc-swap",
+ "atomic-waker",
+ "base64 0.23.1",
+ "bulkhead-bundle",
+ "bulkhead-native",
+ "bytes",
+ "ciborium",
+ "ciborium-ll",
+ "deadpool-postgres",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "quinn",
+ "rcgen",
+ "redb",
+ "rustix",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "scc",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "tokio-rustls",
+ "toml",
+ "tower-service",
+ "tracing",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
+name = "bulkhead-native"
+version = "0.3.0"
+dependencies = [
+ "ciborium",
+ "serde",
+]
+
+[[package]]
+name = "bulkhead-sdk"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk-macros",
+ "ciborium",
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-sdk-macros"
+version = "0.3.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1748,91 +1833,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
-name = "bulkhead-bundle"
-version = "0.3.0"
-dependencies = [
- "rustbridge-bundle 1.0.1 (git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm)",
- "semver",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "thiserror 2.0.21",
- "toml",
- "wasmparser 0.261.0",
-]
-
-[[package]]
-name = "bulkhead-host"
-version = "0.3.0"
-dependencies = [
- "arc-swap",
- "atomic-waker",
- "base64 0.23.1",
- "bytes",
- "ciborium",
- "ciborium-ll",
- "deadpool-postgres",
- "futures-util",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "bulkhead-bundle",
- "bulkhead-native",
- "quinn",
- "rcgen",
- "redb",
- "rustix",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
- "rustls-webpki",
- "scc",
- "semver",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "tokio-rustls",
- "toml",
- "tower-service",
- "tracing",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
-]
-
-[[package]]
-name = "bulkhead-native"
-version = "0.3.0"
-dependencies = [
- "ciborium",
- "serde",
-]
-
-[[package]]
-name = "bulkhead-sdk"
-version = "0.3.0"
-dependencies = [
- "ciborium",
- "bulkhead-sdk-macros",
- "serde",
- "serde_json",
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "bulkhead-sdk-macros"
-version = "0.3.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2556,11 +2556,11 @@ name = "s15-bench"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bulkhead-host",
  "bytes",
  "http-body-util",
  "hyper",
  "hyper-util",
- "bulkhead-host",
  "tokio",
  "wasmtime",
  "wasmtime-wasi",
@@ -2650,6 +2650,22 @@ dependencies = [
 
 [[package]]
 name = "s27-guest"
+version = "0.0.0"
+dependencies = [
+ "bulkhead-sdk",
+]
+
+[[package]]
+name = "s28-bench"
+version = "0.0.0"
+dependencies = [
+ "bulkhead-bundle",
+ "bulkhead-host",
+ "tokio",
+]
+
+[[package]]
+name = "s28-guest"
 version = "0.0.0"
 dependencies = [
  "bulkhead-sdk",

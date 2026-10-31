@@ -1,0 +1,11 @@
+[package]
+name = "s28-guest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bulkhead-sdk = { path = "../../../crates/bulkhead-sdk", features = ["keyvalue", "watch"] }

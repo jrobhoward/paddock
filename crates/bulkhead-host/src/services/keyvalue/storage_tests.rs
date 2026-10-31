@@ -830,3 +830,74 @@ fn live_bucket____overwrites_inserts_and_deletes_beside_readers____no_key_ever_m
     assert_eq!(missed, 0);
     assert!(writes > 0);
 }
+
+#[test]
+fn live_bucket____entries_and_scans_beside_a_writer____each_value_with_its_own_revision() {
+    use std::sync::atomic::AtomicBool;
+    // Few keys, so the writer often overwrites the one a reader is reading.
+    let bucket = Arc::new(LiveBucket::default());
+    let keys: Vec<String> = (0..4).map(|i| format!("k{i}")).collect();
+    bucket
+        .run(
+            Op::SetMany(keys.iter().map(|k| (k.clone(), b"1".to_vec())).collect()),
+            None,
+        )
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let matches = |value: &[u8], revision: u64| value == revision.to_string().as_bytes();
+
+    let writer = std::thread::spawn({
+        let (bucket, keys, stop) = (bucket.clone(), keys.clone(), stop.clone());
+        move || {
+            // Each write raises the revision by one, from 1 after the fill,
+            // so the writer knows the revision it writes at.
+            let mut revision = 1u64;
+            while !stop.load(Ordering::Relaxed) {
+                revision += 1;
+                let k = &keys[(revision % 4) as usize];
+                let applied = bucket
+                    .run(Op::Set(k.clone(), revision.to_string().into_bytes()), None)
+                    .unwrap();
+                assert_eq!(applied.revision, Some(revision));
+            }
+        }
+    });
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let (bucket, keys) = (bucket.clone(), keys.clone());
+            std::thread::spawn(move || {
+                let mut torn = 0;
+                for round in 0..20_000 {
+                    let k = &keys[round % 4];
+                    if let Outcome::Entry(Some((v, r))) =
+                        bucket.run(Op::Entry(k.clone()), None).unwrap().outcome
+                        && !matches(&v, r)
+                    {
+                        torn += 1;
+                    }
+                    if round % 10 == 0 {
+                        let query = ScanQuery {
+                            prefix: Some("k".into()),
+                            start: None,
+                            end: None,
+                            reverse: false,
+                            limit: 0,
+                            cursor: None,
+                        };
+                        if let Outcome::Page { entries, .. } =
+                            bucket.run(Op::Scan(query), None).unwrap().outcome
+                        {
+                            torn += entries.iter().filter(|(_, v, r)| !matches(v, *r)).count();
+                        }
+                    }
+                }
+                torn
+            })
+        })
+        .collect();
+    let torn: usize = readers.into_iter().map(|r| r.join().unwrap()).sum();
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+
+    assert_eq!(torn, 0);
+}

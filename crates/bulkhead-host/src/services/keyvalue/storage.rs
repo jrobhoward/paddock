@@ -66,7 +66,19 @@ pub(crate) struct ScanQuery {
 pub(crate) type Scanned = (String, Vec<u8>, u64);
 
 /// A backend's page of a scan: keys and values, and the first key left.
-pub(crate) type RangePage = (Vec<(String, Vec<u8>)>, Option<String>);
+pub(crate) type RangePage<V = Vec<u8>> = (Vec<(String, V)>, Option<String>);
+
+/// A page of entries with the revision each was written at.
+pub(crate) type RevisionedPage = (Vec<Scanned>, Option<String>);
+
+/// A value and its revision, sized by the value, for [`take_page`].
+struct Stamped(Vec<u8>, u64);
+
+impl AsRef<[u8]> for Stamped {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 /// The smallest string greater than every string starting with `prefix`,
 /// or `None` if there is none (the prefix is all `char::MAX`).
@@ -147,16 +159,16 @@ pub(crate) fn scan_bounds(query: &ScanQuery) -> Option<(Bound<String>, Bound<Str
 
 /// Take entries from `entries` (in scan order) until `limit` of them or
 /// about `max_bytes`, at least one; and the first key left, if any.
-fn take_page(
-    entries: impl Iterator<Item = Result<(String, Vec<u8>), String>>,
+fn take_page<V: AsRef<[u8]>>(
+    entries: impl Iterator<Item = Result<(String, V), String>>,
     limit: usize,
     max_bytes: u64,
-) -> Result<RangePage, String> {
+) -> Result<RangePage<V>, String> {
     let mut page = Vec::new();
     let mut bytes = 0u64;
     for entry in entries {
         let (key, value) = entry?;
-        let size = entry_size(&key, &value);
+        let size = entry_size(&key, value.as_ref());
         if page.len() >= limit || (!page.is_empty() && bytes.saturating_add(size) > max_bytes) {
             return Ok((page, Some(key)));
         }
@@ -360,6 +372,34 @@ pub(crate) trait Txn {
     ) -> Result<RangePage, String>;
     /// Bytes stored: the sum of key and value lengths.
     fn bytes(&mut self) -> Result<u64, String>;
+
+    /// `key`'s value and the revision it was written at, read together: a
+    /// reader without the bucket's lock must not pair one write's value
+    /// with another's revision.
+    fn entry(&mut self, key: &str) -> Result<Option<(Vec<u8>, u64)>, String> {
+        let Some(value) = self.get(key)? else {
+            return Ok(None);
+        };
+        Ok(Some((value, self.key_revision(key)?.unwrap_or(0))))
+    }
+
+    /// As [`Txn::range`], with each entry's revision read with its value
+    /// (as for [`Txn::entry`]).
+    fn range_revisions(
+        &mut self,
+        bounds: &(Bound<String>, Bound<String>),
+        reverse: bool,
+        limit: usize,
+        max_bytes: u64,
+    ) -> Result<RevisionedPage, String> {
+        let (found, next) = self.range(bounds, reverse, limit, max_bytes)?;
+        let mut entries = Vec::with_capacity(found.len());
+        for (key, value) in found {
+            let revision = self.key_revision(&key)?.unwrap_or(0);
+            entries.push((key, value, revision));
+        }
+        Ok((entries, next))
+    }
 }
 
 fn entry_size(key: &str, value: &[u8]) -> u64 {
@@ -385,15 +425,10 @@ fn scan(txn: &mut dyn Txn, query: &ScanQuery) -> Result<Outcome, String> {
         0 => SCAN_ENTRIES,
         n => n.min(SCAN_ENTRIES),
     };
-    let (found, next) = match scan_bounds(query) {
-        Some(bounds) => txn.range(&bounds, query.reverse, limit, SCAN_BYTES)?,
+    let (entries, next) = match scan_bounds(query) {
+        Some(bounds) => txn.range_revisions(&bounds, query.reverse, limit, SCAN_BYTES)?,
         None => (Vec::new(), None),
     };
-    let mut entries = Vec::with_capacity(found.len());
-    for (key, value) in found {
-        let revision = txn.key_revision(&key)?.unwrap_or(0);
-        entries.push((key, value, revision));
-    }
     Ok(Outcome::Page {
         entries,
         next,
@@ -417,10 +452,7 @@ pub(crate) fn apply(txn: &mut dyn Txn, op: Op, quota: Option<u64>) -> Result<App
             bucket: txn.revision()?,
             key: txn.key_revision(&key)?,
         },
-        Op::Entry(key) => match txn.get(&key)? {
-            None => Outcome::Entry(None),
-            Some(v) => Outcome::Entry(Some((v, txn.key_revision(&key)?.unwrap_or(0)))),
-        },
+        Op::Entry(key) => Outcome::Entry(txn.entry(&key)?),
         Op::Since { key, prefix, after } => {
             let mut changed = Vec::new();
             let keys = if prefix {
@@ -875,6 +907,36 @@ impl Txn for LiveTxn<'_> {
 
     fn bytes(&mut self) -> Result<u64, String> {
         Ok(self.0.bytes.load(Ordering::Acquire))
+    }
+
+    fn entry(&mut self, key: &str) -> Result<Option<(Vec<u8>, u64)>, String> {
+        let guard = Guard::new();
+        let entry = self.0.entries.peek(key, &guard);
+        Ok(entry.and_then(|e| live(e, &guard)).cloned())
+    }
+
+    fn range_revisions(
+        &mut self,
+        bounds: &(Bound<String>, Bound<String>),
+        reverse: bool,
+        limit: usize,
+        max_bytes: u64,
+    ) -> Result<RevisionedPage, String> {
+        let guard = Guard::new();
+        let range = self.0.entries.range::<str, _>(str_bounds(bounds), &guard);
+        let owned = |(k, e): (&String, &LiveEntry)| {
+            live(e, &guard).map(|(v, r)| Ok((k.clone(), Stamped(v.clone(), *r))))
+        };
+        let (page, next) = if reverse {
+            take_page(range.rev().filter_map(owned), limit, max_bytes)?
+        } else {
+            take_page(range.filter_map(owned), limit, max_bytes)?
+        };
+        let entries = page
+            .into_iter()
+            .map(|(k, Stamped(v, r))| (k, v, r))
+            .collect();
+        Ok((entries, next))
     }
 }
 
