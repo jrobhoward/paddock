@@ -186,6 +186,7 @@ fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
                 SharedBucket {
                     durability: Durability::Replicated,
                     quota: None,
+                    read_concurrency: false,
                 },
             ),
             (
@@ -193,6 +194,7 @@ fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
                 SharedBucket {
                     durability: Durability::Disk,
                     quota: None,
+                    read_concurrency: false,
                 },
             ),
         ]);

@@ -118,6 +118,7 @@ fn bucket(durability: Durability, quota: Option<u64>) -> Bucket {
     Bucket {
         durability,
         quota: quota.map(ByteSize),
+        read_concurrency: false,
     }
 }
 

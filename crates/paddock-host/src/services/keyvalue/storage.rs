@@ -21,7 +21,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+
+use arc_swap::ArcSwap;
+use scc::{AtomicShared, Guard, Shared, Tag, TreeIndex};
 
 use paddock_bundle::manifest::Durability;
 use redb::{ReadableDatabase, ReadableTable, TableDefinition, TableHandle};
@@ -206,6 +210,9 @@ pub struct BucketHandle {
     pub(crate) quota: Option<u64>,
     /// `false` for a shared bucket granted read-only.
     pub(crate) writable: bool,
+    /// A memory bucket whose reads take no lock ([`LiveBucket`]); chosen
+    /// when the bucket is first used.
+    pub(crate) read_concurrency: bool,
 }
 
 /// One storage operation. Serializable: a replicated bucket's log carries
@@ -595,7 +602,9 @@ fn delete(txn: &mut dyn Txn, bytes: u64, key: &str) -> Result<(u64, bool), Strin
     Ok((bytes.saturating_sub(key_size(key, old)), true))
 }
 
-/// A memory bucket.
+/// A memory bucket as a plain `BTreeMap` behind its lock: the default, and
+/// the model the storage tests check [`LiveBucket`] and the disk backend
+/// against.
 #[derive(Debug, Default)]
 pub(crate) struct MemBucket {
     /// Values, and the revision each was written at.
@@ -743,43 +752,211 @@ pub(crate) struct KvStore {
     replication: OnceLock<(Handle, watch::Receiver<ReplicationStatus>)>,
 }
 
-/// The memory backend: each bucket behind its own lock, found by
-/// namespace and name without building a key (ROADMAP S25).
+/// A live memory bucket: a concurrent B+-tree with lock-free reads
+/// (`scc::TreeIndex`) whose entries swap their value and revision in place,
+/// so readers never wait and an overwrite never hides a key (spike S26). Writers serialize on `writer`, which
+/// keeps the revision and size bookkeeping in step; readers see each
+/// entry as of its own revision.
+#[derive(Debug, Default)]
+pub(crate) struct LiveBucket {
+    entries: TreeIndex<String, LiveEntry>,
+    writer: Mutex<()>,
+    bytes: AtomicU64,
+    revision: AtomicU64,
+    deleted: AtomicU64,
+}
+
+/// An entry's value and the revision it was written at, swapped whole and
+/// reclaimed by the tree's own epochs, so a read under the lookup's guard
+/// is one atomic load.
+type LiveEntry = AtomicShared<(Vec<u8>, u64)>;
+
+/// What `entry` holds now, read under `guard`.
+fn live<'g>(entry: &LiveEntry, guard: &'g Guard) -> Option<&'g (Vec<u8>, u64)> {
+    entry.load(Ordering::Acquire, guard).as_ref()
+}
+
+/// A transaction on a [`LiveBucket`]: a reader's or, holding its writer
+/// lock, a writer's.
+pub(crate) struct LiveTxn<'a>(&'a LiveBucket);
+
+impl Txn for LiveTxn<'_> {
+    fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, String> {
+        let guard = Guard::new();
+        let entry = self.0.entries.peek(key, &guard);
+        Ok(entry.and_then(|e| live(e, &guard)).map(|(v, _)| v.clone()))
+    }
+
+    fn value_len(&mut self, key: &str) -> Result<Option<usize>, String> {
+        let guard = Guard::new();
+        let entry = self.0.entries.peek(key, &guard);
+        Ok(entry.and_then(|e| live(e, &guard)).map(|(v, _)| v.len()))
+    }
+
+    fn put(&mut self, key: &str, value: &[u8], revision: u64) -> Result<(), String> {
+        let value = (value.to_vec(), revision);
+        // The writer lock is held, so no other writer adds this key between
+        // the look and the insert.
+        let guard = Guard::new();
+        match self.0.entries.peek(key, &guard) {
+            Some(e) => {
+                e.swap((Some(Shared::new(value)), Tag::None), Ordering::AcqRel);
+            }
+            None => {
+                let _ = self
+                    .0
+                    .entries
+                    .insert_sync(key.to_string(), AtomicShared::new(value));
+            }
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, key: &str) -> Result<(), String> {
+        self.0.entries.remove_sync(key);
+        Ok(())
+    }
+
+    fn revision(&mut self) -> Result<u64, String> {
+        Ok(self.0.revision.load(Ordering::Acquire))
+    }
+
+    fn set_revision(&mut self, revision: u64) -> Result<(), String> {
+        self.0.revision.store(revision, Ordering::Release);
+        Ok(())
+    }
+
+    fn key_revision(&mut self, key: &str) -> Result<Option<u64>, String> {
+        let guard = Guard::new();
+        let entry = self.0.entries.peek(key, &guard);
+        Ok(entry.and_then(|e| live(e, &guard)).map(|(_, r)| *r))
+    }
+
+    fn deleted(&mut self) -> Result<u64, String> {
+        Ok(self.0.deleted.load(Ordering::Acquire))
+    }
+
+    fn set_deleted(&mut self, revision: u64) -> Result<(), String> {
+        self.0.deleted.store(revision, Ordering::Release);
+        Ok(())
+    }
+
+    fn keys(&mut self, offset: usize, limit: usize) -> Result<Vec<String>, String> {
+        let guard = Guard::new();
+        Ok(self
+            .0
+            .entries
+            .iter(&guard)
+            .skip(offset)
+            .take(limit)
+            .map(|(k, _)| k.clone())
+            .collect())
+    }
+
+    fn range(
+        &mut self,
+        bounds: &(Bound<String>, Bound<String>),
+        reverse: bool,
+        limit: usize,
+        max_bytes: u64,
+    ) -> Result<RangePage, String> {
+        let guard = Guard::new();
+        let range = self.0.entries.range::<str, _>(str_bounds(bounds), &guard);
+        // An entry removed during the scan may still be seen, with no value.
+        let owned = |(k, e): (&String, &LiveEntry)| {
+            live(e, &guard).map(|(v, _)| Ok((k.clone(), v.clone())))
+        };
+        if reverse {
+            take_page(range.rev().filter_map(owned), limit, max_bytes)
+        } else {
+            take_page(range.filter_map(owned), limit, max_bytes)
+        }
+    }
+
+    fn bytes(&mut self) -> Result<u64, String> {
+        Ok(self.0.bytes.load(Ordering::Acquire))
+    }
+}
+
+impl LiveBucket {
+    /// Run `op`: a read without any lock, a write holding the writer lock.
+    pub(crate) fn run(&self, op: Op, quota: Option<u64>) -> Result<Applied, String> {
+        if op.read_only() {
+            return apply(&mut LiveTxn(self), op, quota);
+        }
+        let _writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let applied = apply(&mut LiveTxn(self), op, quota)?;
+        self.bytes.store(applied.bytes, Ordering::Release);
+        Ok(applied)
+    }
+}
+
+/// The memory backend: each bucket a [`MemBucket`] behind its lock, or a
+/// [`LiveBucket`] with `read_concurrency`, found by namespace and name
+/// without building a key (spike S25). The map of buckets is
+/// swapped whole when a bucket is first used, which is rare, so a lookup
+/// writes no shared memory (spike S26).
 #[derive(Debug, Default)]
 struct Memory {
-    buckets: RwLock<HashMap<String, MemSpace>>,
+    buckets: ArcSwap<HashMap<String, MemSpace>>,
+    /// Serializes adding buckets.
+    adding: Mutex<()>,
 }
 
 /// One namespace's memory buckets, by name.
-type MemSpace = HashMap<String, Arc<Mutex<MemBucket>>>;
+type MemSpace = HashMap<String, Arc<MemSlot>>;
+
+/// A memory bucket of either kind.
+#[derive(Debug)]
+enum MemSlot {
+    /// A `BTreeMap` behind one lock: the fastest single operation.
+    Locked(Mutex<MemBucket>),
+    /// Reads without a lock (`read_concurrency`).
+    Live(LiveBucket),
+}
+
+impl MemSlot {
+    fn run(&self, op: Op, quota: Option<u64>) -> Result<Applied, String> {
+        match self {
+            Self::Locked(bucket) => {
+                let mut b = bucket.lock().unwrap_or_else(PoisonError::into_inner);
+                let applied = apply(&mut *b, op, quota)?;
+                b.bytes = applied.bytes;
+                Ok(applied)
+            }
+            Self::Live(bucket) => bucket.run(op, quota),
+        }
+    }
+}
 
 impl Memory {
-    fn bucket(&self, space: &str, name: &str) -> Arc<Mutex<MemBucket>> {
-        let found = self
-            .buckets
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(space)
-            .and_then(|names| names.get(name))
-            .cloned();
-        found.unwrap_or_else(|| {
-            self.buckets
-                .write()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry(space.to_string())
-                .or_default()
-                .entry(name.to_string())
-                .or_default()
-                .clone()
-        })
-    }
-
-    fn run(&self, space: &str, name: &str, op: Op, quota: Option<u64>) -> Result<Applied, String> {
-        let bucket = self.bucket(space, name);
-        let mut b = bucket.lock().unwrap_or_else(PoisonError::into_inner);
-        let applied = apply(&mut *b, op, quota)?;
-        b.bytes = applied.bytes;
-        Ok(applied)
+    fn run(&self, bucket: &BucketHandle, op: Op) -> Result<Applied, String> {
+        let (space, name, quota) = (bucket.space.as_str(), bucket.name.as_str(), bucket.quota);
+        if let Some(slot) = self.buckets.load().get(space).and_then(|n| n.get(name)) {
+            return slot.run(op, quota);
+        }
+        let live = bucket.read_concurrency;
+        let bucket = {
+            let _adding = self.adding.lock().unwrap_or_else(PoisonError::into_inner);
+            let current = self.buckets.load_full();
+            match current.get(space).and_then(|n| n.get(name)) {
+                Some(b) => b.clone(),
+                None => {
+                    let b = Arc::new(if live {
+                        MemSlot::Live(LiveBucket::default())
+                    } else {
+                        MemSlot::Locked(Mutex::default())
+                    });
+                    let mut next = HashMap::clone(&current);
+                    next.entry(space.to_string())
+                        .or_default()
+                        .insert(name.to_string(), b.clone());
+                    self.buckets.store(Arc::new(next));
+                    b
+                }
+            }
+        };
+        bucket.run(op, quota)
     }
 }
 
@@ -900,6 +1077,18 @@ impl KvStore {
         Ok(handle.read(&bucket.name, op).await?)
     }
 
+    /// Whether the memory bucket behind `bucket` reads without a lock, once
+    /// it has been used; for tests.
+    #[cfg(test)]
+    pub(crate) fn reads_without_lock(&self, bucket: &BucketHandle) -> Option<bool> {
+        self.memory
+            .buckets
+            .load()
+            .get(&bucket.space)
+            .and_then(|n| n.get(&bucket.name))
+            .map(|slot| matches!(**slot, MemSlot::Live(_)))
+    }
+
     /// A read, run now on this thread: memory buckets, and disk and
     /// replicated buckets' local copies from redb's page cache, as
     /// [`KvStore::run`] runs reads. For host functions bound synchronously.
@@ -938,9 +1127,7 @@ impl KvStore {
             return on_disk()?.run(&key, op, bucket.quota);
         }
         match bucket.durability {
-            Durability::Memory => self
-                .memory
-                .run(&bucket.space, &bucket.name, op, bucket.quota),
+            Durability::Memory => self.memory.run(bucket, op),
             // Reads (and, from `apply`, nothing else): redb usually serves
             // them from its page cache in a microsecond or two, and a hop to
             // the blocking pool costs about 20 µs (spike S14). A cache miss

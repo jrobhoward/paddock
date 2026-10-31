@@ -221,6 +221,7 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "upgrade": { "mode": "snapshot" } }), "upgrade.snapshot_version")]
 #[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "Bad Name": {} } } } }), "capabilities.wasi:keyvalue.buckets.Bad Name")]
 #[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "b": { "quota": 0 } } } } }), "capabilities.wasi:keyvalue.buckets.b.quota")]
+#[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "b": { "durability": "disk", "read_concurrency": true } } } } }), "capabilities.wasi:keyvalue.buckets.b.read_concurrency")]
 #[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "data": { "volume": "v" } } } } }), "capabilities.wasi:filesystem.preopens.data")]
 #[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data/../etc": { "volume": "v" } } } } }), "capabilities.wasi:filesystem.preopens./data/../etc")]
 #[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "v", "mode": "rw", "quota": "5GiB" } } } } }), "capabilities.wasi:filesystem.preopens./data.quota")]

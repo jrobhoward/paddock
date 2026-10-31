@@ -44,6 +44,7 @@ fn spec(app: &str, caps: &[Capability]) -> InstanceSpec {
             Bucket {
                 durability: Durability::Memory,
                 quota: None,
+                read_concurrency: false,
             },
         ),
         (
@@ -51,6 +52,7 @@ fn spec(app: &str, caps: &[Capability]) -> InstanceSpec {
             Bucket {
                 durability: Durability::Memory,
                 quota: Some(ByteSize(8)),
+                read_concurrency: false,
             },
         ),
     ]);

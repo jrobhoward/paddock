@@ -143,6 +143,9 @@ pub struct SharedBucket {
     pub durability: Durability,
     /// Most bytes the bucket may hold, across every app writing it.
     pub quota: Option<u64>,
+    /// Reads take no lock (memory buckets; spike S26): see the manifest's
+    /// `read_concurrency`.
+    pub read_concurrency: bool,
 }
 
 /// Where a secret's value comes from. Read on every access.

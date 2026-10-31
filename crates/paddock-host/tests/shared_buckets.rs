@@ -22,12 +22,20 @@ fn shared() -> &'static (Runtime, LoadedApp) {
         let bucket = |quota| SharedBucket {
             durability: Durability::Memory,
             quota,
+            read_concurrency: false,
         };
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 16,
             buckets: BTreeMap::from([
                 ("board".to_string(), bucket(None)),
                 ("small".to_string(), bucket(Some(16))),
+                (
+                    "fast".to_string(),
+                    SharedBucket {
+                        read_concurrency: true,
+                        ..bucket(Some(64))
+                    },
+                ),
             ]),
             ..RuntimeConfig::default()
         })
@@ -128,4 +136,29 @@ async fn shared_bucket____quota____counts_every_app_writing_it() {
     assert!(third.starts_with("err:storage:"), "{third}");
     a.kill();
     b.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_bucket____read_concurrency____same_operations_and_quota() {
+    let writer = up("fast-w", &[("fast", AccessMode::Rw)]);
+    let reader = up("fast-r", &[("fast", AccessMode::Ro)]);
+
+    ask(&writer, "set:fast:b:2").await;
+    ask(&writer, "set:fast:a:1").await;
+    let seen = ask(&reader, "get:fast:a").await;
+    let keys = ask(&reader, "keys:fast").await;
+    let denied = ask(&reader, "set:fast:a:9").await;
+    let empty = ask(&writer, "set:fast:big:").await;
+    let too_big = ask(&writer, &format!("set:fast:big:{}", "x".repeat(80))).await;
+    ask(&writer, "delete:fast:a").await;
+    let gone = ask(&reader, "get:fast:a").await;
+
+    assert_eq!(seen, "1");
+    assert_eq!(keys, "a,b");
+    assert_eq!(denied, "err:access denied");
+    assert_eq!(empty, "ok");
+    assert!(too_big.starts_with("err:storage:"), "{too_big}");
+    assert_eq!(gone, "none");
+    writer.kill();
+    reader.kill();
 }

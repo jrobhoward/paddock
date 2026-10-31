@@ -10,6 +10,9 @@
 //! cargo run --release -p paddock-host --example kv_cost -- [workers]
 //! ```
 //!
+//! `KV_READ_CONCURRENCY=1` makes every bucket a `read_concurrency` one
+//! (reads without a lock, spike S26).
+//!
 //! `KV_ONLY=<op>:<bucket>:<keys>:<size>:<seconds>` instead runs one loop
 //! (after filling the bucket) over and over for that long, for a profiler:
 //! `KV_ONLY=miss:b1k:1000:16:20 perf record -g target/release/examples/kv_cost 1`.
@@ -74,6 +77,11 @@ async fn ask(h: &InstanceHandle, body: &str) -> String {
     text
 }
 
+/// `KV_READ_CONCURRENCY=1`: every bucket reads without a lock.
+fn read_concurrency() -> bool {
+    std::env::var_os("KV_READ_CONCURRENCY").is_some_and(|v| v == "1")
+}
+
 fn spec() -> InstanceSpec {
     let mut s = InstanceSpec {
         memory_max: 256 << 20,
@@ -84,6 +92,7 @@ fn spec() -> InstanceSpec {
     let memory = || Bucket {
         durability: Durability::Memory,
         quota: None,
+        read_concurrency: read_concurrency(),
     };
     s.services.keyvalue.buckets = ["b1k", "b100k", "m16", "m1k", "chain"]
         .iter()
@@ -126,6 +135,7 @@ async fn run(workers: usize, component: Vec<u8>) {
             SharedBucket {
                 durability: Durability::Memory,
                 quota: None,
+                read_concurrency: read_concurrency(),
             },
         )]),
         ..RuntimeConfig::default()

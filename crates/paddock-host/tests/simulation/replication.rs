@@ -42,6 +42,7 @@ fn replicated(dir: &Path, config: &mut RuntimeConfig) {
         SharedBucket {
             durability: Durability::Replicated,
             quota: None,
+            read_concurrency: false,
         },
     )]);
 }

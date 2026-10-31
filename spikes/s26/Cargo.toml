@@ -1,0 +1,11 @@
+[package]
+name = "s26-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+arc-swap = "1.9"
+crossbeam-skiplist = "0.1"
+crossbeam-utils = "0.8"
+scc = "3"

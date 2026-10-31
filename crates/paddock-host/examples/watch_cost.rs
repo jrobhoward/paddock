@@ -101,6 +101,7 @@ async fn run(component: Vec<u8>, workers: usize, durability: Durability) {
             SharedBucket {
                 durability,
                 quota: None,
+                read_concurrency: false,
             },
         )]),
         data_dir: Some(dir.path().to_path_buf()),

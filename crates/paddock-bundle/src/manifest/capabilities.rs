@@ -586,6 +586,12 @@ impl KeyValueScope {
                 if bucket.quota.is_some_and(|q| q.bytes() == 0) {
                     v.error_at(format!("{name}.quota"), "must be greater than zero");
                 }
+                if bucket.read_concurrency && bucket.durability != Durability::Memory {
+                    v.error_at(
+                        format!("{name}.read_concurrency"),
+                        "is for memory buckets (disk buckets already read concurrently)",
+                    );
+                }
             });
         }
         for name in self.shared.keys() {
@@ -611,6 +617,12 @@ pub struct Bucket {
     /// Most bytes the bucket may hold.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota: Option<ByteSize>,
+    /// Reads take no lock, so many instances read the bucket at once, as
+    /// ETS's `read_concurrency`; single reads and writes cost more, and a
+    /// scan's entries are each as of their own revision. Memory buckets
+    /// only.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub read_concurrency: bool,
 }
 
 /// Where a bucket's data lives.

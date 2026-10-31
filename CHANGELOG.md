@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `read_concurrency` for memory buckets (manifest `buckets.<name>` and node
+  config `[buckets.<name>]`), as ETS's: reads take no lock, so many
+  instances read a bucket at once. With 4 and 16 readers, about three
+  times the reads (2.5M/s against 0.7M on the 16-core machine, 1.7M
+  against 0.5M on the Raspberry Pi 5); single reads cost 0 to 22% more,
+  writes 13 to 54%, writes to one hot key about half. Readers may see part
+  of a `set-many`, and a `scan` page holds each entry as of its own
+  revision. Off by default; memory buckets only (spike S26). `bench.sh
+  kv-rc` measures it.
 - `kv_cost` (`paddock-host` example, `bench.sh kv`) and
   `scripts/beam_ets.escript` (`bench.sh beam-ets`): keyvalue memory buckets
   from a guest against ETS from an Erlang process, the same loops on both:

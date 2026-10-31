@@ -245,6 +245,7 @@ impl Node {
                         let bucket = SharedBucket {
                             durability,
                             quota: b.quota.map(|q| q.bytes()),
+                            read_concurrency: b.read_concurrency,
                         };
                         (name.clone(), bucket)
                     })

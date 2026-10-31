@@ -29,6 +29,7 @@ fn shared() -> &'static (Runtime, LoadedApp) {
                 SharedBucket {
                     durability: Durability::Memory,
                     quota: None,
+                    read_concurrency: false,
                 },
             )]),
             ..RuntimeConfig::default()
@@ -53,6 +54,7 @@ fn spec(app: &str, mode: AccessMode) -> InstanceSpec {
         Bucket {
             durability: Durability::Memory,
             quota: None,
+            read_concurrency: false,
         },
     )]);
     spec.services.keyvalue.shared = BTreeMap::from([("board".to_string(), mode)]);

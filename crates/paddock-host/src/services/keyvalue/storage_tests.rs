@@ -301,6 +301,7 @@ fn handle(app: &str, name: &str, durability: Durability) -> BucketHandle {
         durability,
         quota: None,
         writable: true,
+        read_concurrency: false,
     }
 }
 
@@ -426,12 +427,31 @@ fn KvStore____shared_disk_bucket_without_data_dir____refused() {
         SharedBucket {
             durability: Durability::Disk,
             quota: None,
+            read_concurrency: false,
         },
     )]);
 
     let err = KvStore::open(None, shared).unwrap_err();
 
     assert!(err.contains("points"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn KvStore____read_concurrency____memory_bucket_reads_without_a_lock() {
+    let store = KvStore::open(None, BTreeMap::new()).unwrap();
+    let plain = handle("app", "plain", Durability::Memory);
+    let live = BucketHandle {
+        read_concurrency: true,
+        ..handle("app", "live", Durability::Memory)
+    };
+
+    store.run(&plain, set("k", "1")).await.unwrap();
+    store.run(&live, set("k", "1")).await.unwrap();
+    let read = store.read(&live, Op::Get("k".into())).unwrap();
+
+    assert_eq!(store.reads_without_lock(&plain), Some(false));
+    assert_eq!(store.reads_without_lock(&live), Some(true));
+    assert_eq!(read, Outcome::Value(Some(b"1".to_vec())));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -477,13 +497,17 @@ async fn KvStore____disk_swap_and_delete_revision____kept_across_reopen() {
 /// Where a scan test runs: a memory bucket or a disk bucket.
 #[derive(Debug, Clone, Copy)]
 enum Backend {
+    /// The `BTreeMap` model.
     Memory,
+    /// The memory backend's lock-free bucket.
+    Live,
     Disk,
 }
 
 /// A bucket on `backend` holding `keys` (each value is its key).
 struct Filled {
     mem: MemBucket,
+    live: LiveBucket,
     disk: Disk,
     backend: Backend,
 }
@@ -492,6 +516,7 @@ impl Filled {
     fn new(backend: Backend, keys: &[&str]) -> Self {
         let mut f = Self {
             mem: MemBucket::default(),
+            live: LiveBucket::default(),
             disk: Disk::in_memory(),
             backend,
         };
@@ -506,6 +531,7 @@ impl Filled {
     fn op(&mut self, op: Op) -> Outcome {
         match self.backend {
             Backend::Memory => run(&mut self.mem, op, None).unwrap(),
+            Backend::Live => self.live.run(op, None).unwrap().outcome,
             Backend::Disk => {
                 let key = ("app".to_string(), "b".to_string());
                 self.disk.run(&key, op, None).unwrap().outcome
@@ -550,6 +576,7 @@ fn q(limit: u32) -> ScanQuery {
 
 #[rstest::rstest]
 #[case::memory(Backend::Memory)]
+#[case::live(Backend::Live)]
 #[case::disk(Backend::Disk)]
 fn scan____paged_both_ways____every_key_once_in_order(#[case] backend: Backend) {
     let keys: Vec<String> = (0..25).map(|i| format!("k{i:02}")).collect();
@@ -571,6 +598,7 @@ fn scan____paged_both_ways____every_key_once_in_order(#[case] backend: Backend) 
 
 #[rstest::rstest]
 #[case::memory(Backend::Memory)]
+#[case::live(Backend::Live)]
 #[case::disk(Backend::Disk)]
 fn scan____prefix_and_bounds____only_keys_inside_both(#[case] backend: Backend) {
     let mut b = Filled::new(backend, &["a", "b", "b/1", "b/2", "b/3", "b0", "c"]);
@@ -606,6 +634,7 @@ fn scan____prefix_and_bounds____only_keys_inside_both(#[case] backend: Backend) 
 
 #[rstest::rstest]
 #[case::memory(Backend::Memory)]
+#[case::live(Backend::Live)]
 #[case::disk(Backend::Disk)]
 fn scan____values_and_revisions____as_written(#[case] backend: Backend) {
     let mut b = Filled::new(backend, &["a", "b"]);
@@ -628,6 +657,7 @@ fn scan____values_and_revisions____as_written(#[case] backend: Backend) {
 
 #[rstest::rstest]
 #[case::memory(Backend::Memory)]
+#[case::live(Backend::Live)]
 #[case::disk(Backend::Disk)]
 fn scan____values_past_the_page_size____one_entry_per_page_at_least(#[case] backend: Backend) {
     let mut b = Filled::new(backend, &[]);
@@ -705,10 +735,10 @@ proptest! {
         end in proptest::option::of(key_strategy()),
         reverse in any::<bool>(),
         limit in 1u32..5,
-        disk in any::<bool>(),
+        backend in 0u8..3,
     ) {
         let refs: Vec<&str> = keys.keys().map(String::as_str).collect();
-        let backend = if disk { Backend::Disk } else { Backend::Memory };
+        let backend = [Backend::Memory, Backend::Live, Backend::Disk][usize::from(backend)];
         let mut b = Filled::new(backend, &refs);
         let query = ScanQuery { prefix, start, end, reverse, limit, cursor: None };
 
@@ -720,9 +750,11 @@ proptest! {
 
 #[rstest::rstest]
 #[case::memory(Backend::Memory)]
+#[case::live(Backend::Live)]
 #[case::disk(Backend::Disk)]
 fn apply____overwrite_and_delete____size_from_the_old_length(#[case] backend: Backend) {
     let mut mem = MemBucket::default();
+    let live = LiveBucket::default();
     let disk = Disk::in_memory();
     let key = ("app".to_string(), "sizes".to_string());
     let mut bytes = |op: Op| match backend {
@@ -731,6 +763,7 @@ fn apply____overwrite_and_delete____size_from_the_old_length(#[case] backend: Ba
             mem.bytes = applied.bytes;
             applied.bytes
         }
+        Backend::Live => live.run(op, Some(20)).unwrap().bytes,
         Backend::Disk => disk.run(&key, op, Some(20)).unwrap().bytes,
     };
 
@@ -740,4 +773,60 @@ fn apply____overwrite_and_delete____size_from_the_old_length(#[case] backend: Ba
     let deleted = bytes(Op::Delete("k".into()));
 
     assert_eq!([first, shrunk, other, deleted], [11, 5, 9, 4]);
+}
+
+#[test]
+fn live_bucket____overwrites_inserts_and_deletes_beside_readers____no_key_ever_missing() {
+    use std::sync::atomic::AtomicBool;
+    let bucket = Arc::new(LiveBucket::default());
+    let keys: Vec<String> = (0..200).map(|i| format!("k{i:03}")).collect();
+    bucket
+        .run(
+            Op::SetMany(keys.iter().map(|k| (k.clone(), b"0".to_vec())).collect()),
+            None,
+        )
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let writer = std::thread::spawn({
+        let (bucket, keys, stop) = (bucket.clone(), keys.clone(), stop.clone());
+        move || {
+            let mut i = 0u64;
+            while !stop.load(Ordering::Relaxed) {
+                let k = &keys[(i % 200) as usize];
+                bucket
+                    .run(Op::Set(k.clone(), i.to_string().into_bytes()), None)
+                    .unwrap();
+                let other = format!("x{}", i % 50);
+                bucket
+                    .run(Op::Set(other.clone(), b"x".to_vec()), None)
+                    .unwrap();
+                bucket.run(Op::Delete(other), None).unwrap();
+                i += 1;
+            }
+            i
+        }
+    });
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let (bucket, keys) = (bucket.clone(), keys.clone());
+            std::thread::spawn(move || {
+                let mut missed = 0;
+                for round in 0..20_000 {
+                    let k = &keys[round % 200];
+                    match bucket.run(Op::Get(k.clone()), None).unwrap().outcome {
+                        Outcome::Value(Some(_)) => {}
+                        _ => missed += 1,
+                    }
+                }
+                missed
+            })
+        })
+        .collect();
+    let missed: usize = readers.into_iter().map(|r| r.join().unwrap()).sum();
+    stop.store(true, Ordering::Relaxed);
+    let writes = writer.join().unwrap();
+
+    assert_eq!(missed, 0);
+    assert!(writes > 0);
 }

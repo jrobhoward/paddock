@@ -139,6 +139,7 @@ impl SimNode {
         let replicated = Bucket {
             durability: Durability::Replicated,
             quota: None,
+            read_concurrency: false,
         };
         s.services.keyvalue.buckets = [(bucket.to_string(), replicated)].into();
         self.rt.spawn(loaded, s).unwrap()

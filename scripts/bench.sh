@@ -40,6 +40,7 @@ BENCHES=(
   "heap|heap growth, memory held live and after exit, slot reuse, passivated state by size|R/examples/heap_cost 1"
   "compile|compile time by component size, and loads from the compiled-code cache|R/examples/compile_cost"
   "kv|keyvalue memory buckets from a guest: single operations, ordered reads, 1 to 16 instances on one bucket, bytes per entry (1 and 4 workers)|R/examples/kv_cost 1; R/examples/kv_cost 4"
+  "kv-rc|kv with every bucket read_concurrency (reads without a lock, spike S26), 4 workers|KV_READ_CONCURRENCY=1 R/examples/kv_cost 4"
   "beam-ets|ETS reference for kv: the same loops in an Erlang process against set and ordered_set tables (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_ets.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_ets.escript"
   "beam|Erlang/OTP reference: gen_server call, cast, spawn, process memory, send_after lateness (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_baseline.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_baseline.escript"
   "s14|spike S14: storage in the guest and host services|S/s14-bench spikes/target/wasm32-wasip2/release/s14_guest.wasm"

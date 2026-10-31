@@ -123,8 +123,9 @@ interface watch {
   /// One page of the bucket's entries in key order, read at one revision.
   /// Pages of one scan are each consistent but may differ in revision; a
   /// key written between two pages appears if it falls in the part not
-  /// yet read. Reads this node's copy of a replicated bucket, as `get`
-  /// does.
+  /// yet read. On a memory bucket with `read_concurrency`, a page's entries
+  /// are each as of their own revision, at or after the page's `revision`.
+  /// Reads this node's copy of a replicated bucket, as `get` does.
   scan: func(bucket: string, query: scan-query) -> result<scan-page, error>;
 
   /// Set `key` to `value` if its revision is `expected` (`none`: only if

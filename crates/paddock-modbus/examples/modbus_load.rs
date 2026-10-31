@@ -112,6 +112,7 @@ async fn run(workers: usize) {
                 SharedBucket {
                     durability: Durability::Memory,
                     quota: None,
+                    read_concurrency: false,
                 },
             )]),
             ..RuntimeConfig::default()

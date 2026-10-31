@@ -86,6 +86,10 @@ ciborium = "0.2"
 # a CBOR map without decoding the rest (hash routing).
 ciborium-ll = "0.2"
 redb = "4"
+# Memory buckets: a concurrent B+-tree with lock-free reads, whose entries
+# swap their values in place (spike S26).
+arc-swap = "1.9"
+scc = "3.8"
 hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12"] }

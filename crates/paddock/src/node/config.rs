@@ -318,6 +318,10 @@ pub struct BucketConfig {
     /// pair, replicated.
     #[serde(default)]
     pub scope: BucketScope,
+    /// Reads take no lock, so many instances read at once (memory buckets
+    /// only).
+    #[serde(default)]
+    pub read_concurrency: bool,
 }
 
 /// A `[secrets.<name>]` entry: exactly one of `file` and `env`.
@@ -1154,6 +1158,10 @@ impl NodeConfig {
                 Some("scope \"cluster\" needs [failover] with arbiter \"witness\"")
             } else if bucket.quota.is_some_and(|q| q.bytes() == 0) {
                 Some("quota must be more than 0")
+            } else if bucket.read_concurrency
+                && (bucket.durability != Durability::Memory || bucket.scope == BucketScope::Cluster)
+            {
+                Some("read_concurrency is for memory buckets")
             } else {
                 None
             };

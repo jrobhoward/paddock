@@ -118,6 +118,7 @@ fn spec(app: &str, init_args: &str) -> InstanceSpec {
         Bucket {
             durability: Durability::Memory,
             quota: None,
+            read_concurrency: false,
         },
     )]);
     s.services.groups.scope = GroupsScope {

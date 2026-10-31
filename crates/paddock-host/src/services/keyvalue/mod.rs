@@ -131,6 +131,7 @@ impl Instance {
                 durability: bucket.durability,
                 quota: bucket.quota.map(|q| q.bytes()),
                 writable: true,
+                read_concurrency: bucket.read_concurrency,
             });
         }
         let Some(mode) = self.shared.get(name) else {
@@ -148,6 +149,7 @@ impl Instance {
             durability: bucket.durability,
             quota: bucket.quota,
             writable: *mode == AccessMode::Rw,
+            read_concurrency: bucket.read_concurrency,
         })
     }
 }

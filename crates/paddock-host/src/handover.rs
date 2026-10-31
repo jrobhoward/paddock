@@ -83,6 +83,7 @@ fn bucket() -> BucketHandle {
         durability: Durability::Replicated,
         quota: None,
         writable: true,
+        read_concurrency: false,
     }
 }
 
