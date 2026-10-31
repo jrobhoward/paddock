@@ -10,6 +10,10 @@
 //! cargo run --release -p paddock-host --example kv_cost -- [workers]
 //! ```
 //!
+//! `KV_ONLY=<op>:<bucket>:<keys>:<size>:<seconds>` instead runs one loop
+//! (after filling the bucket) over and over for that long, for a profiler:
+//! `KV_ONLY=miss:b1k:1000:16:20 perf record -g target/release/examples/kv_cost 1`.
+//!
 //! Each figure is the median of 7 runs of a loop timed by the guest's own
 //! clock, so it is what an app's code pays per operation: the host call,
 //! the copies across the sandbox, the lock, the revision and quota
@@ -21,6 +25,11 @@
 //! - Concurrency: 1 to 16 instances on one shared bucket of 100,000 keys
 //!   (16 B), 95 or 50 reads in 100, or every write to one key; operations
 //!   per second across all of them, timed by the host.
+//! - Batches and dependent reads: `get_many` of 10 and 100 keys, reads
+//!   along a chain whose values name the next key, and 1,000 reads per call
+//!   timed by the host, so the call that starts them counts.
+//! - Readers beside a writer: 1 to 16 instances reading one shared bucket
+//!   while one more overwrites it as fast as it can.
 //! - Memory, measured first: the host's resident memory before and after
 //!   filling a bucket with 100,000 keys.
 
@@ -76,7 +85,7 @@ fn spec() -> InstanceSpec {
         durability: Durability::Memory,
         quota: None,
     };
-    s.services.keyvalue.buckets = ["b1k", "b100k", "m16", "m1k"]
+    s.services.keyvalue.buckets = ["b1k", "b100k", "m16", "m1k", "chain"]
         .iter()
         .map(|n| ((*n).to_string(), memory()))
         .collect();
@@ -124,6 +133,9 @@ async fn run(workers: usize, component: Vec<u8>) {
     .unwrap();
     let app: LoadedApp = rt.load(&component).unwrap();
     let h = rt.spawn(&app, spec()).unwrap();
+    if let Ok(only) = std::env::var("KV_ONLY") {
+        return only_loop(&h, &only).await;
+    }
     println!(
         "tokio workers: {workers}; median of {RUNS} runs; ns per operation, timed in the guest\n"
     );
@@ -131,7 +143,31 @@ async fn run(workers: usize, component: Vec<u8>) {
     memory(&h).await;
     single(&h).await;
     ordered(&h).await;
+    dependent(&h).await;
     concurrency(&rt, &app, &h).await;
+}
+
+/// One loop, over and over, for a profiler; prints ns per operation.
+async fn only_loop(h: &InstanceHandle, spec: &str) {
+    let f: Vec<&str> = spec.split(':').collect();
+    let [op, bucket, keys, size, seconds] = f[..] else {
+        panic!("KV_ONLY=<op>:<bucket>:<keys>:<size>:<seconds>, not {spec}");
+    };
+    ask(h, &format!("fill:{bucket}:k:{keys}:{size}")).await;
+    let until = Instant::now() + Duration::from_secs(seconds.parse().unwrap());
+    let (mut ops, mut ns) = (0u64, 0f64);
+    let n = 100_000;
+    while Instant::now() < until {
+        ns += ask(h, &format!("loop:{bucket}:{op}:{n}:{size}:{keys}:{ops}"))
+            .await
+            .parse::<f64>()
+            .unwrap();
+        ops += n;
+    }
+    println!(
+        "{op} {bucket} {keys} keys {size} B: {:.0} ns/op over {ops} ops",
+        ns / ops as f64
+    );
 }
 
 /// Resident bytes per entry, 100,000 entries of 16 B and of 1 KiB.
@@ -162,7 +198,14 @@ async fn single(h: &InstanceHandle) {
             }
             ask(h, &format!("fill:{bucket}:k:{keys}:{size}")).await;
             let n = if size == 65536 { 5_000 } else { 100_000 };
-            for op in ["get", "miss", "set", "insert", "delete", "incr"] {
+            let ops: &[&str] = if size == 65536 {
+                &["get", "miss", "set", "insert", "delete", "incr"]
+            } else {
+                &[
+                    "get", "miss", "set", "insert", "delete", "incr", "many10", "many100",
+                ]
+            };
+            for &op in ops {
                 let ns = per_op(h, bucket, op, n, size, keys).await;
                 println!("{op:<10} {keys:>8} {size:>8} {ns:>10.0}");
             }
@@ -197,6 +240,28 @@ async fn ordered(h: &InstanceHandle) {
     }
 }
 
+/// Dependent reads along a chain, and 1,000 reads per call timed by the
+/// host.
+async fn dependent(h: &InstanceHandle) {
+    println!("\n{:<14} {:>8} {:>10}", "reads", "keys", "ns/read");
+    for keys in [1_000u64, 100_000] {
+        ask(h, &format!("fillchain:chain:{keys}")).await;
+        let ns = per_op(h, "chain", "chain", 100_000, 0, keys).await;
+        println!("{:<14} {keys:>8} {ns:>10.0}", "chain");
+    }
+    let mut per_read = Vec::with_capacity(200);
+    for seed in 0..200 {
+        let started = Instant::now();
+        ask(h, &format!("loop:b100k:get:1000:16:100000:{seed}")).await;
+        per_read.push(started.elapsed().as_secs_f64() * 1e9 / 1000.0);
+    }
+    per_read.sort_by(f64::total_cmp);
+    println!(
+        "{:<14} {:>8} {:>10.0}",
+        "1000 per call", 100_000, per_read[100]
+    );
+}
+
 /// 1, 4 and 16 instances on one shared bucket at once.
 async fn concurrency(rt: &Runtime, app: &LoadedApp, h: &InstanceHandle) {
     println!(
@@ -227,6 +292,37 @@ async fn concurrency(rt: &Runtime, app: &LoadedApp, h: &InstanceHandle) {
                 total / wall
             );
         }
+    }
+    readers_and_writer(rt, app, &pool, shared_keys).await;
+}
+
+/// Readers of the shared bucket while one more instance overwrites it as
+/// fast as it can: the readers' operations per second, and the writer's.
+async fn readers_and_writer(rt: &Runtime, app: &LoadedApp, pool: &[InstanceHandle], keys: u64) {
+    println!(
+        "\n{:<8} {:>9} {:>14} {:>14}",
+        "readers", "instances", "reads/s", "writes/s"
+    );
+    let writer = rt.spawn(app, spec()).unwrap();
+    ask(&writer, "loop:shared:get:1:16:1:0").await;
+    let n = 50_000u64;
+    for n_inst in [1usize, 4, 16] {
+        let started = Instant::now();
+        let w = writer.clone();
+        let writes = tokio::spawn(async move {
+            let ns: f64 = ask(&w, &format!("loop:shared:set:{n}:16:{keys}:99"))
+                .await
+                .parse()
+                .unwrap();
+            n as f64 / (ns / 1e9)
+        });
+        futures_join(&pool[..n_inst], |i| {
+            format!("loop:shared:get:{n}:16:{keys}:{i}")
+        })
+        .await;
+        let reads = n as f64 * n_inst as f64 / started.elapsed().as_secs_f64();
+        let writes = writes.await.unwrap();
+        println!("{:<8} {n_inst:>9} {reads:>14.0} {writes:>14.0}", "get+set");
     }
 }
 

@@ -717,3 +717,27 @@ proptest! {
         prop_assert_eq!(found, scan_model(&keys, &query));
     }
 }
+
+#[rstest::rstest]
+#[case::memory(Backend::Memory)]
+#[case::disk(Backend::Disk)]
+fn apply____overwrite_and_delete____size_from_the_old_length(#[case] backend: Backend) {
+    let mut mem = MemBucket::default();
+    let disk = Disk::in_memory();
+    let key = ("app".to_string(), "sizes".to_string());
+    let mut bytes = |op: Op| match backend {
+        Backend::Memory => {
+            let applied = apply(&mut mem, op, Some(20)).unwrap();
+            mem.bytes = applied.bytes;
+            applied.bytes
+        }
+        Backend::Disk => disk.run(&key, op, Some(20)).unwrap().bytes,
+    };
+
+    let first = bytes(set("k", "0123456789"));
+    let shrunk = bytes(set("k", "abcd"));
+    let other = bytes(set("j", "xyz"));
+    let deleted = bytes(Op::Delete("k".into()));
+
+    assert_eq!([first, shrunk, other, deleted], [11, 5, 9, 4]);
+}

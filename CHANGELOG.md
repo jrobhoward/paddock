@@ -12,8 +12,10 @@ All notable changes are recorded here. The format follows
   `scripts/beam_ets.escript` (`bench.sh beam-ets`): keyvalue memory buckets
   from a guest against ETS from an Erlang process, the same loops on both:
   single operations by bucket and value size, ordered reads, 1 to 16
-  instances or processes on one bucket or table, and bytes per entry
-  (`paddock-fixture-kvbench`).
+  instances or processes on one bucket or table, bytes per entry,
+  `get_many` batches, dependent reads, reads per call and readers beside a
+  writer; ETS and `persistent_term` on the BEAM side
+  (`paddock-fixture-kvbench`). `KV_ONLY=` runs one loop for a profiler.
 - Ordered scans of keyvalue buckets, as ETS's `ordered_set`:
   `paddock:watch`'s `scan` reads a page of entries in key order (the bytes
   of their UTF-8) with their revisions, by prefix, start and end keys,
@@ -130,6 +132,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Keyvalue operations from a guest are cheaper: reads 28 to 51% on the
+  16-core machine and 18 to 38% on the Raspberry Pi 5, writes 13 to 41%
+  and 9 to 17%. Reads (`get`, `exists`, `list-keys`, `get-many`, and
+  `paddock:watch`'s `get`, `revision` and `scan`) are bound as synchronous
+  host functions; memory buckets are found without building a key, each
+  behind its own lock instead of one for the node; an overwrite or delete
+  reads the old value's length, not the value (spike S25).
 - `paddock status` warns that a manifest field "is not enforced" instead
   of naming the phase that would enforce it: Phases 2 and 3 are done, and
   what is left (global names, `all-nodes` placement and labels, the

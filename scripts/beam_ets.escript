@@ -20,6 +20,13 @@
 %% - Concurrency: 1, 4 and 16 processes on one public table of 100,000
 %%   keys, 95 or 50 reads in 100, or every write to one key; with the
 %%   concurrency options off and on.
+%% - Dependent reads: along a chain whose values name the next key, in ETS
+%%   and in a persistent_term map; and 1,000 lookups per gen_server call,
+%%   timed by the caller, as kv_cost's reads per call.
+%% - Readers beside a writer: 1 to 16 processes reading while one more
+%%   inserts as fast as it can, ETS with the concurrency options on.
+%% - persistent_term, the read-only reference: one map of 100,000 keys,
+%%   read by key from 1, 4 and 16 processes; no copy, no lock.
 %%
 %% Schedulers come from ERL_FLAGS, as for kv_cost's workers:
 %%
@@ -36,7 +43,10 @@ main(_) ->
         memory(),
         single(),
         ordered(),
-        concurrency()
+        dependent(),
+        concurrency(),
+        readers_and_writer(),
+        persistent()
     end).
 
 run_in(F) ->
@@ -266,4 +276,134 @@ concurrency() ->
           end || Mix <- [mix95, mix50, hot], Procs <- [1, 4, 16]],
          ets:delete(T)
      end || Type <- [set, ordered_set], Conc <- [off, on]],
+    ok.
+
+%% --- dependent reads -----------------------------------------------------------
+
+%% The chain i -> (7919 i + 1) mod N, as paddock-fixture-kvbench's fillchain.
+chain_pairs(N) -> [{key("c", I), key("c", (7919 * I + 1) rem N)} || I <- lists:seq(0, N - 1)].
+
+walk_ets(_, K, 0) -> K;
+walk_ets(T, K, N) -> [{_, Next}] = ets:lookup(T, K), walk_ets(T, Next, N - 1).
+
+walk_map(_, K, 0) -> K;
+walk_map(M, K, N) -> walk_map(M, maps:get(K, M), N - 1).
+
+walk_pt(_, K, 0) -> K;
+walk_pt(Name, K, N) -> walk_pt(Name, maps:get(K, persistent_term:get(Name)), N - 1).
+
+timed(N, F) ->
+    median([begin
+                T0 = erlang:monotonic_time(nanosecond),
+                F(),
+                (erlang:monotonic_time(nanosecond) - T0) / N
+            end || _ <- lists:seq(1, ?RUNS)]).
+
+%% Its key lists made up front, as the guest makes them before its clock,
+%% so a call carries an index, not 1,000 keys to copy.
+reader_loop(T, Lists) ->
+    receive
+        {From, I} ->
+            each(fun({K, _}) -> ets:lookup(T, K) end, element(I, Lists)),
+            From ! {self(), done},
+            reader_loop(T, Lists)
+    end.
+
+dependent() ->
+    io:format("~n~-16s ~8s ~10s~n", ["reads", "keys", "ns/read"]),
+    lists:foreach(
+      fun(Keys) ->
+              Pairs = chain_pairs(Keys),
+              T = ets:new(chain, [ordered_set, public]),
+              ets:insert(T, Pairs),
+              io:format("~-16s ~8B ~10B~n",
+                        ["chain ets", Keys, round(timed(100000, fun() -> walk_ets(T, key("c", 0), 100000) end))]),
+              persistent_term:put({?MODULE, chain}, maps:from_list(Pairs)),
+              io:format("~-16s ~8B ~10B~n",
+                        ["chain pt", Keys, round(timed(100000, fun() -> walk_pt({?MODULE, chain}, key("c", 0), 100000) end))]),
+              persistent_term:erase({?MODULE, chain}),
+              ets:delete(T)
+      end, [1000, 100000]),
+    %% 1,000 lookups per call to a process that owns nothing but reads a
+    %% public table, timed by the caller: the call counts, as in kv_cost.
+    T = ets:new(bench, [ordered_set, public]),
+    fill(T, "k", 100000, 16),
+    Lists = list_to_tuple([picked(get, 1000, 100000, Seed) || Seed <- lists:seq(0, 199)]),
+    Reader = spawn_link(fun() -> reader_loop(T, Lists) end),
+    PerRead = median([begin
+                          T0 = erlang:monotonic_time(nanosecond),
+                          Reader ! {self(), Seed + 1},
+                          receive {Reader, done} -> ok end,
+                          (erlang:monotonic_time(nanosecond) - T0) / 1000
+                      end || Seed <- lists:seq(0, 199)]),
+    io:format("~-16s ~8B ~10B~n", ["1000 per call", 100000, round(PerRead)]),
+    unlink(Reader),
+    exit(Reader, kill),
+    ets:delete(T).
+
+%% --- readers beside a writer -------------------------------------------------------
+
+readers_and_writer() ->
+    io:format("~n~-8s ~-11s ~9s ~14s ~14s~n",
+              ["readers", "table", "processes", "reads/s", "writes/s"]),
+    Keys = 100000,
+    N = 50000,
+    V = value(16),
+    [begin
+         T = ets:new(shared, [Type, public, {read_concurrency, true}, {write_concurrency, auto}]),
+         fill(T, "k", Keys, 16),
+         [begin
+              Self = self(),
+              Writes = picked(set, N, Keys, 99),
+              Writer = spawn_link(fun() ->
+                                          receive go -> ok end,
+                                          W0 = erlang:monotonic_time(nanosecond),
+                                          each(fun({K, _}) -> ets:insert(T, {K, V}) end, Writes),
+                                          Self ! {writer, N / ((erlang:monotonic_time(nanosecond) - W0) / 1.0e9)}
+                                  end),
+              Lists = [picked(get, N, Keys, I) || I <- lists:seq(0, Procs - 1)],
+              Pids = [spawn_link(fun() ->
+                                         receive go -> ok end,
+                                         each(fun({K, _}) -> ets:lookup(T, K) end, P),
+                                         Self ! {done, self()}
+                                 end) || P <- Lists],
+              T0 = erlang:monotonic_time(nanosecond),
+              [P ! go || P <- [Writer | Pids]],
+              [receive {done, P} -> ok end || P <- Pids],
+              Secs = (erlang:monotonic_time(nanosecond) - T0) / 1.0e9,
+              WritesPerSec = receive {writer, W} -> W end,
+              io:format("~-8s ~-11s ~9B ~14B ~14B~n",
+                        ["get+set", Type, Procs, round(N * Procs / Secs), round(WritesPerSec)])
+          end || Procs <- [1, 4, 16]],
+         ets:delete(T)
+     end || Type <- [set, ordered_set]],
+    ok.
+
+%% --- persistent_term ---------------------------------------------------------------
+
+persistent() ->
+    io:format("~n~-16s ~9s ~10s ~14s~n", ["persistent_term", "processes", "ns/read", "reads/s"]),
+    Keys = 100000,
+    N = 100000,
+    Name = {?MODULE, table},
+    persistent_term:put(Name, maps:from_list([{key("k", I), value(16)} || I <- lists:seq(0, Keys - 1)])),
+    Single = per_op(get, N, Keys,
+                    fun(P) -> each(fun({K, _}) -> maps:get(K, persistent_term:get(Name)) end, P) end),
+    io:format("~-16s ~9B ~10B~n", ["get", 1, round(Single)]),
+    lists:foreach(
+      fun(Procs) ->
+              Self = self(),
+              Lists = [picked(get, N, Keys, I) || I <- lists:seq(0, Procs - 1)],
+              Pids = [spawn_link(fun() ->
+                                         receive go -> ok end,
+                                         each(fun({K, _}) -> maps:get(K, persistent_term:get(Name)) end, P),
+                                         Self ! {done, self()}
+                                 end) || P <- Lists],
+              T0 = erlang:monotonic_time(nanosecond),
+              [P ! go || P <- Pids],
+              [receive {done, P} -> ok end || P <- Pids],
+              Secs = (erlang:monotonic_time(nanosecond) - T0) / 1.0e9,
+              io:format("~-16s ~9B ~10s ~14B~n", ["get", Procs, "", round(N * Procs / Secs)])
+      end, [1, 4, 16]),
+    persistent_term:erase(Name),
     ok.

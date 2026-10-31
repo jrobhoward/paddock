@@ -1972,8 +1972,42 @@ Memory per entry with 100,000 entries: a bucket takes 174 bytes (16-core) and 15
 - **Memory is about the same:** 31 to 54 bytes more per small entry, and less at 1 KiB.
 - **What this leaves:** ROADMAP H6.
 
+## 2026-10-30: a cheaper bucket operation (S25), and the harness's new workloads
+
+`scripts/bench.sh kv beam-ets` after spike S25's changes (borrowed bucket handles, sizes from the old value's length, memory buckets found without building a key and each behind its own lock, read imports bound synchronously; [spikes/s25](../spikes/s25/README.md) has the profile and each change alone). One suite run on each machine: the 16-core machine at load 1.14 at the start, commit dd37785 with the changes; the Raspberry Pi 5 at 0.00. Before is the 2026-10-30 run in "keyvalue buckets against ETS", same machines, same day. 4 workers or schedulers, ns per operation (median of 7).
+
+| Operation, keys, value | 16-core before | after | `ordered_set` | Pi before | after | `ordered_set` |
+| --- | --- | --- | --- | --- | --- | --- |
+| get, 1,000, 16 B | 1,209 | 627 | 243 | 1,221 | 866 | 324 |
+| get, 100,000, 16 B | 1,523 | 1,015 | 675 | 1,911 | 1,568 | 1,199 |
+| get of a missing key, 1,000 | 989 | 493 | 176 | 1,032 | 639 | 268 |
+| overwrite, 1,000, 16 B | 1,547 | 984 | 262 | 1,492 | 1,300 | 379 |
+| overwrite, 100,000, 16 B | 2,221 | 1,520 | 710 | 2,375 | 2,153 | 1,264 |
+| overwrite, 1,000, 64 KiB | 10,471 | 8,734 | | 34,350 | not run again | |
+| increment | 1,384 | 857 | | 1,347 | 1,118 | |
+| `next`, one key at a time, 100,000 | 2,882 | 2,388 | 144 | 3,352 | 3,024 | 231 |
+| 95 reads in 100, 16 instances (ops/s) | 0.57M | 0.67M | 3.68M (with `read_concurrency`) | 0.48M | 0.54M | 2.53M |
+
+New workloads (after the changes), against ETS `ordered_set` and `persistent_term`:
+
+| Workload | 16-core: bucket | ETS | `persistent_term` | Pi: bucket | ETS | `persistent_term` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `get_many` of 100, per key, 1,000 / 100,000 keys | 474 / 896 | | | 676 / 1,401 | | |
+| Dependent reads along a chain, 1,000 / 100,000 keys | 652 / 961 | 224 / 401 | 94 / 137 | 876 / 1,516 | 283 / 727 | 121 / 195 |
+| 1,000 reads per call, the call counted, per read | 1,265 | 682 | | 1,897 | 1,177 | |
+| A read from a 100,000-entry map, 1 process | | | 238 | | | 438 |
+| Reads/s, 16 readers, no writer | 0.67M (95 in 100) | 3.68M | 16.4M | 0.54M | 2.53M | 8.4M |
+| Reads/s and writes/s, 1 / 4 / 16 readers beside one writer | 0.25M, 0.29M / 0.43M, 0.14M / 0.63M, 0.20M | 0.79M, 1.01M / 2.15M, 0.58M / 3.57M, 0.36M | | 0.33M, 0.36M / 0.43M, 0.14M / 0.50M, 0.15M | 0.73M, 0.70M / 1.92M, 0.60M / 2.58M, 0.22M | |
+
+- **A read is 28 to 51% cheaper on the 16-core machine and 18 to 38% on the Pi;** writes 13 to 41% and 9 to 17%. The track's goal, a point read within twice `ordered_set`, is met at 100,000 keys (1.5 and 1.3 times) and not yet at 1,000 (2.6 and 2.7 times, a missing key 2.8 and 2.4).
+- **Readers of one bucket still share its lock:** 0.5 to 0.7 million operations per second from 1 to 16 instances, up 6 to 58% from the cheaper operation alone; a writer beside 16 readers keeps 0.15 to 0.2 million writes per second. ETS with `read_concurrency` scales to 2.5 to 3.7 million, `persistent_term` to 8 to 16 million (S26, S27, S28).
+- **Batches help less than the call they save:** `get_many` of 100 costs 474 ns a key against 627 for single reads (16-core), because `wasi:keyvalue` returns each key with its value, each its own allocation in the guest (S25).
+- **Dependent reads cost what single reads do:** 3 to 4 times ETS and 5 to 8 times `persistent_term`, which reads one map in place: the gap a copy in the guest (S28) or data in the component (S27) would close.
+- **Scans of the whole bucket** read 8 to 11% slower on the 16-core machine in this run and the same on the Pi; 100-entry ranges did not move on either. Not attributed.
+
 ## Not measured yet
 
 - B15's fix on the 16-core machine.
+- S25's changes in a run of the whole harness repeated (one suite run each so far).
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
 - Resident memory over more than two hours, and in the failover, replication and scada scenarios, whose nodes the faults kill every minute or two.

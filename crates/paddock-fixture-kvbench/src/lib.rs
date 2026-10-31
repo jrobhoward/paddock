@@ -22,6 +22,13 @@
 //!   - `walk`: `next` from the first key, `<n>` steps, wrapping.
 //!   - `mix95`, `mix50`: reads and overwrites of keys, 95 or 50 in 100
 //!     reads; `hot`: overwrite `k000000` every time.
+//!   - `many10`, `many100`: the `<n>` keys read in `get_many` batches of 10
+//!     or 100 (the time is still per key).
+//!   - `chain`: `<n>` dependent reads along the chain `fillchain` wrote,
+//!     from `c<seed mod keys>`: each value is the next key, as in a walk
+//!     of a trie or a graph.
+//! - `fillchain:<bucket>:<n>`: keys `c000000` to `c<n-1>`, each holding the
+//!   next key of the chain `i -> (7919 i + 1) mod n`; replies `ok`.
 //!
 //! Built for `wasm32-wasip2`.
 
@@ -64,6 +71,20 @@ fn fill(f: &[&str]) -> Result<String, KvError> {
     while i < n {
         let batch: Vec<(String, Vec<u8>)> = (i..n.min(i + 1000))
             .map(|j| (key(prefix, j), value.clone()))
+            .collect();
+        i += batch.len() as u64;
+        bucket.set_many(&batch)?;
+    }
+    Ok("ok".into())
+}
+
+fn fill_chain(f: &[&str]) -> Result<String, KvError> {
+    let bucket = Bucket::open(f.first().copied().unwrap_or(""))?;
+    let n = number(f.get(1)).max(1);
+    let mut i = 0;
+    while i < n {
+        let batch: Vec<(String, Vec<u8>)> = (i..n.min(i + 1000))
+            .map(|j| (key("c", j), key("c", (7919 * j + 1) % n).into_bytes()))
             .collect();
         i += batch.len() as u64;
         bucket.set_many(&batch)?;
@@ -148,6 +169,23 @@ fn run(f: &[&str]) -> Result<u128, String> {
                 std::hint::black_box(&at);
             }
         }
+        "many10" | "many100" => {
+            let batch = if op == "many10" { 10 } else { 100 };
+            let keys: Vec<String> = picked.iter().map(|(k, _)| k.clone()).collect();
+            let started = Instant::now();
+            for chunk in keys.chunks(batch) {
+                std::hint::black_box(bucket.get_many(chunk).map_err(e)?);
+            }
+            return Ok(started.elapsed().as_nanos());
+        }
+        "chain" => {
+            let mut at = key("c", number(f.get(5)) % keys.max(1));
+            for _ in 0..n {
+                let next = bucket.get(&at).map_err(e)?.unwrap_or_default();
+                at = String::from_utf8(next).map_err(|e| e.to_string())?;
+            }
+            std::hint::black_box(at);
+        }
         "mix95" | "mix50" => {
             for (k, read) in &picked {
                 if *read {
@@ -173,6 +211,7 @@ impl App for KvBench {
         let f: Vec<&str> = rest.split(':').collect();
         let reply = match verb {
             "fill" => fill(&f).unwrap_or_else(|e| format!("err:{e}")),
+            "fillchain" => fill_chain(&f).unwrap_or_else(|e| format!("err:{e}")),
             "loop" => run(&f).map_or_else(|e| format!("err:{e}"), |ns| ns.to_string()),
             _ => format!("err:unknown command {verb}"),
         };

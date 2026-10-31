@@ -50,7 +50,18 @@ mod bindings {
             "wit",
         ],
         world: "paddock:host/keyvalue",
-        imports: { default: async | trappable },
+        // Reads are bound synchronously: they never wait, and an async host
+        // function costs about a tenth of a read (spike S25).
+        imports: {
+            "wasi:keyvalue/store.[method]bucket.get": trappable,
+            "wasi:keyvalue/store.[method]bucket.exists": trappable,
+            "wasi:keyvalue/store.[method]bucket.list-keys": trappable,
+            "wasi:keyvalue/batch.get-many": trappable,
+            "paddock:watch/watch.get": trappable,
+            "paddock:watch/watch.revision": trappable,
+            "paddock:watch/watch.scan": trappable,
+            default: async | trappable,
+        },
         with: {
             "wasi:keyvalue/store.bucket": super::storage::BucketHandle,
         },
@@ -196,14 +207,39 @@ impl ServiceCtx<'_, Instance> {
         bucket: &Resource<BucketHandle>,
         op: Op,
     ) -> Result<std::result::Result<Outcome, store::Error>> {
-        let handle = self.table.get(bucket)?.clone();
+        // Borrowed, not cloned: the table and the service state are
+        // separate fields.
+        let handle = self.table.get(bucket)?;
         if !handle.writable && !op.read_only() {
             return Ok(Err(store::Error::AccessDenied));
         }
         Ok(self
-            .run_on(&handle, op)
+            .state
+            .store
+            .run(handle, op)
             .await
             .map_err(|e| store::Error::Other(e.to_string())))
+    }
+
+    /// Run a read now, without waiting; for host functions bound
+    /// synchronously.
+    fn read(
+        &mut self,
+        bucket: &Resource<BucketHandle>,
+        op: Op,
+    ) -> Result<std::result::Result<Outcome, store::Error>> {
+        let handle = self.table.get(bucket)?;
+        Ok(self
+            .state
+            .store
+            .read(handle, op)
+            .map_err(|e| store::Error::Other(e.to_string())))
+    }
+
+    /// Run a `paddock:watch` read on `bucket` now.
+    fn watch_read(&mut self, bucket: &str, op: Op) -> std::result::Result<Outcome, watch::Error> {
+        let handle = self.watch_bucket(bucket, false)?;
+        self.state.store.read(&handle, op).map_err(watch_error)
     }
 
     async fn run_on(
@@ -272,18 +308,15 @@ impl store::Host for ServiceCtx<'_, Instance> {
 }
 
 impl store::HostBucket for ServiceCtx<'_, Instance> {
-    async fn get(
+    fn get(
         &mut self,
         bucket: Resource<BucketHandle>,
         key: String,
     ) -> Result<std::result::Result<Option<Vec<u8>>, store::Error>> {
-        Ok(self
-            .run(&bucket, Op::Get(key))
-            .await?
-            .and_then(|o| match o {
-                Outcome::Value(v) => Ok(v),
-                other => Err(unexpected(&other)),
-            }))
+        Ok(self.read(&bucket, Op::Get(key))?.and_then(|o| match o {
+            Outcome::Value(v) => Ok(v),
+            other => Err(unexpected(&other)),
+        }))
     }
 
     async fn set(
@@ -303,32 +336,26 @@ impl store::HostBucket for ServiceCtx<'_, Instance> {
         Ok(self.run(&bucket, Op::Delete(key)).await?.map(|_| ()))
     }
 
-    async fn exists(
+    fn exists(
         &mut self,
         bucket: Resource<BucketHandle>,
         key: String,
     ) -> Result<std::result::Result<bool, store::Error>> {
-        Ok(self
-            .run(&bucket, Op::Exists(key))
-            .await?
-            .and_then(|o| match o {
-                Outcome::Exists(e) => Ok(e),
-                other => Err(unexpected(&other)),
-            }))
+        Ok(self.read(&bucket, Op::Exists(key))?.and_then(|o| match o {
+            Outcome::Exists(e) => Ok(e),
+            other => Err(unexpected(&other)),
+        }))
     }
 
-    async fn list_keys(
+    fn list_keys(
         &mut self,
         bucket: Resource<BucketHandle>,
         cursor: Option<u64>,
     ) -> Result<std::result::Result<store::KeyResponse, store::Error>> {
-        Ok(self
-            .run(&bucket, Op::Keys(cursor))
-            .await?
-            .and_then(|o| match o {
-                Outcome::Keys(keys, cursor) => Ok(store::KeyResponse { keys, cursor }),
-                other => Err(unexpected(&other)),
-            }))
+        Ok(self.read(&bucket, Op::Keys(cursor))?.and_then(|o| match o {
+            Outcome::Keys(keys, cursor) => Ok(store::KeyResponse { keys, cursor }),
+            other => Err(unexpected(&other)),
+        }))
     }
 
     async fn drop(&mut self, bucket: Resource<BucketHandle>) -> Result<()> {
@@ -355,14 +382,13 @@ impl atomics::Host for ServiceCtx<'_, Instance> {
 }
 
 impl batch::Host for ServiceCtx<'_, Instance> {
-    async fn get_many(
+    fn get_many(
         &mut self,
         bucket: Resource<BucketHandle>,
         keys: Vec<String>,
     ) -> Result<std::result::Result<Vec<Option<(String, Vec<u8>)>>, store::Error>> {
         Ok(self
-            .run(&bucket, Op::GetMany(keys))
-            .await?
+            .read(&bucket, Op::GetMany(keys))?
             .and_then(|o| match o {
                 Outcome::Values(v) => Ok(v),
                 other => Err(unexpected(&other)),
@@ -457,14 +483,13 @@ impl watch::Host for ServiceCtx<'_, Instance> {
         Ok(Ok(()))
     }
 
-    async fn get(
+    fn get(
         &mut self,
         bucket: String,
         key: String,
     ) -> Result<std::result::Result<Option<watch::Entry>, watch::Error>> {
         Ok(self
-            .watch_op(&bucket, Op::Entry(key))
-            .await
+            .watch_read(&bucket, Op::Entry(key))
             .and_then(|o| match o {
                 Outcome::Entry(e) => {
                     Ok(e.map(|(value, revision)| watch::Entry { value, revision }))
@@ -500,10 +525,9 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             }))
     }
 
-    async fn revision(&mut self, bucket: String) -> Result<std::result::Result<u64, watch::Error>> {
+    fn revision(&mut self, bucket: String) -> Result<std::result::Result<u64, watch::Error>> {
         Ok(self
-            .watch_op(&bucket, Op::Revision(String::new()))
-            .await
+            .watch_read(&bucket, Op::Revision(String::new()))
             .and_then(|o| match o {
                 Outcome::Revision { bucket, .. } => Ok(bucket),
                 other => Err(watch::Error::Other(format!(
@@ -512,7 +536,7 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             }))
     }
 
-    async fn scan(
+    fn scan(
         &mut self,
         bucket: String,
         query: watch::ScanQuery,
@@ -526,8 +550,7 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             cursor: query.cursor,
         };
         Ok(self
-            .watch_op(&bucket, Op::Scan(query))
-            .await
+            .watch_read(&bucket, Op::Scan(query))
             .and_then(|o| match o {
                 Outcome::Page {
                     entries,

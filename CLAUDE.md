@@ -390,7 +390,11 @@ absent import as unused, not as an error.
 
 **Guest ABI is synchronous WASI 0.2.** Host imports are async; guests are not.
 `paddock:runtime` never exposes `wasi:io` pollables or streams, so a later
-WASI 0.3 world is additive (S3, `docs/DESIGN.md` → WASI migration).
+WASI 0.3 world is additive (S3, `docs/DESIGN.md` → WASI migration). The
+exception is a host function that never waits: keyvalue and watch reads
+(and `paddock:io`) are bound synchronously, since an async host function
+cost about a fifth of a read (S25). A sync host function must not block;
+its time counts against the callback deadline.
 
 **Ungranted capabilities get typed deny stubs built with `func_new`, not
 `Linker::define_unknown_imports_as_traps`.** A typed stub returns

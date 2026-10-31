@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use paddock_bundle::manifest::Durability;
 use redb::{ReadableDatabase, ReadableTable, TableDefinition, TableHandle};
@@ -324,6 +324,8 @@ pub(crate) struct Applied {
 /// The view of one bucket an operation runs against.
 pub(crate) trait Txn {
     fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, String>;
+    /// The length of `key`'s value, without copying it.
+    fn value_len(&mut self, key: &str) -> Result<Option<usize>, String>;
     /// Store `value` under `key`, stamped with `revision`.
     fn put(&mut self, key: &str, value: &[u8], revision: u64) -> Result<(), String>;
     /// Remove `key` and its revision.
@@ -354,7 +356,12 @@ pub(crate) trait Txn {
 }
 
 fn entry_size(key: &str, value: &[u8]) -> u64 {
-    u64::try_from(key.len() + value.len()).unwrap_or(u64::MAX)
+    key_size(key, value.len())
+}
+
+/// An entry's size from its key and its value's length.
+fn key_size(key: &str, value_len: usize) -> u64 {
+    u64::try_from(key.len() + value_len).unwrap_or(u64::MAX)
 }
 
 /// The revision of an existing key: 0 if written before revisions.
@@ -482,7 +489,7 @@ pub(crate) fn apply(txn: &mut dyn Txn, op: Op, quota: Option<u64>) -> Result<App
             // Check the whole batch first, so it fails or succeeds as one.
             let mut after = bytes;
             for (key, value) in &pairs {
-                let old = txn.get(key)?.map_or(0, |v| entry_size(key, &v));
+                let old = txn.value_len(key)?.map_or(0, |n| key_size(key, n));
                 after = after
                     .saturating_sub(old)
                     .saturating_add(entry_size(key, value));
@@ -570,7 +577,7 @@ fn set(
     quota: Option<u64>,
     revision: u64,
 ) -> Result<u64, String> {
-    let old = txn.get(key)?.map_or(0, |v| entry_size(key, &v));
+    let old = txn.value_len(key)?.map_or(0, |n| key_size(key, n));
     let after = bytes
         .saturating_sub(old)
         .saturating_add(entry_size(key, value));
@@ -581,11 +588,11 @@ fn set(
 
 /// Remove `key`; returns the new size and whether the key existed.
 fn delete(txn: &mut dyn Txn, bytes: u64, key: &str) -> Result<(u64, bool), String> {
-    let Some(old) = txn.get(key)? else {
+    let Some(old) = txn.value_len(key)? else {
         return Ok((bytes, false));
     };
     txn.remove(key)?;
-    Ok((bytes.saturating_sub(entry_size(key, &old)), true))
+    Ok((bytes.saturating_sub(key_size(key, old)), true))
 }
 
 /// A memory bucket.
@@ -601,6 +608,10 @@ pub(crate) struct MemBucket {
 impl Txn for MemBucket {
     fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, String> {
         Ok(self.entries.get(key).map(|(v, _)| v.clone()))
+    }
+
+    fn value_len(&mut self, key: &str) -> Result<Option<usize>, String> {
+        Ok(self.entries.get(key).map(|(v, _)| v.len()))
     }
 
     fn put(&mut self, key: &str, value: &[u8], revision: u64) -> Result<(), String> {
@@ -732,17 +743,41 @@ pub(crate) struct KvStore {
     replication: OnceLock<(Handle, watch::Receiver<ReplicationStatus>)>,
 }
 
-/// The memory backend.
+/// The memory backend: each bucket behind its own lock, found by
+/// namespace and name without building a key (ROADMAP S25).
 #[derive(Debug, Default)]
 struct Memory {
-    buckets: Mutex<HashMap<Key, MemBucket>>,
+    buckets: RwLock<HashMap<String, MemSpace>>,
 }
 
+/// One namespace's memory buckets, by name.
+type MemSpace = HashMap<String, Arc<Mutex<MemBucket>>>;
+
 impl Memory {
-    fn run(&self, key: Key, op: Op, quota: Option<u64>) -> Result<Applied, String> {
-        let mut buckets = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
-        let b = buckets.entry(key).or_default();
-        let applied = apply(b, op, quota)?;
+    fn bucket(&self, space: &str, name: &str) -> Arc<Mutex<MemBucket>> {
+        let found = self
+            .buckets
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(space)
+            .and_then(|names| names.get(name))
+            .cloned();
+        found.unwrap_or_else(|| {
+            self.buckets
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(space.to_string())
+                .or_default()
+                .entry(name.to_string())
+                .or_default()
+                .clone()
+        })
+    }
+
+    fn run(&self, space: &str, name: &str, op: Op, quota: Option<u64>) -> Result<Applied, String> {
+        let bucket = self.bucket(space, name);
+        let mut b = bucket.lock().unwrap_or_else(PoisonError::into_inner);
+        let applied = apply(&mut *b, op, quota)?;
         b.bytes = applied.bytes;
         Ok(applied)
     }
@@ -840,9 +875,9 @@ impl KvStore {
                 .ok_or_else(|| StoreError::Unavailable("replication is not running".into()))?;
             return Ok(handle.write(&bucket.name, bucket.quota, op).await?);
         }
-        let key = (bucket.space.clone(), bucket.name.clone());
-        let applied = self.apply(bucket, key.clone(), op).await?;
+        let applied = self.apply(bucket, op).await?;
         if let Some(revision) = applied.revision {
+            let key = (bucket.space.clone(), bucket.name.clone());
             self.watches.notify(&key, &applied.changed, revision);
         }
         Ok(applied.outcome)
@@ -865,35 +900,54 @@ impl KvStore {
         Ok(handle.read(&bucket.name, op).await?)
     }
 
+    /// A read, run now on this thread: memory buckets, and disk and
+    /// replicated buckets' local copies from redb's page cache, as
+    /// [`KvStore::run`] runs reads. For host functions bound synchronously.
+    pub(crate) fn read(&self, bucket: &BucketHandle, op: Op) -> Result<Outcome, StoreError> {
+        debug_assert!(op.read_only(), "a write through KvStore::read");
+        Ok(self.apply_now(bucket, op)?.outcome)
+    }
+
     /// Run `op` on the bucket's backend.
-    async fn apply(&self, bucket: &BucketHandle, key: Key, op: Op) -> Result<Applied, String> {
-        if bucket.space == SPACE {
-            // A replicated bucket's local copy, for reads.
+    async fn apply(&self, bucket: &BucketHandle, op: Op) -> Result<Applied, String> {
+        // Disk writes fsync, so they stay off the worker that runs guests.
+        if bucket.durability == Durability::Disk && bucket.space != SPACE && !op.read_only() {
             let disk = self
                 .disk
                 .clone()
                 .ok_or("disk storage is not configured on this node")?;
-            return disk.run(&key, op, bucket.quota);
+            let key = (bucket.space.clone(), bucket.name.clone());
+            let quota = bucket.quota;
+            return tokio::task::spawn_blocking(move || disk.run(&key, op, quota))
+                .await
+                .map_err(|e| format!("storage task failed: {e}"))?;
+        }
+        self.apply_now(bucket, op)
+    }
+
+    /// Run `op` on this thread: anything but a disk bucket's write.
+    fn apply_now(&self, bucket: &BucketHandle, op: Op) -> Result<Applied, String> {
+        let on_disk = || {
+            self.disk
+                .as_ref()
+                .ok_or("disk storage is not configured on this node")
+        };
+        if bucket.space == SPACE {
+            // A replicated bucket's local copy, for reads.
+            let key = (bucket.space.clone(), bucket.name.clone());
+            return on_disk()?.run(&key, op, bucket.quota);
         }
         match bucket.durability {
-            Durability::Memory => self.memory.run(key, op, bucket.quota),
+            Durability::Memory => self
+                .memory
+                .run(&bucket.space, &bucket.name, op, bucket.quota),
+            // Reads (and, from `apply`, nothing else): redb usually serves
+            // them from its page cache in a microsecond or two, and a hop to
+            // the blocking pool costs about 20 µs (spike S14). A cache miss
+            // blocks this worker for one read from disk.
             Durability::Disk => {
-                let disk = self
-                    .disk
-                    .clone()
-                    .ok_or("disk storage is not configured on this node")?;
-                let quota = bucket.quota;
-                // Reads run here: redb usually serves them from its page
-                // cache in a microsecond or two, and a hop to the blocking
-                // pool costs about 20 µs (spike S14). A cache miss blocks
-                // this worker for one read from disk. Writes fsync, so they
-                // stay off the worker.
-                if op.read_only() {
-                    return disk.run(&key, op, quota);
-                }
-                tokio::task::spawn_blocking(move || disk.run(&key, op, quota))
-                    .await
-                    .map_err(|e| format!("storage task failed: {e}"))?
+                let key = (bucket.space.clone(), bucket.name.clone());
+                on_disk()?.run(&key, op, bucket.quota)
             }
             // Opened in the replicated namespace, handled above.
             Durability::Replicated => Err("a replicated bucket outside replication".into()),
@@ -1221,6 +1275,15 @@ impl Txn for DiskRead<'_> {
             .map(|v| v.value().to_vec()))
     }
 
+    fn value_len(&mut self, key: &str) -> Result<Option<usize>, String> {
+        let Some(t) = &self.table else {
+            return Ok(None);
+        };
+        Ok(t.get(key)
+            .map_err(|e| e.to_string())?
+            .map(|v| v.value().len()))
+    }
+
     fn put(&mut self, _key: &str, _value: &[u8], _revision: u64) -> Result<(), String> {
         Err("write in a read transaction".into())
     }
@@ -1297,6 +1360,14 @@ impl Txn for DiskWrite<'_, '_> {
             .get(key)
             .map_err(|e| e.to_string())?
             .map(|v| v.value().to_vec()))
+    }
+
+    fn value_len(&mut self, key: &str) -> Result<Option<usize>, String> {
+        Ok(self
+            .table
+            .get(key)
+            .map_err(|e| e.to_string())?
+            .map(|v| v.value().len()))
     }
 
     fn put(&mut self, key: &str, value: &[u8], revision: u64) -> Result<(), String> {
