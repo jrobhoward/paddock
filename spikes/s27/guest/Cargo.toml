@@ -9,4 +9,4 @@ build = "build.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { path = "../../../crates/paddock-sdk" }
+bulkhead-sdk = { path = "../../../crates/bulkhead-sdk" }

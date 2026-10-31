@@ -1,10 +1,10 @@
-package paddock
+package bulkhead
 
 import (
 	"fmt"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/runtime/types"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/runtime/types"
 )
 
 // Pid identifies one instance: {node, id, incarnation}. A restart keeps the

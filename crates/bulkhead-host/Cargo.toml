@@ -1,0 +1,103 @@
+[package]
+name = "bulkhead-host"
+version.workspace = true
+description = "Bulkhead host runtime: engine, instances, mailboxes and the callback loop"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["http", "tls", "sql", "egress"]
+# The HTTP ingress (`bulkhead_host::http`): node-level routes to apps.
+http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+# HTTPS on the HTTP ingress (`http::IngressTls`).
+tls = ["http", "dep:tokio-rustls"]
+# SQL datasources (`bulkhead:sql`): a Postgres pool per datasource
+# in node config. Idle without one.
+# HTTP egress (`wasi:http/outgoing-handler`): a filtering
+# sender with a connection pool. Without it, the interface is deny-stubbed.
+egress = ["tls", "dep:wasmtime-wasi-http", "dep:hyper-rustls", "dep:rustls-native-certs", "dep:tower-service", "hyper-util/client-legacy", "hyper-util/http1"]
+sql = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio-postgres-rustls", "dep:futures-util"]
+# USDT probes on the message path (`src/probe.rs`): SystemTap SDT on Linux,
+# DTrace on macOS and FreeBSD, ETW on Windows. Without it the probe calls
+# compile to nothing.
+probes = ["dep:anyprobe"]
+
+[dependencies]
+anyprobe = { workspace = true, optional = true }
+atomic-waker = { workspace = true }
+bytes = { workspace = true }
+ciborium = { workspace = true }
+ciborium-ll = { workspace = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+base64 = { workspace = true }
+quinn = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+rustls-webpki = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+rustls-pki-types = { workspace = true }
+tokio-rustls = { workspace = true, optional = true }
+tokio-postgres = { workspace = true, optional = true }
+deadpool-postgres = { workspace = true, optional = true }
+tokio-postgres-rustls = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+bulkhead-bundle = { workspace = true }
+bulkhead-native = { workspace = true }
+redb = { workspace = true }
+arc-swap = { workspace = true }
+scc = { workspace = true }
+semver = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "process"] }
+tracing = { workspace = true }
+wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "parallel-compilation", "runtime", "std", "pooling-allocator"] }
+wasmtime-wasi = { workspace = true, features = ["p2"] }
+wasmtime-wasi-http = { workspace = true, optional = true }
+hyper-rustls = { workspace = true, optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+tower-service = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }
+proptest = { workspace = true }
+rstest = { workspace = true }
+tempfile = { workspace = true }
+wat = { workspace = true }
+bulkhead-workload = { workspace = true }
+tracing-subscriber = { workspace = true }
+semver = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
+
+[[test]]
+name = "http"
+required-features = ["tls"]
+
+[[test]]
+name = "egress"
+required-features = ["egress"]
+
+[[test]]
+name = "http_handler"
+required-features = ["http", "egress"]
+
+[[example]]
+name = "ingress_throughput"
+required-features = ["http"]
+
+[[example]]
+name = "egress_cost"
+required-features = ["egress"]
+
+[lints]
+workspace = true

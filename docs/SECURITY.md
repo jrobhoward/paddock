@@ -1,12 +1,12 @@
-# Paddock: Security
+# Bulkhead: Security
 
 2026-10-25 · Companion to [ARCHITECTURE.md](ARCHITECTURE.md)
 
-The threat model as built: what Paddock protects, whom it trusts, each boundary between trusted and untrusted parts with the controls on it and the gaps found, and the fuzz targets. Findings are numbered S1 and on; each is fixed, and a new one would be a ROADMAP item. First drafted in the 2026-10-10 review and kept current as Phases 2 and 3 added boundaries.
+The threat model as built: what Bulkhead protects, whom it trusts, each boundary between trusted and untrusted parts with the controls on it and the gaps found, and the fuzz targets. Findings are numbered S1 and on; each is fixed, and a new one would be a ROADMAP item. First drafted in the 2026-10-10 review and kept current as Phases 2 and 3 added boundaries.
 
 ## Reporting a vulnerability
 
-Report it privately through the repository's Security tab ("Report a vulnerability"), not in a public issue. Paddock is a research project without support (README.md): reports are read, but there is no response time and no fixed releases.
+Report it privately through the repository's Security tab ("Report a vulnerability"), not in a public issue. Bulkhead is a research project without support (README.md): reports are read, but there is no response time and no fixed releases.
 
 ## What is protected
 
@@ -16,7 +16,7 @@ Report it privately through the repository's Security tab ("Report a vulnerabili
 - **Availability** of the node and of other apps when one app misbehaves.
 - **Logs and the audit log**, which operators and the soak's checker read as the node's own record.
 
-## Whom Paddock trusts
+## Whom Bulkhead trusts
 
 | Party | Trusted to | Not trusted to |
 | --- | --- | --- |
@@ -46,7 +46,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### The admin socket and the remote admin API
 
 - **Controls.** A Unix socket created owner-only; bundles verified against `trusted_keys` whoever uploads them; uploads capped at 512 MiB; changes recorded in `audit.log`. The remote admin API (`[admin]`) is TLS 1.3 with raw public keys both ways: the node presents its key, which the operator pins (`--node-key`), and accepts only a key its operators file lists; a handshake has 10 s to finish; every request but a `GET` is recorded in `audit.log` with the operator's name.
-- **Gaps.** Every listed operator has every right the socket gives: there are no read-only operators. Anyone who can reach the address can open connections and start handshakes; there is no limit on either, so put the address on a management network. Removing an operator stops new connections, not one already open, including a stream (`paddock events`, `logs --follow`) that has run since. The shell keeps its history, call bodies included, in the operator's `~/.config/paddock/history`.
+- **Gaps.** Every listed operator has every right the socket gives: there are no read-only operators. Anyone who can reach the address can open connections and start handshakes; there is no limit on either, so put the address on a management network. Removing an operator stops new connections, not one already open, including a stream (`bulkhead events`, `logs --follow`) that has run since. The shell keeps its history, call bodies included, in the operator's `~/.config/bulkhead/history`.
 
 ### Node and node
 
@@ -72,7 +72,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### Native-process apps
 
-- **Controls.** A native app's program runs only through `paddock-runner`, which, before the program runs and while it has one thread: marks itself non-dumpable (no core dump, no ptrace from the node's user); restricts itself with Landlock to reading the system library directories, the program's own directory and the app's `priv/` files, executing only the program (and its ELF interpreter), writing nothing and binding or connecting no TCP port; and installs a seccomp filter refusing signals to any process but itself, `ptrace`, `process_vm_readv` and `process_vm_writev`, `pidfd_send_signal` and `pidfd_getfd`, and new sockets. A kernel without Landlock is refused unless `[native] landlock_optional`. Both stay in force across the exec of an executable and in anything it starts. The node runs the process with an empty environment, in its own process group, with the parent-death signal (`SIGKILL`) and no core dumps; with `[native] cgroup`, in a cgroup of its own with `memory.max` (no swap) and `pids.max`. The process reaches Paddock only over its pipe, as its instance: messages carry that instance's pid and app, checked by messaging ACLs as for a component, and its requests are the process functions a component imports, with the same host-object limits. A manifest may declare only `wasi:logging`.
+- **Controls.** A native app's program runs only through `bulkhead-runner`, which, before the program runs and while it has one thread: marks itself non-dumpable (no core dump, no ptrace from the node's user); restricts itself with Landlock to reading the system library directories, the program's own directory and the app's `priv/` files, executing only the program (and its ELF interpreter), writing nothing and binding or connecting no TCP port; and installs a seccomp filter refusing signals to any process but itself, `ptrace`, `process_vm_readv` and `process_vm_writev`, `pidfd_send_signal` and `pidfd_getfd`, and new sockets. A kernel without Landlock is refused unless `[native] landlock_optional`. Both stay in force across the exec of an executable and in anything it starts. The node runs the process with an empty environment, in its own process group, with the parent-death signal (`SIGKILL`) and no core dumps; with `[native] cgroup`, in a cgroup of its own with `memory.max` (no swap) and `pids.max`. The process reaches Bulkhead only over its pipe, as its instance: messages carry that instance's pid and app, checked by messaging ACLs as for a component, and its requests are the process functions a component imports, with the same host-object limits. A manifest may declare only `wasi:logging`.
 - **Gaps.** Native code is not memory-safe from the node's point of view: everything above is the boundary, not the language. The exec restriction is not a boundary of its own: since the ELF interpreter must be executable, a program can run any readable binary through it, but that binary inherits the same Landlock rules and seccomp filter. Without `[native] cgroup` there is no CPU or process limit, and memory is bounded only by `RLIMIT_DATA`; with it there is still no CPU limit. A callback's deadline bounds a callback, but the program may run its own threads between callbacks. Landlock scopes (Linux 6.12) are not required: the seccomp filter covers signals, and refusing `socket` covers abstract Unix sockets; inherited descriptors are only the three pipes. The program runs as the node's user: Landlock keeps it from that user's files, not from a kernel flaw an unprivileged process can reach. Tested on Linux 6.8 (Landlock ABI 4) on x86-64 and on a Raspberry Pi 5 with Linux 7.0 (aarch64), 2026-10-23.
 
 ### SQL datasources
@@ -107,14 +107,14 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### Bundles, manifests and policy
 
-- **Controls.** Signatures checked against operator keys only (never the key inside the bundle); checksums; manifest validation; the effective grant computed from the manifest and policy; `priv/` paths checked by Paddock on open and again on extraction (plain relative names only), as well as by rustbridge-bundle.
+- **Controls.** Signatures checked against operator keys only (never the key inside the bundle); checksums; manifest validation; the effective grant computed from the manifest and policy; `priv/` paths checked by Bulkhead on open and again on extraction (plain relative names only), as well as by rustbridge-bundle.
 - **Gaps.** None found; S7 is fixed.
 - **Compiled components** (`data_dir/compiled`) are machine code a restart runs without compiling or checking it against the bundle again. A file is read only if it and its directory belong to the node's user and neither can be written by group or others; anyone who can write there as that user can run code as the node, as with the node's binary and configuration.
 
 ### Secrets and keys
 
 - **Controls.** Secret values are read on each access and never printed: errors name the secret, and `Debug` shows only the source. Keys are written with mode 0600, and the cluster key and signer keys are refused on load if their group or others may access them, as ssh does.
-- **Gaps.** None found; S9 is fixed. A test asserts that a secret's value appears in no log record, at any level or target, and in no error (`paddock-host` `tests/secrets.rs`).
+- **Gaps.** None found; S9 is fixed. A test asserts that a secret's value appears in no log record, at any level or target, and in no error (`bulkhead-host` `tests/secrets.rs`).
 
 ## Findings
 
@@ -126,7 +126,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 | S4 | medium, fixed 2026-10-10 | The Modbus server accepted reads and writes from any master that reached its address; a write changes the served table and is cast to the `deliver_to` app. | Fixed: `server.allow` lists the masters' addresses or networks, loopback only by default; MANIFEST.md says to bind it to the SCADA interface. `server.max_connections` (default 32) caps the masters connected at once (2026-10-11). |
 | S5 | low, fixed 2026-10-10 | A pair node took failover answers (`Granted`, `LeaseOk`, `Fenced`, `NotYet`, `Refused`) from any member, not only its witness: a faulty member's `Granted` promotes the standby. | Fixed: answers from any node but the configured witness are dropped and logged. |
 | S6 | low, fixed 2026-10-10 | A volume's `quota` was accepted but not enforced (documented): an app with a writable volume can fill the disk. | Fixed: a manifest `quota` on a preopen is refused, since wasmtime-wasi offers no place to enforce one; MANIFEST.md tells operators to give each writable volume a filesystem quota. |
-| S7 | low, fixed 2026-10-10 | `priv/` extraction relied on rustbridge-bundle for path safety. | Fixed: Paddock refuses a bundle with a `priv/` path that is not plain relative names (`..`, `.`, a root, an empty part, `:` or a backslash), on open and again on extraction. |
+| S7 | low, fixed 2026-10-10 | `priv/` extraction relied on rustbridge-bundle for path safety. | Fixed: Bulkhead refuses a bundle with a `priv/` path that is not plain relative names (`..`, `.`, a root, an empty part, `:` or a backslash), on open and again on extraction. |
 | S8 | low, fixed 2026-10-10 | Each incoming `Frame::Call` started a task with no bound; an honest peer is bounded by its instances' `pending_calls_max`, a faulty one was not. | Fixed: at most `[cluster] incoming_calls_max` (default 10,000) calls from one peer run at once; beyond it a call is answered `overloaded`, with one warning until the peer is back to half the limit. |
 | S9 | low, fixed 2026-10-10 | The cluster key and signer keys were loaded without checking their permissions. | Fixed: a key its group or others may access is refused, with a message to `chmod 600` it. |
 
@@ -139,7 +139,7 @@ In `fuzz/`, run nightly for five minutes each: `bundle_open`, `manifest`, `parse
 | `wire_packet` | cluster members | `transport::wire::decode` and the hello's version agreement |
 | `failover_status` | the partner | `failover::Status::decode` (heartbeat payloads) |
 | `http_reply` | guests | the HTTP reply envelope decoder in `http.rs` |
-| `state_view` | guests | `node/state_view.rs`, which decodes a guest's snapshot for `paddock state` |
+| `state_view` | guests | `node/state_view.rs`, which decodes a guest's snapshot for `bulkhead state` |
 | `modbus_request` | Modbus masters | the server's request handling against its tables (address and count bounds) |
 
 Private functions are exported for fuzzing the way `routing_key` is: `#[cfg(fuzzing)] #[doc(hidden)]`.

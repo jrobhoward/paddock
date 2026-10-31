@@ -22,8 +22,8 @@ buckets = ["board"]
 TOML
 echo "[peers]" > peers.toml
 for n in 1 2 3; do
-  [ -f "node-$n.key" ] || "$PADDOCK" cluster keygen "node-$n.key" >/dev/null
-  echo "$n = [\"$("$PADDOCK" cluster pubkey "node-$n.key")\"]" >> peers.toml
+  [ -f "node-$n.key" ] || "$BULKHEAD" cluster keygen "node-$n.key" >/dev/null
+  echo "$n = [\"$("$BULKHEAD" cluster pubkey "node-$n.key")\"]" >> peers.toml
 done
 # Short timings, so a takeover takes seconds: 200 ms heartbeats, a 1 s
 # node timeout, a 2 s lease. The defaults take about 9 to 10 s.
@@ -76,8 +76,8 @@ start_node 2
 # runs on the primary only.
 SINGLETON='[appserver.placement]
 mode = "singleton"'
-deploy_board 1 "$BOARD_DIR/paddock.toml" "$SINGLETON"
-deploy_board 2 "$BOARD_DIR/paddock.toml" "$SINGLETON"
+deploy_board 1 "$BOARD_DIR/bulkhead.toml" "$SINGLETON"
+deploy_board 2 "$BOARD_DIR/bulkhead.toml" "$SINGLETON"
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }
 # Node N serves the board itself (not a redirect).
 serves() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$(url "$1")")" = 200 ]; }
@@ -97,19 +97,19 @@ cat <<EOF
 The board on node 1 counts to 3 already, and the board bucket is now a
 cluster bucket: each write returns once node 2 has it on disk too.
 From another terminal:
-  export PATH="$(dirname "$PADDOCK"):\$PATH"
+  export PATH="$(dirname "$BULKHEAD"):\$PATH"
   curl -s $(url 1)
   curl -s -X POST $(url 1)
   curl -si $(url 2)                # 307 to node 1: the standby does not run it
   curl -sL $(url 2)                # follows the redirect
-  paddock --socket $(sock 1) failover
-  paddock --socket $(sock 2) status board
+  bulkhead --socket $(sock 1) failover
+  bulkhead --socket $(sock 2) status board
 
 Then kill the primary, as a power cut would:
   kill -9 ${NODE_PIDS[1]}
 and read node 2 again (a few seconds later):
   curl -s $(url 2)
-  paddock --socket $(sock 2) failover
+  bulkhead --socket $(sock 2) failover
 The script restarts node 1 for you at the next step.
 EOF
 

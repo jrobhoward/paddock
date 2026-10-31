@@ -1,10 +1,10 @@
-package paddock:connection@0.1.0;
+package bulkhead:connection@0.1.0;
 
 /// A connection handler: the host owns a listener (declared in the app's
 /// manifest, bound to an address by the node), accepts connections, and
 /// starts one instance of this world per connection.
 ///
-/// Kept apart from `paddock:runtime`, which has no `wasi:io` types so a
+/// Kept apart from `bulkhead:runtime`, which has no `wasi:io` types so a
 /// WASI 0.3 world can be added without changing it. In WASI 0.3 the two
 /// streams become `stream<u8>`.
 interface handler {
@@ -30,6 +30,6 @@ interface handler {
 /// has a pid but no mailbox: messages, timers and exit signals sent to it
 /// are dropped.
 world connection-handler {
-  import paddock:runtime/process@0.1.0;
+  import bulkhead:runtime/process@0.1.0;
   export handler;
 }

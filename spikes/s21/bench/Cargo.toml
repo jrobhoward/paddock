@@ -5,5 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-paddock-host = { path = "../../../crates/paddock-host" }
+bulkhead-host = { path = "../../../crates/bulkhead-host" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

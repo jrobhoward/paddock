@@ -1,8 +1,8 @@
-//! Entries in the node's shared `ledger` bucket, written with `paddock-sdk`:
+//! Entries in the node's shared `ledger` bucket, written with `bulkhead-sdk`:
 //! the example for replicated (`cluster`) buckets, and the app the
 //! replication soak writes through.
 //!
-//! Text commands, so `paddock call ledger "put a 1"` works:
+//! Text commands, so `bulkhead call ledger "put a 1"` works:
 //! - `put <key> <value>`: `ok`, or `err:<error>`. On a replicated bucket it
 //!   returns once the pair's primary has committed the write; an error that
 //!   says it may yet commit means the outcome is unknown.
@@ -11,8 +11,8 @@
 //!   `none`.
 //! - `keys`: every key, joined by `,`.
 
-use paddock_sdk::kv::Bucket;
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply, watch};
+use bulkhead_sdk::kv::Bucket;
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply, watch};
 
 const LEDGER: &str = "ledger";
 
@@ -60,4 +60,4 @@ impl App for Ledger {
     }
 }
 
-paddock_sdk::app!(Ledger);
+bulkhead_sdk::app!(Ledger);

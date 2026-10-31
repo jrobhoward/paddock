@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use paddock_host::http::fuzz_response;
+use bulkhead_host::http::fuzz_response;
 
 fuzz_target!(|bytes: &[u8]| {
     if let Some(code) = fuzz_response(bytes) {

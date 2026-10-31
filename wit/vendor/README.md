@@ -1,7 +1,7 @@
 # Vendored WASI proposal WIT
 
-Paddock implements these draft interfaces in its own host. They are copied
-here, not tracked upstream, so the guest ABI changes only when Paddock chooses
+Bulkhead implements these draft interfaces in its own host. They are copied
+here, not tracked upstream, so the guest ABI changes only when Bulkhead chooses
 (spike S7).
 
 | Directory | Package | Source |
@@ -13,5 +13,5 @@ here, not tracked upstream, so the guest ABI changes only when Paddock chooses
 
 The files are unmodified copies; the WASI proposals and wasmtime are
 Apache-2.0 WITH LLVM-exception. `wit/vendor/` is not a `deps/` directory, so
-parsing `wit/` loads only `paddock:runtime`; host and guest bindings name each
+parsing `wit/` loads only `bulkhead:runtime`; host and guest bindings name each
 vendored package explicitly.

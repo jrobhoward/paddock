@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 
 const KEY: usize = 16;
 const RECORD: usize = KEY + 160;
@@ -176,4 +176,4 @@ impl App for Reference {
     }
 }
 
-paddock_sdk::app!(Reference);
+bulkhead_sdk::app!(Reference);

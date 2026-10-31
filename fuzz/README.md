@@ -11,14 +11,14 @@
 | `wire_packet` | arbitrary bytes from a cluster member | as a hello, any agreed version is one both sides speak; as a packet, one that decodes round-trips through `encode` |
 | `failover_status` | arbitrary heartbeat payloads from the partner | a status that decodes encodes to 26 bytes that decode to the same status |
 | `http_reply` | arbitrary reply bodies from a guest | the HTTP reply envelope decoder never panics; an accepted reply has a valid status code |
-| `state_view` | arbitrary snapshot bytes from a guest | `paddock state`'s reader never panics, names a format, and its answer serializes as JSON |
+| `state_view` | arbitrary snapshot bytes from a guest | `bulkhead state`'s reader never panics, names a format, and its answer serializes as JSON |
 | `modbus_request` | arbitrary Modbus requests and table sizes | a read returns exactly the count asked for and a write changes only addresses the table has |
 | `process_ops` | sequences of up to 64 operations on 4 live chaos instances | calls and casts with arbitrary envelopes and pids, links, monitors, exit signals, registration, timers, kills and respawns; afterwards every instance dies when killed and a fresh one answers |
 
 ```sh
 cargo install cargo-fuzz
 # process_ops runs the chaos fixture:
-cargo build --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures
+cargo build --release --target wasm32-wasip2 -p bulkhead-fixture-chaos --target-dir target/fixtures
 cd fuzz
 cargo +nightly fuzz run parse -- -max_total_time=60
 ```

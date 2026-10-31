@@ -1,4 +1,4 @@
-package paddock:spike5@0.1.0;
+package bulkhead:spike5@0.1.0;
 
 world app {
   /// Version string of this component build.

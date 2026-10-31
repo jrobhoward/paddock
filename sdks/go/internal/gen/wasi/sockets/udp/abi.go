@@ -3,7 +3,7 @@
 package udp
 
 import (
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/sockets/network"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/sockets/network"
 	"go.bytecodealliance.org/cm"
 	"unsafe"
 )

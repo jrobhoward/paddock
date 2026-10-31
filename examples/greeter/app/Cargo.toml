@@ -1,7 +1,7 @@
 [package]
 name = "example-greeter-app"
 version.workspace = true
-description = "Paddock example: an app that calls the greeter extension"
+description = "Bulkhead example: an app that calls the greeter extension"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true }
+bulkhead-sdk = { workspace = true }
 wit-bindgen = { workspace = true }
 
 [lints]

@@ -11,8 +11,8 @@ package log
 import (
 	"fmt"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/logging/logging"
-	"github.com/jrobhoward/paddock/sdks/go/internal/loglevel"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/logging/logging"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/loglevel"
 )
 
 // Level is a record's level.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a Go app on the Paddock Go SDK into a component.
+# Build a Go app on the Bulkhead Go SDK into a component.
 #
 #   sdks/go/build.sh <app-package-dir> <out.wasm>
 #
@@ -23,5 +23,5 @@ command -v "$TINYGO" > /dev/null || {
 out=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 cd "$1"
 "$TINYGO" build -target=wasip2 -scheduler=none -opt=2 \
-  --wit-package "$SDK/wit" --wit-world paddock:go-sdk/app \
+  --wit-package "$SDK/wit" --wit-world bulkhead:go-sdk/app \
   -o "$out" .

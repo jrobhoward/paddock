@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use paddock_host::{Envelope, InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig};
+use bulkhead_host::{Envelope, InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig};
 
 const LONG: Duration = Duration::from_secs(120);
 const READS: u64 = 200_000;

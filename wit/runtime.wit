@@ -1,8 +1,8 @@
-/// The Paddock app contract: an app is a component that implements the `app`
+/// The Bulkhead app contract: an app is a component that implements the `app`
 /// world, a `gen_server`-style set of callbacks the host drives one message at
 /// a time, and imports host services from `process`.
 ///
-/// Rules (checked by `crates/paddock/tests/wit_rules.rs`):
+/// Rules (checked by `crates/bulkhead/tests/wit_rules.rs`):
 /// - Synchronous functions only, and no `stream` or `future` types: the guest
 ///   ABI targets WASI 0.2. A later world version may add async functions.
 /// - No `wasi:io` types (pollables, streams), so a WASI 0.3 world can be added
@@ -11,7 +11,7 @@
 ///   `types` and `process`, which every app gets) returns
 ///   `result<_, error>` where `error` has an `access-denied` case, so a
 ///   capability the operator did not grant is an error value, not a trap.
-package paddock:runtime@0.1.0;
+package bulkhead:runtime@0.1.0;
 
 /// Types shared by the host services and the app callbacks.
 interface types {

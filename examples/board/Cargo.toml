@@ -1,7 +1,7 @@
 [package]
 name = "example-board"
 version.workspace = true
-description = "Paddock example: a counter on a shared bulletin board (a disk bucket), served over HTTP, that survives crashes"
+description = "Bulkhead example: a counter on a shared bulletin board (a disk bucket), served over HTTP, that survives crashes"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true, features = ["groups", "http", "keyvalue", "watch"] }
+bulkhead-sdk = { workspace = true, features = ["groups", "http", "keyvalue", "watch"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

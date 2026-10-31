@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run a Paddock node with traffic worth tracing, for the bpftrace scripts in
+# Run a Bulkhead node with traffic worth tracing, for the bpftrace scripts in
 # examples/tracing/bt. See examples/tracing/README.md.
 #
 #   examples/tracing/demo.sh            # from the repository root; Ctrl-C stops it
 #
-# It builds paddock and the ping-pong and chaos examples, starts a node in
+# It builds bulkhead and the ping-pong and chaos examples, starts a node in
 # $DEMO_DIR (default: a fresh temporary directory), deploys pong, ping and a
 # crash-prone chaos, and then loops:
 #   - ping calls pong (admin API -> ping -> pong) a few times a second;
@@ -15,19 +15,19 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-DEMO_DIR=${DEMO_DIR:-$(mktemp -d -t paddock-trace-XXXXXX)}
-PADDOCK="$ROOT/target/release/paddock"
+DEMO_DIR=${DEMO_DIR:-$(mktemp -d -t bulkhead-trace-XXXXXX)}
+BULKHEAD="$ROOT/target/release/bulkhead"
 WASM="$ROOT/target/wasm32-wasip2/release"
 
 echo "building (release)..."
-cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p paddock
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
   --target wasm32-wasip2 -p example-ping-pong -p example-chaos
 
 cd "$DEMO_DIR"
-"$PADDOCK" keygen signer --no-password >/dev/null
+"$BULKHEAD" keygen signer --no-password >/dev/null
 # Unix socket paths are limited to about 107 bytes; keep this one short.
-SOCKET="/tmp/paddock-trace-$$.sock"
+SOCKET="/tmp/bulkhead-trace-$$.sock"
 cat > node.toml <<TOML
 data_dir = "$DEMO_DIR/data"
 admin_socket = "$SOCKET"
@@ -53,9 +53,9 @@ period_ms = 60000
 max_level = "info"
 TOML
 
-"$PADDOCK" node --config node.toml > node.log 2>&1 &
+"$BULKHEAD" node --config node.toml > node.log 2>&1 &
 NODE=$!
-export PADDOCK_SOCKET="$SOCKET"
+export BULKHEAD_SOCKET="$SOCKET"
 cleanup() {
   kill "$NODE" 2>/dev/null || true
   wait "$NODE" 2>/dev/null || true
@@ -63,11 +63,11 @@ cleanup() {
   echo "node stopped; its files are in $DEMO_DIR"
 }
 trap cleanup EXIT
-for _ in $(seq 100); do [ -S "$PADDOCK_SOCKET" ] && break; sleep 0.05; done
+for _ in $(seq 100); do [ -S "$BULKHEAD_SOCKET" ] && break; sleep 0.05; done
 
 bundle() {
-  "$PADDOCK" bundle "$1" "$WASM/$2.wasm" --key signer.key --out "$3" >/dev/null
-  "$PADDOCK" deploy "$3" >/dev/null
+  "$BULKHEAD" bundle "$1" "$WASM/$2.wasm" --key signer.key --out "$3" >/dev/null
+  "$BULKHEAD" deploy "$3" >/dev/null
 }
 bundle "$ROOT/examples/ping-pong/pong.toml" example_ping_pong pong.rbp
 bundle "$ROOT/examples/ping-pong/ping.toml" example_ping_pong ping.rbp
@@ -85,26 +85,26 @@ In another terminal, from $ROOT:
 
 and to watch the instances:
 
-  PADDOCK_SOCKET=$PADDOCK_SOCKET $PADDOCK ps
+  BULKHEAD_SOCKET=$BULKHEAD_SOCKET $BULKHEAD ps
 
 Traffic is running; Ctrl-C stops it and the node.
 EOF
 
-pid_of() { "$PADDOCK" ps | awk -v app="$1" '$2 == app { print $1 }'; }
+pid_of() { "$BULKHEAD" ps | awk -v app="$1" '$2 == app { print $1 }'; }
 
 n=0
 while true; do
   n=$((n + 1))
-  "$PADDOCK" call ping "ping:$n" >/dev/null || true
+  "$BULKHEAD" call ping "ping:$n" >/dev/null || true
   if (( n % 40 == 0 )); then
     echo "$(date +%T) killing pong $(pid_of pong)"
-    "$PADDOCK" kill "$(pid_of pong)" >/dev/null || true
+    "$BULKHEAD" kill "$(pid_of pong)" >/dev/null || true
   fi
   if (( n % 60 == 30 )); then
     echo "$(date +%T) chaos: spin while casts arrive"
-    "$PADDOCK" call chaos spin >/dev/null 2>&1 &
+    "$BULKHEAD" call chaos spin >/dev/null 2>&1 &
     sleep 0.05
-    for _ in 1 2 3 4 5 6 7 8; do "$PADDOCK" cast chaos "echo:x" >/dev/null 2>&1 || true; done
+    for _ in 1 2 3 4 5 6 7 8; do "$BULKHEAD" cast chaos "echo:x" >/dev/null 2>&1 || true; done
   fi
   sleep 0.25
 done

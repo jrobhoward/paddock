@@ -1,4 +1,4 @@
-// Spike S21: a Paddock app in Go (TinyGo), against the raw WIT bindings in
+// Spike S21: a Bulkhead app in Go (TinyGo), against the raw WIT bindings in
 // gen/ (wit-bindgen-go). The counter example's text protocol, plus commands
 // that misbehave so the host's limits can be checked on a TinyGo guest.
 //
@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"example.com/s21counter/gen/s21/go/app"
-	"example.com/s21counter/gen/paddock/runtime/process"
-	"example.com/s21counter/gen/paddock/runtime/types"
+	"example.com/s21counter/gen/bulkhead/runtime/process"
+	"example.com/s21counter/gen/bulkhead/runtime/types"
 	"go.bytecodealliance.org/cm"
 )
 

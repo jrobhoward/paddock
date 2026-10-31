@@ -1,7 +1,7 @@
 [package]
 name = "example-scada-hmi"
 version.workspace = true
-description = "Paddock example: the point table over HTTP, with long polls"
+description = "Bulkhead example: the point table over HTTP, with long polls"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true, features = ["http", "keyvalue", "watch"] }
+bulkhead-sdk = { workspace = true, features = ["http", "keyvalue", "watch"] }
 serde = { workspace = true }
 
 [lints]

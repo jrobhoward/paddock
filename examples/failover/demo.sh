@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Fail over a singleton between two Paddock nodes, with a witness, as three
-# `paddock node` processes on loopback. See examples/failover/README.md.
+# Fail over a singleton between two Bulkhead nodes, with a witness, as three
+# `bulkhead node` processes on loopback. See examples/failover/README.md.
 #
 #   examples/failover/demo.sh            # from the repository root
 #
-# It builds paddock and the counter example, makes a key per node and a
+# It builds bulkhead and the counter example, makes a key per node and a
 # peers file, starts a witness (node 3) and a pair (nodes 1 and 2), and
 # deploys the counter to both members as a singleton. Then it:
 #   1. waits for node 1 to be primary and run the counter, and counts to 3;
@@ -14,32 +14,32 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-DEMO_DIR=${DEMO_DIR:-$(mktemp -d -t paddock-failover-XXXXXX)}
+DEMO_DIR=${DEMO_DIR:-$(mktemp -d -t bulkhead-failover-XXXXXX)}
 BASE_PORT=${BASE_PORT:-7401}
-PADDOCK="$ROOT/target/release/paddock"
+BULKHEAD="$ROOT/target/release/bulkhead"
 WASM="$ROOT/target/wasm32-wasip2/release/example_counter.wasm"
 
 echo "building (release)..."
-cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p paddock
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
   --target wasm32-wasip2 -p example-counter
 
 cd "$DEMO_DIR"
-"$PADDOCK" keygen signer --no-password >/dev/null
+"$BULKHEAD" keygen signer --no-password >/dev/null
 SIGNER=$(tail -n 1 signer.pub)
 
 # Unix socket paths are limited to about 107 bytes; keep these short.
-sock() { echo "/tmp/paddock-fo-$$-$1.sock"; }
+sock() { echo "/tmp/bulkhead-fo-$$-$1.sock"; }
 addr() { echo "127.0.0.1:$((BASE_PORT + $1 - 1))"; }
 p() {
   local n=$1
   shift
-  "$PADDOCK" --socket "$(sock "$n")" "$@"
+  "$BULKHEAD" --socket "$(sock "$n")" "$@"
 }
 
 echo "[peers]" > peers.toml
 for n in 1 2 3; do
-  echo "$n = [\"$("$PADDOCK" cluster keygen "node-$n.key")\"]" >> peers.toml
+  echo "$n = [\"$("$BULKHEAD" cluster keygen "node-$n.key")\"]" >> peers.toml
 done
 
 # Fast timings for the demo: 200 ms heartbeats, a 1 s node timeout, a 2 s
@@ -77,7 +77,7 @@ done
 
 declare -A PIDS
 start() {
-  "$PADDOCK" node --config "node-$1.toml" >> "node-$1.log" 2>&1 &
+  "$BULKHEAD" node --config "node-$1.toml" >> "node-$1.log" 2>&1 &
   PIDS[$1]=$!
   for _ in $(seq 200); do [ -S "$(sock "$1")" ] && return; sleep 0.05; done
   echo "node $1 did not start; see $DEMO_DIR/node-$1.log" >&2
@@ -112,9 +112,9 @@ start 1
 start 2
 
 # The counter, made a singleton: one instance, on the primary only.
-cp "$ROOT/examples/counter/paddock.toml" counter.toml
+cp "$ROOT/examples/counter/bulkhead.toml" counter.toml
 printf '\n[appserver.placement]\nmode = "singleton"\n' >> counter.toml
-"$PADDOCK" bundle counter.toml "$WASM" --key signer.key --out counter.rbp >/dev/null
+"$BULKHEAD" bundle counter.toml "$WASM" --key signer.key --out counter.rbp >/dev/null
 p 1 deploy counter.rbp >/dev/null
 p 2 deploy counter.rbp >/dev/null
 

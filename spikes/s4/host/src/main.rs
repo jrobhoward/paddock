@@ -23,11 +23,11 @@ use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 
 wasmtime::component::bindgen!({ path: "../wit", world: "app" });
 
-use paddock::spike4::{audit, kv, net};
+use bulkhead::spike4::{audit, kv, net};
 
-const KV: &str = "paddock:spike4/kv@0.1.0";
-const NET: &str = "paddock:spike4/net@0.1.0";
-const AUDIT: &str = "paddock:spike4/audit@0.1.0";
+const KV: &str = "bulkhead:spike4/kv@0.1.0";
+const NET: &str = "bulkhead:spike4/net@0.1.0";
+const AUDIT: &str = "bulkhead:spike4/audit@0.1.0";
 
 struct State {
     wasi: WasiCtx,
@@ -207,7 +207,7 @@ fn main() -> Result<()> {
     let component = Component::from_file(&engine, &wasm)?;
 
     // Host directories for the jailed filesystem.
-    let base = std::env::temp_dir().join(format!("paddock-s4-{}", std::process::id()));
+    let base = std::env::temp_dir().join(format!("bulkhead-s4-{}", std::process::id()));
     let data = base.join("data");
     let privd = base.join("priv");
     std::fs::create_dir_all(&data)?;

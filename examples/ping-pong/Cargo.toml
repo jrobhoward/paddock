@@ -1,7 +1,7 @@
 [package]
 name = "example-ping-pong"
 version.workspace = true
-description = "Paddock example: two apps calling each other with typed CBOR messages"
+description = "Bulkhead example: two apps calling each other with typed CBOR messages"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true }
+bulkhead-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

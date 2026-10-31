@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The SCADA release drill: the example's apps on an HA
-# pair and a witness, three `paddock node` processes, with two fake Modbus
+# pair and a witness, three `bulkhead node` processes, with two fake Modbus
 # devices, taken through a release cycle while a probe per node asks the
 # HMI for the point table and the alarms ten times a second:
 #
-#   deploy; a release of control v2 across the pair (`paddock release
+#   deploy; a release of control v2 across the pair (`bulkhead release
 #   upgrade`: the standby, then the primary in place); a planned
 #   switchover; a release rollback; a release of the standby alone
 #   (`--standby-only`), then the primary lost (kill -9) before its step,
@@ -17,7 +17,7 @@
 # pump-1-pressure alarm (raised and acknowledged before the cycle) as the
 # primary sees it after each step. The point table is a `cluster` bucket
 # polled by the primary alone, and control's buckets are `replicated`.
-# paddock-soak scada turns the report into a pass or fail.
+# bulkhead-soak scada turns the report into a pass or fail.
 #
 #   examples/scada/drill.sh                 # STEP_SECS=5 between steps
 #   DRILL_DIR=/tmp/drill examples/scada/drill.sh
@@ -28,19 +28,19 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-DRILL_DIR=${DRILL_DIR:-$(mktemp -d -t paddock-drill-XXXXXX)}
+DRILL_DIR=${DRILL_DIR:-$(mktemp -d -t bulkhead-drill-XXXXXX)}
 STEP_SECS=${STEP_SECS:-5}
 HTTP_PORT=${HTTP_PORT:-8091}
 BASE_PORT=${BASE_PORT:-7501}
 DEVICE_PORT=${DEVICE_PORT:-5021}
-PADDOCK="$ROOT/target/release/paddock"
+BULKHEAD="$ROOT/target/release/bulkhead"
 WASM="$ROOT/target/wasm32-wasip2/release"
 WASM_V2="$ROOT/target/fixtures/scada-drill-v2/wasm32-wasip2/release"
 
 echo "building (release; the first build takes a few minutes)..."
-cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p paddock --features modbus
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead --features modbus
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
-  -p paddock-modbus --example fake_device
+  -p bulkhead-modbus --example fake_device
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" --target wasm32-wasip2 \
   -p example-scada-points -p example-scada-hmi -p example-scada-control
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" --target wasm32-wasip2 \
@@ -50,11 +50,11 @@ cd "$DRILL_DIR"
 url() { echo "http://127.0.0.1:$((HTTP_PORT + $1 - 1))"; }
 addr() { echo "127.0.0.1:$((BASE_PORT + $1 - 1))"; }
 # Unix socket paths are limited to about 107 bytes; keep these short.
-sock() { echo "/tmp/paddock-drill-$$-$1.sock"; }
+sock() { echo "/tmp/bulkhead-drill-$$-$1.sock"; }
 p() {
   local n=$1
   shift
-  "$PADDOCK" --socket "$(sock "$n")" "$@"
+  "$BULKHEAD" --socket "$(sock "$n")" "$@"
 }
 now_ms() { date +%s%3N; }
 
@@ -62,7 +62,7 @@ declare -A NODE_PIDS
 PIDS=()
 start_node() {
   rm -f "$(sock "$1")"
-  "$PADDOCK" node --config "$DRILL_DIR/node-$1.toml" >> "$DRILL_DIR/node-$1.log" 2>&1 &
+  "$BULKHEAD" node --config "$DRILL_DIR/node-$1.toml" >> "$DRILL_DIR/node-$1.log" 2>&1 &
   NODE_PIDS[$1]=$!
   for _ in $(seq 200); do [ -S "$(sock "$1")" ] && return; sleep 0.05; done
   echo "node $1 did not start; see $DRILL_DIR/node-$1.log" >&2
@@ -71,7 +71,7 @@ start_node() {
 cleanup() {
   for pid in "${NODE_PIDS[@]}" "${PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
-  rm -f /tmp/paddock-drill-$$-*.sock
+  rm -f /tmp/bulkhead-drill-$$-*.sock
   echo "configs, data and logs are in $DRILL_DIR"
 }
 trap cleanup EXIT
@@ -90,10 +90,10 @@ until_ok() {
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }
 # The primary $1's partner has every replicated write.
 caught_up() { p "$1" --json failover | grep -q '"partner_outdated": false'; }
-release() { "$PADDOCK" release "$@" --pair "$DRILL_DIR/pair.toml"; }
+release() { "$BULKHEAD" release "$@" --pair "$DRILL_DIR/pair.toml"; }
 
 # Keys, signer, policy and the three nodes' configs.
-[ -f signer.key ] || "$PADDOCK" keygen signer --no-password >/dev/null
+[ -f signer.key ] || "$BULKHEAD" keygen signer --no-password >/dev/null
 SIGNER=$(tail -n 1 signer.pub)
 cat > policy.toml <<'TOML'
 [apps.points]
@@ -104,13 +104,13 @@ grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
 buckets = ["points"]
 [apps.control]
 grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging", "wasi:config",
-         "paddock-modbus:modbus"]
+         "bulkhead-modbus:modbus"]
 buckets = ["points"]
 TOML
 echo "[peers]" > peers.toml
 for n in 1 2 3; do
-  [ -f "node-$n.key" ] || "$PADDOCK" cluster keygen "node-$n.key" >/dev/null
-  echo "$n = [\"$("$PADDOCK" cluster pubkey "node-$n.key")\"]" >> peers.toml
+  [ -f "node-$n.key" ] || "$BULKHEAD" cluster keygen "node-$n.key" >/dev/null
+  echo "$n = [\"$("$BULKHEAD" cluster pubkey "node-$n.key")\"]" >> peers.toml
 done
 for n in 1 2 3; do
   {
@@ -153,7 +153,7 @@ for n in 1 2 3; do
       echo "durability = \"disk\""
       echo "scope = \"cluster\""
       for d in 1 2; do
-        echo "[extensions.\"paddock-modbus:modbus\".devices.pump-$d]"
+        echo "[extensions.\"bulkhead-modbus:modbus\".devices.pump-$d]"
         echo "address = \"127.0.0.1:$((DEVICE_PORT + d - 1))\""
         echo "poll_ms = 100"
         echo "timeout_ms = 500"
@@ -176,12 +176,12 @@ socket = "$(sock 2)"
 TOML
 
 bundle() {
-  "$PADDOCK" bundle "$ROOT/examples/scada/$1" "$2" --key signer.key --out "$3" >/dev/null
+  "$BULKHEAD" bundle "$ROOT/examples/scada/$1" "$2" --key signer.key --out "$3" >/dev/null
 }
-bundle points/paddock.toml "$WASM/example_scada_points.wasm" points.rbp
-bundle hmi/paddock.toml "$WASM/example_scada_hmi.wasm" hmi.rbp
-bundle control/paddock.toml "$WASM/example_scada_control.wasm" control.rbp
-bundle control/paddock-v2.toml "$WASM_V2/example_scada_control.wasm" control-v2.rbp
+bundle points/bulkhead.toml "$WASM/example_scada_points.wasm" points.rbp
+bundle hmi/bulkhead.toml "$WASM/example_scada_hmi.wasm" hmi.rbp
+bundle control/bulkhead.toml "$WASM/example_scada_control.wasm" control.rbp
+bundle control/bulkhead-v2.toml "$WASM_V2/example_scada_control.wasm" control-v2.rbp
 
 "$ROOT/target/release/examples/fake_device" \
   "127.0.0.1:$DEVICE_PORT" "127.0.0.1:$((DEVICE_PORT + 1))" > devices.log 2>&1 &

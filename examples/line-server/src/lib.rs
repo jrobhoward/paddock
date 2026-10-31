@@ -1,4 +1,4 @@
-//! A connection handler written with `paddock-sdk`: each TCP connection on
+//! A connection handler written with `bulkhead-sdk`: each TCP connection on
 //! the `lines` listener gets its own instance, which reads commands one per
 //! line and answers each with a line.
 //!
@@ -11,8 +11,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
 
-use paddock_sdk::connection::{Connection, ConnectionInfo, Stream};
-use paddock_sdk::{Ctx, Envelope};
+use bulkhead_sdk::connection::{Connection, ConnectionInfo, Stream};
+use bulkhead_sdk::{Ctx, Envelope};
 
 struct Lines;
 
@@ -44,4 +44,4 @@ impl Connection for Lines {
     }
 }
 
-paddock_sdk::connection!(Lines);
+bulkhead_sdk::connection!(Lines);

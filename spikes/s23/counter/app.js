@@ -1,5 +1,5 @@
-// Spike S23: a Paddock app in JavaScript (jco componentize, StarlingMonkey),
-// against paddock:runtime/app as jco maps it (types/ from `jco guest-types`).
+// Spike S23: a Bulkhead app in JavaScript (jco componentize, StarlingMonkey),
+// against bulkhead:runtime/app as jco maps it (types/ from `jco guest-types`).
 // The same text protocol and misbehaving commands as S21's Go app.
 //
 // Calls (text/plain): inc, get, after <ms> (a timer that incs through
@@ -11,7 +11,7 @@ import {
   whereis,
   call,
   sendAfter,
-} from "paddock:runtime/process@0.1.0";
+} from "bulkhead:runtime/process@0.1.0";
 
 const VERSION = "js-1";
 const encoder = new TextEncoder();

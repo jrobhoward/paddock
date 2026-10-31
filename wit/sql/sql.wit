@@ -1,11 +1,11 @@
-package paddock:sql@0.1.0;
+package bulkhead:sql@0.1.0;
 
 /// SQL datasources the node binds: Postgres today. Separate
-/// from `paddock:runtime` so the frozen app world does not change; an app
+/// from `bulkhead:runtime` so the frozen app world does not change; an app
 /// imports it only if it calls it.
 ///
 /// An app names the datasources it uses in its manifest
-/// (`capabilities."paddock:sql"`, with a connection cap each), the operator
+/// (`capabilities."bulkhead:sql"`, with a connection cap each), the operator
 /// grants each name (policy `datasources`), and the node binds each name to
 /// a database (`[datasources.<name>]`: address, credentials from a secret,
 /// TLS, pool size). The app never sees the address or the credentials.
@@ -49,7 +49,7 @@ interface sql {
 
   /// Why a call failed.
   variant error {
-    /// `paddock:sql` is not granted, the manifest does not list the
+    /// `bulkhead:sql` is not granted, the manifest does not list the
     /// datasource, or the policy does not grant it.
     access-denied,
     /// The node binds no datasource of that name.

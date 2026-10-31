@@ -1,7 +1,7 @@
 [package]
 name = "example-chaos"
 version.workspace = true
-description = "Paddock example: an app that fails on purpose, for the Phase 1 failure tests"
+description = "Bulkhead example: an app that fails on purpose, for the Phase 1 failure tests"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true }
+bulkhead-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

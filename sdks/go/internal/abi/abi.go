@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/runtime/types"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/runtime/types"
 	"go.bytecodealliance.org/cm"
 )
 

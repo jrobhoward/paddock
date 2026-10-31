@@ -1,0 +1,20 @@
+[package]
+name = "bulkhead-fixture-sdk"
+version.workspace = true
+description = "Test fixture: an app using wasi:config and wasi:keyvalue through bulkhead-sdk"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bulkhead-sdk = { workspace = true, features = ["config", "groups", "http", "http-client", "keyvalue", "metrics", "secrets", "sql", "watch"] }
+serde = { workspace = true }
+
+[lints]
+workspace = true

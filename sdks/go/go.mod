@@ -1,4 +1,4 @@
-module github.com/jrobhoward/paddock/sdks/go
+module github.com/jrobhoward/bulkhead/sdks/go
 
 go 1.27.3
 

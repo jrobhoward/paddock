@@ -1,10 +1,10 @@
 # Bundle with:
 #   cargo build -p example-ping-pong --target wasm32-wasip2 --release
-#   paddock bundle examples/ping-pong/pong.toml target/wasm32-wasip2/release/example_ping_pong.wasm --key paddock.key
+#   bulkhead bundle examples/ping-pong/pong.toml target/wasm32-wasip2/release/example_ping_pong.wasm --key bulkhead.key
 [app]
 name = "pong"
 version = "1.0.0"
-description = "Answers typed Ping calls (paddock-sdk example)"
+description = "Answers typed Ping calls (bulkhead-sdk example)"
 license = "MIT OR Apache-2.0"
 
 [appserver]

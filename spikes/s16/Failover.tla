@@ -8,7 +8,7 @@
  * three steps, witness crash and recovery, and a resume that cancels
  * pending promotions. Replicated data is left out.
  *
- * What Paddock adds:
+ * What Bulkhead adds:
  *   - The property is about apps, not roles: at most one node RUNS the
  *     singleton at any moment (AtMostOneRunning). A stale primary at a
  *     lower epoch may not keep going until it is fenced: a SCADA singleton
@@ -287,7 +287,7 @@ TypeOK ==
     /\ wEpoch \in 1..MaxEpoch
     /\ wPromoted \in Nodes
 
-\* The property Paddock needs: the singleton never runs on both nodes.
+\* The property Bulkhead needs: the singleton never runs on both nodes.
 AtMostOneRunning == ~(running[Alpha] /\ running[Beta])
 
 \* An app runs only on a live primary.

@@ -7,7 +7,7 @@
 package terminalstderr
 
 import (
-	terminaloutput "github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/cli/terminal-output"
+	terminaloutput "github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/cli/terminal-output"
 	"go.bytecodealliance.org/cm"
 )
 

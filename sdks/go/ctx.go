@@ -1,9 +1,9 @@
-package paddock
+package bulkhead
 
 import (
 	"time"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/runtime/process"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/runtime/process"
 )
 
 // Ctx is messaging, links, monitors, timers and the registry, passed to

@@ -1,6 +1,6 @@
 # ping-pong in other languages
 
-The `pong` half of [`examples/ping-pong`](../src/lib.rs) written in Go, Python and JavaScript, each against `paddock:runtime/app` ([`wit/runtime.wit`](../../../wit/runtime.wit)) through its language's own Component Model tooling. Paddock ships an SDK for Rust only. These show that an app in another language runs on an unmodified node, and what each language needs to do so.
+The `pong` half of [`examples/ping-pong`](../src/lib.rs) written in Go, Python and JavaScript, each against `bulkhead:runtime/app` ([`wit/runtime.wit`](../../../wit/runtime.wit)) through its language's own Component Model tooling. Bulkhead ships an SDK for Rust only. These show that an app in another language runs on an unmodified node, and what each language needs to do so.
 
 Each `pong` does what the Rust one does: `init` registers the name `pong`, and `handle-call` answers a CBOR `Ping { n }` (content type `application/cbor`, schema `ping-pong.ping.v1`) with `Pong { n: n + 1 }`. The Rust `ping` app calls it by name and monitors it. Since a message is an envelope of bytes, nothing in `ping` depends on the language `pong` is written in.
 
@@ -9,13 +9,13 @@ Each `pong` does what the Rust one does: `init` registers the name `pong`, and `
 ```text
 == pong upgraded to python (1.2.0, 17908 KiB)
   running: pong 1.2.0
-  $ paddock call ping ping:41
+  $ bulkhead call ping ping:41
   pong 42
-  $ paddock call ping ping:4294967295
+  $ bulkhead call ping ping:4294967295
   pong 4294967296
 ...
 == what ping's monitor saw
-  $ paddock call ping downs
+  $ bulkhead call ping downs
   3
 ```
 
@@ -51,7 +51,7 @@ examples/ping-pong/languages/build.sh python     # one
 examples/ping-pong/languages/demo.sh
 ```
 
-These builds are not in CI, and `crates/paddock/tests/examples.rs` does not run them; the demo is the check. A toolchain release can change a component's imports or core module count.
+These builds are not in CI, and `crates/bulkhead/tests/examples.rs` does not run them; the demo is the check. A toolchain release can change a component's imports or core module count.
 
 ## What each language needs
 
@@ -66,6 +66,6 @@ Found by spikes S21 to S23 ([`spikes/s21`](../../../spikes/s21/README.md), [`s22
 | Node config | none | `max_core_instances_per_component` of 14 or more (the demo sets 16): the component has 14 core module instances, against a default of 8 | none |
 | Component size | 744 KiB | 17.9 MiB | 11.9 MiB |
 
-The capabilities each runtime imports are declared with no preopens, socket rules or allow list, and the demo's node grants none of them. The node links deny stubs, so each `pong` reaches no file and no network, and `paddock status pong` lists them as denied. An upgrade that adds a capability needs `paddock upgrade --approve`.
+The capabilities each runtime imports are declared with no preopens, socket rules or allow list, and the demo's node grants none of them. The node links deny stubs, so each `pong` reaches no file and no network, and `bulkhead status pong` lists them as denied. An upgrade that adds a capability needs `bulkhead upgrade --approve`.
 
 S21 to S23 measured each language's cost against the Rust counter (start, call, memory per instance) on a counter app; their tables apply here. The Go `pong` held 128 KiB through 5,000 calls from `ping` (2026-10-26), so `go/free.go` frees what it must.

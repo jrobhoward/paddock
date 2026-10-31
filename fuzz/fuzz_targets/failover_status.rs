@@ -5,7 +5,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use paddock_host::failover::fuzz_status;
+use bulkhead_host::failover::fuzz_status;
 
 fuzz_target!(|bytes: &[u8]| {
     if let Some(encoded) = fuzz_status(bytes) {

@@ -5,7 +5,7 @@ package main
 import (
 	"unsafe"
 
-	"example.com/s21counter/gen/paddock/runtime/types"
+	"example.com/s21counter/gen/bulkhead/runtime/types"
 )
 
 // TinyGo's cabi_realloc allocates with allocManual: the block stays live

@@ -1,4 +1,4 @@
-# Paddock: Architecture
+# Bulkhead: Architecture
 
 2026-10-25 · Companion to [DESIGN.md](DESIGN.md)
 
@@ -8,52 +8,52 @@ A map of the code as built: the crates, the paths a call, a deploy, a failover, 
 
 ```mermaid
 flowchart TD
-    operator(["operator"]) -->|"CLI, over the Unix socket or TLS"| paddock
-    paddock["paddock (bin + lib)<br/>api: admin types, client<br/>node: daemon, store, gate, events, audit, serial path<br/>cli: commands, shell"]
-    host["paddock-host<br/>runtime, process core, services, supervisors,<br/>transport, failover, replication, http, listeners, native"]
-    bundle["paddock-bundle<br/>manifest, .rbp, verify, policy, grant<br/>(no wasmtime)"]
-    native["paddock-native<br/>protocol, app, paddock-runner"]
-    ext["extensions<br/>paddock-modbus, greeter service"]
-    guests["guests (Wasm)<br/>paddock-sdk, fixtures, examples"]
-    napps["native apps<br/>rustbridge plugins, executables<br/>on paddock-native's app API"]
-    paddock --> host
-    paddock --> bundle
-    paddock -->|"modbus feature"| ext
+    operator(["operator"]) -->|"CLI, over the Unix socket or TLS"| bulkhead
+    bulkhead["bulkhead (bin + lib)<br/>api: admin types, client<br/>node: daemon, store, gate, events, audit, serial path<br/>cli: commands, shell"]
+    host["bulkhead-host<br/>runtime, process core, services, supervisors,<br/>transport, failover, replication, http, listeners, native"]
+    bundle["bulkhead-bundle<br/>manifest, .rbp, verify, policy, grant<br/>(no wasmtime)"]
+    native["bulkhead-native<br/>protocol, app, bulkhead-runner"]
+    ext["extensions<br/>bulkhead-modbus, greeter service"]
+    guests["guests (Wasm)<br/>bulkhead-sdk, fixtures, examples"]
+    napps["native apps<br/>rustbridge plugins, executables<br/>on bulkhead-native's app API"]
+    bulkhead --> host
+    bulkhead --> bundle
+    bulkhead -->|"modbus feature"| ext
     host --> bundle
     host -->|"protocol only"| native
     ext -->|"Extension trait"| host
     guests -.->|"WIT imports"| host
-    napps -.->|"run by paddock-runner"| native
+    napps -.->|"run by bulkhead-runner"| native
 ```
 
 Solid arrows point from a crate to the crates it depends on; dotted arrows are what runs on the host, not Cargo dependencies.
 
 | Crate | Builds | What it holds |
 | --- | --- | --- |
-| `paddock` | binary and library | `api` (admin API types, and the client over the Unix socket or TLS), `node` (the daemon, feature `node`), `serial` (the tty layer and frames for the failover serial line), `cli` (commands, bundle building, the shell). Without `node` it does not build wasmtime. |
-| `paddock-bundle` | library | The app manifest model and validation, `.rbp` opening and signature checks against operator keys (a component, or a native app's platform variant), component import inspection, operator policy and the effective grant. |
-| `paddock-host` | library | The runtime: engine, epoch ticker, process table, instances (components and native processes), passivation, links and monitors, supervisors, app sets and pools, host services, the HTTP ingress and handlers, listeners, the cluster transport, liveness, membership, failover, replication, moving singletons and release versions. |
-| `paddock-native` | library and `paddock-runner` | The frame protocol between a node and a native app, the app API for native executables (feature `app`), and `paddock-runner` (feature `runner`, default), the launcher that sandboxes itself and loads or executes a native app. `paddock-host` takes the protocol only. |
-| `paddock-modbus` | library | The Modbus TCP extension; depends on `paddock-host` alone. |
-| `paddock-sdk`, `paddock-sdk-macros` | guest libraries | The Rust guest SDK: the `App` trait, envelopes, snapshots, service wrappers by feature. The SDK owns the generated bindings. |
-| `paddock-fixture-*` | guests and native test apps | Components (echo, chaos, counter in three versions, services, sdk, conn, http, net), a native executable (`native`) and a rustbridge plugin (`plugin`). |
-| `paddock-soak` | binary | Fault injection against `paddock node` processes (`scripts/soak.sh`): failover, replication and the SCADA release cycle. |
+| `bulkhead` | binary and library | `api` (admin API types, and the client over the Unix socket or TLS), `node` (the daemon, feature `node`), `serial` (the tty layer and frames for the failover serial line), `cli` (commands, bundle building, the shell). Without `node` it does not build wasmtime. |
+| `bulkhead-bundle` | library | The app manifest model and validation, `.rbp` opening and signature checks against operator keys (a component, or a native app's platform variant), component import inspection, operator policy and the effective grant. |
+| `bulkhead-host` | library | The runtime: engine, epoch ticker, process table, instances (components and native processes), passivation, links and monitors, supervisors, app sets and pools, host services, the HTTP ingress and handlers, listeners, the cluster transport, liveness, membership, failover, replication, moving singletons and release versions. |
+| `bulkhead-native` | library and `bulkhead-runner` | The frame protocol between a node and a native app, the app API for native executables (feature `app`), and `bulkhead-runner` (feature `runner`, default), the launcher that sandboxes itself and loads or executes a native app. `bulkhead-host` takes the protocol only. |
+| `bulkhead-modbus` | library | The Modbus TCP extension; depends on `bulkhead-host` alone. |
+| `bulkhead-sdk`, `bulkhead-sdk-macros` | guest libraries | The Rust guest SDK: the `App` trait, envelopes, snapshots, service wrappers by feature. The SDK owns the generated bindings. |
+| `bulkhead-fixture-*` | guests and native test apps | Components (echo, chaos, counter in three versions, services, sdk, conn, http, net), a native executable (`native`) and a rustbridge plugin (`plugin`). |
+| `bulkhead-soak` | binary | Fault injection against `bulkhead node` processes (`scripts/soak.sh`): failover, replication and the SCADA release cycle. |
 | `examples/*` | guests and scripts | SDK examples, the tutorial's apps, the SCADA reference app, the greeter extension, the failover demo, systemd units. |
 
-The WIT contracts live in `wit/`: `paddock:runtime` (the app world, frozen per version) and separate packages for connections, groups, watch, secrets, metrics, SQL and I/O readiness. `wit/vendor/` holds the WASI interfaces bound against.
+The WIT contracts live in `wit/`: `bulkhead:runtime` (the app world, frozen per version) and separate packages for connections, groups, watch, secrets, metrics, SQL and I/O readiness. `wit/vendor/` holds the WASI interfaces bound against.
 
 Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 
-## Inside `paddock-host`
+## Inside `bulkhead-host`
 
 | Area | Modules | Role |
 | --- | --- | --- |
-| Engine | `runtime`, `config`, `bindings`, `deny`, `compiled` | `Runtime` and its `RuntimeInner`: the wasmtime engine with a pooling allocator sized by `max_instances` (a freed slot keeps up to `keep_resident` of its written pages for the next instance, given back once starts have been quiet for `release_idle_after`, `pool_memory`), the epoch ticker, the linker (WASI p2 with the socket functions redefined, `paddock:runtime`, `paddock:io`, services, extensions), deny stubs for ungranted imports, compiled components kept on disk |
+| Engine | `runtime`, `config`, `bindings`, `deny`, `compiled` | `Runtime` and its `RuntimeInner`: the wasmtime engine with a pooling allocator sized by `max_instances` (a freed slot keeps up to `keep_resident` of its written pages for the next instance, given back once starts have been quiet for `release_idle_after`, `pool_memory`), the epoch ticker, the linker (WASI p2 with the socket functions redefined, `bulkhead:runtime`, `bulkhead:io`, services, extensions), deny stubs for ungranted imports, compiled components kept on disk |
 | Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `instance_native`, `state`, `process`, `ready`, `delivery`, `acl`, `lifecycle`, `output`, `health` | Instances, their mailboxes and callback loop (a Store, or a native process), passivation, the per-instance host state and `process` functions, readiness waits, pid routing, messaging ACLs (checked on the target's node), links and monitors, health checks |
 | Orchestration | `apps`, `pool`, `supervisor`, `upgrade`, `spec` | App sets in dependency order, a root supervisor per app, pools with routing and a blue-green second side, snapshot, restart and blue-green upgrades |
 | Services | `services::{config, keyvalue, groups, logging, secrets, metrics, egress, sockets, sql, extension}`, `metrics` | Guest-facing interfaces on the `Service` pattern; extensions from other crates |
 | I/O | `http` (`http::tls`, `http::handler`), `listener` | The HTTP ingress (a request is a call to a pool), HTTP handlers (an instance per request) and listeners (an instance per connection) |
-| Native apps | `native::{port, cgroup, convert}` | A native instance's process through `paddock-runner`, its limits, and the conversions to the protocol's types |
+| Native apps | `native::{port, cgroup, convert}` | A native instance's process through `bulkhead-runner`, its limits, and the conversions to the protocol's types |
 | Cluster | `transport::{liveness, membership, wire, quic, memory, lane}`, `failover::{node, witness}`, `replication::{core, log}`, `handover`, `formats` | Frames between nodes, heartbeats and sessions, joining, QUIC with pinned keys, the in-memory mesh for tests, the HA pair and witness, replicated buckets, singletons moved with their state, the pair's version for what is kept |
 | Observability | `probe`, `metrics` | USDT probes on the message path; Prometheus text |
 
@@ -67,7 +67,7 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 
 ```mermaid
 sequenceDiagram
-    participant CLI as paddock call app body
+    participant CLI as bulkhead call app body
     participant Node as node::server, Node::send
     participant H as InstanceHandle
     participant T as instance task (serve loop)
@@ -108,7 +108,7 @@ Listeners (`listener`) are like HTTP handlers for raw TCP: each accepted connect
 
 - **HTTP egress** (`services::egress`): wasmtime-wasi-http's send hook is the filter. A request goes out only if it matches the manifest's `allow` (inside node config's `[egress] allow`), through the node's connection pool, at most `max_concurrent` per app at once. Its resolver refuses names that resolve only to loopback or link-local addresses unless `allow_loopback`.
 - **Guest sockets** (`services::sockets`): wasmtime-wasi implements `wasi:sockets`; the service narrows it with an address check on every use (the manifest's `connect` and `bind` rules, `listen`, and the guard on loopback, link-local and unspecified destinations). The count per app (`max_sockets`) has no hook in wasmtime-wasi, so `shadow` redefines `create-tcp-socket`, `create-udp-socket`, `accept` and both socket destructors on the linker, taking a semaphore permit per socket.
-- **Waiting on a socket** (`ready`, `paddock:io`): a guest hands the host a pollable and a tag with `ready.notify`; the serve loop polls the instance's pollables beside its mailbox and delivers the host event `io-ready` once one is ready. The `wasi:io/poll` pollable destructor is redefined to forget waits on a dropped pollable.
+- **Waiting on a socket** (`ready`, `bulkhead:io`): a guest hands the host a pollable and a tag with `ready.notify`; the serve loop polls the instance's pollables beside its mailbox and delivers the host event `io-ready` once one is ready. The `wasi:io/poll` pollable destructor is redefined to forget waits on a dropped pollable.
 - **SQL** (`services::sql`, feature `sql`): a Postgres pool per datasource, with a connection cap per app.
 
 ## Passivation
@@ -119,15 +119,15 @@ Stores are bounded by `RuntimeInner::slots`, a semaphore of `max_instances` perm
 
 ## Native-process apps
 
-A native app (`kind = "native-process"`) runs as a process, one per instance, through `paddock-runner`:
+A native app (`kind = "native-process"`) runs as a process, one per instance, through `bulkhead-runner`:
 
 ```mermaid
 sequenceDiagram
     participant I as instance task (instance_native)
-    participant R as paddock-runner (one process)
+    participant R as bulkhead-runner (one process)
     Note over I: spawn: pre_exec sets the parent-death signal,<br/>no core dumps, the cgroup or RLIMIT_DATA
     I->>R: spawn
-    Note over R: non-dumpable, Landlock (read libraries and the app's files,<br/>execute only the program), seccomp (signals to itself only,<br/>no ptrace, no sockets), then load the rustbridge .so<br/>or execve the executable (paddock-native app)
+    Note over R: non-dumpable, Landlock (read libraries and the app's files,<br/>execute only the program), seccomp (signals to itself only,<br/>no ptrace, no sockets), then load the rustbridge .so<br/>or execve the executable (bulkhead-native app)
     R->>I: Hello
     I->>R: Init
     I->>R: Call / Cast / Info, one callback at a time
@@ -145,7 +145,7 @@ No snapshots, so no passivation, snapshot upgrades or moves; upgrade operations 
 
 ## A deploy
 
-`paddock deploy app.rbp` sends the bundle (`POST /v1/apps`). The node holds the change lock for the whole deploy; reads do not wait for it.
+`bulkhead deploy app.rbp` sends the bundle (`POST /v1/apps`). The node holds the change lock for the whole deploy; reads do not wait for it.
 
 1. The upload is written to `<data_dir>/tmp`.
 2. `VerifiedBundle::open`, on the blocking pool: the signature against `trusted_keys`, the `appserver` section, checksums, and the `wasm32-wasip2` variant and its world, or a native app's platform variant.
@@ -165,7 +165,7 @@ An upgrade takes the same verify and compile steps, then one of three modes, as 
 
 - **`snapshot`:** each instance in place: save-snapshot in the old Store, a new Store from the new component, load-snapshot; a failure reverts that instance with its state intact.
 - **`restart`:** the instances stop and start again from `init` at the new version.
-- **`blue-green`:** the new version's instances start beside the old under a root supervisor of their own, as a second side of the app's pool (`pool`), with a weight: the percentage of messages routed to the new side. `paddock upgrade --steps` moves the weight in steps, and `paddock traffic` sets it, retires the old side or stops the new one. A watcher in `apps` follows the new side's supervisor. The node's `daemon/blue_green.rs` keeps the deploy store in step, so a restart brings back both sides at the same weight.
+- **`blue-green`:** the new version's instances start beside the old under a root supervisor of their own, as a second side of the app's pool (`pool`), with a weight: the percentage of messages routed to the new side. `bulkhead upgrade --steps` moves the weight in steps, and `bulkhead traffic` sets it, retires the old side or stops the new one. A watcher in `apps` follows the new side's supervisor. The node's `daemon/blue_green.rs` keeps the deploy store in step, so a restart brings back both sides at the same weight.
 
 Rollback goes to the previous version the same way.
 
@@ -205,7 +205,7 @@ stateDiagram-v2
 A standby asks the witness once its partner is silent on every path, or at once when the partner yields in a switchover. `Override` promotes on an operator's confirmation, when the witness cannot be reached either; `Paths` promotes on silence alone, for a pair without a witness. `Bootstrap` is the start of a pair: with both nodes down, the lower node id leads.
 
 - **Liveness** (`transport::liveness`) beats every peer each heartbeat interval, on the cluster link and any extra path, with a payload failover sets (standing, epoch, whether it confirms). A path silent for `node_timeout` raises an event; a peer that stops being reachable ends its session.
-- **The serial path** (`node/serial_path.rs`, on `paddock::serial`): one task per configured device writes this node's beats as serial frames and reports the partner's to the runtime as a heartbeat path. A device that fails is reopened a second later, the path silent meanwhile; frames from or for another node are dropped. The tty layer is Paddock's own, on `rustix`.
+- **The serial path** (`node/serial_path.rs`, on `bulkhead::serial`): one task per configured device writes this node's beats as serial frames and reports the partner's to the runtime as a heartbeat path. A device that fails is reopened a second later, the path silent meanwhile; frames from or for another node are dropped. The tty layer is Bulkhead's own, on `rustix`.
 - **The failover task** (`failover::node::run`) is a state machine, one type per standing, stepping on node events, witness messages, each heartbeat tick, and the moment its lease would end. It sees liveness and the transport through the `Env` trait, which unit tests fake to drive one transition at a time. It publishes a `Leadership` (standing, epoch, `may_run`) on a watch channel. Its transitions are named after the actions in `docs/tla/FailoverL2.tla`.
 - **The witness** (`failover::witness`) answers one request at a time under a lock, and writes its epoch, promoted node and record of a partner out of date to disk before a grant or record change leaves. A primary yielding in a planned switchover releases its lease there (`Release`), so the standby need not wait it out.
 - **The gate** (`node::gate`) follows the leadership on the node: it writes the epoch to `failover-epoch` before acting on it, and starts the held singletons when `may_run` is set, from a moved snapshot if one waits, else from `init`. A singleton with replicated buckets (its own or a cluster bucket it uses) waits until `ReplicationStatus::ready` at the current epoch. It checks held singletons as a start would and retries failed starts. When `may_run` drops it kills them without `terminate`. It logs `singleton starting` and `singleton killed`, which the soak's checker reads.
@@ -215,7 +215,7 @@ The rules are R1 to R14 in `docs/tla/VERIFICATION.md`; the assumptions the model
 
 ### A planned switchover, with state
 
-`paddock failover switchover` on the primary hands its singletons to the standby. A singleton in `snapshot` upgrade mode, on a pair with `[failover] replication = true`, is moved with its state (`handover`): the instance takes its snapshot (the `MoveOut` operation; afterwards it handles nothing more), and the old primary writes it to the reserved replicated bucket `@handover`, one key per app, through the pair's log. Every start of a singleton that moves takes the record first (`Runtime::take_handover`): it deletes the record, waits for the delete to commit, and loads the snapshot in place of `init`. The gate's `hand_over` and `start` do the two halves; `RuntimeInner::handovers` holds what was taken until the instance starts.
+`bulkhead failover switchover` on the primary hands its singletons to the standby. A singleton in `snapshot` upgrade mode, on a pair with `[failover] replication = true`, is moved with its state (`handover`): the instance takes its snapshot (the `MoveOut` operation; afterwards it handles nothing more), and the old primary writes it to the reserved replicated bucket `@handover`, one key per app, through the pair's log. Every start of a singleton that moves takes the record first (`Runtime::take_handover`): it deletes the record, waits for the delete to commit, and loads the snapshot in place of `init`. The gate's `hand_over` and `start` do the two halves; `RuntimeInner::handovers` holds what was taken until the instance starts.
 
 ## A replicated write
 
@@ -239,7 +239,7 @@ sequenceDiagram
 
 - **What replicates:** `cluster` buckets from node config, apps' buckets declared `replicated` (kept as `<app>/<bucket>` in the `@cluster` namespace), and the reserved records `@handover` and `@release`. Replication runs on a pair with `[failover] replication = true`.
 - **`KvStore`** sends a write to a replicated bucket (`Durability::Replicated`) to the replication task and waits for its answer; reads are local, from this node's copy. `get-linearizable` goes to the task too, which serves it on the primary (or forwards it).
-- **The replication task** (`replication::Task`) owns the replica, a state machine named after spike S20's actions (`replication::core`), over the log (`replication::log`), which lives in the same redb file as the disk buckets: entries, and the commit index applied with the data in one transaction. It follows the failover leadership, takes frames from the partner (`Frame::Replication`), forwards the standby's writes and linearizable reads to the primary, asks the failover task to set or clear the witness's record (`failover::record_partner`), and ticks each heartbeat interval to resend, send the commit index and compact. It publishes `ReplicationStatus` for the gate and `paddock failover`. Its redb work runs under `block_in_place`.
+- **The replication task** (`replication::Task`) owns the replica, a state machine named after spike S20's actions (`replication::core`), over the log (`replication::log`), which lives in the same redb file as the disk buckets: entries, and the commit index applied with the data in one transaction. It follows the failover leadership, takes frames from the partner (`Frame::Replication`), forwards the standby's writes and linearizable reads to the primary, asks the failover task to set or clear the witness's record (`failover::record_partner`), and ticks each heartbeat interval to resend, send the commit index and compact. It publishes `ReplicationStatus` for the gate and `bulkhead failover`. Its redb work runs under `block_in_place`.
 
 The rules are spike S20's R1 to R7, mapped to the code in `docs/tla/VERIFICATION.md` with the witness's record (R13).
 
@@ -247,15 +247,15 @@ The rules are spike S20's R1 to R7, mapped to the code in `docs/tla/VERIFICATION
 
 Each build speaks its own wire protocol version and the one before. A connection agrees on the highest version both speak (`wire::Hello`, `Transport::version`), and a frame is written only on a connection at or above the version that introduced it (`wire::since`), so the two nodes of a pair can run builds one release apart.
 
-What outlives a connection (the replicated log, the `@cluster` records) follows the pair's version instead (`formats`): it is kept in the reserved replicated bucket `@release` (key `formats`), so both nodes apply a change at the same log index, and it rises only by `Runtime::finalize_formats` (`paddock release finalize`), once every node named speaks this build's version. A node refuses to start a build older than the pair's version.
+What outlives a connection (the replicated log, the `@cluster` records) follows the pair's version instead (`formats`): it is kept in the reserved replicated bucket `@release` (key `formats`), so both nodes apply a change at the same log index, and it rises only by `Runtime::finalize_formats` (`bulkhead release finalize`), once every node named speaks this build's version. A node refuses to start a build older than the pair's version.
 
-`paddock release` (the CLI, over each node's admin API) shows the versions; `paddock release upgrade` upgrades an app on the standby, then the primary, gating each step on the app running at the new version there; `release rollback` returns both to their common previous version.
+`bulkhead release` (the CLI, over each node's admin API) shows the versions; `bulkhead release upgrade` upgrades an app on the standby, then the primary, gating each step on the app running at the new version there; `release rollback` returns both to their common previous version.
 
 ## The node's admin side
 
-- **The admin API** (`node::server`) serves JSON over HTTP on the admin socket, and over TLS with pinned keys on `[admin]`. Long answers stream (`server.rs`, `stream`): `paddock events`, `paddock logs --follow`, and long polls such as `GET /v1/failover?after=...&wait_ms=...`.
-- **The event hub** (`node/events.rs`) merges audit records as they are written, instance exits and restarts (`Runtime::instance_events`), members heard and lost, and failover changes into one stream of JSON lines (`paddock events`).
-- **The shell** (`cli/shell.rs`, `cli/contacts.rs`) runs `paddock` commands against one node at a time, moving between nodes named in a contacts file.
+- **The admin API** (`node::server`) serves JSON over HTTP on the admin socket, and over TLS with pinned keys on `[admin]`. Long answers stream (`server.rs`, `stream`): `bulkhead events`, `bulkhead logs --follow`, and long polls such as `GET /v1/failover?after=...&wait_ms=...`.
+- **The event hub** (`node/events.rs`) merges audit records as they are written, instance exits and restarts (`Runtime::instance_events`), members heard and lost, and failover changes into one stream of JSON lines (`bulkhead events`).
+- **The shell** (`cli/shell.rs`, `cli/contacts.rs`) runs `bulkhead` commands against one node at a time, moving between nodes named in a contacts file.
 
 ## Threads and tasks
 
@@ -263,7 +263,7 @@ A node runs one tokio multi-threaded runtime, one worker per core by default. No
 
 | Thread or task | Count | Started by | Ends |
 | --- | --- | --- | --- |
-| `paddock-epoch` OS thread | 1 per runtime | `Runtime::new` | runtime drop |
+| `bulkhead-epoch` OS thread | 1 per runtime | `Runtime::new` | runtime drop |
 | Pool memory release | 1 per runtime, once an instance starts (unless `release_idle_after` is unset) | `pool_memory::start_once` | runtime drop |
 | tokio workers | 1 per core | `node::run` | process exit |
 | blocking pool | on demand | bundle verify and compile, `disk` bucket transactions (redb), secret file reads | per job |
@@ -289,7 +289,7 @@ A node runs one tokio multi-threaded runtime, one worker per core by default. No
 | Metrics endpoint | 1 if configured | daemon | stop |
 | Seed join, identity reload, certificate watcher, SIGHUP reload | 1 each if configured | daemon | stop |
 | Gate follower | 1 on a pair member | daemon | stop |
-| Modbus device, server | 1 per device; 1 per server | `paddock-modbus` | stop |
+| Modbus device, server | 1 per device; 1 per server | `bulkhead-modbus` | stop |
 
 The epoch ticker is an OS thread so that a node whose workers all run spinning guests still advances the epoch, and the guests still yield.
 
@@ -358,4 +358,4 @@ A guest's state lives only in its Store (or its process). A crash or restart sta
 └── audit.log                  one JSON object per line
 ```
 
-Node configuration, the node's cluster key and the peers file live wherever the configuration names them. A compiled component is read back only if it and its directory belong to the node's user and neither is writable by group or others (`paddock_host::compiled`), since deserializing runs its code. [OPERATIONS.md](OPERATIONS.md) lists every path under `data_dir`.
+Node configuration, the node's cluster key and the peers file live wherever the configuration names them. A compiled component is read back only if it and its directory belong to the node's user and neither is writable by group or others (`bulkhead_host::compiled`), since deserializing runs its code. [OPERATIONS.md](OPERATIONS.md) lists every path under `data_dir`.

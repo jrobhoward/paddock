@@ -5,8 +5,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use paddock_host::Pid;
-use paddock_bundle::manifest::{ByteSize, Capability, PortRange, Routing, classify_import, is_valid_name, parse_cidr};
+use bulkhead_host::Pid;
+use bulkhead_bundle::manifest::{ByteSize, Capability, PortRange, Routing, classify_import, is_valid_name, parse_cidr};
 
 fuzz_target!(|text: &str| {
     if let Ok(pid) = text.parse::<Pid>() {

@@ -1,0 +1,24 @@
+package bulkhead:sdk;
+
+/// The world the SDK binds: the app world plus the host services the SDK
+/// wraps. A component imports only what its code calls, so an app that
+/// never opens a bucket has no `wasi:keyvalue` import.
+world app {
+  include bulkhead:runtime/app@0.1.0;
+  import wasi:logging/logging@0.1.0-draft;
+  import wasi:config/store@0.2.0-rc.1;
+  import wasi:keyvalue/store@0.2.0-draft;
+  import wasi:keyvalue/atomics@0.2.0-draft;
+  import wasi:keyvalue/batch@0.2.0-draft;
+  import bulkhead:groups/groups@0.1.0;
+  import bulkhead:watch/watch@0.1.0;
+  import bulkhead:secrets/store@0.1.0;
+  import bulkhead:metrics/metrics@0.1.0;
+  import bulkhead:sql/sql@0.1.0;
+}
+
+/// The world the SDK binds for connection handlers (feature `connection`):
+/// one instance per connection accepted on the app's listeners.
+world connection {
+  include bulkhead:connection/connection-handler@0.1.0;
+}

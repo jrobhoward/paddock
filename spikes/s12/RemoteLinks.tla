@@ -6,12 +6,12 @@
  * or refuses them when a send queue is full.
  *
  * The model follows the code as of 2026-10-14:
- *   - crates/paddock-host/src/delivery.rs (link, unlink, monitor,
+ *   - crates/bulkhead-host/src/delivery.rs (link, unlink, monitor,
  *     demonitor, notify_exit),
- *   - crates/paddock-host/src/transport/mod.rs (send, deliver, end_session),
- *   - crates/paddock-host/src/transport/liveness.rs (on_frame, on_heartbeat,
+ *   - crates/bulkhead-host/src/transport/mod.rs (send, deliver, end_session),
+ *   - crates/bulkhead-host/src/transport/liveness.rs (on_frame, on_heartbeat,
  *     check, update),
- *   - crates/paddock-host/src/transport/quic.rs (one connection per pair,
+ *   - crates/bulkhead-host/src/transport/quic.rs (one connection per pair,
  *     a frame lost only with its connection, a send queue of 4,096 frames,
  *     a close seen by each side on its own, a stale close ignored once a
  *     new connection replaced it).

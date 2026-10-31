@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Info, MonitorRef, Reply};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Info, MonitorRef, Reply};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,4 +115,4 @@ impl App for PingPong {
     }
 }
 
-paddock_sdk::app!(PingPong);
+bulkhead_sdk::app!(PingPong);

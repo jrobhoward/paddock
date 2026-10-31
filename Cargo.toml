@@ -1,28 +1,28 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/paddock",
-    "crates/paddock-bundle",
-    "crates/paddock-fixture-chaos",
-    "crates/paddock-fixture-conformance",
-    "crates/paddock-fixture-conn",
-    "crates/paddock-fixture-counter",
-    "crates/paddock-fixture-echo",
-    "crates/paddock-fixture-http",
-    "crates/paddock-fixture-kvbench",
-    "crates/paddock-fixture-native",
-    "crates/paddock-fixture-net",
-    "crates/paddock-fixture-plugin",
-    "crates/paddock-fixture-sdk",
-    "crates/paddock-fixture-services",
-    "crates/paddock-fixture-workload",
-    "crates/paddock-host",
-    "crates/paddock-modbus",
-    "crates/paddock-native",
-    "crates/paddock-sdk",
-    "crates/paddock-sdk-macros",
-    "crates/paddock-soak",
-    "crates/paddock-workload",
+    "crates/bulkhead",
+    "crates/bulkhead-bundle",
+    "crates/bulkhead-fixture-chaos",
+    "crates/bulkhead-fixture-conformance",
+    "crates/bulkhead-fixture-conn",
+    "crates/bulkhead-fixture-counter",
+    "crates/bulkhead-fixture-echo",
+    "crates/bulkhead-fixture-http",
+    "crates/bulkhead-fixture-kvbench",
+    "crates/bulkhead-fixture-native",
+    "crates/bulkhead-fixture-net",
+    "crates/bulkhead-fixture-plugin",
+    "crates/bulkhead-fixture-sdk",
+    "crates/bulkhead-fixture-services",
+    "crates/bulkhead-fixture-workload",
+    "crates/bulkhead-host",
+    "crates/bulkhead-modbus",
+    "crates/bulkhead-native",
+    "crates/bulkhead-sdk",
+    "crates/bulkhead-sdk-macros",
+    "crates/bulkhead-soak",
+    "crates/bulkhead-workload",
     "examples/board",
     "examples/counter",
     "examples/ping-pong",
@@ -50,7 +50,7 @@ edition = "2024"
 rust-version = "1.99.0"
 license = "MIT OR Apache-2.0"
 authors = ["James Howard <jrobhoward@gmail.com>"]
-repository = "https://github.com/jrobhoward/paddock"
+repository = "https://github.com/jrobhoward/bulkhead"
 
 # Versions pinned by spike S3 (spikes/S3-wasi-target.md). The wasmtime crates are
 # released together and move as a group.
@@ -62,7 +62,7 @@ wasmtime-wasi-config = "50"
 # (webpki-roots) and no p3.
 wasmtime-wasi-http = { version = "50", default-features = false, features = ["p2"] }
 wit-bindgen = "0.63"
-# The SDK's HTTP client (`paddock_sdk::http_client`): wasi:http bindings.
+# The SDK's HTTP client (`bulkhead_sdk::http_client`): wasi:http bindings.
 wasip2 = "2"
 # wit-parser and wasmparser on wasmtime 50's line, so host builds carry one
 # copy. wit-bindgen 0.63's macro is a line ahead (0.262); that copy is built
@@ -122,40 +122,40 @@ proc-macro2 = "1"
 semver = { version = "1", features = ["serde"] }
 toml = "1"
 
-paddock = { path = "crates/paddock", default-features = false }
-paddock-bundle = { path = "crates/paddock-bundle" }
-# Without the HTTP ingress; `paddock` enables `http` and `tls` by feature.
-paddock-host = { path = "crates/paddock-host", default-features = false }
-paddock-modbus = { path = "crates/paddock-modbus" }
-paddock-native = { path = "crates/paddock-native", default-features = false }
-paddock-sdk = { path = "crates/paddock-sdk" }
-paddock-sdk-macros = { path = "crates/paddock-sdk-macros" }
-paddock-workload = { path = "crates/paddock-workload" }
+bulkhead = { path = "crates/bulkhead", default-features = false }
+bulkhead-bundle = { path = "crates/bulkhead-bundle" }
+# Without the HTTP ingress; `bulkhead` enables `http` and `tls` by feature.
+bulkhead-host = { path = "crates/bulkhead-host", default-features = false }
+bulkhead-modbus = { path = "crates/bulkhead-modbus" }
+bulkhead-native = { path = "crates/bulkhead-native", default-features = false }
+bulkhead-sdk = { path = "crates/bulkhead-sdk" }
+bulkhead-sdk-macros = { path = "crates/bulkhead-sdk-macros" }
+bulkhead-workload = { path = "crates/bulkhead-workload" }
 # rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2
 # components, manifest extensions, trusted-key verification, signed file
 # checksums). Cargo.lock pins the commit. Move to a crates.io release once one
 # includes format 1.2.
 rustbridge-bundle = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
-# Loads a rustbridge plugin in paddock-runner (paddock-native).
+# Loads a rustbridge plugin in bulkhead-runner (bulkhead-native).
 rustbridge-consumer = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
-# A rustbridge plugin, for paddock-fixture-plugin.
+# A rustbridge plugin, for bulkhead-fixture-plugin.
 rustbridge = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
-# USDT probes (paddock-host's `probes` feature). Pre-release; Cargo.lock pins
+# USDT probes (bulkhead-host's `probes` feature). Pre-release; Cargo.lock pins
 # the commit of `main`. Move to a crates.io release once there is one.
 anyprobe = { git = "https://github.com/jrobhoward/anyprobe", branch = "main", default-features = false }
-# Signs bundles (`paddock bundle`) and test fixtures; same major as
+# Signs bundles (`bulkhead bundle`) and test fixtures; same major as
 # rustbridge-bundle's, so bundles verify with one copy.
 minisign = "0.10"
 
 # Test-only
-# Ordinary app code for the `app_cost` benchmark (paddock-workload).
+# Ordinary app code for the `app_cost` benchmark (bulkhead-workload).
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 regex = "1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi", "json"] }
 proptest = "1"
 rstest = "0.28"
 # Safe system calls: the effective uid for the compiled-component cache's
-# owner check (paddock-host, unix only).
+# owner check (bulkhead-host, unix only).
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
 tempfile = "3"
 wat = "1.259"
@@ -194,7 +194,7 @@ await_holding_lock = "deny"
 debug = "line-tables-only"
 
 # minisign's scrypt key derivation takes about 5 s per key unoptimized, which
-# makes debug builds of `paddock bundle` and their tests crawl.
+# makes debug builds of `bulkhead bundle` and their tests crawl.
 [profile.dev.package.scrypt]
 opt-level = 3
 

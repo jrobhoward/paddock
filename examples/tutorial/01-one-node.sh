@@ -35,7 +35,7 @@ durability = "disk"
 TOML
 
 start_node 1
-deploy_board 1 "$BOARD_DIR/paddock.toml"
+deploy_board 1 "$BOARD_DIR/bulkhead.toml"
 deploy_board 1 "$BOARD_DIR/watch.toml"
 until_ok 30 curl -sf "$URL"
 
@@ -48,7 +48,7 @@ A node is running (process ${NODE_PIDS[1]}), with two apps:
   board-watch  watches the count on the board and logs each change
 
 Use it from another terminal:
-  export PATH="$(dirname "$PADDOCK"):\$PATH" PADDOCK_SOCKET=$(sock 1)
+  export PATH="$(dirname "$BULKHEAD"):\$PATH" BULKHEAD_SOCKET=$(sock 1)
 
   # read the count; the reply names the instance that answered
   curl -s $URL
@@ -58,9 +58,9 @@ Use it from another terminal:
   # make the app trap, as a bug would; then read again
   curl -s -X POST $URL/crash
 
-  paddock ps                  # instances and their pids
-  paddock logs board-watch    # every change the watcher saw
-  paddock status board
+  bulkhead ps                  # instances and their pids
+  bulkhead logs board-watch    # every change the watcher saw
+  bulkhead status board
 EOF
 
 pause "count to 3"

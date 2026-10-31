@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use paddock_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
+use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
 
 fuzz_target!(|text: &str| {
     let Ok(spec) = AppSpec::from_json_str(text) else {
@@ -22,7 +22,7 @@ fuzz_target!(|text: &str| {
         component: ComponentRef {
             path: "fuzz.wasm".into(),
             checksum: String::new(),
-            world: "paddock:runtime/app@0.1.0".into(),
+            world: "bulkhead:runtime/app@0.1.0".into(),
         },
         provenance: Provenance {
             signer_key: String::new(),
@@ -32,7 +32,7 @@ fuzz_target!(|text: &str| {
         spec,
     };
     if manifest.validate().is_ok() {
-        let _ = paddock_host::InstanceSpec::from_manifest(&manifest);
+        let _ = bulkhead_host::InstanceSpec::from_manifest(&manifest);
         let _ = manifest.spec.unenforced_fields();
     }
 });

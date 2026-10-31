@@ -1,5 +1,5 @@
 // Package watch is revisions, compare-and-swap and change watches on
-// keyvalue buckets, through paddock:watch, under the wasi:keyvalue
+// keyvalue buckets, through bulkhead:watch, under the wasi:keyvalue
 // capability: a bucket is reachable here exactly when kv.Open would open
 // it.
 //
@@ -13,9 +13,9 @@ import (
 	"errors"
 	"fmt"
 
-	paddock "github.com/jrobhoward/paddock/sdks/go"
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/watch/watch"
+	bulkhead "github.com/jrobhoward/bulkhead/sdks/go"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/watch/watch"
 	"go.bytecodealliance.org/cm"
 )
 
@@ -105,8 +105,8 @@ type Change struct {
 }
 
 // ChangeFromInfo is the change an info carries, if it is a change notice.
-func ChangeFromInfo(info paddock.Info) (Change, bool) {
-	ev, ok := info.(paddock.EventInfo)
+func ChangeFromInfo(info bulkhead.Info) (Change, bool) {
+	ev, ok := info.(bulkhead.EventInfo)
 	if !ok || ev.Name != Event {
 		return Change{}, false
 	}

@@ -35,10 +35,10 @@ build_go() {
   local work="$OUT/go" tinygo_root
   tinygo_root=$("$TINYGO" env TINYGOROOT)
   rm -rf "$work"
-  mkdir -p "$work/wit/deps/cli" "$work/wit/deps/paddock-runtime"
+  mkdir -p "$work/wit/deps/cli" "$work/wit/deps/bulkhead-runtime"
   cp -r "$tinygo_root"/lib/wasi-cli/wit/deps/* "$work/wit/deps/"
   cp "$tinygo_root"/lib/wasi-cli/wit/*.wit "$work/wit/deps/cli/"
-  cp "$ROOT/wit/runtime.wit" "$work/wit/deps/paddock-runtime/"
+  cp "$ROOT/wit/runtime.wit" "$work/wit/deps/bulkhead-runtime/"
   cp "$HERE/go/world.wit" "$work/wit/"
   cp "$HERE"/go/*.go "$HERE"/go/go.mod "$HERE"/go/go.sum "$work/"
   (
@@ -60,7 +60,7 @@ build_python() {
   cp "$HERE/python/app.py" "$work/"
   (
     cd "$work"
-    "$COMPONENTIZE_PY" -d "$ROOT/wit/runtime.wit" -w paddock:runtime/app \
+    "$COMPONENTIZE_PY" -d "$ROOT/wit/runtime.wit" -w bulkhead:runtime/app \
       componentize app -o "$OUT/pong-python.wasm" > /dev/null
   )
 }
@@ -68,7 +68,7 @@ build_python() {
 # So does jco.
 build_js() {
   "$JCO" componentize "$HERE/js/app.js" --wit "$ROOT/wit/runtime.wit" \
-    --world-name paddock:runtime/app -o "$OUT/pong-js.wasm" > /dev/null
+    --world-name bulkhead:runtime/app -o "$OUT/pong-js.wasm" > /dev/null
 }
 
 langs=${*:-go python js}

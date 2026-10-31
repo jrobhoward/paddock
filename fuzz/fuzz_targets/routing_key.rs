@@ -6,7 +6,7 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use paddock_host::Envelope;
+use bulkhead_host::Envelope;
 
 #[derive(Debug, Arbitrary)]
 struct Input {
@@ -21,5 +21,5 @@ fuzz_target!(|input: Input| {
     if input.charset {
         content_type.push_str("; charset=utf-8");
     }
-    let _ = paddock_host::routing_key(&Envelope::new(content_type, input.body), &input.field);
+    let _ = bulkhead_host::routing_key(&Envelope::new(content_type, input.body), &input.field);
 });

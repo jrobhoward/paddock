@@ -1,5 +1,5 @@
-// Package sql is SQL datasources the node binds, through paddock:sql.
-// Declare the `paddock:sql` capability in the manifest with the
+// Package sql is SQL datasources the node binds, through bulkhead:sql.
+// Declare the `bulkhead:sql` capability in the manifest with the
 // datasources' names. Parameters are $1, $2 ... (Postgres).
 package sql
 
@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/sql/sql"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/sql/sql"
 	"go.bytecodealliance.org/cm"
 )
 

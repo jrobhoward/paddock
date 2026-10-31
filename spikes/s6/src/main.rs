@@ -1,4 +1,4 @@
-//! Spike S6: can Paddock read `.rbp` bundles carrying a Wasm component with
+//! Spike S6: can Bulkhead read `.rbp` bundles carrying a Wasm component with
 //! rustbridge-bundle 1.0.1 as a library, and what must change upstream?
 //!
 //! Builds three bundles by hand and opens each with `BundleLoader`:
@@ -41,7 +41,7 @@ fn appserver() -> serde_json::Value {
 fn main() {
     let wasm_path = std::env::args().nth(1).expect("usage: s6-bundle <component.wasm>");
     let wasm = std::fs::read(&wasm_path).unwrap();
-    let dir = std::env::temp_dir().join(format!("paddock-s6-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("bulkhead-s6-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let lib = "lib/wasm32-wasip2/release/counter.wasm";
 
@@ -51,7 +51,7 @@ fn main() {
             "plugin": { "name": "counter", "version": "1.0.0" },
             "platforms": { "wasm32-wasip2": { "variants": { "release": {
                 "library": lib, "checksum": sha(&wasm),
-                "component": { "world": "paddock:runtime/app@0.1.0" }
+                "component": { "world": "bulkhead:runtime/app@0.1.0" }
             } } } },
             "appserver": appserver()
         })

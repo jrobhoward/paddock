@@ -1,7 +1,7 @@
 [package]
 name = "example-tally"
 version.workspace = true
-description = "Paddock example: a tally kept in Postgres through paddock:sql, served over HTTP"
+description = "Bulkhead example: a tally kept in Postgres through bulkhead:sql, served over HTTP"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true, features = ["http", "sql"] }
+bulkhead-sdk = { workspace = true, features = ["http", "sql"] }
 serde_json = { workspace = true }
 
 [lints]

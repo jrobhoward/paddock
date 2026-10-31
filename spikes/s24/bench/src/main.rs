@@ -6,7 +6,7 @@
 //! - `off`: no checks compiled in;
 //! - `epoch idle`: epoch checks, the epoch never advanced (the checks alone);
 //! - `epoch`: epoch checks, a tick every 2 ms and a yield on each, as
-//!   `paddock-host` drives them (`UpdateDeadline::Yield(1)`);
+//!   `bulkhead-host` drives them (`UpdateDeadline::Yield(1)`);
 //! - `mmu idle`: MMU checks, the timing wheel never ticked (the loads alone);
 //! - `mmu`: MMU checks, `TimingWheelInterrupter::new(0)` ticked every 2 ms,
 //!   so a running store is interrupted at the next tick, as with epochs.
@@ -17,7 +17,7 @@
 //!
 //! ```sh
 //! # in the main workspace, once:
-//! cargo rustc --release -p paddock-workload --features exports \
+//! cargo rustc --release -p bulkhead-workload --features exports \
 //!     --crate-type cdylib --target wasm32-unknown-unknown --target-dir target/fixtures
 //! # here:
 //! cargo run --release [-- kernels|app]
@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use paddock_workload::{Inputs, WORKLOADS};
+use bulkhead_workload::{Inputs, WORKLOADS};
 use wasmtime::{
     Config, Engine, Instance, Module, Store, TimingWheelInterrupter, TypedFunc, UpdateDeadline,
     WasmParams, WasmResults,
@@ -42,7 +42,7 @@ const TARGET: Duration = Duration::from_millis(50);
 
 const CORE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../../target/fixtures/wasm32-unknown-unknown/release/paddock_workload.wasm"
+    "/../../../target/fixtures/wasm32-unknown-unknown/release/bulkhead_workload.wasm"
 );
 
 const KERNELS: &str = r#"
@@ -153,7 +153,7 @@ impl Side {
         store
     }
 
-    /// Drive the ticked sides from one OS thread, as `paddock-host`'s
+    /// Drive the ticked sides from one OS thread, as `bulkhead-host`'s
     /// epoch ticker does.
     fn ticker(sides: &[Side], stop: Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
         let epoch: Vec<Engine> = sides
@@ -318,16 +318,16 @@ async fn app(sides: &[Side]) {
         loaded.push(l);
     }
     let inputs = Inputs::new();
-    println!("\npaddock-workload core module, median of {SAMPLES}, times in ms\n");
+    println!("\nbulkhead-workload core module, median of {SAMPLES}, times in ms\n");
     header("Workload");
     for (id, name) in (0u32..).zip(WORKLOADS) {
         let once = {
             let started = Instant::now();
-            std::hint::black_box(paddock_workload::run(&inputs, name, 1));
+            std::hint::black_box(bulkhead_workload::run(&inputs, name, 1));
             started.elapsed()
         };
         let n = u32::try_from((TARGET.as_nanos() / once.as_nanos().max(1)).max(1)).unwrap();
-        let expected = paddock_workload::run(&inputs, name, n).unwrap();
+        let expected = bulkhead_workload::run(&inputs, name, n).unwrap();
         let (t, y) = sample::<(u32, u32), u64>(&mut loaded, "workload_run", (id, n)).await;
         let (_, got, _) = loaded[0].time::<(u32, u32), u64>("workload_run", (id, n)).await;
         assert_eq!(got, expected, "{name}: differs from native");

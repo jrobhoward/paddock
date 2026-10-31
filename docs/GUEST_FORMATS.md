@@ -1,29 +1,29 @@
-# Paddock: Guest formats
+# Bulkhead: Guest formats
 
 2026-10-29 · Companion to [`wit/runtime.wit`](../wit/runtime.wit) and [WRITING_APPS.md](WRITING_APPS.md)
 
-The WIT packages fix the calls between a guest and the host. Several messages that cross them have a body whose shape is Paddock's: an HTTP request arrives as a call whose body is a CBOR map, a health check is a call with a reserved schema, and a key change arrives as a host event with a JSON body. This document gives each such format. An SDK in any language produces and reads them as written here.
+The WIT packages fix the calls between a guest and the host. Several messages that cross them have a body whose shape is Bulkhead's: an HTTP request arrives as a call whose body is a CBOR map, a health check is a call with a reserved schema, and a key change arrives as a host event with a JSON body. This document gives each such format. An SDK in any language produces and reads them as written here.
 
-The examples are the reference. Each is a fenced block whose info string names its encoding and the example (` ```cbor-hex http-request `, ` ```json kv-changed `). Tests read the blocks from this file and check them against the code that writes or reads the format: `paddock-sdk`'s `formats_tests.rs`, `paddock-host`'s `http_tests.rs` and `paddock-modbus`'s `points_tests.rs`. An SDK in another language can test against the same blocks. CBOR is shown as hex, with its diagnostic notation ([RFC 8949](https://www.rfc-editor.org/rfc/rfc8949.html#section-8)) above it.
+The examples are the reference. Each is a fenced block whose info string names its encoding and the example (` ```cbor-hex http-request `, ` ```json kv-changed `). Tests read the blocks from this file and check them against the code that writes or reads the format: `bulkhead-sdk`'s `formats_tests.rs`, `bulkhead-host`'s `http_tests.rs` and `bulkhead-modbus`'s `points_tests.rs`. An SDK in another language can test against the same blocks. CBOR is shown as hex, with its diagnostic notation ([RFC 8949](https://www.rfc-editor.org/rfc/rfc8949.html#section-8)) above it.
 
 ## Envelopes
 
-Every message is an envelope (`paddock:runtime/types`): a content type, an optional schema and a body of bytes.
+Every message is an envelope (`bulkhead:runtime/types`): a content type, an optional schema and a body of bytes.
 
-- **Content types.** `text/plain` (UTF-8), `application/json` and `application/cbor` are the ones Paddock reads. Parameters are allowed and ignored (`application/json; charset=utf-8`).
-- **Schemas.** A schema names a body's shape. Names starting `paddock/` are Paddock's, listed below. An app names its own as it likes; the examples use `<app>.<message>.v<version>` (`ping-pong.ping.v1`).
-- **CBOR.** Readers accept any well-formed CBOR, with definite or indefinite lengths. Paddock writes definite lengths and the shortest integer encodings (RFC 8949's preferred serialization), so the bytes it writes are the ones shown. Bytes are CBOR byte strings (major type 2), never arrays of integers.
+- **Content types.** `text/plain` (UTF-8), `application/json` and `application/cbor` are the ones Bulkhead reads. Parameters are allowed and ignored (`application/json; charset=utf-8`).
+- **Schemas.** A schema names a body's shape. Names starting `bulkhead/` are Bulkhead's, listed below. An app names its own as it likes; the examples use `<app>.<message>.v<version>` (`ping-pong.ping.v1`).
+- **CBOR.** Readers accept any well-formed CBOR, with definite or indefinite lengths. Bulkhead writes definite lengths and the shortest integer encodings (RFC 8949's preferred serialization), so the bytes it writes are the ones shown. Bytes are CBOR byte strings (major type 2), never arrays of integers.
 - **Maps.** Readers find map entries by key, accept them in any order, and ignore keys they do not know, so that a field can be added later without breaking older readers. Writers keep the order shown.
-- **From the CLI.** `paddock call` and `paddock cast` send `text/plain` unless `--content-type` says otherwise; with `--cbor` they read the body as JSON, send it as `application/cbor`, and print a CBOR reply as JSON. An app that takes text commands or CBOR maps can be driven from the shell.
+- **From the CLI.** `bulkhead call` and `bulkhead cast` send `text/plain` unless `--content-type` says otherwise; with `--cbor` they read the body as JSON, send it as `application/cbor`, and print a CBOR reply as JSON. An app that takes text commands or CBOR maps can be driven from the shell.
 
 ## Snapshots
 
-What `save-snapshot` returns and `load-snapshot` receives belongs to the app: the host passes the bytes from the old version to the new one in an upgrade, and reads them only to show them (`paddock state`). The Rust SDK writes a CBOR array of two items:
+What `save-snapshot` returns and `load-snapshot` receives belongs to the app: the host passes the bytes from the old version to the new one in an upgrade, and reads them only to show them (`bulkhead state`). The Rust SDK writes a CBOR array of two items:
 
 - the state's format version, an unsigned integer that the app raises whenever the state's shape changes;
 - the state.
 
-A reader decodes the state when the version is its own, and otherwise migrates from the version given or refuses. `paddock state` shows a snapshot in this format as `format: paddock-sdk`, with its version, and the state as JSON. An SDK in another language that writes the same array lets state cross languages in an upgrade, when both versions read the same state shape.
+A reader decodes the state when the version is its own, and otherwise migrates from the version given or refuses. `bulkhead state` shows a snapshot in this format as `format: bulkhead-sdk`, with its version, and the state as JSON. An SDK in another language that writes the same array lets state cross languages in an upgrade, when both versions read the same state shape.
 
 ```text
 [2, {"count": 5, "label": "board"}]
@@ -35,7 +35,7 @@ A reader decodes the state when the version is its own, and otherwise migrates f
 
 ## HTTP requests and responses
 
-The node's HTTP ingress sends each request on an app's routes as a call: content type `application/cbor`, schema `paddock/http-request`, a CBOR map with these keys, in this order:
+The node's HTTP ingress sends each request on an app's routes as a call: content type `application/cbor`, schema `bulkhead/http-request`, a CBOR map with these keys, in this order:
 
 | Key | Type | What |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ a766736368656d656468747470666d6574686f6464504f535464706174686a2f
 6a746578742f706c61696e64626f6479426869636b65796874656e616e742d37
 ```
 
-The app answers from `handle-call`, now or later with `process.reply`. A reply with schema `paddock/http-response` is a CBOR map:
+The app answers from `handle-call`, now or later with `process.reply`. A reply with schema `bulkhead/http-response` is a CBOR map:
 
 | Key | Type | What |
 | --- | --- | --- |
@@ -77,15 +77,15 @@ a36673746174757318c9676865616465727381826c636f6e74656e742d747970
 656a746578742f706c61696e64626f6479426f6b
 ```
 
-A reply with any other schema is sent as `200`, with the envelope's content type as `content-type` and its body. A reply that has the schema but is not such a map is answered `502`, as is one larger than the route's `max_response`. MANIFEST.md has the route settings, and `crates/paddock-host/src/http.rs` the statuses for each failure.
+A reply with any other schema is sent as `200`, with the envelope's content type as `content-type` and its body. A reply that has the schema but is not such a map is answered `502`, as is one larger than the route's `max_response`. MANIFEST.md has the route settings, and `crates/bulkhead-host/src/http.rs` the statuses for each failure.
 
 ## Health checks
 
-An app whose manifest has a `health` section is called every `interval_ms` on each instance: content type `text/plain`, schema `paddock/health`, body `health`. A reply whose body is exactly `ok` is healthy, whatever its content type and schema. Any other body is a failure, and the node logs it as the reason; so are an error and no reply within the interval. The Rust SDK replies with schema `paddock/health` and content type `text/plain`.
+An app whose manifest has a `health` section is called every `interval_ms` on each instance: content type `text/plain`, schema `bulkhead/health`, body `health`. A reply whose body is exactly `ok` is healthy, whatever its content type and schema. Any other body is a failure, and the node logs it as the reason; so are an error and no reply within the interval. The Rust SDK replies with schema `bulkhead/health` and content type `text/plain`.
 
 ## Batches
 
-Many small items to the same instance travel as one message (`paddock_sdk::batch`): content type `application/cbor`, schema `paddock/batch`, a CBOR array of the items. Each item is what the sender's item type encodes to; the Rust SDK encodes a struct as a map from field names to values.
+Many small items to the same instance travel as one message (`bulkhead_sdk::batch`): content type `application/cbor`, schema `bulkhead/batch`, a CBOR array of the items. Each item is what the sender's item type encodes to; the Rust SDK encodes a struct as a map from field names to values.
 
 ```text
 [{"device": "pump-1", "value": 17}, {"device": "pump-2", "value": 3}]
@@ -112,10 +112,10 @@ The host tells an instance about events with `handle-info`'s `host-event(name, e
 
 | Name | Envelope | When |
 | --- | --- | --- |
-| `log-level` | `text/plain`: `trace`, `debug`, `info`, `warn`, `error` or `critical` | After `init` and whenever the app's effective level changes (`paddock log-level`); only to instances granted logging. The host drops records below it anyway; an SDK uses it to skip formatting them. |
+| `log-level` | `text/plain`: `trace`, `debug`, `info`, `warn`, `error` or `critical` | After `init` and whenever the app's effective level changes (`bulkhead log-level`); only to instances granted logging. The host drops records below it anyway; an SDK uses it to skip formatting them. |
 | `failover-role` | `text/plain`: `primary`, `standby` or `down` | After `init` and on every change of the node's role in an HA pair; only to apps with `placement.mode = "hot-standby"`. |
-| `kv-changed` | `application/json`, below | A key a watch covers changed (`paddock:watch`). Changes made while a notice waits are folded into it: one notice per key, carrying the latest revision when it was taken. |
-| `io-ready` | `application/json`, below | A pollable handed to `paddock:io/ready.notify` became ready. |
+| `kv-changed` | `application/json`, below | A key a watch covers changed (`bulkhead:watch`). Changes made while a notice waits are folded into it: one notice per key, carrying the latest revision when it was taken. |
+| `io-ready` | `application/json`, below | A pollable handed to `bulkhead:io/ready.notify` became ready. |
 
 The JSON objects' keys come in any order.
 
@@ -133,7 +133,7 @@ The JSON objects' keys come in any order.
 
 ## Modbus updates
 
-The Modbus extension (`paddock-modbus`, off by default) casts to the app its configuration names: content type `application/cbor`, no schema, a CBOR map:
+The Modbus extension (`bulkhead-modbus`, off by default) casts to the app its configuration names: content type `application/cbor`, no schema, a CBOR map:
 
 | Key | Type | What |
 | --- | --- | --- |
@@ -167,6 +167,6 @@ a5666465766963656670756d702d31646b696e64676f66666c696e656466756c
 
 ## Not covered here
 
-- The WIT packages themselves, and the WASI interfaces Paddock binds.
-- Native-process apps' frames between a node and its process (`crates/paddock-native/src/protocol.rs`): a protocol for programs on `paddock-native`'s app API, not for components.
+- The WIT packages themselves, and the WASI interfaces Bulkhead binds.
+- Native-process apps' frames between a node and its process (`crates/bulkhead-native/src/protocol.rs`): a protocol for programs on `bulkhead-native`'s app API, not for components.
 - Bodies an app defines for its own messages.

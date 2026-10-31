@@ -1,7 +1,7 @@
 ------------------------------ MODULE FailoverL2 ------------------------------
 (*
  * Layer 2: failover of a singleton between an HA pair (A, B) with a witness
- * (W), as `paddock_host::failover` implements it, with time.
+ * (W), as `bulkhead_host::failover` implements it, with time.
  *
  * Layer 1 (FailoverL1.tla, from spike S16) has atomic steps and abstracts
  * the lease as "it runs out only while its holder cannot renew". Here time

@@ -1,7 +1,7 @@
 [package]
 name = "example-http-counter"
 version.workspace = true
-description = "Paddock example: a counter served over HTTP through the node's ingress"
+description = "Bulkhead example: a counter served over HTTP through the node's ingress"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paddock-sdk = { workspace = true, features = ["http"] }
+bulkhead-sdk = { workspace = true, features = ["http"] }
 serde_json = { workspace = true }
 
 [lints]

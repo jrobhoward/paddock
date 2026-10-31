@@ -1,5 +1,5 @@
 // Package secrets reads secrets the operator binds, through
-// paddock:secrets. Declare the `paddock:secrets` capability in the manifest
+// bulkhead:secrets. Declare the `bulkhead:secrets` capability in the manifest
 // with the secrets' names.
 package secrets
 
@@ -7,8 +7,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/secrets/store"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/secrets/store"
 )
 
 var (

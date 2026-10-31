@@ -1,0 +1,39 @@
+//! The Bulkhead node daemon: node configuration, the deploy store, the admin
+//! API on a Unix socket, and the audit log.
+//!
+//! A node verifies each bundle against its trusted keys, checks the
+//! component's imports against the manifest and the operator policy, keeps
+//! the bundle on disk, and runs the app under a root supervisor. On restart
+//! it re-verifies and restarts every app that was running.
+//!
+//! The admin API is described in [`crate::api`]; the `bulkhead` CLI wraps it, and `bulkhead node` runs a node.
+
+mod audit;
+mod config;
+mod daemon;
+mod error;
+mod events;
+mod gate;
+mod logring;
+mod run;
+#[cfg(unix)]
+pub mod serial_path;
+mod server;
+mod state_view;
+mod store;
+
+pub use config::{
+    ArbiterKind, BucketConfig, BucketScope, ClusterConfig, ClusterRole, EgressBinding,
+    FailoverBinding, HttpBinding, ListenerBinding, LogFormat, MemoryProfile, MetricsBinding,
+    NodeConfig, SecretBinding, SerialBinding, TlsBinding, WitnessBinding,
+};
+pub use daemon::{Node, Traffic};
+pub use error::NodeError;
+pub use logring::{LogRing, RingLayer};
+pub use run::{builtin_extensions, run};
+pub use server::{MAX_BODY, serve};
+/// The snapshot reader behind `bulkhead state`, for the fuzz targets in
+/// `fuzz/` only.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub use state_view::describe;

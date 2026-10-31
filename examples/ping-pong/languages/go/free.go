@@ -3,7 +3,7 @@ package main
 import (
 	"unsafe"
 
-	"example.com/pong/gen/paddock/runtime/types"
+	"example.com/pong/gen/bulkhead/runtime/types"
 	"go.bytecodealliance.org/cm"
 )
 

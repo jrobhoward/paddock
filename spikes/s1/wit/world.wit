@@ -1,6 +1,6 @@
-package paddock:spike@0.1.0;
+package bulkhead:spike@0.1.0;
 
-/// Host services imported by the guest (stand-in for paddock:runtime/process).
+/// Host services imported by the guest (stand-in for bulkhead:runtime/process).
 interface host {
   /// Send `msg` to the instance registered as `target` and wait for its reply.
   call: func(target: string, msg: string, timeout-ms: u32) -> result<string, string>;

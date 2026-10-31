@@ -1,4 +1,4 @@
-package paddock
+package bulkhead
 
 import (
 	"bytes"
@@ -8,11 +8,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/runtime/types"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/runtime/types"
 )
 
-// Content types Paddock reads.
+// Content types Bulkhead reads.
 const (
 	TextType = "text/plain"
 	JSONType = "application/json"
@@ -33,7 +33,7 @@ func Text(s string) Envelope {
 }
 
 // CBOR encodes v as an application/cbor envelope, as GUEST_FORMATS.md
-// says Paddock writes CBOR: definite lengths, the shortest integers, a
+// says Bulkhead writes CBOR: definite lengths, the shortest integers, a
 // struct's fields in their order, and nil slices and maps as empty ones.
 func CBOR(v any) (Envelope, error) {
 	body, err := MarshalCBOR(v)
@@ -115,7 +115,7 @@ var cborMode = func() cbor.EncMode {
 	return mode
 }()
 
-// MarshalCBOR encodes v as Paddock writes CBOR (see [CBOR]).
+// MarshalCBOR encodes v as Bulkhead writes CBOR (see [CBOR]).
 func MarshalCBOR(v any) ([]byte, error) {
 	body, err := cborMode.Marshal(v)
 	if err != nil {

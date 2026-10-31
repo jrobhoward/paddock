@@ -1,7 +1,7 @@
 //! S1 test guest: behaviour selected by the message prefix.
 wit_bindgen::generate!({ path: "../wit", world: "app" });
 
-use paddock::spike::host;
+use bulkhead::spike::host;
 
 struct Component;
 

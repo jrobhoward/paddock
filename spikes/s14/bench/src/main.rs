@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use paddock_bundle::manifest::{Bucket, Capability, Durability};
-use paddock_host::{Envelope, InstanceHandle, InstanceSpec, Preopen, Runtime, RuntimeConfig};
+use bulkhead_bundle::manifest::{Bucket, Capability, Durability};
+use bulkhead_host::{Envelope, InstanceHandle, InstanceSpec, Preopen, Runtime, RuntimeConfig};
 use redb::{Database, ReadableDatabase, TableDefinition, backends::InMemoryBackend};
 
 const T: TableDefinition<&str, &[u8]> = TableDefinition::new("t");

@@ -1,6 +1,6 @@
-package paddock:spike4@0.1.0;
+package bulkhead:spike4@0.1.0;
 
-/// Term storage stand-in. Errors follow the Paddock convention: a variant with
+/// Term storage stand-in. Errors follow the Bulkhead convention: a variant with
 /// a `permission-denied` case, so a generic deny stub can return it.
 interface kv {
   variant error { permission-denied, not-found, other(string) }

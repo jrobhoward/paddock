@@ -19,5 +19,5 @@ fn dir() -> &'static tempfile::TempDir {
 fuzz_target!(|data: &[u8]| {
     let path = dir().path().join("input.rbp");
     std::fs::write(&path, data).unwrap();
-    let _ = paddock_bundle::VerifiedBundle::open(&path, &[KEY.to_string()]);
+    let _ = bulkhead_bundle::VerifiedBundle::open(&path, &[KEY.to_string()]);
 });

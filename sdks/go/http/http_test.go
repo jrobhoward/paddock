@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	paddock "github.com/jrobhoward/paddock/sdks/go"
-	"github.com/jrobhoward/paddock/sdks/go/internal/formats"
+	bulkhead "github.com/jrobhoward/bulkhead/sdks/go"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/formats"
 )
 
 func example(t *testing.T, name string) []byte {
@@ -30,7 +30,7 @@ func documentedRequest() Request {
 
 func TestRequest_DocumentedExample_ReadWithEveryFieldAndWrittenAlike(t *testing.T) {
 	documented := example(t, "http-request")
-	msg := paddock.Envelope{ContentType: paddock.CBORType, Schema: RequestSchema, Body: documented}
+	msg := bulkhead.Envelope{ContentType: bulkhead.CBORType, Schema: RequestSchema, Body: documented}
 
 	read, ok := RequestFrom(msg)
 	written := documentedRequest().Envelope()
@@ -49,7 +49,7 @@ func TestResponse_DocumentedExample_SameBytesAndReadBack(t *testing.T) {
 	msg := NewResponse(201).Header("content-type", "text/plain").WithBody([]byte("ok")).Envelope()
 	read, ok := ResponseFrom(msg)
 
-	if !bytes.Equal(msg.Body, documented) || msg.ContentType != paddock.CBORType || msg.Schema != ResponseSchema {
+	if !bytes.Equal(msg.Body, documented) || msg.ContentType != bulkhead.CBORType || msg.Schema != ResponseSchema {
 		t.Errorf("written %x %q %q", msg.Body, msg.ContentType, msg.Schema)
 	}
 	if !ok || read.Status != 201 || string(read.Body) != "ok" {
@@ -63,7 +63,7 @@ func TestRequest_HelpersAndOtherSchemas(t *testing.T) {
 	host, _ := req.Header("Host")
 	by, _ := req.Param("by")
 	_, missing := req.Param("nope")
-	_, plain := RequestFrom(paddock.Text("GET /"))
+	_, plain := RequestFrom(bulkhead.Text("GET /"))
 
 	if host != "localhost:8080" || by != "2" || missing || plain {
 		t.Errorf("%q %q %v %v", host, by, missing, plain)

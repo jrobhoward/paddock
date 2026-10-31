@@ -6,7 +6,7 @@
 //!   - instantiation time per instance (Store + WasiCtx + instantiate + init)
 //!   - resident (VmRSS) and virtual (VmSize) memory added per instance
 //!   - host -> guest call cost (handle-call "inc", called directly)
-//!   - actor round trip cost (mpsc + oneshot + handle-call), as Paddock would do it
+//!   - actor round trip cost (mpsc + oneshot + handle-call), as Bulkhead would do it
 //!
 //! usage: s2-bench <counter.wasm> [ondemand|pooling] [counts...]
 
@@ -123,7 +123,7 @@ async fn measure(wasm: &str, strategy: &str, n: usize) -> Result<()> {
         direct.as_nanos(),
     );
 
-    // Actor round trip: the way Paddock delivers a call.
+    // Actor round trip: the way Bulkhead delivers a call.
     if n == 1 {
         let (store, app) = instances.pop().unwrap();
         let (tx, mut rx) = mpsc::channel::<oneshot::Sender<String>>(64);

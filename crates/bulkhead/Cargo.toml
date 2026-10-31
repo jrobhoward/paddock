@@ -1,0 +1,149 @@
+[package]
+name = "bulkhead"
+version.workspace = true
+description = "Clustered WebAssembly application server with OTP-style supervision: the bulkhead command, node daemon and admin API"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "bulkhead"
+path = "src/main.rs"
+# Same output path as the library's docs (cargo#6313); the command's
+# documentation is its --help.
+doc = false
+
+[features]
+default = ["node", "http", "tls", "sql", "egress", "probes"]
+# The node daemon (`bulkhead node`) and everything it runs on, wasmtime
+# included. Without it, the CLI and bundle tooling only. Alone, a node with
+# no optional capability: no HTTP ingress, no probes, no Modbus.
+node = [
+    "dep:bulkhead-host",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "tokio/rt-multi-thread",
+    "tokio/signal",
+    "tokio/sync",
+    "tokio/time",
+]
+# The node's HTTP ingress (`[http.<name>]` in node config, apps' routes).
+http = ["node", "bulkhead-host/http"]
+# HTTPS on the HTTP ingress, and the remote admin API (`[admin]`) with its
+# client (`bulkhead --remote`).
+tls = ["http", "bulkhead-host/tls", "dep:tokio-rustls"]
+# HTTP egress for apps (`wasi:http/outgoing-handler`, `[egress]` in node
+# config): allow-listed requests through a connection pool.
+egress = ["tls", "bulkhead-host/egress"]
+# SQL datasources (`[datasources.<name>]` in node config, `bulkhead:sql`):
+# Postgres pools, idle until an app calls one.
+sql = ["node", "bulkhead-host/sql"]
+# USDT probes on the message path (docs/OBSERVABILITY.md).
+probes = ["node", "bulkhead-host/probes"]
+# The Modbus TCP extension (`bulkhead-modbus:modbus`) in `bulkhead node`. Off
+# by default: a network server with no authentication of its own.
+modbus = ["node", "dep:bulkhead-modbus"]
+
+[dependencies]
+anyhow = { workspace = true }
+bytes = { workspace = true }
+ciborium = { workspace = true }
+clap = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+minisign = { workspace = true }
+bulkhead-bundle = { workspace = true }
+bulkhead-host = { workspace = true, optional = true }
+bulkhead-modbus = { workspace = true, optional = true }
+rustbridge-bundle = { workspace = true }
+rustyline = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "net", "fs", "time", "signal", "sync"] }
+toml = { workspace = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+
+# The serial tty layer (raw termios, ptys for tests and the soak's relay);
+# Unix only.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs", "pty", "termios"] }
+
+[dev-dependencies]
+rcgen = { workspace = true }
+rstest = { workspace = true }
+proptest = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+tempfile = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio-modbus = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
+wat = { workspace = true }
+wit-parser = { workspace = true }
+
+[[example]]
+name = "admin_latency"
+required-features = ["node"]
+
+[[test]]
+name = "cli"
+required-features = ["node"]
+
+[[test]]
+name = "examples"
+required-features = ["node"]
+
+[[test]]
+name = "exit_criteria"
+required-features = ["node"]
+
+[[test]]
+name = "node"
+required-features = ["node"]
+
+[[test]]
+name = "remote_admin"
+required-features = ["tls"]
+
+[[test]]
+name = "listeners"
+required-features = ["node"]
+
+[[test]]
+name = "http"
+required-features = ["tls"]
+
+[[test]]
+name = "cluster"
+required-features = ["node"]
+
+[[test]]
+name = "board"
+required-features = ["http"]
+
+[[test]]
+name = "http_handler"
+required-features = ["http", "egress"]
+
+[[test]]
+name = "tally"
+required-features = ["http", "sql"]
+
+[[test]]
+name = "failover"
+required-features = ["node"]
+
+[[test]]
+name = "scada"
+required-features = ["modbus"]
+
+[lints]
+workspace = true

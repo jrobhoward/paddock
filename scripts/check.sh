@@ -24,7 +24,7 @@
 #   clippy       clippy on every target and feature, -Dwarnings
 #   build        cargo build --workspace --all-targets: links what clippy and
 #                the tests do not (the guest crates' native cdylibs)
-#   cli-no-node  paddock without its `node` feature builds and has no wasmtime
+#   cli-no-node  bulkhead without its `node` feature builds and has no wasmtime
 #   features     the node with no optional feature (no HTTP ingress, TLS,
 #                probes or Modbus), and with HTTP but no TLS, each builds
 #                clean; the first has none of their dependencies
@@ -126,28 +126,28 @@ check_build() {
     cargo build --workspace --all-targets --locked
 }
 
-# `paddock` without its `node` feature is the CLI and bundle tooling only; it
+# `bulkhead` without its `node` feature is the CLI and bundle tooling only; it
 # must build, and must not pull in wasmtime.
 check_cli_no_node() {
-    cargo clippy -p paddock --no-default-features --all-targets --locked -- -Dwarnings || return 1
-    if cargo tree -p paddock --no-default-features -e normal --locked | has wasmtime; then
-        echo "paddock --no-default-features depends on wasmtime"
+    cargo clippy -p bulkhead --no-default-features --all-targets --locked -- -Dwarnings || return 1
+    if cargo tree -p bulkhead --no-default-features -e normal --locked | has wasmtime; then
+        echo "bulkhead --no-default-features depends on wasmtime"
         return 1
     fi
 }
 
-# Each optional capability compiles out: `paddock` with `node` alone, and
-# `paddock-host` with no features, then the HTTP ingress without TLS. The
+# Each optional capability compiles out: `bulkhead` with `node` alone, and
+# `bulkhead-host` with no features, then the HTTP ingress without TLS. The
 # default and every feature together are `build` and `clippy`.
 check_features() {
-    cargo clippy -p paddock-host --no-default-features --all-targets --locked -- -Dwarnings || return 1
-    cargo clippy -p paddock --no-default-features --features node --all-targets --locked -- -Dwarnings || return 1
-    cargo clippy -p paddock --no-default-features --features http --all-targets --locked -- -Dwarnings || return 1
+    cargo clippy -p bulkhead-host --no-default-features --all-targets --locked -- -Dwarnings || return 1
+    cargo clippy -p bulkhead --no-default-features --features node --all-targets --locked -- -Dwarnings || return 1
+    cargo clippy -p bulkhead --no-default-features --features http --all-targets --locked -- -Dwarnings || return 1
     local found
-    found=$(cargo tree -p paddock --no-default-features --features node -e normal --prefix none --locked |
-        grep -E '^(paddock-modbus|tokio-modbus|anyprobe|tokio-rustls) ' | sort -u)
+    found=$(cargo tree -p bulkhead --no-default-features --features node -e normal --prefix none --locked |
+        grep -E '^(bulkhead-modbus|tokio-modbus|anyprobe|tokio-rustls) ' | sort -u)
     if [ -n "$found" ]; then
-        echo "paddock with only the node feature depends on:"
+        echo "bulkhead with only the node feature depends on:"
         echo "$found"
         return 1
     fi
@@ -200,10 +200,10 @@ check_guests() {
         wasm=target/wasm32-wasip2/release/$(echo "$name" | tr - _).wasm
         wasm-tools validate --features all "$wasm" || { failed=1; continue; }
         wit=$(wasm-tools component wit "$wasm") || { failed=1; continue; }
-        # Connection handlers export `paddock:connection/handler`. Apps export
+        # Connection handlers export `bulkhead:connection/handler`. Apps export
         # the app world's callbacks; a component imports only what its code
         # calls (echo has no `process` import), so only exports are checked.
-        if echo "$wit" | has "export paddock:connection/handler@"; then
+        if echo "$wit" | has "export bulkhead:connection/handler@"; then
             echo "$name: connection handler"
             continue
         fi
@@ -219,7 +219,7 @@ check_guests() {
     done
     [ "$failed" = 0 ] || return 1
     # Tests that load a built fixture are ignored in the plain test run.
-    cargo test -p paddock-bundle --test fixture_echo --locked -- --ignored
+    cargo test -p bulkhead-bundle --test fixture_echo --locked -- --ignored
 }
 
 check_secrets() {

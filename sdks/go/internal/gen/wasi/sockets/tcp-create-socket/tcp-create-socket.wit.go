@@ -4,8 +4,8 @@
 package tcpcreatesocket
 
 import (
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/sockets/network"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/sockets/tcp"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/sockets/network"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/sockets/tcp"
 	"go.bytecodealliance.org/cm"
 )
 

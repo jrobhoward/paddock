@@ -6,6 +6,16 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Forked from Paddock (`../paddock`, commit 657ae61, 2026-10-31) as
+  Bulkhead: an app server whose apps are native OS processes instead of
+  WebAssembly components. Every crate, binary, path, environment variable
+  (`BULKHEAD_*`) and protocol identifier is renamed, including the
+  cluster's QUIC ALPN (`bulkhead`), so Bulkhead and Paddock nodes never
+  join each other's clusters. Nothing else changes yet: removing wasmtime
+  comes next. The entries below this one are Paddock's history.
+
 ### Added
 
 - `read_concurrency` for memory buckets (manifest `buckets.<name>` and node

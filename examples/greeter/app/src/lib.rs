@@ -1,10 +1,10 @@
 //! An app that calls the `example:greeting` extension, written with
-//! `paddock-sdk` plus its own bindings for the extension's package.
+//! `bulkhead-sdk` plus its own bindings for the extension's package.
 //!
 //! Commands: `hello:<name>` (the greeting) and `count` (greetings made on
 //! this node). Errors reply `err:<error>`.
 
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 
 #[allow(missing_docs)]
 mod bindings {
@@ -46,4 +46,4 @@ impl App for Greeted {
     }
 }
 
-paddock_sdk::app!(Greeted);
+bulkhead_sdk::app!(Greeted);

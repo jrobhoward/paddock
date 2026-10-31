@@ -4,8 +4,8 @@
 //! instances, kills, and messages to made-up pids. Afterwards every instance
 //! must die when killed, and a fresh instance must still answer.
 //!
-//! Needs the fixture built first (or `PADDOCK_FUZZ_COMPONENT` set):
-//! `cargo build --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures`
+//! Needs the fixture built first (or `BULKHEAD_FUZZ_COMPONENT` set):
+//! `cargo build --release --target wasm32-wasip2 -p bulkhead-fixture-chaos --target-dir target/fixtures`
 
 #![no_main]
 
@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use paddock_host::{Envelope, InstanceHandle, InstanceSpec, LoadedApp, Pid, Runtime, RuntimeConfig};
+use bulkhead_host::{Envelope, InstanceHandle, InstanceSpec, LoadedApp, Pid, Runtime, RuntimeConfig};
 
 const SLOTS: usize = 4;
 const SHORT: Duration = Duration::from_millis(50);
@@ -69,10 +69,10 @@ enum Op {
 fn runtime() -> &'static (tokio::runtime::Runtime, Runtime, LoadedApp) {
     static RT: OnceLock<(tokio::runtime::Runtime, Runtime, LoadedApp)> = OnceLock::new();
     RT.get_or_init(|| {
-        let path = std::env::var("PADDOCK_FUZZ_COMPONENT").unwrap_or_else(|_| {
+        let path = std::env::var("BULKHEAD_FUZZ_COMPONENT").unwrap_or_else(|_| {
             concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../target/fixtures/wasm32-wasip2/release/paddock_fixture_chaos.wasm"
+                "/../target/fixtures/wasm32-wasip2/release/bulkhead_fixture_chaos.wasm"
             )
             .to_string()
         });

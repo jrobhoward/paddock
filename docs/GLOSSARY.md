@@ -1,6 +1,6 @@
 # Glossary
 
-Terms used across Paddock's docs and code, grouped by area. Each entry says what the word means in Paddock and points to the file that has the detail. Where Paddock uses an Erlang/OTP word, the meaning is close to OTP's unless the entry says otherwise.
+Terms used across Bulkhead's docs and code, grouped by area. Each entry says what the word means in Bulkhead and points to the file that has the detail. Where Bulkhead uses an Erlang/OTP word, the meaning is close to OTP's unless the entry says otherwise.
 
 Two words have more than one meaning:
 
@@ -13,11 +13,11 @@ Two words have more than one meaning:
 - **App:** a deployed WebAssembly component (or a native program) with its manifest, run as one or more instances. Named by the manifest, versioned by semver.
 - **Bundle:** an `.rbp` file (rustbridge's bundle format) holding an app's component, manifest (the `appserver` section), checksums and signature. A node opens only bundles signed by a key in its `trusted_keys`. [MANIFEST.md](MANIFEST.md).
 - **Manifest:** the app's declaration of what it needs: capabilities, limits, instances, placement, upgrade mode, routes. [MANIFEST.md](MANIFEST.md).
-- **Component:** a WebAssembly component (WASI 0.2) exporting the `paddock:runtime/app` world, or the `paddock:connection` or `wasi:http/proxy` world for listeners and HTTP handlers.
+- **Component:** a WebAssembly component (WASI 0.2) exporting the `bulkhead:runtime/app` world, or the `bulkhead:connection` or `wasi:http/proxy` world for listeners and HTTP handlers.
 - **Guest:** code running inside a component instance, as opposed to the host. "Guest time" is time spent running that code.
-- **Host:** `paddock-host`, the runtime that runs guests and implements their imports. "Host time" is time a callback spends waiting in a host function a guest called; it does not count against the callback deadline. Work a host function does without waiting counts with the guest's time.
+- **Host:** `bulkhead-host`, the runtime that runs guests and implements their imports. "Host time" is time a callback spends waiting in a host function a guest called; it does not count against the callback deadline. Work a host function does without waiting counts with the guest's time.
 - **Instance:** one running copy of an app, with its own pid, mailbox, memory and state; Erlang's process. A component instance runs in a wasmtime Store; a native instance is an OS process.
-- **Native-process app:** an app shipped as a native program (a rustbridge plugin or an executable on `paddock-native`'s app API) rather than a component. Each instance is a process started through `paddock-runner`, which sandboxes itself first. No snapshots, so no passivation or snapshot upgrades. [ARCHITECTURE.md](ARCHITECTURE.md), "Native-process apps".
+- **Native-process app:** an app shipped as a native program (a rustbridge plugin or an executable on `bulkhead-native`'s app API) rather than a component. Each instance is a process started through `bulkhead-runner`, which sandboxes itself first. No snapshots, so no passivation or snapshot upgrades. [ARCHITECTURE.md](ARCHITECTURE.md), "Native-process apps".
 - **Pid:** an instance's address, written `node.serial.incarnation@creation`. The serial stays across restarts; the incarnation grows by one on each restart. [OBSERVABILITY.md](OBSERVABILITY.md).
 - **Incarnation:** the part of a pid counting restarts of one instance, so a message for a crashed incarnation never reaches its replacement.
 - **Pool:** an app's set of instances behind one name. A message to the app picks one, round robin or by a hash of a routing key. During a blue-green upgrade a pool has two sides and a weight.
@@ -25,9 +25,9 @@ Two words have more than one meaning:
 - **App set:** the apps on a node, started in dependency order.
 - **Placement:** where an app's instances run in a cluster: `any`, `singleton` (one instance in the cluster; on an HA pair, on the primary only), `all-nodes`, or `hot-standby` (on both pair nodes, each told its role). [MANIFEST.md](MANIFEST.md).
 - **Singleton:** an app with `placement.mode = "singleton"`.
-- **Extension:** a host service from a crate outside `paddock-host` (`paddock-modbus`, the greeter example), linked into a node binary.
+- **Extension:** a host service from a crate outside `bulkhead-host` (`bulkhead-modbus`, the greeter example), linked into a node binary.
 - **Hot standby:** an app with `placement.mode = "hot-standby"`: an instance on both nodes of an HA pair, each told its role (`failover-role` host event), for an app that keeps a warm copy and takes over itself.
-- **Priv files:** files bundled with an app (`paddock bundle --priv`), read-only at `/priv` in a component, or in the directory `PADDOCK_PRIV` names for a native app.
+- **Priv files:** files bundled with an app (`bulkhead bundle --priv`), read-only at `/priv` in a component, or in the directory `BULKHEAD_PRIV` names for a native app.
 
 ## Messages
 
@@ -40,8 +40,8 @@ Two words have more than one meaning:
 - **Mailbox:** an instance's bounded queue of calls and casts (`limits.mailbox_max`). Full, it refuses a call with `overloaded` and drops a cast.
 - **Noreply:** a callback's answer meaning "the reply comes later": the guest keeps the call ref and answers with `process.reply`.
 - **Send-after:** `process.send-after`, a timer that puts a message in the instance's own mailbox after a delay; Erlang's `erlang:send_after`. Each is a tokio sleep, so it fires on a 1 ms grain; how late it is handled is measured in [BASELINE.md](BASELINE.md) (`timer_cost`).
-- **Batch:** many items sent as one message through `paddock_sdk::batch`, flushed by count, bytes or delay.
-- **Group:** a named set of instances a message can be published to (`paddock:groups`); OTP's `pg`.
+- **Batch:** many items sent as one message through `bulkhead_sdk::batch`, flushed by count, bytes or delay.
+- **Group:** a named set of instances a message can be published to (`bulkhead:groups`); OTP's `pg`.
 
 ## Lifecycle and supervision
 
@@ -65,38 +65,38 @@ Two words have more than one meaning:
 - **Pooling allocator:** wasmtime's allocator that reserves address space for every slot when the runtime starts, so instantiating needs no `mmap`. The reservation is virtual, not resident: about 8 GiB per slot on the standard memory profile and 256 MiB on dense.
 - **Memory profile:** `standard` (up to 4 GiB of linear memory per instance, with guard regions large enough that wasmtime compiles no bounds checks) or `dense` (up to 128 MiB, with small guards, so bounds checks are compiled in; less address space per slot, for nodes with tens of thousands of instances).
 - **Linear memory:** a guest's heap: one byte array it can grow but never shrink. `ps` shows its size, which is the instance's high-water mark.
-- **Epoch tick:** the moment the host's epoch ticker (an OS thread, `paddock-epoch`) advances wasmtime's epoch counter, every `epoch_tick_ms` (2 ms by default; 10 ms before 2026-10-07). Compiled guest code checks the counter at every function entry and loop back edge (the epoch check). At each tick, a running guest yields its tokio worker so other instances run, and a guest past its callback deadline traps. The tick bounds how long a busy instance holds a worker. Measured cost: [BASELINE.md](BASELINE.md), "Epoch interruption".
+- **Epoch tick:** the moment the host's epoch ticker (an OS thread, `bulkhead-epoch`) advances wasmtime's epoch counter, every `epoch_tick_ms` (2 ms by default; 10 ms before 2026-10-07). Compiled guest code checks the counter at every function entry and loop back edge (the epoch check). At each tick, a running guest yields its tokio worker so other instances run, and a guest past its callback deadline traps. The tick bounds how long a busy instance holds a worker. Measured cost: [BASELINE.md](BASELINE.md), "Epoch interruption".
 - **Epoch check:** the load, compare and branch that wasmtime compiles into guest code for epoch interruption.
-- **Call hook:** wasmtime's hook on every entry to and return from a host function. Paddock does not install one: the callback clock times the task's polls of a callback instead (2026-10-24; the hook cost about 5% of an empty call).
+- **Call hook:** wasmtime's hook on every entry to and return from a host function. Bulkhead does not install one: the callback clock times the task's polls of a callback instead (2026-10-24; the hook cost about 5% of an empty call).
 - **Callback clock:** the guest time of the callback running now: the time the instance's task spends polling it, which stops while a host function waits. The epoch callback compares it with the callback deadline.
 - **Compiled-code cache:** compiled components kept on disk (`compiled/` under the data directory), so a restarted node deserializes them instead of compiling again. Read only if the file and its directory belong to the node's user and neither is writable by group or others.
 - **Deny stub:** a function that stands in for an import the operator did not grant and returns `access-denied`, so a component with an ungranted import still links.
 
 ## Capabilities and services
 
-- **Capability:** a host interface an app declares under `capabilities` in its manifest, with the scope that narrows it (`wasi:keyvalue` with its buckets, `wasi:http/outgoing-handler` with its `allow` list, `paddock:sql` with its datasources). [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance).
+- **Capability:** a host interface an app declares under `capabilities` in its manifest, with the scope that narrows it (`wasi:keyvalue` with its buckets, `wasi:http/outgoing-handler` with its `allow` list, `bulkhead:sql` with its datasources). [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance).
 - **Policy:** the operator's file of what apps may be granted (`policy` in node config names it): defaults, per app and per signer, plus the shared buckets, secrets and datasources each may use.
 - **Signer:** a minisign key whose bundles a node runs (`trusted_keys`); policy can grant by signer.
 - **Grant:** the capabilities an instance gets: what the manifest asks for, narrowed by policy (the effective grant). Imports outside it get deny stubs.
 - **Host service:** an interface the host implements for guests (config, keyvalue, groups, logging, secrets, metrics, egress, sockets, SQL), each on the `Service` pattern. [DESIGN.md](DESIGN.md), "Host services".
 - **Ingress:** the node's HTTP server: a request to a route becomes a call to the owning app's pool.
 - **HTTP handler:** a `wasi:http/proxy` component given a new instance per request, with no mailbox.
-- **Listener, connection handler:** a TCP port whose every accepted connection gets a new instance of a `paddock:connection` component.
+- **Listener, connection handler:** a TCP port whose every accepted connection gets a new instance of a `bulkhead:connection` component.
 - **Egress:** outgoing HTTP from a guest through `wasi:http`, filtered by the manifest's `allow` and node config's ceiling, through the node's connection pool.
 - **Volume:** a host directory node config names (`[volumes]`), mapped into a guest path by a manifest preopen, read-only or read-write.
-- **Datasource:** a Postgres database node config binds (`[datasources.<name>]`), pooled, that granted apps query through `paddock:sql` by name.
+- **Datasource:** a Postgres database node config binds (`[datasources.<name>]`), pooled, that granted apps query through `bulkhead:sql` by name.
 
 ## Storage
 
 - **Bucket:** a key-value namespace through `wasi:keyvalue`, an app's own or shared from node config's `[buckets]`. Durability: `memory` (survives instance crashes, not node restarts), `disk` (redb, synced) or `replicated` (kept whole on both nodes of an HA pair, through the replicated log). A shared bucket with `scope = "cluster"` is replicated the same way. [MANIFEST.md](MANIFEST.md).
-- **Watch:** a subscription to changes of a key or prefix in a bucket (`paddock:watch`); each change is delivered as a host event. Notices for a watcher that falls behind are conflated.
+- **Watch:** a subscription to changes of a key or prefix in a bucket (`bulkhead:watch`); each change is delivered as a host event. Notices for a watcher that falls behind are conflated.
 - **Replicated log:** the HA pair's log of writes to replicated and cluster buckets, in the same redb file as the disk buckets. A write is acknowledged once both nodes have synced it, or, with the standby gone, once the witness has recorded it out of date.
 - **Group commit:** writers arriving together sharing one synced append.
 - **Reserved buckets:** `@cluster` (the replicated buckets' namespace), `@handover` (snapshots of singletons moved in a switchover) and `@release` (the pair's formats version).
 
 ## Cluster and failover
 
-- **Node:** one `paddock node` process with its data directory and node id.
+- **Node:** one `bulkhead node` process with its data directory and node id.
 - **Member:** a node that has joined the cluster, with its id, creation, address and role (`member`, or `witness`).
 - **Creation:** a node's start count, kept in its data directory and raised on every start. It is part of every pid and every packet, so pids and frames from an earlier start are never mistaken for current ones; Erlang's `creation`.
 - **Frame:** one message between nodes (a call, cast, reply, link, monitor, exit or down notice, heartbeat, replication message and so on), in the versioned CBOR wire format.
@@ -115,16 +115,16 @@ Two words have more than one meaning:
 - **Promotion, switchover, override, bootstrap:** a standby becoming primary on the witness's grant; a planned handover from primary to standby; a promotion on an operator's confirmation when the witness cannot be reached; the first start of a pair, where the lower node id leads.
 - **Handover:** a singleton moved with its state in a switchover, through `@handover`.
 - **Out of date:** the witness's record that the standby lacks replicated writes the primary committed alone. While it stands, the witness grants that node no promotion, and a switchover to it is refused.
-- **Pair version (formats):** the version of what outlives a connection (the log, the `@cluster` records). It rises only by `paddock release finalize`.
-- **Release:** `paddock release`, an app upgraded on both nodes of a pair, standby first, each step gated on the app running at the new version; also the build-upgrade sequence that ends in `release finalize`. [OPERATIONS.md](OPERATIONS.md).
+- **Pair version (formats):** the version of what outlives a connection (the log, the `@cluster` records). It rises only by `bulkhead release finalize`.
+- **Release:** `bulkhead release`, an app upgraded on both nodes of a pair, standby first, each step gated on the app running at the new version; also the build-upgrade sequence that ends in `release finalize`. [OPERATIONS.md](OPERATIONS.md).
 
 ## Operations and project terms
 
-- **Admin API:** the node's JSON-over-HTTP API on its Unix socket (and over TLS with pinned keys), used by the `paddock` CLI.
+- **Admin API:** the node's JSON-over-HTTP API on its Unix socket (and over TLS with pinned keys), used by the `bulkhead` CLI.
 - **Operator:** whoever can use the admin API: the node's user on the socket, or an operator whose key the `[admin]` operators file lists, with the same rights.
-- **Contacts file:** the operator's list of nodes for `paddock shell` (`connect <name>`): each node's admin address and pinned key.
+- **Contacts file:** the operator's list of nodes for `bulkhead shell` (`connect <name>`): each node's admin address and pinned key.
 - **Probe:** a USDT probe on the message path, for bpftrace and similar tracers. [OBSERVABILITY.md](OBSERVABILITY.md).
-- **Soak:** hours of fault injection against `paddock node` processes (`scripts/soak.sh`).
+- **Soak:** hours of fault injection against `bulkhead node` processes (`scripts/soak.sh`).
 - **Baseline:** the recorded benchmark figures in [BASELINE.md](BASELINE.md), from `scripts/bench.sh`.
 - **Spike (S1 to S23):** a throwaway program that answered one design question, under `spikes/`; its README has the answer.
 - **R1 to R14:** the failover and replication rules model-checked in TLA+. [tla/VERIFICATION.md](tla/VERIFICATION.md).

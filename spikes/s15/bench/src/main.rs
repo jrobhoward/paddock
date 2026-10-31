@@ -17,7 +17,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use paddock_host::{Envelope, InstanceHandle, InstanceSpec};
+use bulkhead_host::{Envelope, InstanceHandle, InstanceSpec};
 use tokio::net::{TcpListener, TcpStream};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, InstanceAllocationStrategy, Store};
@@ -30,7 +30,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 const WASM: &str = "target/wasm32-wasip2/release";
-const CHAOS: &str = "../target/fixtures/wasm32-wasip2/release/paddock_fixture_chaos.wasm";
+const CHAOS: &str = "../target/fixtures/wasm32-wasip2/release/bulkhead_fixture_chaos.wasm";
 const SEQUENTIAL: usize = 10_000;
 const CONNECTIONS: usize = 32;
 const LOAD_TIME: Duration = Duration::from_secs(2);
@@ -129,9 +129,9 @@ async fn native_server() -> SocketAddr {
     addr
 }
 
-/// Host hyper; each request is a call into a Paddock instance (round-robin).
-async fn paddock_server(instances: usize) -> SocketAddr {
-    let rt = paddock_host::Runtime::new(paddock_host::RuntimeConfig {
+/// Host hyper; each request is a call into a Bulkhead instance (round-robin).
+async fn bulkhead_server(instances: usize) -> SocketAddr {
+    let rt = bulkhead_host::Runtime::new(bulkhead_host::RuntimeConfig {
         max_instances: 64,
         ..Default::default()
     })
@@ -412,7 +412,7 @@ async fn run(workers: usize) {
     println!("|---|---|---|---|---|---|---|");
     let servers = [
         ("native hyper", native_server().await),
-        ("host hyper -> Paddock instance call", paddock_server(workers).await),
+        ("host hyper -> Bulkhead instance call", bulkhead_server(workers).await),
         ("wasi:http incoming-handler (instance per request)", wasi_http_server(&engine).await),
         ("guest-owned socket (wasi:sockets, guest parses HTTP)", guest_socket_server(&engine).await),
     ];

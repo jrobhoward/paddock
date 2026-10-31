@@ -1,4 +1,4 @@
-//! Spike S26: how a bucket's map scales with readers, outside Paddock.
+//! Spike S26: how a bucket's map scales with readers, outside Bulkhead.
 //!
 //! One map of 100,000 keys (`k000000` ...) with 16 B values, read by 1 to
 //! N threads (a read copies the value out, as the keyvalue host does),

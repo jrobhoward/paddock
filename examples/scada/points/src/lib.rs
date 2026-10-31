@@ -8,11 +8,11 @@
 //! A call with `updates` replies how many updates this instance has
 //! stored.
 
-use paddock_sdk::kv::Bucket;
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use bulkhead_sdk::kv::Bucket;
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 use serde::Deserialize;
 
-/// An update from the Modbus extension (`paddock_modbus::points`).
+/// An update from the Modbus extension (`bulkhead_modbus::points`).
 #[derive(Debug, Deserialize)]
 struct Update {
     device: String,
@@ -64,12 +64,12 @@ impl App for Points {
 
     fn handle_cast(&mut self, _ctx: &mut Ctx, msg: Envelope) {
         let Ok(update) = msg.decode::<Update>() else {
-            paddock_sdk::warn!("not a modbus update");
+            bulkhead_sdk::warn!("not a modbus update");
             return;
         };
         match store(&update) {
             Ok(()) => self.updates += 1,
-            Err(e) => paddock_sdk::warn!("storing {}: {e}", update.device),
+            Err(e) => bulkhead_sdk::warn!("storing {}: {e}", update.device),
         }
     }
 
@@ -82,4 +82,4 @@ impl App for Points {
     }
 }
 
-paddock_sdk::app!(Points);
+bulkhead_sdk::app!(Points);

@@ -1,9 +1,9 @@
 // Package groups is process groups across the cluster, with publish,
-// through paddock:groups, as OTP's pg: membership is eventual, and a node
+// through bulkhead:groups, as OTP's pg: membership is eventual, and a node
 // cut off from another stops listing its members until they hear each
 // other again.
 //
-// Declare the `paddock:groups` capability in the manifest with the groups
+// Declare the `bulkhead:groups` capability in the manifest with the groups
 // the app may join and publish to. An instance leaves every group when it
 // exits; an upgrade keeps its groups. Published messages arrive as casts.
 package groups
@@ -11,9 +11,9 @@ package groups
 import (
 	"errors"
 
-	paddock "github.com/jrobhoward/paddock/sdks/go"
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/groups/groups"
+	bulkhead "github.com/jrobhoward/bulkhead/sdks/go"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/groups/groups"
 )
 
 var (
@@ -50,22 +50,22 @@ func Leave(group string) error {
 }
 
 // Members lists group's members on every node this node hears from.
-func Members(group string) ([]paddock.Pid, error) {
+func Members(group string) ([]bulkhead.Pid, error) {
 	r := groups.Members(group)
 	if e := r.Err(); e != nil {
 		return nil, fromHost(*e)
 	}
 	list := *r.OK()
-	out := make([]paddock.Pid, 0, list.Len())
+	out := make([]bulkhead.Pid, 0, list.Len())
 	for _, p := range list.Slice() {
-		out = append(out, paddock.Pid{Node: p.Node, ID: p.ID, Incarnation: p.Incarnation})
+		out = append(out, bulkhead.Pid{Node: p.Node, ID: p.ID, Incarnation: p.Incarnation})
 	}
 	abi.FreeList(list)
 	return out, nil
 }
 
 // Publish casts msg to every member of group, and returns how many took it.
-func Publish(group string, msg paddock.Envelope) (uint32, error) {
+func Publish(group string, msg bulkhead.Envelope) (uint32, error) {
 	r := groups.Publish(group, abi.HostEnvelope(msg.ContentType, msg.Schema, msg.Body))
 	if e := r.Err(); e != nil {
 		return 0, fromHost(*e)

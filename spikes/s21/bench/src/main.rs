@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use paddock_host::{Envelope, InstanceSpec, Runtime, RuntimeConfig};
+use bulkhead_host::{Envelope, InstanceSpec, Runtime, RuntimeConfig};
 
 const STARTS: usize = 200;
 fn call_count() -> usize {

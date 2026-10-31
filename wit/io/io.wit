@@ -1,4 +1,4 @@
-package paddock:io@0.1.0;
+package bulkhead:io@0.1.0;
 
 /// Readiness as messages, as Erlang's `{active, once}`: an instance hands
 /// the host a pollable (a socket's stream, a listening socket, any
@@ -10,7 +10,7 @@ package paddock:io@0.1.0;
 ///
 /// Granted to every app: it gives no access the pollable did not.
 ///
-/// Kept apart from `paddock:runtime`, which has no `wasi:io` types so a
+/// Kept apart from `bulkhead:runtime`, which has no `wasi:io` types so a
 /// WASI 0.3 world can be added without changing it.
 interface ready {
   use wasi:io/poll@0.2.12.{pollable};

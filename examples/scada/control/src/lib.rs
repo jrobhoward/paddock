@@ -16,7 +16,7 @@
 //! meanwhile are re-raised from the table, and their acknowledgements and
 //! the events of the other node are not there.
 //!
-//! Every response carries `x-paddock-pid` and `x-scada-version`.
+//! Every response carries `x-bulkhead-pid` and `x-scada-version`.
 //!
 //! - `GET /scada/alarms`: `{"version", "pid", "alarms": {name: alarm}}`.
 //! - `POST /scada/alarms/<name>/ack`: acknowledge; the alarm, 404 for an
@@ -27,31 +27,31 @@
 //!   "address", "value"}`: write to the device through the Modbus
 //!   extension; `{"ok": true}`, or 502 with `{"error"}`.
 //!
-//! - v1 (`paddock.toml`) is the version above. It reads newer snapshot
+//! - v1 (`bulkhead.toml`) is the version above. It reads newer snapshot
 //!   formats by ignoring the fields it does not know, so a rollback from v2
 //!   keeps the alarms (later versions only add fields).
-//! - v2 (`--features v2`, `paddock-v2.toml`) also counts how often each
+//! - v2 (`--features v2`, `bulkhead-v2.toml`) also counts how often each
 //!   alarm was raised (`raised`), and migrates v1's snapshot (format 1)
 //!   by counting an alarm active at the upgrade as raised once.
 
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use paddock_sdk::http::{Request, Response};
-use paddock_sdk::kv::Bucket;
-use paddock_sdk::watch::{self, Change};
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Info, Reply, Snapshot, config};
+use bulkhead_sdk::http::{Request, Response};
+use bulkhead_sdk::kv::Bucket;
+use bulkhead_sdk::watch::{self, Change};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Info, Reply, Snapshot, config};
 use serde::{Deserialize, Serialize};
 
 #[allow(missing_docs)]
 mod bindings {
     wit_bindgen::generate!({
-        path: "../../../crates/paddock-modbus/wit",
-        world: "paddock-modbus:modbus/modbus",
+        path: "../../../crates/bulkhead-modbus/wit",
+        world: "bulkhead-modbus:modbus/modbus",
     });
 }
 
-use bindings::paddock_modbus::modbus::client;
+use bindings::bulkhead_modbus::modbus::client;
 
 #[cfg(not(feature = "v2"))]
 const VERSION: &str = "1.0.0";
@@ -118,7 +118,7 @@ struct State {
 
 /// A newer format, read as format 1: later versions only add fields.
 #[cfg(not(feature = "v2"))]
-fn newer(from: u32, old: paddock_sdk::snapshot::Value) -> Result<State, String> {
+fn newer(from: u32, old: bulkhead_sdk::snapshot::Value) -> Result<State, String> {
     if from < 1 {
         return Err(format!("unknown snapshot format {from}"));
     }
@@ -135,7 +135,7 @@ struct State {
 }
 
 #[cfg(feature = "v2")]
-fn migrate(from: u32, old: paddock_sdk::snapshot::Value) -> Result<State, String> {
+fn migrate(from: u32, old: bulkhead_sdk::snapshot::Value) -> Result<State, String> {
     #[derive(Deserialize)]
     struct AlarmV1 {
         status: Status,
@@ -299,7 +299,7 @@ impl Control {
             Ok(())
         });
         if let Err(e) = stored {
-            paddock_sdk::warn!("event {seq} not stored: {e}");
+            bulkhead_sdk::warn!("event {seq} not stored: {e}");
         }
     }
 
@@ -310,7 +310,7 @@ impl Control {
         if let Err(e) =
             open(ALARMS).and_then(|b| b.set_value(name, alarm).map_err(|e| e.to_string()))
         {
-            paddock_sdk::warn!("alarm {name} not stored: {e}");
+            bulkhead_sdk::warn!("alarm {name} not stored: {e}");
         }
     }
 
@@ -464,7 +464,7 @@ impl Control {
             ),
         };
         response
-            .header("x-paddock-pid", ctx.pid().to_string())
+            .header("x-bulkhead-pid", ctx.pid().to_string())
             .header("x-scada-version", VERSION)
     }
 }
@@ -497,7 +497,7 @@ impl App for Control {
             .map(|v| v.map(|v| String::from_utf8_lossy(&v).into_owned()));
         match value {
             Ok(value) => self.evaluate(&change.key, value.as_deref()),
-            Err(e) => paddock_sdk::warn!("reading {}: {e}", change.key),
+            Err(e) => bulkhead_sdk::warn!("reading {}: {e}", change.key),
         }
     }
 
@@ -518,4 +518,4 @@ impl App for Control {
     }
 }
 
-paddock_sdk::app!(Control);
+bulkhead_sdk::app!(Control);

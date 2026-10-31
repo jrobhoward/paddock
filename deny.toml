@@ -1,9 +1,9 @@
-# cargo-deny policy for paddock.
+# cargo-deny policy for bulkhead.
 #
 # This file exists to answer one question on every build:
 #   Is every dependency under a permissive (non-copyleft) licence?
 #
-# Paddock is MIT OR Apache-2.0 and is meant to be embedded and redistributed,
+# Bulkhead is MIT OR Apache-2.0 and is meant to be embedded and redistributed,
 # so nothing in the dependency graph may impose reciprocal source-disclosure
 # obligations on it or on its users.
 
@@ -30,7 +30,7 @@ ignore = []
 
 [licenses]
 # Permissive only. Every licence below imposes no reciprocal source-disclosure
-# obligation on downstream users of paddock.
+# obligation on downstream users of bulkhead.
 #
 # Absent on purpose, and the reason this is an allow-list:
 #   - MPL-2.0        weak/file-level copyleft
@@ -58,7 +58,7 @@ allow = [
     # ingress). ISC is a permissive licence equivalent to MIT.
     "ISC",
     # `clipboard-win` and `error-code`, Windows-only dependencies of
-    # `rustyline` (the `paddock shell` line editor). The Boost
+    # `rustyline` (the `bulkhead shell` line editor). The Boost
     # licence is permissive: notices only, nothing for binaries.
     "BSL-1.0",
 ]
@@ -77,7 +77,7 @@ wildcards = "deny"
 # Path dependencies without a version are fine inside an unpublished
 # workspace; cargo strips dev-dependencies at publish.
 allow-wildcard-paths = true
-# Crates whose licences or behaviour are incompatible with paddock, listed by
+# Crates whose licences or behaviour are incompatible with bulkhead, listed by
 # name so an accidental `cargo add` fails loudly. Empty until one is found.
 deny = []
 

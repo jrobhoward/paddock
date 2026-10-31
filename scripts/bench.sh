@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run Paddock's benchmarks and write a dated section for docs/BASELINE.md.
+# Run Bulkhead's benchmarks and write a dated section for docs/BASELINE.md.
 # Each benchmark runs as its own process under GNU time, which
 # adds its wall time, CPU time and peak resident memory (from the kernel's
 # rusage; no root). Benchmarks run one at a time, on an idle machine: the
@@ -21,7 +21,7 @@ BENCHES=(
   "baseline|call, cast, instantiate, idle memory (1 and 4 workers, dense)|R/examples/baseline 1 1000 standard; R/examples/baseline 4 1000 standard; R/examples/baseline 1 5000 dense"
   "pool_load|concurrent clients against a pool (1, 4, 16 workers)|R/examples/pool_load 1; R/examples/pool_load 4; R/examples/pool_load 16"
   "epoch|epoch-check overhead|R/examples/epoch_cost"
-  "app|ordinary app code (serde JSON, regex, Markdown, a BTreeMap) native, in Paddock, and as a core module with epoch checks off and on|R/examples/app_cost"
+  "app|ordinary app code (serde JSON, regex, Markdown, a BTreeMap) native, in Bulkhead, and as a core module with epoch checks off and on|R/examples/app_cost"
   "log|guest log records|R/examples/log_cost"
   "admin|admin API latency (1 and 4 workers)|R/examples/admin_latency 1; R/examples/admin_latency 4"
   "watch|keyvalue writes with watchers, memory and disk buckets|R/examples/watch_cost 4; R/examples/watch_cost 4 disk"
@@ -81,27 +81,27 @@ fi
 [ -x /usr/bin/time ] || { echo "bench: needs GNU time at /usr/bin/time" >&2; exit 1; }
 
 echo "bench: building (release)"
-cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-chaos -p paddock-fixture-workload \
-  -p paddock-fixture-kvbench --target-dir target/fixtures
-# app_cost's core module: paddock-workload with no imports.
+cargo build -q --release --target wasm32-wasip2 -p bulkhead-fixture-chaos -p bulkhead-fixture-workload \
+  -p bulkhead-fixture-kvbench --target-dir target/fixtures
+# app_cost's core module: bulkhead-workload with no imports.
 app_core=0
 if wanted app; then
   if rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then
-    cargo rustc -q --release -p paddock-workload --features exports --crate-type cdylib \
+    cargo rustc -q --release -p bulkhead-workload --features exports --crate-type cdylib \
       --target wasm32-unknown-unknown --target-dir target/fixtures
     app_core=1
   else
     echo "bench: app skipped (rustup target add wasm32-unknown-unknown)" >&2
   fi
 fi
-cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-sdk -p paddock-fixture-counter \
-  -p paddock-fixture-http -p paddock-fixture-echo -p paddock-fixture-chaos -p example-chaos \
+cargo build -q --release --target wasm32-wasip2 -p bulkhead-fixture-sdk -p bulkhead-fixture-counter \
+  -p bulkhead-fixture-http -p bulkhead-fixture-echo -p bulkhead-fixture-chaos -p example-chaos \
   -p example-scada-points -p example-scada-control
 # compile_cost's large component: the SDK fixture unoptimized.
-cargo build -q --target wasm32-wasip2 -p paddock-fixture-sdk
-cargo build -q --release -p paddock-host --examples
-cargo build -q --release -p paddock --example admin_latency
-cargo build -q --release -p paddock-modbus --example modbus_load
+cargo build -q --target wasm32-wasip2 -p bulkhead-fixture-sdk
+cargo build -q --release -p bulkhead-host --examples
+cargo build -q --release -p bulkhead --example admin_latency
+cargo build -q --release -p bulkhead-modbus --example modbus_load
 if wanted s14 || wanted s15; then
   (cd spikes && cargo build -q --release --target wasm32-wasip2 -p s14-guest -p s15-proxy -p s15-client -p s15-tcpserver \
     && cargo build -q --release -p s14-bench -p s15-bench)

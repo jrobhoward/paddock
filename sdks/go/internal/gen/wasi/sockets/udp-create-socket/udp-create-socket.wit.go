@@ -4,8 +4,8 @@
 package udpcreatesocket
 
 import (
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/sockets/network"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/sockets/udp"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/sockets/network"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/sockets/udp"
 	"go.bytecodealliance.org/cm"
 )
 

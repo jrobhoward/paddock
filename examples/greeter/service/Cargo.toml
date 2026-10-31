@@ -1,7 +1,7 @@
 [package]
 name = "example-greeter-service"
 version.workspace = true
-description = "Paddock example: a host service (extension) built against paddock-host alone"
+description = "Bulkhead example: a host service (extension) built against bulkhead-host alone"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-paddock-host = { workspace = true }
+bulkhead-host = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

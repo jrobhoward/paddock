@@ -1,14 +1,14 @@
 // Package metrics is counters, gauges and histograms through
-// paddock:metrics, exported by the node in Prometheus text. Declare the
-// `paddock:metrics` capability in the manifest. Updates never fail: a
+// bulkhead:metrics, exported by the node in Prometheus text. Declare the
+// `bulkhead:metrics` capability in the manifest. Updates never fail: a
 // metric that could be made can always be updated.
 package metrics
 
 import (
 	"errors"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/paddock/metrics/metrics"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/bulkhead/metrics/metrics"
 	"go.bytecodealliance.org/cm"
 )
 

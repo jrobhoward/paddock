@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tutorial chapter 4: state outside the pair. The tally app keeps its count
-# in Postgres (paddock:sql) and runs as a singleton on an HA pair, as the
+# in Postgres (bulkhead:sql) and runs as a singleton on an HA pair, as the
 # board did in chapter 2; kill the primary's process and node 2 carries on
 # from the same count, because both nodes reach the same database. See
 # examples/tutorial/README.md.
@@ -11,7 +11,7 @@
 # Needs Postgres's server programs (on Ubuntu: apt install postgresql; the
 # system service is not used and can be disabled). This script starts its
 # own server in the demo directory, as you, on a Unix socket only, and stops
-# it at the end. PADDOCK_PG_BIN names the directory holding initdb and
+# it at the end. BULKHEAD_PG_BIN names the directory holding initdb and
 # pg_ctl if they are not under /usr/lib/postgresql/*/bin.
 #
 # HTTP_PORT (default 8081) is node 1's ingress port, and one more is node
@@ -22,17 +22,17 @@ BASE_PORT=${BASE_PORT:-7401}
 url() { echo "http://127.0.0.1:$((HTTP_PORT + $1 - 1))/tally"; }
 addr() { echo "127.0.0.1:$((BASE_PORT + $1 - 1))"; }
 
-PG_BIN=${PADDOCK_PG_BIN:-$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n 1)}
+PG_BIN=${BULKHEAD_PG_BIN:-$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n 1)}
 if [ ! -x "$PG_BIN/initdb" ] || [ ! -x "$PG_BIN/pg_ctl" ]; then
   echo "this chapter needs Postgres's initdb and pg_ctl (apt install postgresql," >&2
-  echo "or set PADDOCK_PG_BIN to the directory holding them)" >&2
+  echo "or set BULKHEAD_PG_BIN to the directory holding them)" >&2
   exit 1
 fi
 PG_PORT=5433
 pg_stop() { "$PG_BIN/pg_ctl" -D "$DEMO_DIR/pg" -m fast stop >/dev/null 2>&1 || true; }
 trap 'cleanup; pg_stop' EXIT
 if [ ! -d "$DEMO_DIR/pg" ]; then
-  "$PG_BIN/initdb" -A trust -U paddock -E UTF8 -D "$DEMO_DIR/pg" >/dev/null
+  "$PG_BIN/initdb" -A trust -U bulkhead -E UTF8 -D "$DEMO_DIR/pg" >/dev/null
 fi
 "$PG_BIN/pg_ctl" -D "$DEMO_DIR/pg" -l "$DEMO_DIR/pg.log" -w start \
   -o "-k $DEMO_DIR -p $PG_PORT -c listen_addresses=''" >/dev/null
@@ -44,13 +44,13 @@ TALLY_WASM="$ROOT/target/wasm32-wasip2/release/example_tally.wasm"
 
 cat > policy.toml <<'TOML'
 [apps.tally]
-grant = ["wasi:http/incoming-handler", "paddock:sql", "wasi:logging"]
+grant = ["wasi:http/incoming-handler", "bulkhead:sql", "wasi:logging"]
 datasources = ["main"]
 TOML
 echo "[peers]" > peers.toml
 for n in 1 2 3; do
-  [ -f "node-$n.key" ] || "$PADDOCK" cluster keygen "node-$n.key" >/dev/null
-  echo "$n = [\"$("$PADDOCK" cluster pubkey "node-$n.key")\"]" >> peers.toml
+  [ -f "node-$n.key" ] || "$BULKHEAD" cluster keygen "node-$n.key" >/dev/null
+  echo "$n = [\"$("$BULKHEAD" cluster pubkey "node-$n.key")\"]" >> peers.toml
 done
 # Chapter 2's pair and witness, with the same short timings, and the
 # datasource on both nodes of the pair.
@@ -88,7 +88,7 @@ for n in 1 2 3; do
       echo "host = \"$DEMO_DIR\""
       echo "port = $PG_PORT"
       echo "dbname = \"postgres\""
-      echo "user = \"paddock\""
+      echo "user = \"bulkhead\""
     fi
   } > "node-$n.toml"
 done
@@ -97,9 +97,9 @@ start_node 3
 start_node 1
 start_node 2
 # The tally, as a singleton: it runs on the primary only.
-cp "$ROOT/examples/tally/paddock.toml" tally.toml
+cp "$ROOT/examples/tally/bulkhead.toml" tally.toml
 printf '\n[appserver.placement]\nmode = "singleton"\n' >> tally.toml
-"$PADDOCK" bundle tally.toml "$TALLY_WASM" --key signer.key --out tally.rbp >/dev/null
+"$BULKHEAD" bundle tally.toml "$TALLY_WASM" --key signer.key --out tally.rbp >/dev/null
 p 1 deploy tally.rbp >/dev/null
 p 2 deploy tally.rbp >/dev/null
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }
@@ -119,10 +119,10 @@ cat <<EOF
   Postgres                  $DEMO_DIR (socket), port $PG_PORT
 
 The tally on node 1 counts to 3, in Postgres. From another terminal:
-  export PATH="$(dirname "$PADDOCK"):\$PATH"
+  export PATH="$(dirname "$BULKHEAD"):\$PATH"
   curl -s $(url 1)
   curl -s -X POST -d 10 $(url 1)
-  $PG_BIN/psql -h $DEMO_DIR -p $PG_PORT -U paddock postgres -c 'SELECT * FROM tally_log'
+  $PG_BIN/psql -h $DEMO_DIR -p $PG_PORT -U bulkhead postgres -c 'SELECT * FROM tally_log'
 
 Then kill the primary, as a power cut would:
   kill -9 ${NODE_PIDS[1]}
@@ -149,7 +149,7 @@ chapter 2, but its state was never on node 1. Each change was committed in
 Postgres, in one transaction with its line in tally_log (whose "by" names
 the instance that made it), before the node answered. The database is
 outside the pair; making it highly available is the database's own matter
-(replication, a managed service), not Paddock's.
+(replication, a managed service), not Bulkhead's.
 EOF
 
 pause "restart node 1"

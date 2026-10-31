@@ -7,7 +7,7 @@
 package terminalstdin
 
 import (
-	terminalinput "github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/cli/terminal-input"
+	terminalinput "github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/cli/terminal-input"
 	"go.bytecodealliance.org/cm"
 )
 

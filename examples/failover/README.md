@@ -1,15 +1,15 @@
 # Failover demo
 
-A singleton moving between two Paddock nodes when the primary's process is
+A singleton moving between two Bulkhead nodes when the primary's process is
 killed, with a witness deciding the promotion. Three
-`paddock node` processes run on loopback: a witness (node 3) and a pair
+`bulkhead node` processes run on loopback: a witness (node 3) and a pair
 (nodes 1 and 2).
 
 ```bash
 examples/failover/demo.sh        # from the repository root
 ```
 
-The script builds `paddock` and the counter example (needs the
+The script builds `bulkhead` and the counter example (needs the
 `wasm32-wasip2` target), makes a cluster key per node and a peers file, and
 deploys the counter to both members with `placement.mode = "singleton"`.
 Then it:
@@ -40,5 +40,5 @@ failed.
 `examples/tutorial` is the longer version: an app with state over HTTP,
 paused between steps, with the primary killed by hand.
 
-`crates/paddock/tests/failover.rs` runs the same steps as a test, with the
+`crates/bulkhead/tests/failover.rs` runs the same steps as a test, with the
 pair started after the witness has stopped waiting for it.

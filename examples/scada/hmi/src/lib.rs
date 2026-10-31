@@ -1,7 +1,7 @@
 //! The operator's view of the point table, over HTTP through the node's
 //! ingress: a pool of instances on every node, each reading the shared
 //! `points` bucket that the `points` app keeps. Every response carries
-//! `x-paddock-pid`, the instance that answered.
+//! `x-bulkhead-pid`, the instance that answered.
 //!
 //! - `GET /scada/points`: `{"revision": r, "pid": "<...>", "points":
 //!   {"pump-1/holding/0": 17, ...}, "devices": {"pump-1": "online"}}`.
@@ -18,10 +18,10 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use paddock_sdk::http::{Request, Response};
-use paddock_sdk::kv::Bucket;
-use paddock_sdk::watch::{self, Change};
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Info, Reply, TimerRef};
+use bulkhead_sdk::http::{Request, Response};
+use bulkhead_sdk::kv::Bucket;
+use bulkhead_sdk::watch::{self, Change};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Info, Reply, TimerRef};
 use serde::Serialize;
 
 /// The shared bucket the `points` app writes.
@@ -88,7 +88,7 @@ fn answer(ctx: &Ctx) -> Envelope {
     table(ctx)
         .and_then(|t| Response::json(200, &t).map_err(|e| e.to_string()))
         .unwrap_or_else(|e| Response::text(500, e))
-        .header("x-paddock-pid", pid)
+        .header("x-bulkhead-pid", pid)
         .into()
 }
 
@@ -161,4 +161,4 @@ impl App for Hmi {
     }
 }
 
-paddock_sdk::app!(Hmi);
+bulkhead_sdk::app!(Hmi);

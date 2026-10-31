@@ -1,4 +1,4 @@
-//! A stateful counter, written with `paddock-sdk`: the upgrade example
+//! A stateful counter, written with `bulkhead-sdk`: the upgrade example
 //! (docs/GETTING_STARTED.md, tutorial chapter 6).
 //!
 //! - v1 keeps a count.
@@ -7,11 +7,11 @@
 //! - v3 (`--features v3`) is v2 refusing every snapshot: the upgrade that
 //!   must revert.
 //!
-//! Text commands, so `paddock call counter inc` works: `inc` replies the new
+//! Text commands, so `bulkhead call counter inc` works: `inc` replies the new
 //! count; `get` replies `<version> count=<n>` (and ` history=...` from v2).
 //! `lifecycle.start_args = { register = "name" }` registers a name.
 
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply, Snapshot};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply, Snapshot};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "v2"))]
@@ -39,7 +39,7 @@ struct State {
 }
 
 #[cfg(feature = "v2")]
-fn migrate(from: u32, old: paddock_sdk::snapshot::Value) -> Result<State, String> {
+fn migrate(from: u32, old: bulkhead_sdk::snapshot::Value) -> Result<State, String> {
     #[derive(Deserialize)]
     struct V1 {
         count: u64,
@@ -134,4 +134,4 @@ impl App for Counter {
     }
 }
 
-paddock_sdk::app!(Counter);
+bulkhead_sdk::app!(Counter);

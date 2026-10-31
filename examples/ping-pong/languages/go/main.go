@@ -9,8 +9,8 @@ package main
 import (
 	"strings"
 
-	"example.com/pong/gen/paddock/runtime/process"
-	"example.com/pong/gen/paddock/runtime/types"
+	"example.com/pong/gen/bulkhead/runtime/process"
+	"example.com/pong/gen/bulkhead/runtime/types"
 	"example.com/pong/gen/pong/go/app"
 	"go.bytecodealliance.org/cm"
 )

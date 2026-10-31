@@ -1,7 +1,7 @@
 [package]
 name = "example-greeter-node"
 version.workspace = true
-description = "Paddock example: a node binary with the greeter extension"
+description = "Bulkhead example: a node binary with the greeter extension"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,11 +16,11 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 example-greeter-service = { path = "../service" }
-paddock = { path = "../../../crates/paddock" }
+bulkhead = { path = "../../../crates/bulkhead" }
 
 [dev-dependencies]
 minisign = { workspace = true }
-paddock-host = { workspace = true }
+bulkhead-host = { workspace = true }
 rustbridge-bundle = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

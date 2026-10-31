@@ -1,5 +1,5 @@
-//! `greeter-node`: a Paddock node that also serves the `example:greeting`
-//! extension. Run it like `paddock node`:
+//! `greeter-node`: a Bulkhead node that also serves the `example:greeting`
+//! extension. Run it like `bulkhead node`:
 //!
 //! ```sh
 //! cargo run -p example-greeter-node -- node.toml
@@ -16,5 +16,5 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .context("usage: greeter-node <node.toml>")?
         .into();
-    paddock::node::run(&config, vec![Arc::new(Greeter::default())])
+    bulkhead::node::run(&config, vec![Arc::new(Greeter::default())])
 }

@@ -36,7 +36,7 @@ jobs:
       # process_ops runs the chaos fixture.
       - name: Build guest fixture
         if: matrix.target == 'process_ops'
-        run: cargo +stable build --release --target wasm32-wasip2 -p paddock-fixture-chaos --target-dir target/fixtures --locked
+        run: cargo +stable build --release --target wasm32-wasip2 -p bulkhead-fixture-chaos --target-dir target/fixtures --locked
 
       - uses: actions/cache@v4
         with:
@@ -56,7 +56,7 @@ jobs:
 
   # Random distribution scenarios on new seeds each night: run
   # N starts at N * 1000. A failure prints its seed; replay it locally with
-  # PADDOCK_SIM_SEED=<seed> cargo test -p paddock-host --test simulation random.
+  # BULKHEAD_SIM_SEED=<seed> cargo test -p bulkhead-host --test simulation random.
   simulation:
     name: simulation seeds
     runs-on: ubuntu-latest
@@ -68,6 +68,6 @@ jobs:
 
       - name: Run seeds
         env:
-          PADDOCK_SIM_FIRST_SEED: ${{ github.run_number }}000
-          PADDOCK_SIM_SEEDS: "500"
-        run: cargo +stable test -p paddock-host --test simulation --locked random
+          BULKHEAD_SIM_FIRST_SEED: ${{ github.run_number }}000
+          BULKHEAD_SIM_SEEDS: "500"
+        run: cargo +stable test -p bulkhead-host --test simulation --locked random

@@ -3,7 +3,7 @@
 %%! -noshell
 %%
 %% BEAM reference figures for docs/BASELINE.md: the shapes `baseline` and
-%% `timer_cost` measure in Paddock, as Erlang/OTP does them. A gen_server
+%% `timer_cost` measure in Bulkhead, as Erlang/OTP does them. A gen_server
 %% call and cast, spawning a gen_server to its first reply, idle memory per
 %% process, and how late erlang:send_after messages are handled, idle and
 %% under load. The load is timer_cost's: 64 clients calling 16 gen_servers
@@ -29,7 +29,7 @@ main(_) ->
     io:format("erts ~s, OTP ~s, schedulers: ~p~n",
               [erlang:system_info(version), erlang:system_info(otp_release),
                erlang:system_info(schedulers_online)]),
-    %% From a process of its own, as the Paddock client runs as a task.
+    %% From a process of its own, as the Bulkhead client runs as a task.
     run_in(fun() ->
         {ok, S} = gen_server:start(?MODULE, [], []),
         call_latency(S, echo, "empty call"),

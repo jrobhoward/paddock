@@ -1,7 +1,7 @@
 [package]
 name = "example-scada-control"
 version.workspace = true
-description = "Paddock example: SCADA alarms, operator writes and an event log, as a singleton"
+description = "Bulkhead example: SCADA alarms, operator writes and an event log, as a singleton"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -18,7 +18,7 @@ crate-type = ["cdylib"]
 v2 = []
 
 [dependencies]
-paddock-sdk = { workspace = true, features = ["config", "http", "keyvalue", "watch"] }
+bulkhead-sdk = { workspace = true, features = ["config", "http", "keyvalue", "watch"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 wit-bindgen = { workspace = true }

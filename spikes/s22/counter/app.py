@@ -1,4 +1,4 @@
-"""Spike S22: a Paddock app in Python (componentize-py), against the raw
+"""Spike S22: a Bulkhead app in Python (componentize-py), against the raw
 bindings componentize-py generates from wit/runtime.wit. The same text
 protocol and misbehaving commands as S21's Go app.
 

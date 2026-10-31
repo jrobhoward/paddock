@@ -32,7 +32,7 @@
 package batch
 
 import (
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/keyvalue/store"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/keyvalue/store"
 	"go.bytecodealliance.org/cm"
 )
 

@@ -3,9 +3,9 @@
 # needs. What follows is that file's note.
 #
 # Watches the counter on the bulletin board and logs every change
-# (`paddock logs board-watch`). The same component as `board`, started with
+# (`bulkhead logs board-watch`). The same component as `board`, started with
 # {"watch": true}. Needs the `board` bucket in node config (see
-# paddock.toml) and in policy:
+# bulkhead.toml) and in policy:
 #
 #   [apps.board-watch]
 #   grant = ["wasi:keyvalue", "wasi:logging"]
@@ -13,7 +13,7 @@
 [app]
 name = "board-watch"
 version = "1.0.0"
-description = "Logs every change to the board's counter (paddock example, Go)"
+description = "Logs every change to the board's counter (bulkhead example, Go)"
 license = "MIT OR Apache-2.0"
 
 [appserver.lifecycle]
@@ -24,7 +24,7 @@ board = "ro"
 
 # The component imports process groups for its hot-standby mode
 # (hot-standby.toml); declared without groups here, it is never called.
-[appserver.capabilities."paddock:groups"]
+[appserver.capabilities."bulkhead:groups"]
 
 [appserver.capabilities."wasi:logging"]
 

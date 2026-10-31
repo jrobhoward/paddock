@@ -1,7 +1,7 @@
-package paddock:metrics@0.1.0;
+package bulkhead:metrics@0.1.0;
 
 /// App-defined counters, gauges and histograms, exported by the node with
-/// its own (Prometheus text). Declared under `capabilities."paddock:metrics"`
+/// its own (Prometheus text). Declared under `capabilities."bulkhead:metrics"`
 /// with a `prefix`; every name is exported as `<prefix>_<name>` with an
 /// `app` label. Metrics are per app: every instance that registers the same
 /// name and labels updates the same series.
@@ -18,7 +18,7 @@ interface metrics {
 
   /// Why an operation failed.
   variant error {
-    /// `paddock:metrics` is not granted.
+    /// `bulkhead:metrics` is not granted.
     access-denied,
     /// A bad name or label, a name already used with another kind, buckets
     /// not increasing, an update that does not fit the kind, or a value

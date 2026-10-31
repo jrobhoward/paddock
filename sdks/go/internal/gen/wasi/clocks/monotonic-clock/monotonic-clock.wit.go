@@ -15,7 +15,7 @@
 package monotonicclock
 
 import (
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/io/poll"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/io/poll"
 	"go.bytecodealliance.org/cm"
 )
 

@@ -3,7 +3,7 @@
 package types
 
 import (
-	wallclock "github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/clocks/wall-clock"
+	wallclock "github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/clocks/wall-clock"
 	"go.bytecodealliance.org/cm"
 	"unsafe"
 )

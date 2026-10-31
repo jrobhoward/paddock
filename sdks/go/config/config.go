@@ -6,8 +6,8 @@ package config
 import (
 	"errors"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/config/store"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/config/store"
 )
 
 // ErrAccessDenied: the operator did not grant wasi:config.

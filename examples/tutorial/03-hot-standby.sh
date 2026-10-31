@@ -18,13 +18,13 @@ addr() { echo "127.0.0.1:$((BASE_PORT + $1 - 1))"; }
 
 cat > policy.toml <<'TOML'
 [apps.board]
-grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging", "paddock:groups"]
+grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging", "bulkhead:groups"]
 buckets = ["board"]
 TOML
 echo "[peers]" > peers.toml
 for n in 1 2 3; do
-  [ -f "node-$n.key" ] || "$PADDOCK" cluster keygen "node-$n.key" >/dev/null
-  echo "$n = [\"$("$PADDOCK" cluster pubkey "node-$n.key")\"]" >> peers.toml
+  [ -f "node-$n.key" ] || "$BULKHEAD" cluster keygen "node-$n.key" >/dev/null
+  echo "$n = [\"$("$BULKHEAD" cluster pubkey "node-$n.key")\"]" >> peers.toml
 done
 # The same short timings as chapter 2.
 for n in 1 2 3; do
@@ -88,11 +88,11 @@ cat <<EOF
   node 3  process ${NODE_PIDS[3]}   witness
 
 The board counts to 3 on both nodes. From another terminal:
-  export PATH="$(dirname "$PADDOCK"):\$PATH"
+  export PATH="$(dirname "$BULKHEAD"):\$PATH"
   curl -s -X POST $(url 1)          # "replicas":1: on node 2's board too
   curl -s $(url 2)                  # the standby reads its own board
   curl -s -X POST $(url 2)          # 503: writes go to the primary
-  paddock --socket $(sock 1) logs board
+  bulkhead --socket $(sock 1) logs board
 
 Then kill the primary:
   kill -9 ${NODE_PIDS[1]}

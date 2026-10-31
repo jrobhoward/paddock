@@ -1,4 +1,4 @@
-//! An app that fails on purpose, written with `paddock-sdk`, for the Phase
+//! An app that fails on purpose, written with `bulkhead-sdk`, for the Phase
 //! 1 failure tests (crash loop, runaway code, memory cap).
 //!
 //! `start_args = { fail = "error" | "trap" | "spin" }` makes `init` fail.
@@ -6,7 +6,7 @@
 //! `alloc:<mib>` (allocate and keep `<mib>` MiB), `log:<n>` (write `<n>`
 //! debug records, for measuring what a filtered record costs).
 
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 use serde::Deserialize;
 
 #[derive(Deserialize, Default)]
@@ -57,7 +57,7 @@ impl App for Chaos {
             "log" => {
                 let n: u32 = arg.parse().unwrap_or(0);
                 for i in 0..n {
-                    paddock_sdk::debug!("record {i} of {n}");
+                    bulkhead_sdk::debug!("record {i} of {n}");
                 }
                 "ok".to_string()
             }
@@ -67,4 +67,4 @@ impl App for Chaos {
     }
 }
 
-paddock_sdk::app!(Chaos);
+bulkhead_sdk::app!(Chaos);

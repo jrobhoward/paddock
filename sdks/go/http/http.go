@@ -2,12 +2,12 @@
 // calls, and their responses, in GUEST_FORMATS.md's formats.
 //
 // A route in the node's HTTP config sends each request on its paths to the
-// app as a call with schema `paddock/http-request`. Answer with a
+// app as a call with schema `bulkhead/http-request`. Answer with a
 // [Response] envelope, now or later:
 //
-//	func (a *App) HandleCall(ctx *paddock.Ctx, call paddock.CallRef, msg paddock.Envelope) paddock.Reply {
+//	func (a *App) HandleCall(ctx *bulkhead.Ctx, call bulkhead.CallRef, msg bulkhead.Envelope) bulkhead.Reply {
 //		if req, ok := http.RequestFrom(msg); ok {
-//			return paddock.Now(http.Text(200, "hello "+req.Path).Envelope())
+//			return bulkhead.Now(http.Text(200, "hello "+req.Path).Envelope())
 //		}
 //		...
 //	}
@@ -17,13 +17,13 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	paddock "github.com/jrobhoward/paddock/sdks/go"
+	bulkhead "github.com/jrobhoward/bulkhead/sdks/go"
 )
 
 // Schemas of a request and a response.
 const (
-	RequestSchema  = "paddock/http-request"
-	ResponseSchema = "paddock/http-response"
+	RequestSchema  = "bulkhead/http-request"
+	ResponseSchema = "bulkhead/http-response"
 )
 
 // Header is one header: a lower-case name and its value.
@@ -89,12 +89,12 @@ func headersTo(headers []Header) [][]string {
 }
 
 // RequestFrom reads msg as a request, if it is one.
-func RequestFrom(msg paddock.Envelope) (Request, bool) {
+func RequestFrom(msg bulkhead.Envelope) (Request, bool) {
 	if msg.Schema != RequestSchema {
 		return Request{}, false
 	}
 	var w wireRequest
-	if paddock.UnmarshalCBOR(msg.Body, &w) != nil || w.Method == "" || w.Path == "" {
+	if bulkhead.UnmarshalCBOR(msg.Body, &w) != nil || w.Method == "" || w.Path == "" {
 		return Request{}, false
 	}
 	r := Request{
@@ -120,7 +120,7 @@ func RequestFrom(msg paddock.Envelope) (Request, bool) {
 }
 
 // Envelope writes the request as the ingress sends it.
-func (r Request) Envelope() paddock.Envelope {
+func (r Request) Envelope() bulkhead.Envelope {
 	w := wireRequest{
 		Scheme:  r.Scheme,
 		Method:  r.Method,
@@ -189,7 +189,7 @@ func Text(status uint16, body string) Response {
 
 // JSON is an application/json response with v encoded.
 func JSON(status uint16, v any) (Response, error) {
-	body, err := paddock.MarshalJSON(v)
+	body, err := bulkhead.MarshalJSON(v)
 	if err != nil {
 		return Response{}, err
 	}
@@ -209,25 +209,25 @@ func (r Response) WithBody(body []byte) Response {
 }
 
 // Envelope writes the response for a reply.
-func (r Response) Envelope() paddock.Envelope {
+func (r Response) Envelope() bulkhead.Envelope {
 	return encode(wireResponse{Status: r.Status, Headers: headersTo(r.Headers), Body: r.Body}, ResponseSchema)
 }
 
 // ResponseFrom reads msg as a response, if it is one; a missing status is
 // 200.
-func ResponseFrom(msg paddock.Envelope) (Response, bool) {
+func ResponseFrom(msg bulkhead.Envelope) (Response, bool) {
 	if msg.Schema != ResponseSchema {
 		return Response{}, false
 	}
 	w := wireResponse{Status: 200}
-	if paddock.UnmarshalCBOR(msg.Body, &w) != nil {
+	if bulkhead.UnmarshalCBOR(msg.Body, &w) != nil {
 		return Response{}, false
 	}
 	return Response{Status: w.Status, Headers: headersFrom(w.Headers), Body: w.Body}, true
 }
 
-func encode(v any, schema string) paddock.Envelope {
+func encode(v any, schema string) bulkhead.Envelope {
 	// Encoding these types cannot fail.
-	msg, _ := paddock.CBOR(v)
+	msg, _ := bulkhead.CBOR(v)
 	return msg.WithSchema(schema)
 }

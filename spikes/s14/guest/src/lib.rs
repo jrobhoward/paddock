@@ -5,7 +5,7 @@
 //!   `file` is `/data/guest.redb` through WASI, fsync per commit;
 //!   `file-nosync` uses `Durability::None`.
 //! - `kv:<bucket>:<put|get>:<n>:<size>`: the host's keyvalue service through
-//!   `paddock_sdk::kv` (`mem` is a memory bucket, `disk` native redb).
+//!   `bulkhead_sdk::kv` (`mem` is a memory bucket, `disk` native redb).
 //! - `self:<n>`: `n` calls to `process.self`, the cheapest host import.
 //!
 //! One put or get is one transaction, as in the host's keyvalue service.
@@ -13,8 +13,8 @@
 
 use std::time::Instant;
 
-use paddock_sdk::kv::Bucket;
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use bulkhead_sdk::kv::Bucket;
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 use redb::{Database, Durability, ReadableDatabase, TableDefinition, backends::InMemoryBackend};
 
 const T: TableDefinition<&str, &[u8]> = TableDefinition::new("t");
@@ -112,4 +112,4 @@ impl App for Guest {
     }
 }
 
-paddock_sdk::app!(Guest);
+bulkhead_sdk::app!(Guest);

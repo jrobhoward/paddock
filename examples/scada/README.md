@@ -1,14 +1,14 @@
 # SCADA reference app
 
-Phase 3's workload: a small SCADA system on Paddock, fed by
-the built-in Modbus TCP extension (`paddock node` built with the `modbus`
+Phase 3's workload: a small SCADA system on Bulkhead, fed by
+the built-in Modbus TCP extension (`bulkhead node` built with the `modbus`
 feature). Three apps:
 
 | App | Placement | What it does |
 | --- | --- | --- |
 | `points` | a pool of 4, `hash:device` | Takes each device's updates from the Modbus extension and writes them into the node's shared `points` bucket: `<device>/<table>/<address>` and `<device>/status`. |
 | `hmi` | a pool of 2 | Serves the table over HTTP, `GET /scada/points`, and holds a long poll (`?after=<revision>&wait_ms=<n>`) until the bucket changes. |
-| `control` | singleton | Watches the table and raises alarms from it (rules in its `rules` config, and `<device>-offline`), takes acknowledgements and device writes, and keeps an event log, in disk buckets of its own. Version 2 (`paddock-v2.toml`, `--features v2`) adds a field and migrates version 1's snapshot; version 1 reads version 2's, so a rollback keeps the alarms. |
+| `control` | singleton | Watches the table and raises alarms from it (rules in its `rules` config, and `<device>-offline`), takes acknowledgements and device writes, and keeps an event log, in disk buckets of its own. Version 2 (`bulkhead-v2.toml`, `--features v2`) adds a field and migrates version 1's snapshot; version 1 reads version 2's, so a rollback keeps the alarms. |
 
 Each module's doc comment lists its routes and replies. On an HA pair the
 apps are deployed to both nodes. `points` and `hmi` run on both;
@@ -20,7 +20,7 @@ the standby's copy comes from it. `control`'s buckets are `replicated`, so
 it needs `[failover] replication = true` on both nodes; its alarms and
 event log are on both, and a new primary's `control` starts with them.
 
-`crates/paddock/tests/scada.rs` runs the three on one node against a
+`crates/bulkhead/tests/scada.rs` runs the three on one node against a
 fake device (`control`'s buckets on disk there, since one node has no
 replication): polling, a long poll woken by a change, an alarm raised by a
 write and acknowledged, the upgrade to version 2 and the rollback, and a
@@ -34,15 +34,15 @@ acknowledged alarm is still acknowledged after a planned switchover.
 examples/scada/drill.sh        # from the repository root
 ```
 
-The script builds `paddock` with `modbus`, the apps (both versions of
-`control`) and `fake_device` (`crates/paddock-modbus/examples`: two
+The script builds `bulkhead` with `modbus`, the apps (both versions of
+`control`) and `fake_device` (`crates/bulkhead-modbus/examples`: two
 devices whose register 0 counts up every 100 ms), and starts a witness and
-a pair as three `paddock node` processes, with the timings of
+a pair as three `bulkhead node` processes, with the timings of
 `examples/failover` (200 ms heartbeats, 1 s node timeout, 2 s lease). It
 deploys the apps to both nodes, raises and acknowledges an alarm, and then
 runs a release cycle, `STEP_SECS` (5) apart:
 
-1. `control` released at version 2 across the pair (`paddock release
+1. `control` released at version 2 across the pair (`bulkhead release
    upgrade --pair pair.toml`: the standby, then the primary in place);
 2. a planned switchover;
 3. a release rollback across the pair;
@@ -100,10 +100,10 @@ bucket polled by the primary alone and `control`'s buckets `replicated`:
   against about 3 s and 28. The failover (the primary killed) is
   unchanged at 3.6 s: it still waits the node timeout and the lease.
 
-## Third run: the cycle through `paddock release`
+## Third run: the cycle through `bulkhead release`
 
 On 2026-10-21 (same machine, load average about 1.4 from other work), with
-the upgrades and the rollback run by `paddock release` across the pair
+the upgrades and the rollback run by `bulkhead release` across the pair
  instead of a command per node:
 
 - Each release did the standby (a bundle swap of the held singleton),
@@ -124,9 +124,9 @@ the upgrades and the rollback run by `paddock release` across the pair
   wait before the primary commits without it.
 - The acknowledged alarm stayed `acked` after every step.
 
-## Under faults: `paddock-soak scada`
+## Under faults: `bulkhead-soak scada`
 
-`paddock-soak scada` (`scripts/soak.sh --only scada`) runs
+`bulkhead-soak scada` (`scripts/soak.sh --only scada`) runs
 the same apps on the failover soak's pair and witness, behind proxies
 that cut, hold and drop the links, with nodes killed and stopped, and
 between episodes of faults releases `control` across the pair and

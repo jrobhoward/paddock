@@ -1,11 +1,11 @@
-// pong in JavaScript (jco componentize), against paddock:runtime/app as jco
+// pong in JavaScript (jco componentize), against bulkhead:runtime/app as jco
 // maps it: registers `pong` and answers each CBOR `Ping { n }` with
 // `Pong { n: n + 1 }`, as the Rust example's `pong` role does. The Rust
 // `ping` app (examples/ping-pong) calls it.
 //
 // Build with build.sh in the directory above; see its README.
 
-import { register } from "paddock:runtime/process@0.1.0";
+import { register } from "bulkhead:runtime/process@0.1.0";
 
 const CBOR = "application/cbor";
 const encoder = new TextEncoder();

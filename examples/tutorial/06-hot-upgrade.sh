@@ -12,16 +12,16 @@ source "$(dirname "$0")/common.sh"
 # target directory so the three components sit side by side.
 for v in 1 2 3; do
   features=""
-  manifest="$ROOT/examples/counter/paddock.toml"
+  manifest="$ROOT/examples/counter/bulkhead.toml"
   if [ "$v" != 1 ]; then
     features="--features v$v"
-    manifest="$ROOT/examples/counter/paddock-v$v.toml"
+    manifest="$ROOT/examples/counter/bulkhead-v$v.toml"
   fi
   # shellcheck disable=SC2086
   cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
     --target wasm32-wasip2 -p example-counter $features \
     --target-dir "$ROOT/target/tutorial-counter-v$v"
-  "$PADDOCK" bundle "$manifest" \
+  "$BULKHEAD" bundle "$manifest" \
     "$ROOT/target/tutorial-counter-v$v/wasm32-wasip2/release/example_counter.wasm" \
     --key signer.key --out "counter-$v.rbp" >/dev/null
 done
@@ -48,13 +48,13 @@ versions are in $DEMO_DIR:
   counter-3.rbp  version 2, but refuses every snapshot: an upgrade that fails
 
 From another terminal:
-  export PATH="$(dirname "$PADDOCK"):\$PATH" PADDOCK_SOCKET=$(sock 1)
+  export PATH="$(dirname "$BULKHEAD"):\$PATH" BULKHEAD_SOCKET=$(sock 1)
   cd $DEMO_DIR
-  paddock call counter inc
-  paddock call counter get
-  paddock ps
-  paddock state <pid>         # the instance's state, through save-snapshot
-  paddock upgrade counter counter-2.rbp
+  bulkhead call counter inc
+  bulkhead call counter get
+  bulkhead ps
+  bulkhead state <pid>         # the instance's state, through save-snapshot
+  bulkhead upgrade counter counter-2.rbp
 EOF
 
 pause "count to 3"

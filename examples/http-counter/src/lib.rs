@@ -1,12 +1,12 @@
-//! A counter served over HTTP with `paddock-sdk`'s `http` feature. The
+//! A counter served over HTTP with `bulkhead-sdk`'s `http` feature. The
 //! node terminates HTTP; each request arrives in `handle_call`.
 //!
 //! - `GET /counter`: `{"count": n}`.
 //! - `POST /counter`: add one (or the body's number) and return the count.
 //! - `DELETE /counter`: reset.
 
-use paddock_sdk::http::{Request, Response};
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use bulkhead_sdk::http::{Request, Response};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 
 #[derive(Default)]
 struct Counter {
@@ -48,4 +48,4 @@ impl App for Counter {
     }
 }
 
-paddock_sdk::app!(Counter);
+bulkhead_sdk::app!(Counter);

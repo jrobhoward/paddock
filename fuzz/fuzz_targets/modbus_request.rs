@@ -7,7 +7,7 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use paddock_modbus::fuzz_request;
+use bulkhead_modbus::fuzz_request;
 
 #[derive(Debug, Arbitrary)]
 struct Input {

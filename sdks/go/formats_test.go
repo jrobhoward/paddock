@@ -1,10 +1,10 @@
-package paddock
+package bulkhead
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/jrobhoward/paddock/sdks/go/internal/formats"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/formats"
 )
 
 type board struct {

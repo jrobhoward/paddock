@@ -1,4 +1,4 @@
-package paddock:watch@0.1.0;
+package bulkhead:watch@0.1.0;
 
 /// Revisioned reads, compare-and-swap and change watches on keyvalue
 /// buckets. Next to `wasi:keyvalue`, which has none of these, and covered

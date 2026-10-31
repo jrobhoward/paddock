@@ -4,8 +4,8 @@
 // bucket on disk; the instance holds no state of its own, so the count
 // survives a crash and its restart. One component, three ways to run it:
 //
-//   - board (paddock.toml) serves HTTP through the node's ingress. Every
-//     response carries x-paddock-pid, the instance that answered.
+//   - board (bulkhead.toml) serves HTTP through the node's ingress. Every
+//     response carries x-bulkhead-pid, the instance that answered.
 //     GET /board: {"count": n, "pid": "<...>"}. POST /board: add one (or the
 //     body's number) and return the same. DELETE /board: reset to 0.
 //     POST /board/crash: trap, as a bug would; the supervisor restarts the
@@ -28,12 +28,12 @@ import (
 	"strings"
 	"time"
 
-	paddock "github.com/jrobhoward/paddock/sdks/go"
-	"github.com/jrobhoward/paddock/sdks/go/groups"
-	"github.com/jrobhoward/paddock/sdks/go/http"
-	"github.com/jrobhoward/paddock/sdks/go/kv"
-	"github.com/jrobhoward/paddock/sdks/go/log"
-	"github.com/jrobhoward/paddock/sdks/go/watch"
+	bulkhead "github.com/jrobhoward/bulkhead/sdks/go"
+	"github.com/jrobhoward/bulkhead/sdks/go/groups"
+	"github.com/jrobhoward/bulkhead/sdks/go/http"
+	"github.com/jrobhoward/bulkhead/sdks/go/kv"
+	"github.com/jrobhoward/bulkhead/sdks/go/log"
+	"github.com/jrobhoward/bulkhead/sdks/go/watch"
 )
 
 // The shared bucket, the key the count is kept under, and the process group
@@ -81,7 +81,7 @@ func read(b *kv.Bucket) (int64, error) {
 
 // replicateTo writes count to every other member of the group, and returns
 // how many took it.
-func replicateTo(ctx *paddock.Ctx, count int64) int {
+func replicateTo(ctx *bulkhead.Ctx, count int64) int {
 	me := ctx.Pid()
 	members, _ := groups.Members(group)
 	took := 0
@@ -89,7 +89,7 @@ func replicateTo(ctx *paddock.Ctx, count int64) int {
 		if other == me {
 			continue
 		}
-		msg := paddock.Text(fmt.Sprintf("replicate:%d", count))
+		msg := bulkhead.Text(fmt.Sprintf("replicate:%d", count))
 		if _, err := ctx.Call(other, msg, replicaTimeout); err != nil {
 			log.Warnf("replica %s missed count %d: %v", other, count, err)
 			continue
@@ -105,7 +105,7 @@ type reply struct {
 	Replicas *int   `json:"replicas,omitempty"`
 }
 
-func (w *web) serve(ctx *paddock.Ctx, req http.Request) (http.Response, error) {
+func (w *web) serve(ctx *bulkhead.Ctx, req http.Request) (http.Response, error) {
 	pid := ctx.Pid().String()
 	b, err := kv.Open(board)
 	if err != nil {
@@ -158,26 +158,26 @@ func (w *web) serve(ctx *paddock.Ctx, req http.Request) (http.Response, error) {
 	if err != nil {
 		return http.Response{}, err
 	}
-	return resp.Header("x-paddock-pid", pid), nil
+	return resp.Header("x-bulkhead-pid", pid), nil
 }
 
-func (w *web) HandleCall(ctx *paddock.Ctx, _ paddock.CallRef, msg paddock.Envelope) paddock.Reply {
+func (w *web) HandleCall(ctx *bulkhead.Ctx, _ bulkhead.CallRef, msg bulkhead.Envelope) bulkhead.Reply {
 	if req, ok := http.RequestFrom(msg); ok {
 		resp, err := w.serve(ctx, req)
 		if err != nil {
 			resp = http.Text(500, err.Error())
 		}
-		return paddock.Now(resp.Envelope())
+		return bulkhead.Now(resp.Envelope())
 	}
 	text, _ := msg.AsText()
 	n, ok := strings.CutPrefix(text, "replicate:")
 	if !ok {
-		return paddock.Now(paddock.Text("send HTTP requests to /board"))
+		return bulkhead.Now(bulkhead.Text("send HTTP requests to /board"))
 	}
 	// The primary's write, for this node's board.
 	count, err := strconv.ParseInt(n, 10, 64)
 	if err != nil {
-		return paddock.Now(paddock.Text("error: " + err.Error()))
+		return bulkhead.Now(bulkhead.Text("error: " + err.Error()))
 	}
 	b, err := kv.Open(board)
 	if err == nil {
@@ -185,13 +185,13 @@ func (w *web) HandleCall(ctx *paddock.Ctx, _ paddock.CallRef, msg paddock.Envelo
 		b.Close()
 	}
 	if err != nil {
-		return paddock.Now(paddock.Text("error: " + err.Error()))
+		return bulkhead.Now(bulkhead.Text("error: " + err.Error()))
 	}
-	return paddock.Now(paddock.Text("ok"))
+	return bulkhead.Now(bulkhead.Text("ok"))
 }
 
-func (w *web) HandleInfo(_ *paddock.Ctx, info paddock.Info) {
-	ev, ok := info.(paddock.EventInfo)
+func (w *web) HandleInfo(_ *bulkhead.Ctx, info bulkhead.Info) {
+	ev, ok := info.(bulkhead.EventInfo)
 	if !ok || ev.Name != "failover-role" {
 		return
 	}
@@ -206,11 +206,11 @@ func (w *web) HandleInfo(_ *paddock.Ctx, info paddock.Info) {
 	log.Infof("role: %s", roleNames[w.role])
 }
 
-func (w *watcher) HandleCall(*paddock.Ctx, paddock.CallRef, paddock.Envelope) paddock.Reply {
-	return paddock.Now(paddock.Text(strconv.FormatUint(w.seen, 10)))
+func (w *watcher) HandleCall(*bulkhead.Ctx, bulkhead.CallRef, bulkhead.Envelope) bulkhead.Reply {
+	return bulkhead.Now(bulkhead.Text(strconv.FormatUint(w.seen, 10)))
 }
 
-func (w *watcher) HandleInfo(_ *paddock.Ctx, info paddock.Info) {
+func (w *watcher) HandleInfo(_ *bulkhead.Ctx, info bulkhead.Info) {
 	change, ok := watch.ChangeFromInfo(info)
 	if !ok {
 		return
@@ -232,7 +232,7 @@ func (w *watcher) HandleInfo(_ *paddock.Ctx, info paddock.Info) {
 	}
 }
 
-func start(_ *paddock.Ctx, raw []byte) (paddock.App, error) {
+func start(_ *bulkhead.Ctx, raw []byte) (bulkhead.App, error) {
 	var a args
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -256,7 +256,7 @@ func start(_ *paddock.Ctx, raw []byte) (paddock.App, error) {
 }
 
 func init() {
-	paddock.Export(paddock.Def{Init: start})
+	bulkhead.Export(bulkhead.Def{Init: start})
 }
 
 func main() {}

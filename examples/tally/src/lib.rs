@@ -1,4 +1,4 @@
-//! A tally kept in Postgres, through `paddock:sql`: the state lives in the
+//! A tally kept in Postgres, through `bulkhead:sql`: the state lives in the
 //! database, not the instance or the node, so it survives the instance,
 //! the node and a failover to another node that reaches the same database
 //! (tutorial chapter 4).
@@ -11,9 +11,9 @@
 //!
 //! `init` creates the two tables if they are missing.
 
-use paddock_sdk::http::{Request, Response};
-use paddock_sdk::sql::{self, SqlError, Value};
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Reply};
+use bulkhead_sdk::http::{Request, Response};
+use bulkhead_sdk::sql::{self, SqlError, Value};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 
 /// The datasource the manifest names.
 const DB: &str = "main";
@@ -113,7 +113,7 @@ impl App for Tally {
         };
         let pid = ctx.pid().to_string();
         let response = serve(&pid, &req).unwrap_or_else(|e| {
-            paddock_sdk::warn!("tally: {e}");
+            bulkhead_sdk::warn!("tally: {e}");
             let status = match e {
                 SqlError::Unavailable(_) | SqlError::LimitReached | SqlError::Timeout => 503,
                 _ => 500,
@@ -124,4 +124,4 @@ impl App for Tally {
     }
 }
 
-paddock_sdk::app!(Tally);
+bulkhead_sdk::app!(Tally);

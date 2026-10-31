@@ -1,7 +1,7 @@
 # Tutorial: state that survives failures
 
 One small app, a counter on a bulletin board, run through the failures
-Paddock handles: a crash, a node restart, and the loss of a whole node,
+Bulkhead handles: a crash, a node restart, and the loss of a whole node,
 with its state kept in four places; then a counter that keeps its state in
 memory, carried through a hot upgrade.
 Each chapter is a script that starts the nodes, prints the commands to
@@ -26,7 +26,7 @@ Go ([`examples/board-go`](../board-go), on the Go SDK; needs TinyGo, on
 `PATH` or in `TINYGO`); the commands and replies are the same. `board` serves `GET`, `POST` and `DELETE /board` over the node's HTTP
 ingress and keeps the count in the node's `board` bucket, not in its own
 memory; `POST /board/crash` makes it trap. Every reply names the instance
-that answered (`"pid"`, and the `x-paddock-pid` header). `board-watch`
+that answered (`"pid"`, and the `x-bulkhead-pid` header). `board-watch`
 watches the count on the board and logs every change.
 
 ## Chapter 1: one node
@@ -46,8 +46,8 @@ A pid reads `<node.instance.incarnation@creation>`. The crash fails its
 request (502); the app's supervisor restarts the instance from `init`, as
 the next incarnation of the same instance (`1.1.1` to `1.1.2`). The new
 instance starts with nothing in memory and reads the count from the board,
-so nothing is lost. `paddock logs board-watch` shows each change the
-watcher saw, and `paddock ps` the instances.
+so nothing is lost. `bulkhead logs board-watch` shows each change the
+watcher saw, and `bulkhead ps` the instances.
 
 The script then restarts the whole node. The new node process has a new
 creation (`@2`), and the count is still 3: the bucket is on disk.
@@ -72,7 +72,7 @@ would, `kill -9 <node 1's process>`, and read node 2 a few seconds later:
 ```text
 $ curl -s http://127.0.0.1:8082/board
 {"count":0,"pid":"<2.1.1@1>"}
-$ paddock --socket ... failover
+$ bulkhead --socket ... failover
 role:       primary
 epoch:      2
 ```
@@ -86,7 +86,7 @@ it. The script then restarts node 1, which rejoins as the standby; its own
 board still says 3, a stale copy that would come back if node 1 were
 promoted again.
 
-Kill node 1 only once node 2 is the standby (`paddock failover` on node 2
+Kill node 1 only once node 2 is the standby (`bulkhead failover` on node 2
 says so; the script waits for it). A node still starting is `down`, and a
 `down` node does not ask to be promoted: if the primary dies in that
 window, nobody takes over until it returns. This is an open question for
@@ -117,9 +117,9 @@ backend board
 ```
 
 Cloud load balancers work the same way. For a virtual IP that moves with
-the primary (as VRRP would), [`examples/systemd/paddock-vip.sh`](../systemd/paddock-vip.sh)
-is an agent driven by the node's leadership (`paddock failover --watch`;
-OPERATIONS.md). It stays outside `paddock node`, which then needs no
+the primary (as VRRP would), [`examples/systemd/bulkhead-vip.sh`](../systemd/bulkhead-vip.sh)
+is an agent driven by the node's leadership (`bulkhead failover --watch`;
+OPERATIONS.md). It stays outside `bulkhead node`, which then needs no
 network privileges.
 
 What this shows: failover moves where an app runs, not its state. The next
@@ -172,7 +172,7 @@ the standby, or refuses the write.
 of its own in the demo directory (as you, on a Unix socket only; it needs
 Postgres's server programs, on Ubuntu `apt install postgresql`). The app is
 [`examples/tally`](../tally), a counter that keeps its count in Postgres
-through `paddock:sql`, deployed to both nodes as a singleton, as the board
+through `bulkhead:sql`, deployed to both nodes as a singleton, as the board
 was in chapter 2. Each node's config names the database once,
 `[datasources.main]`; the app's manifest names `main` with how many
 connections it may hold, and policy grants it (`datasources = ["main"]`).
@@ -197,7 +197,7 @@ before the node answered, so nothing that a client saw is lost.
 
 What this shows: state an app keeps in a database outside the pair moves
 with it for free. The database is then the part to keep available, with
-its own replication or a managed service, which Paddock does not do. Its
+its own replication or a managed service, which Bulkhead does not do. Its
 calls cost a round trip to the database each, and a transaction holds one
 of the app's connections until it commits.
 
@@ -216,7 +216,7 @@ later, at the same count:
 ```text
 $ curl -s http://127.0.0.1:8082/board
 {"count":3,"pid":"<2.1.1@1>"}
-$ paddock --socket ... failover
+$ bulkhead --socket ... failover
 role:       primary
 outdated:   the partner lacks replicated writes; it is not promoted until it catches up
 replicated: board (commit 5, last 5, log 1 KiB, partner at 0, 5 behind, committing alone)
@@ -236,7 +236,7 @@ write costs a round trip to the standby and a sync to its disk (about 2.2
 to 2.8 ms on NVMe; BASELINE.md), so it suits state, such as counts, point
 tables and settings, more than streams. A singleton in `snapshot` upgrade
 mode can also take its in-memory state along in a planned switchover
-(`paddock failover switchover`; OPERATIONS.md).
+(`bulkhead failover switchover`; OPERATIONS.md).
 
 ## Chapter 6: a hot upgrade
 
@@ -246,19 +246,19 @@ last three values and reads v1's state, and v3 is v2 refusing every
 snapshot. All three use `upgrade.mode = "snapshot"`.
 
 ```text
-$ paddock call counter get
+$ bulkhead call counter get
 1.0.0 count=3
-$ paddock upgrade counter counter-2.rbp
+$ bulkhead upgrade counter counter-2.rbp
 1.0.0 -> 2.0.0 (snapshot), 1 instance(s), longest pause 344 µs
-$ paddock call counter get
+$ bulkhead call counter get
 2.0.0 count=3 history=
-$ paddock upgrade counter counter-3.rbp
+$ bulkhead upgrade counter counter-3.rbp
 Error: rollout stopped and reverted: instance-1: load-snapshot failed: v3 refuses snapshots from 2.0.0; ...
-$ paddock rollback counter
+$ bulkhead rollback counter
 Error: rollout stopped and reverted: instance-1: load-snapshot failed: cannot read snapshot format 2 ...
-$ paddock rollback counter --restart
+$ bulkhead rollback counter --restart
 2.0.0 -> 1.0.0 (restart), 1 instance(s)
-$ paddock call counter get
+$ bulkhead call counter get
 1.0.0 count=0
 ```
 
@@ -275,7 +275,7 @@ and the audit log records `"restart_requested": true`.
 What this shows: code changes without stopping the app or losing what it
 holds in memory, and a version that cannot take the state over is refused
 rather than run without it. Writing the snapshot functions is the app's
-part: `paddock-sdk`'s `#[derive(Snapshot)]` versions the format and hands
+part: `bulkhead-sdk`'s `#[derive(Snapshot)]` versions the format and hands
 older ones to a `migrate` function (WRITING_APPS.md, "State across
 upgrades"). An app whose state lives outside the instance, as the board's
 does, needs none of this and upgrades in `restart` or `blue-green` mode.

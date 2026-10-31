@@ -1,6 +1,6 @@
 package example:greeting@0.1.0;
 
-/// Greetings from a host service outside Paddock: the `greeter` extension.
+/// Greetings from a host service outside Bulkhead: the `greeter` extension.
 interface greet {
   variant error {
     /// The operator did not grant `example:greeting` to this app.

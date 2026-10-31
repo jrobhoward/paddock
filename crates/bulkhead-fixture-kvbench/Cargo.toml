@@ -1,0 +1,19 @@
+[package]
+name = "bulkhead-fixture-kvbench"
+version.workspace = true
+description = "Test fixture: keyvalue loops timed inside the guest, for the kv_cost benchmark against ETS"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bulkhead-sdk = { workspace = true, features = ["keyvalue", "watch"] }
+
+[lints]
+workspace = true

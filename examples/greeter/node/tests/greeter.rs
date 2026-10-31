@@ -11,10 +11,10 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bulkhead::node::{LogRing, Node, NodeConfig};
+use bulkhead_host::Envelope;
 use example_greeter_service::Greeter;
 use minisign::KeyPair;
-use paddock::node::{LogRing, Node, NodeConfig};
-use paddock_host::Envelope;
 use rustbridge_bundle::{BundleBuilder, Manifest, Platform};
 use serde_json::json;
 use tempfile::TempDir;
@@ -51,7 +51,7 @@ fn bundle(key: &KeyPair, name: &str, component: &[u8], appserver: serde_json::Va
     std::fs::write(&wasm, component).unwrap();
     let out = dir.path().join("app.rbp");
     BundleBuilder::new(Manifest::new(name, "1.0.0"))
-        .add_component(Platform::Wasm32Wasip2, &wasm, "paddock:runtime/app@0.1.0")
+        .add_component(Platform::Wasm32Wasip2, &wasm, "bulkhead:runtime/app@0.1.0")
         .unwrap()
         .with_extension("appserver", appserver)
         .with_signing_key(key.pk.to_base64(), key.sk.clone())

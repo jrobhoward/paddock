@@ -2,11 +2,11 @@
 %% -*- erlang -*-
 %%! -noshell
 %%
-%% ETS reference figures for docs/BASELINE.md: the loops paddock-host's
+%% ETS reference figures for docs/BASELINE.md: the loops bulkhead-host's
 %% kv_cost example runs in a guest against memory buckets, run in an Erlang
 %% process against ETS tables. The same keys (<<"k000000">> ...), binary
 %% values of the same sizes, and the same pseudo-random key sequence
-%% (paddock-fixture-kvbench's generator), made before each loop is timed.
+%% (bulkhead-fixture-kvbench's generator), made before each loop is timed.
 %% Each figure is the median of 7 runs, in ns per operation.
 %%
 %% - Memory: bytes per entry with 100,000 entries, the table's own words
@@ -59,7 +59,7 @@ run_in(F) ->
 
 -define(MASK, 16#FFFFFFFFFFFFFFFF).
 
-%% paddock-fixture-kvbench's Lcg::next.
+%% bulkhead-fixture-kvbench's Lcg::next.
 lcg(X, Below) ->
     X1 = (X * 6364136223846793005 + 1442695040888963407) band ?MASK,
     {(X1 bsr 33) rem max(Below, 1), X1}.
@@ -94,7 +94,7 @@ fill(T, Prefix, N, Size) ->
     ets:insert(T, [{key(Prefix, I), value(Size)} || I <- lists:seq(0, N - 1)]).
 
 %% Run F on each item, keeping nothing: a list comprehension would collect
-%% every result, garbage the Paddock loop does not make.
+%% every result, garbage the Bulkhead loop does not make.
 each(F, P) -> lists:foreach(F, P).
 
 %% --- memory -----------------------------------------------------------------
@@ -280,7 +280,7 @@ concurrency() ->
 
 %% --- dependent reads -----------------------------------------------------------
 
-%% The chain i -> (7919 i + 1) mod N, as paddock-fixture-kvbench's fillchain.
+%% The chain i -> (7919 i + 1) mod N, as bulkhead-fixture-kvbench's fillchain.
 chain_pairs(N) -> [{key("c", I), key("c", (7919 * I + 1) rem N)} || I <- lists:seq(0, N - 1)].
 
 walk_ets(_, K, 0) -> K;

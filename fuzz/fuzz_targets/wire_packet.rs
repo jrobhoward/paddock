@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use paddock_host::transport::wire::{Hello, VERSION, agree, decode, encode, from_cbor};
+use bulkhead_host::transport::wire::{Hello, VERSION, agree, decode, encode, from_cbor};
 
 fuzz_target!(|bytes: &[u8]| {
     if let Ok(theirs) = from_cbor::<Hello>(bytes) {

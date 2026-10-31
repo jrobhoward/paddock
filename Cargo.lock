@@ -277,6 +277,285 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulkhead"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bulkhead-bundle",
+ "bulkhead-host",
+ "bulkhead-modbus",
+ "bytes",
+ "ciborium",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "minisign",
+ "proptest",
+ "rcgen",
+ "rstest",
+ "rustbridge-bundle",
+ "rustix",
+ "rustls",
+ "rustls-pki-types",
+ "rustyline",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-modbus",
+ "tokio-rustls",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "wat",
+ "wit-parser 0.261.0",
+]
+
+[[package]]
+name = "bulkhead-bundle"
+version = "0.3.0"
+dependencies = [
+ "minisign",
+ "proptest",
+ "rstest",
+ "rustbridge-bundle",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "wasmparser 0.261.0",
+ "wat",
+ "zip",
+]
+
+[[package]]
+name = "bulkhead-fixture-chaos"
+version = "0.3.0"
+dependencies = [
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-fixture-conformance"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk",
+ "serde",
+]
+
+[[package]]
+name = "bulkhead-fixture-conn"
+version = "0.3.0"
+dependencies = [
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-fixture-counter"
+version = "0.3.0"
+dependencies = [
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-fixture-echo"
+version = "0.3.0"
+dependencies = [
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-fixture-http"
+version = "0.3.0"
+dependencies = [
+ "wasip2 2.0.1+wasi-0.2.12",
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-fixture-kvbench"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk",
+]
+
+[[package]]
+name = "bulkhead-fixture-native"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-native",
+]
+
+[[package]]
+name = "bulkhead-fixture-net"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk",
+]
+
+[[package]]
+name = "bulkhead-fixture-plugin"
+version = "0.3.0"
+dependencies = [
+ "rustbridge",
+ "serde",
+]
+
+[[package]]
+name = "bulkhead-fixture-sdk"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk",
+ "serde",
+]
+
+[[package]]
+name = "bulkhead-fixture-services"
+version = "0.3.0"
+dependencies = [
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-fixture-workload"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk",
+ "bulkhead-workload",
+]
+
+[[package]]
+name = "bulkhead-host"
+version = "0.3.0"
+dependencies = [
+ "anyprobe",
+ "arc-swap",
+ "atomic-waker",
+ "base64 0.23.1",
+ "bulkhead-bundle",
+ "bulkhead-native",
+ "bulkhead-workload",
+ "bytes",
+ "ciborium",
+ "ciborium-ll",
+ "deadpool-postgres",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "proptest",
+ "quinn",
+ "rcgen",
+ "redb",
+ "rstest",
+ "rustix",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "scc",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "tokio-rustls",
+ "toml",
+ "tower-service",
+ "tracing",
+ "tracing-subscriber",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+ "wat",
+]
+
+[[package]]
+name = "bulkhead-modbus"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-bundle",
+ "bulkhead-host",
+ "ciborium",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-modbus",
+ "tracing",
+]
+
+[[package]]
+name = "bulkhead-native"
+version = "0.3.0"
+dependencies = [
+ "ciborium",
+ "landlock",
+ "libc",
+ "rstest",
+ "rustbridge-consumer",
+ "rustix",
+ "seccompiler",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bulkhead-sdk"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk-macros",
+ "ciborium",
+ "rstest",
+ "serde",
+ "serde_json",
+ "wasip2 2.0.1+wasi-0.2.12",
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "bulkhead-sdk-macros"
+version = "0.3.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "bulkhead-soak"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bulkhead",
+ "clap",
+ "rstest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "bulkhead-workload"
+version = "0.3.0"
+dependencies = [
+ "pulldown-cmark",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -988,7 +1267,7 @@ checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 name = "example-board"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde",
  "serde_json",
 ]
@@ -997,7 +1276,7 @@ dependencies = [
 name = "example-chaos"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde",
  "serde_json",
 ]
@@ -1006,7 +1285,7 @@ dependencies = [
 name = "example-counter"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde",
  "serde_json",
 ]
@@ -1015,7 +1294,7 @@ dependencies = [
 name = "example-greeter-app"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "wit-bindgen 0.63.0",
 ]
 
@@ -1024,10 +1303,10 @@ name = "example-greeter-node"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "bulkhead",
+ "bulkhead-host",
  "example-greeter-service",
  "minisign",
- "paddock",
- "paddock-host",
  "rustbridge-bundle",
  "serde_json",
  "tempfile",
@@ -1038,7 +1317,7 @@ dependencies = [
 name = "example-greeter-service"
 version = "0.3.0"
 dependencies = [
- "paddock-host",
+ "bulkhead-host",
  "serde_json",
 ]
 
@@ -1046,7 +1325,7 @@ dependencies = [
 name = "example-http-counter"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde_json",
 ]
 
@@ -1054,21 +1333,21 @@ dependencies = [
 name = "example-ledger"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
 ]
 
 [[package]]
 name = "example-line-server"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
 ]
 
 [[package]]
 name = "example-ping-pong"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde",
  "serde_json",
 ]
@@ -1077,7 +1356,7 @@ dependencies = [
 name = "example-scada-control"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde",
  "serde_json",
  "wit-bindgen 0.63.0",
@@ -1087,7 +1366,7 @@ dependencies = [
 name = "example-scada-hmi"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde",
 ]
 
@@ -1095,7 +1374,7 @@ dependencies = [
 name = "example-scada-points"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde",
 ]
 
@@ -1103,7 +1382,7 @@ dependencies = [
 name = "example-tally"
 version = "0.3.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "serde_json",
 ]
 
@@ -1944,285 +2223,6 @@ name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
-
-[[package]]
-name = "paddock"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "bytes",
- "ciborium",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-util",
- "minisign",
- "paddock-bundle",
- "paddock-host",
- "paddock-modbus",
- "proptest",
- "rcgen",
- "rstest",
- "rustbridge-bundle",
- "rustix",
- "rustls",
- "rustls-pki-types",
- "rustyline",
- "semver",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-modbus",
- "tokio-rustls",
- "toml",
- "tracing",
- "tracing-subscriber",
- "wat",
- "wit-parser 0.261.0",
-]
-
-[[package]]
-name = "paddock-bundle"
-version = "0.3.0"
-dependencies = [
- "minisign",
- "proptest",
- "rstest",
- "rustbridge-bundle",
- "semver",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "tempfile",
- "thiserror",
- "toml",
- "wasmparser 0.261.0",
- "wat",
- "zip",
-]
-
-[[package]]
-name = "paddock-fixture-chaos"
-version = "0.3.0"
-dependencies = [
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "paddock-fixture-conformance"
-version = "0.3.0"
-dependencies = [
- "paddock-sdk",
- "serde",
-]
-
-[[package]]
-name = "paddock-fixture-conn"
-version = "0.3.0"
-dependencies = [
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "paddock-fixture-counter"
-version = "0.3.0"
-dependencies = [
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "paddock-fixture-echo"
-version = "0.3.0"
-dependencies = [
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "paddock-fixture-http"
-version = "0.3.0"
-dependencies = [
- "wasip2 2.0.1+wasi-0.2.12",
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "paddock-fixture-kvbench"
-version = "0.3.0"
-dependencies = [
- "paddock-sdk",
-]
-
-[[package]]
-name = "paddock-fixture-native"
-version = "0.3.0"
-dependencies = [
- "paddock-native",
-]
-
-[[package]]
-name = "paddock-fixture-net"
-version = "0.3.0"
-dependencies = [
- "paddock-sdk",
-]
-
-[[package]]
-name = "paddock-fixture-plugin"
-version = "0.3.0"
-dependencies = [
- "rustbridge",
- "serde",
-]
-
-[[package]]
-name = "paddock-fixture-sdk"
-version = "0.3.0"
-dependencies = [
- "paddock-sdk",
- "serde",
-]
-
-[[package]]
-name = "paddock-fixture-services"
-version = "0.3.0"
-dependencies = [
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "paddock-fixture-workload"
-version = "0.3.0"
-dependencies = [
- "paddock-sdk",
- "paddock-workload",
-]
-
-[[package]]
-name = "paddock-host"
-version = "0.3.0"
-dependencies = [
- "anyprobe",
- "arc-swap",
- "atomic-waker",
- "base64 0.23.1",
- "bytes",
- "ciborium",
- "ciborium-ll",
- "deadpool-postgres",
- "futures-util",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "paddock-bundle",
- "paddock-native",
- "paddock-workload",
- "proptest",
- "quinn",
- "rcgen",
- "redb",
- "rstest",
- "rustix",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
- "rustls-webpki",
- "scc",
- "semver",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "tokio-rustls",
- "toml",
- "tower-service",
- "tracing",
- "tracing-subscriber",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
- "wat",
-]
-
-[[package]]
-name = "paddock-modbus"
-version = "0.3.0"
-dependencies = [
- "ciborium",
- "paddock-bundle",
- "paddock-host",
- "serde",
- "serde_json",
- "tokio",
- "tokio-modbus",
- "tracing",
-]
-
-[[package]]
-name = "paddock-native"
-version = "0.3.0"
-dependencies = [
- "ciborium",
- "landlock",
- "libc",
- "rstest",
- "rustbridge-consumer",
- "rustix",
- "seccompiler",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "paddock-sdk"
-version = "0.3.0"
-dependencies = [
- "ciborium",
- "paddock-sdk-macros",
- "rstest",
- "serde",
- "serde_json",
- "wasip2 2.0.1+wasi-0.2.12",
- "wit-bindgen 0.63.0",
-]
-
-[[package]]
-name = "paddock-sdk-macros"
-version = "0.3.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "paddock-soak"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "clap",
- "paddock",
- "rstest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "paddock-workload"
-version = "0.3.0"
-dependencies = [
- "pulldown-cmark",
- "regex",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "parking_lot"

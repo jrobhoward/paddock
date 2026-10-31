@@ -10,7 +10,7 @@ publish = false
 [workspace]
 
 [dependencies]
-paddock-workload = { path = "../../../crates/paddock-workload" }
+bulkhead-workload = { path = "../../../crates/bulkhead-workload" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 wasmtime = { git = "https://github.com/erikrose/wasmtime", rev = "933d170c4c1073d77f916c8c053fb3c7810d73d7" }
 

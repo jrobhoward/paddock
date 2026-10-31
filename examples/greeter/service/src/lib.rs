@@ -1,6 +1,6 @@
-//! A host service from outside Paddock: the `example:greeting` extension.
+//! A host service from outside Bulkhead: the `example:greeting` extension.
 //!
-//! It depends on `paddock-host` alone. Apps declare it in their manifest
+//! It depends on `bulkhead-host` alone. Apps declare it in their manifest
 //! with a scope the service reads:
 //!
 //! ```toml
@@ -10,29 +10,29 @@
 //!
 //! and the operator grants it by package name (`grant =
 //! ["example:greeting"]`). A node runs it with
-//! `paddock::node::run(&config, vec![Arc::new(Greeter::default())])`.
+//! `bulkhead::node::run(&config, vec![Arc::new(Greeter::default())])`.
 
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use paddock_host::services::{
+use bulkhead_host::services::{
     Extension, ExtensionApp, ExtensionCtx, ServiceCtx, StoreData, extension_ctx,
 };
-use paddock_host::wasmtime;
-use paddock_host::wasmtime::component::Linker;
+use bulkhead_host::wasmtime;
+use bulkhead_host::wasmtime::component::Linker;
 
 mod bindings {
     // Generated code carries no doc comments.
     #![allow(missing_docs)]
 
-    paddock_host::wasmtime::component::bindgen!({
+    bulkhead_host::wasmtime::component::bindgen!({
         path: "../wit",
         world: "example:greeting/client",
         imports: { default: async | trappable },
-        // The wasmtime paddock-host links against; no wasmtime dependency
+        // The wasmtime bulkhead-host links against; no wasmtime dependency
         // of this crate's own, so the versions cannot drift.
-        wasmtime_crate: paddock_host::wasmtime,
+        wasmtime_crate: bulkhead_host::wasmtime,
     });
 }
 

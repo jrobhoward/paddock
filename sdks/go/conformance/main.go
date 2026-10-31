@@ -1,7 +1,7 @@
 // The Go SDK's conformance app: the command protocol of
-// crates/paddock-fixture-conformance, which paddock-host's
+// crates/bulkhead-fixture-conformance, which bulkhead-host's
 // tests/conformance.rs drives. Build with ../build.sh and run the suite
-// with PADDOCK_CONFORMANCE_APP set to the component.
+// with BULKHEAD_CONFORMANCE_APP set to the component.
 package main
 
 import (
@@ -12,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	paddock "github.com/jrobhoward/paddock/sdks/go"
-	"github.com/jrobhoward/paddock/sdks/go/config"
-	"github.com/jrobhoward/paddock/sdks/go/groups"
-	"github.com/jrobhoward/paddock/sdks/go/kv"
-	"github.com/jrobhoward/paddock/sdks/go/log"
-	"github.com/jrobhoward/paddock/sdks/go/metrics"
-	"github.com/jrobhoward/paddock/sdks/go/secrets"
-	"github.com/jrobhoward/paddock/sdks/go/watch"
+	bulkhead "github.com/jrobhoward/bulkhead/sdks/go"
+	"github.com/jrobhoward/bulkhead/sdks/go/config"
+	"github.com/jrobhoward/bulkhead/sdks/go/groups"
+	"github.com/jrobhoward/bulkhead/sdks/go/kv"
+	"github.com/jrobhoward/bulkhead/sdks/go/log"
+	"github.com/jrobhoward/bulkhead/sdks/go/metrics"
+	"github.com/jrobhoward/bulkhead/sdks/go/secrets"
+	"github.com/jrobhoward/bulkhead/sdks/go/watch"
 )
 
 // Kept is what a snapshot carries, in the protocol's order.
@@ -42,13 +42,13 @@ type conformance struct {
 	healthChecks uint64
 	loadedFrom   string
 	hoard        [][]byte
-	onTerminate  *paddock.Pid
+	onTerminate  *bulkhead.Pid
 }
 
 // sink keeps the spin command's loop from being optimized away.
 var sink uint64
 
-func showPid(p paddock.Pid) string {
+func showPid(p bulkhead.Pid) string {
 	return fmt.Sprintf("%d.%d.%d@%d", p.Node, p.ID&(1<<40-1), p.Incarnation, p.ID>>40)
 }
 
@@ -57,7 +57,7 @@ func number(s string) uint64 {
 	return n
 }
 
-func parsePid(s string) paddock.Pid {
+func parsePid(s string) bulkhead.Pid {
 	fields, creation, _ := strings.Cut(s, "@")
 	parts := strings.Split(fields, ".")
 	get := func(i int) uint64 {
@@ -66,56 +66,56 @@ func parsePid(s string) paddock.Pid {
 		}
 		return 0
 	}
-	return paddock.Pid{
+	return bulkhead.Pid{
 		Node:        uint32(get(0)),
 		ID:          number(creation)<<40 | get(1),
 		Incarnation: uint32(get(2)),
 	}
 }
 
-func showExit(r paddock.ExitReason) string {
-	if r.Kind == paddock.Crashed {
+func showExit(r bulkhead.ExitReason) string {
+	if r.Kind == bulkhead.Crashed {
 		return "crashed(" + r.Detail + ")"
 	}
 	return r.String()
 }
 
-func parseExit(s string) paddock.ExitReason {
+func parseExit(s string) bulkhead.ExitReason {
 	switch s {
 	case "normal":
-		return paddock.ExitReason{Kind: paddock.Normal}
+		return bulkhead.ExitReason{Kind: bulkhead.Normal}
 	case "shutdown":
-		return paddock.ExitReason{Kind: paddock.Shutdown}
+		return bulkhead.ExitReason{Kind: bulkhead.Shutdown}
 	case "killed":
-		return paddock.ExitReason{Kind: paddock.Killed}
+		return bulkhead.ExitReason{Kind: bulkhead.Killed}
 	default:
-		return paddock.CrashedWith(s)
+		return bulkhead.CrashedWith(s)
 	}
 }
 
-var callErrorNames = map[paddock.CallErrorKind]string{
-	paddock.CallNoproc:       "noproc",
-	paddock.CallNoconnection: "noconnection",
-	paddock.CallTimeout:      "timeout",
-	paddock.CallOverloaded:   "overloaded",
-	paddock.CallTooLarge:     "too-large",
-	paddock.CallAccessDenied: "access-denied",
+var callErrorNames = map[bulkhead.CallErrorKind]string{
+	bulkhead.CallNoproc:       "noproc",
+	bulkhead.CallNoconnection: "noconnection",
+	bulkhead.CallTimeout:      "timeout",
+	bulkhead.CallOverloaded:   "overloaded",
+	bulkhead.CallTooLarge:     "too-large",
+	bulkhead.CallAccessDenied: "access-denied",
 }
 
 func showCallError(err error) string {
-	var ce *paddock.CallError
+	var ce *bulkhead.CallError
 	if !errors.As(err, &ce) {
 		return err.Error()
 	}
-	if ce.Kind == paddock.CallExited {
+	if ce.Kind == bulkhead.CallExited {
 		return "exited:" + showExit(ce.Reason)
 	}
 	return callErrorNames[ce.Kind]
 }
 
-func register(ctx *paddock.Ctx, name string) string {
+func register(ctx *bulkhead.Ctx, name string) string {
 	err := ctx.Register(name)
-	var re *paddock.RegisterError
+	var re *bulkhead.RegisterError
 	switch {
 	case err == nil:
 		return "ok"
@@ -186,7 +186,7 @@ func groupCommand(verb, arg string) (string, error) {
 		slices.Sort(shown)
 		return strings.Join(shown, ","), err
 	default:
-		n, err := groups.Publish(group, paddock.Text(rest))
+		n, err := groups.Publish(group, bulkhead.Text(rest))
 		return strconv.FormatUint(uint64(n), 10), err
 	}
 }
@@ -273,10 +273,10 @@ func orServiceError(reply string, err error) string {
 }
 
 // run handles one command; reply is false for no answer.
-func (c *conformance) run(ctx *paddock.Ctx, caller *paddock.CallRef, msg paddock.Envelope) (paddock.Envelope, bool) {
+func (c *conformance) run(ctx *bulkhead.Ctx, caller *bulkhead.CallRef, msg bulkhead.Envelope) (bulkhead.Envelope, bool) {
 	command := string(msg.Body)
 	verb, arg, _ := strings.Cut(command, ":")
-	reply := func(s string) (paddock.Envelope, bool) { return paddock.Text(s), true }
+	reply := func(s string) (bulkhead.Envelope, bool) { return bulkhead.Text(s), true }
 	switch verb {
 	case "echo":
 		return reply(arg)
@@ -293,24 +293,24 @@ func (c *conformance) run(ctx *paddock.Ctx, caller *paddock.CallRef, msg paddock
 	case "notes":
 		return reply(strings.Join(c.kept.Notes, ","))
 	case "noreply":
-		return paddock.Envelope{}, false
+		return bulkhead.Envelope{}, false
 	case "defer":
 		if caller != nil {
 			c.kept.Deferred = append(c.kept.Deferred, uint64(*caller))
 		}
-		return paddock.Envelope{}, false
+		return bulkhead.Envelope{}, false
 	case "answer":
 		deferred := c.kept.Deferred
 		c.kept.Deferred = nil
 		for _, d := range deferred {
-			ctx.Reply(paddock.CallRef(d), paddock.Text(arg))
+			ctx.Reply(bulkhead.CallRef(d), bulkhead.Text(arg))
 		}
 		return reply(fmt.Sprintf("answered:%d", len(deferred)))
 	case "answer-now":
 		if caller != nil {
-			ctx.Reply(*caller, paddock.Text(arg))
+			ctx.Reply(*caller, bulkhead.Text(arg))
 		}
-		return paddock.Envelope{}, false
+		return bulkhead.Envelope{}, false
 	case "self":
 		return reply(showPid(ctx.Pid()))
 	case "call":
@@ -318,14 +318,14 @@ func (c *conformance) run(ctx *paddock.Ctx, caller *paddock.CallRef, msg paddock
 		for len(parts) < 3 {
 			parts = append(parts, "")
 		}
-		got, err := ctx.Call(parsePid(parts[0]), paddock.Text(parts[2]), time.Duration(number(parts[1]))*time.Millisecond)
+		got, err := ctx.Call(parsePid(parts[0]), bulkhead.Text(parts[2]), time.Duration(number(parts[1]))*time.Millisecond)
 		if err != nil {
 			return reply("err:" + showCallError(err))
 		}
 		return reply("ok:" + string(got.Body))
 	case "cast":
 		pid, inner, _ := strings.Cut(arg, ":")
-		ctx.Cast(parsePid(pid), paddock.Text(inner))
+		ctx.Cast(parsePid(pid), bulkhead.Text(inner))
 		return reply("sent")
 	case "register":
 		return reply(register(ctx, arg))
@@ -336,10 +336,10 @@ func (c *conformance) run(ctx *paddock.Ctx, caller *paddock.CallRef, msg paddock
 		return reply("none")
 	case "timer":
 		ms, text, _ := strings.Cut(arg, ":")
-		t := ctx.SendAfter(time.Duration(number(ms))*time.Millisecond, paddock.Text(text))
+		t := ctx.SendAfter(time.Duration(number(ms))*time.Millisecond, bulkhead.Text(text))
 		return reply(strconv.FormatUint(uint64(t), 10))
 	case "cancel":
-		ctx.CancelTimer(paddock.TimerRef(number(arg)))
+		ctx.CancelTimer(bulkhead.TimerRef(number(arg)))
 		return reply("cancelled")
 	case "timers":
 		return reply(strings.Join(c.fired, ","))
@@ -355,7 +355,7 @@ func (c *conformance) run(ctx *paddock.Ctx, caller *paddock.CallRef, msg paddock
 	case "monitor":
 		return reply(strconv.FormatUint(uint64(ctx.Monitor(parsePid(arg))), 10))
 	case "demonitor":
-		ctx.Demonitor(paddock.MonitorRef(number(arg)))
+		ctx.Demonitor(bulkhead.MonitorRef(number(arg)))
 		return reply("ok")
 	case "exit":
 		pid, reason, found := strings.Cut(arg, ":")
@@ -443,41 +443,41 @@ func (c *conformance) run(ctx *paddock.Ctx, caller *paddock.CallRef, msg paddock
 	}
 }
 
-func (c *conformance) HandleCall(ctx *paddock.Ctx, call paddock.CallRef, msg paddock.Envelope) paddock.Reply {
+func (c *conformance) HandleCall(ctx *bulkhead.Ctx, call bulkhead.CallRef, msg bulkhead.Envelope) bulkhead.Reply {
 	if out, ok := c.run(ctx, &call, msg); ok {
-		return paddock.Now(out)
+		return bulkhead.Now(out)
 	}
-	return paddock.Later()
+	return bulkhead.Later()
 }
 
-func (c *conformance) HandleCast(ctx *paddock.Ctx, msg paddock.Envelope) {
+func (c *conformance) HandleCast(ctx *bulkhead.Ctx, msg bulkhead.Envelope) {
 	c.run(ctx, nil, msg)
 }
 
-func (c *conformance) HandleInfo(_ *paddock.Ctx, info paddock.Info) {
+func (c *conformance) HandleInfo(_ *bulkhead.Ctx, info bulkhead.Info) {
 	if change, ok := watch.ChangeFromInfo(info); ok {
 		c.changes = append(c.changes, fmt.Sprintf("%s@%d", change.Key, change.Revision))
 		return
 	}
 	switch i := info.(type) {
-	case paddock.TimerInfo:
+	case bulkhead.TimerInfo:
 		c.fired = append(c.fired, string(i.Msg.Body))
-	case paddock.ExitInfo:
+	case bulkhead.ExitInfo:
 		c.infos = append(c.infos, fmt.Sprintf("exit:%s:%s", showPid(i.From), showExit(i.Reason)))
-	case paddock.DownInfo:
+	case bulkhead.DownInfo:
 		c.infos = append(c.infos, fmt.Sprintf("down:%d:%s:%s", i.Monitor, showPid(i.Pid), showExit(i.Reason)))
-	case paddock.EventInfo:
+	case bulkhead.EventInfo:
 		c.infos = append(c.infos, fmt.Sprintf("event:%s:%s", i.Name, i.Msg.Body))
 	}
 }
 
-func (c *conformance) Terminate(ctx *paddock.Ctx, reason paddock.ExitReason) {
+func (c *conformance) Terminate(ctx *bulkhead.Ctx, reason bulkhead.ExitReason) {
 	if c.onTerminate != nil {
-		ctx.Cast(*c.onTerminate, paddock.Text("note:terminate:"+showExit(reason)))
+		ctx.Cast(*c.onTerminate, bulkhead.Text("note:terminate:"+showExit(reason)))
 	}
 }
 
-func (c *conformance) Health(*paddock.Ctx) error {
+func (c *conformance) Health(*bulkhead.Ctx) error {
 	c.healthChecks++
 	if c.health != "" {
 		return errors.New(c.health)
@@ -486,10 +486,10 @@ func (c *conformance) Health(*paddock.Ctx) error {
 }
 
 func (c *conformance) SaveSnapshot() ([]byte, error) {
-	return paddock.EncodeSnapshot(formatVersion, c.kept)
+	return bulkhead.EncodeSnapshot(formatVersion, c.kept)
 }
 
-func start(ctx *paddock.Ctx, args []byte) (paddock.App, error) {
+func start(ctx *bulkhead.Ctx, args []byte) (bulkhead.App, error) {
 	raw := string(args)
 	for _, word := range strings.Fields(strings.Trim(strings.TrimSpace(raw), "\"")) {
 		if name, ok := strings.CutPrefix(word, "register:"); ok {
@@ -510,9 +510,9 @@ func start(ctx *paddock.Ctx, args []byte) (paddock.App, error) {
 	return &conformance{args: raw}, nil
 }
 
-func load(_ *paddock.Ctx, fromVersion string, snapshot []byte) (paddock.App, error) {
+func load(_ *bulkhead.Ctx, fromVersion string, snapshot []byte) (bulkhead.App, error) {
 	var kept Kept
-	if err := paddock.LoadSnapshot(snapshot, formatVersion, &kept); err != nil {
+	if err := bulkhead.LoadSnapshot(snapshot, formatVersion, &kept); err != nil {
 		return nil, err
 	}
 	if kept.Refuse {
@@ -522,7 +522,7 @@ func load(_ *paddock.Ctx, fromVersion string, snapshot []byte) (paddock.App, err
 }
 
 func init() {
-	paddock.Export(paddock.Def{Init: start, LoadSnapshot: load})
+	bulkhead.Export(bulkhead.Def{Init: start, LoadSnapshot: load})
 }
 
 func main() {}

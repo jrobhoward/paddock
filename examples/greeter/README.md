@@ -1,10 +1,10 @@
-# Greeter: a host service from outside Paddock
+# Greeter: a host service from outside Bulkhead
 
 An extension is a host service built into a node by its operator, serving one WIT package that apps import. This example has four parts:
 
 - `wit/greeting.wit`: the package, `example:greeting`, with `hello(name)` and `count()`.
-- `service/`: the extension. It depends on `paddock-host` alone.
-- `app/`: an app that calls it, written with `paddock-sdk` plus its own bindings for the package. Its `paddock.toml` declares the extension.
+- `service/`: the extension. It depends on `bulkhead-host` alone.
+- `app/`: an app that calls it, written with `bulkhead-sdk` plus its own bindings for the package. Its `bulkhead.toml` declares the extension.
 - `node/`: a node binary with the extension (`greeter-node`). Its test deploys the app twice, granted and not, and calls both.
 
 ```sh
@@ -13,15 +13,15 @@ cargo test -p example-greeter-node
 
 ## Writing an extension
 
-1. Define the package in WIT, in a namespace other than `wasi` or `paddock`. Give every function a `result` whose error has an `access-denied` case, so an ungranted app gets an error value, not a trap.
-2. Generate host bindings with `paddock_host::wasmtime::component::bindgen!`, passing `wasmtime_crate: paddock_host::wasmtime` so the bindings use the wasmtime the node links.
-3. Implement `paddock_host::services::Extension`:
+1. Define the package in WIT, in a namespace other than `wasi` or `bulkhead`. Give every function a `result` whose error has an `access-denied` case, so an ungranted app gets an error value, not a trap.
+2. Generate host bindings with `bulkhead_host::wasmtime::component::bindgen!`, passing `wasmtime_crate: bulkhead_host::wasmtime` so the bindings use the wasmtime the node links.
+3. Implement `bulkhead_host::services::Extension`:
    - `package()`: the package name, which is also the manifest key and the policy grant.
    - `instance(app)`: per-instance state from the app's scope table (`app.scope`) and whether it was granted (`app.granted`). Every instance gets state, including apps that do not declare the extension.
    - `link(linker)`: call the generated `add_to_linker::<StoreData, ExtensionCtx<State>>(linker, extension_ctx::<State>)`.
-   - `start(node)`, optional: work on the extension's own schedule (polling devices, serving a port), started once the node's apps are up. It gets the node's `[extensions."<package>"]` table, a way to cast to apps by name, and whether this node runs singletons (on an HA pair, the primary). `crates/paddock-modbus` is an extension that does.
+   - `start(node)`, optional: work on the extension's own schedule (polling devices, serving a port), started once the node's apps are up. It gets the node's `[extensions."<package>"]` table, a way to cast to apps by name, and whether this node runs singletons (on an HA pair, the primary). `crates/bulkhead-modbus` is an extension that does.
 4. Implement the generated `Host` traits for `ServiceCtx<'_, State>`. `ctx.state()` is the instance's state; `ctx.app()` and `ctx.pid()` say who is calling. Time a host function spends waiting does not count against the callback deadline; work it does without waiting does.
-5. Run a node with it: `paddock::node::run(&config, vec![Arc::new(MyService::default())])`.
+5. Run a node with it: `bulkhead::node::run(&config, vec![Arc::new(MyService::default())])`.
 
 ## Using it from an app
 
@@ -37,4 +37,4 @@ The operator grants it in the node's policy, by package name:
 grant = ["example:greeting"]
 ```
 
-An app that imports the package without declaring it is refused by `paddock bundle` and at deploy. A declared but ungranted app gets `access-denied`. A node built without the extension links deny stubs for the package.
+An app that imports the package without declaring it is refused by `bulkhead bundle` and at deploy. A declared but ungranted app gets `access-denied`. A node built without the extension links deny stubs for the package.

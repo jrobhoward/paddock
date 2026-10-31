@@ -4,7 +4,7 @@
 package preopens
 
 import (
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/filesystem/types"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/filesystem/types"
 	"go.bytecodealliance.org/cm"
 )
 

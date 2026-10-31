@@ -9,8 +9,8 @@ package s21:go;
 
 world app {
   include wasi:cli/imports@0.2.0;
-  import paddock:runtime/process@0.1.0;
-  use paddock:runtime/types@0.1.0.{call-ref, envelope, exit-reason, info, call-result};
+  import bulkhead:runtime/process@0.1.0;
+  use bulkhead:runtime/types@0.1.0.{call-ref, envelope, exit-reason, info, call-result};
 
   export init: func(args: list<u8>) -> result<_, string>;
   export handle-call: func(caller: call-ref, msg: envelope) -> call-result;

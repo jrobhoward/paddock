@@ -1748,7 +1748,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
-name = "paddock-bundle"
+name = "bulkhead-bundle"
 version = "0.3.0"
 dependencies = [
  "rustbridge-bundle 1.0.1 (git+https://github.com/jrobhoward/rustbridge?branch=experiment%2Fwasm)",
@@ -1762,7 +1762,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "paddock-host"
+name = "bulkhead-host"
 version = "0.3.0"
 dependencies = [
  "arc-swap",
@@ -1777,8 +1777,8 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "paddock-bundle",
- "paddock-native",
+ "bulkhead-bundle",
+ "bulkhead-native",
  "quinn",
  "rcgen",
  "redb",
@@ -1805,7 +1805,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "paddock-native"
+name = "bulkhead-native"
 version = "0.3.0"
 dependencies = [
  "ciborium",
@@ -1813,18 +1813,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "paddock-sdk"
+name = "bulkhead-sdk"
 version = "0.3.0"
 dependencies = [
  "ciborium",
- "paddock-sdk-macros",
+ "bulkhead-sdk-macros",
  "serde",
  "serde_json",
  "wit-bindgen 0.63.0",
 ]
 
 [[package]]
-name = "paddock-sdk-macros"
+name = "bulkhead-sdk-macros"
 version = "0.3.0"
 dependencies = [
  "proc-macro2",
@@ -2536,8 +2536,8 @@ dependencies = [
 name = "s14-bench"
 version = "0.0.0"
 dependencies = [
- "paddock-bundle",
- "paddock-host",
+ "bulkhead-bundle",
+ "bulkhead-host",
  "redb",
  "tempfile",
  "tokio",
@@ -2547,7 +2547,7 @@ dependencies = [
 name = "s14-guest"
 version = "0.0.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
  "redb",
 ]
 
@@ -2560,7 +2560,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "paddock-host",
+ "bulkhead-host",
  "tokio",
  "wasmtime",
  "wasmtime-wasi",
@@ -2626,7 +2626,7 @@ dependencies = [
 name = "s21-bench"
 version = "0.0.0"
 dependencies = [
- "paddock-host",
+ "bulkhead-host",
  "tokio",
 ]
 
@@ -2644,7 +2644,7 @@ dependencies = [
 name = "s27-bench"
 version = "0.0.0"
 dependencies = [
- "paddock-host",
+ "bulkhead-host",
  "tokio",
 ]
 
@@ -2652,7 +2652,7 @@ dependencies = [
 name = "s27-guest"
 version = "0.0.0"
 dependencies = [
- "paddock-sdk",
+ "bulkhead-sdk",
 ]
 
 [[package]]
@@ -2701,7 +2701,7 @@ dependencies = [
 name = "s8-bench"
 version = "0.0.0"
 dependencies = [
- "paddock-host",
+ "bulkhead-host",
  "s8-kernels",
  "tokio",
 ]

@@ -1,4 +1,4 @@
-//! Spike S8: how much slower is work inside a Paddock instance than the same
+//! Spike S8: how much slower is work inside a Bulkhead instance than the same
 //! code compiled natively, and what does a call into an instance cost?
 //!
 //! usage: s8-bench <s8_guest.wasm> [workers]
@@ -6,7 +6,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use paddock_host::{Envelope, InstanceHandle, InstanceSpec, Runtime, RuntimeConfig};
+use bulkhead_host::{Envelope, InstanceHandle, InstanceSpec, Runtime, RuntimeConfig};
 
 const RUNS: usize = 5;
 
@@ -220,11 +220,11 @@ async fn run(wasm: &str) {
         black_box(s8_kernels::run(black_box("noop")));
     }
     let native_call = t.elapsed() / n;
-    println!("Empty call: native {} / Paddock call {}", fmt(native_call), fmt(call));
+    println!("Empty call: native {} / Bulkhead call {}", fmt(native_call), fmt(call));
     println!();
     transfer(&instance).await;
     println!();
-    println!("| Workload | Native | In Paddock | Ratio |");
+    println!("| Workload | Native | In Bulkhead | Ratio |");
     println!("| --- | --- | --- | --- |");
 
     // Per-hash cost including one call per hash: overhead dominates small inputs.

@@ -1,10 +1,10 @@
-//! A Paddock app that runs the S8 kernels on request.
+//! A Bulkhead app that runs the S8 kernels on request.
 
 #[allow(missing_docs, clippy::too_many_arguments)]
 mod bindings {
     wit_bindgen::generate!({
         path: "../../../wit",
-        world: "paddock:runtime/app@0.1.0",
+        world: "bulkhead:runtime/app@0.1.0",
         pub_export_macro: true,
     });
 }

@@ -3,15 +3,15 @@
 //! its supervisor restarts it, the count is still there. One component,
 //! two apps (each its own manifest):
 //!
-//! - `board` (`paddock.toml`) serves HTTP through the node's ingress. Every
-//!   response carries `x-paddock-pid`, the instance that answered.
+//! - `board` (`bulkhead.toml`) serves HTTP through the node's ingress. Every
+//!   response carries `x-bulkhead-pid`, the instance that answered.
 //!   - `GET /board`: `{"count": n, "pid": "<...>"}`.
 //!   - `POST /board`: add one (or the body's number) and return the same.
 //!   - `DELETE /board`: reset to 0.
 //!   - `POST /board/crash`: trap, as a bug would. The request fails; the
 //!     supervisor restarts the instance with a new incarnation.
 //! - `board-watch` (`watch.toml`, start args `{"watch": true}`) watches the
-//!   counter on the board and logs every change (`paddock logs
+//!   counter on the board and logs every change (`bulkhead logs
 //!   board-watch`); a call with `seen` replies how many it has seen.
 //! - `board` as a hot standby (`hot-standby.toml`, start args
 //!   `{"replicate": true}`, tutorial chapter 3): runs on both nodes of an HA
@@ -25,10 +25,10 @@
 
 use std::time::Duration;
 
-use paddock_sdk::http::{Request, Response};
-use paddock_sdk::kv::Bucket;
-use paddock_sdk::watch::{self, Change};
-use paddock_sdk::{App, CallRef, Ctx, Envelope, Info, Reply, groups};
+use bulkhead_sdk::http::{Request, Response};
+use bulkhead_sdk::kv::Bucket;
+use bulkhead_sdk::watch::{self, Change};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Info, Reply, groups};
 use serde::Deserialize;
 
 /// The shared bucket, and the key the count is kept under.
@@ -81,7 +81,7 @@ fn replicate(ctx: &mut Ctx, count: i64) -> usize {
         let msg = Envelope::text(format!("replicate:{count}"));
         match ctx.call(other, msg, REPLICA_TIMEOUT) {
             Ok(_) => took += 1,
-            Err(e) => paddock_sdk::warn!("replica {other} missed count {count}: {e}"),
+            Err(e) => bulkhead_sdk::warn!("replica {other} missed count {count}: {e}"),
         }
     }
     took
@@ -110,7 +110,7 @@ fn serve(ctx: &mut Ctx, req: &Request, replicate_to: Option<Role>) -> Result<Res
             0
         }
         ("POST", "/board/crash") => {
-            paddock_sdk::warn!("crashing on request");
+            bulkhead_sdk::warn!("crashing on request");
             // A trap, as a bug would raise; the supervisor restarts us.
             std::process::abort();
         }
@@ -127,7 +127,7 @@ fn serve(ctx: &mut Ctx, req: &Request, replicate_to: Option<Role>) -> Result<Res
         body["replicas"] = replicate(ctx, count).into();
     }
     Response::json(200, &body)
-        .map(|r| r.header("x-paddock-pid", pid))
+        .map(|r| r.header("x-bulkhead-pid", pid))
         .map_err(|e| e.to_string())
 }
 
@@ -148,7 +148,7 @@ impl App for Board {
             });
         }
         let started = watch::watch(BOARD, KEY).map_err(|e| e.to_string())?;
-        paddock_sdk::info!("watching {BOARD}/{KEY} from revision {}", started.revision);
+        bulkhead_sdk::info!("watching {BOARD}/{KEY} from revision {}", started.revision);
         Ok(Self::Watch { seen: 0 })
     }
 
@@ -188,7 +188,7 @@ impl App for Board {
                 Some("standby") => Role::Standby,
                 _ => Role::Alone,
             };
-            paddock_sdk::info!("role: {role:?}");
+            bulkhead_sdk::info!("role: {role:?}");
             return;
         }
         let (Self::Watch { seen }, Some(change)) = (self, Change::from_info(&info)) else {
@@ -201,11 +201,11 @@ impl App for Board {
             .flatten();
         match now {
             Some(count) => {
-                paddock_sdk::info!("board: count is {count} (revision {})", change.revision)
+                bulkhead_sdk::info!("board: count is {count} (revision {})", change.revision)
             }
-            None => paddock_sdk::info!("board: count removed (revision {})", change.revision),
+            None => bulkhead_sdk::info!("board: count removed (revision {})", change.revision),
         }
     }
 }
 
-paddock_sdk::app!(Board);
+bulkhead_sdk::app!(Board);

@@ -1,0 +1,51 @@
+[package]
+name = "bulkhead-sdk"
+version.workspace = true
+description = "Write Bulkhead apps in Rust: the App trait, process context, typed envelopes and snapshots"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# `bulkhead_sdk::config`: the app's configuration (`wasi:config`).
+config = []
+# `bulkhead_sdk::kv`: keyvalue buckets (`wasi:keyvalue`).
+keyvalue = []
+# `bulkhead_sdk::connection`: connection handlers (`bulkhead:connection`).
+connection = []
+# `bulkhead_sdk::groups`: process groups and publish (`bulkhead:groups`).
+groups = []
+# `bulkhead_sdk::http`: HTTP requests from the node's ingress, as calls.
+http = []
+# `bulkhead_sdk::http_client`: HTTP requests from the app
+# (`wasi:http/outgoing-handler`).
+http-client = ["dep:wasip2"]
+# `bulkhead_sdk::net`: TCP from the app (`wasi:sockets`), with readiness as
+# messages (`bulkhead:io`).
+net = ["dep:wasip2"]
+# `bulkhead_sdk::secrets`: secrets the operator binds (`bulkhead:secrets`).
+secrets = []
+# `bulkhead_sdk::metrics`: counters, gauges and histograms (`bulkhead:metrics`).
+metrics = []
+# `bulkhead_sdk::sql`: SQL datasources the node binds (`bulkhead:sql`).
+sql = []
+# `bulkhead_sdk::watch`: revisions, compare-and-swap and watches on keyvalue
+# buckets (`bulkhead:watch`, under the `wasi:keyvalue` capability).
+watch = []
+
+[dependencies]
+ciborium = { workspace = true }
+bulkhead-sdk-macros = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wit-bindgen = { workspace = true }
+wasip2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+
+[lints]
+workspace = true

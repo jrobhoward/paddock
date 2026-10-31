@@ -10,8 +10,8 @@
 package streams
 
 import (
-	ioerror "github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/io/error"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/io/poll"
+	ioerror "github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/io/error"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/io/poll"
 	"go.bytecodealliance.org/cm"
 )
 

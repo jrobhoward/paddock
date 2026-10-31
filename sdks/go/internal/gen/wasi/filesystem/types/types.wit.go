@@ -29,8 +29,8 @@
 package types
 
 import (
-	wallclock "github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/clocks/wall-clock"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/io/streams"
+	wallclock "github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/clocks/wall-clock"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/io/streams"
 	"go.bytecodealliance.org/cm"
 )
 

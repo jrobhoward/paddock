@@ -1,7 +1,7 @@
 //! S4 test guest: exercises custom capabilities plus WASI filesystem and sockets.
 wit_bindgen::generate!({ path: "../wit", world: "app" });
 
-use paddock::spike4::{audit, kv, net};
+use bulkhead::spike4::{audit, kv, net};
 
 struct Component;
 

@@ -11,10 +11,10 @@ package kv
 import (
 	"errors"
 
-	paddock "github.com/jrobhoward/paddock/sdks/go"
-	"github.com/jrobhoward/paddock/sdks/go/internal/abi"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/keyvalue/atomics"
-	"github.com/jrobhoward/paddock/sdks/go/internal/gen/wasi/keyvalue/store"
+	bulkhead "github.com/jrobhoward/bulkhead/sdks/go"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/abi"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/keyvalue/atomics"
+	"github.com/jrobhoward/bulkhead/sdks/go/internal/gen/wasi/keyvalue/store"
 	"go.bytecodealliance.org/cm"
 )
 
@@ -135,12 +135,12 @@ func (b *Bucket) GetValue(key string, v any) (found bool, err error) {
 	if err != nil || !found {
 		return found, err
 	}
-	return true, paddock.UnmarshalCBOR(raw, v)
+	return true, bulkhead.UnmarshalCBOR(raw, v)
 }
 
 // SetValue writes v at key as CBOR.
 func (b *Bucket) SetValue(key string, v any) error {
-	raw, err := paddock.MarshalCBOR(v)
+	raw, err := bulkhead.MarshalCBOR(v)
 	if err != nil {
 		return err
 	}

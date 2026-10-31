@@ -66,7 +66,7 @@ impl WasiView for State {
     }
 }
 
-impl paddock::spike::host::Host for State {
+impl bulkhead::spike::host::Host for State {
     async fn call(&mut self, target: String, msg: String, timeout_ms: u32) -> wasmtime::Result<Reply> {
         let started = Instant::now();
         let result = async {

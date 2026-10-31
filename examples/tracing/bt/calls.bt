@@ -6,13 +6,13 @@
 // Instance ids are the middle number of a pid (0.<id>.<incarnation>);
 // a sender of 0 is the admin API.
 
-usdt:*:paddock:call__start
+usdt:*:bulkhead:call__start
 {
   @start[arg0] = nsecs;
   @calls[arg1, arg2] = count();
 }
 
-usdt:*:paddock:call__done
+usdt:*:bulkhead:call__done
 /@start[arg0]/
 {
   @latency_us[arg1] = hist((nsecs - @start[arg0]) / 1000);
