@@ -206,3 +206,160 @@ func CompareAndDelete(bucket, key string, expected uint64) (uint64, error) {
 	}
 	return *r.OK(), nil
 }
+
+// KeyedEntry is one entry a scan found.
+type KeyedEntry struct {
+	Key      string
+	Value    []byte
+	Revision uint64
+}
+
+// Page is one page of a [Scanner].
+type Page struct {
+	// Entries in key order, or downward with [Scanner.Reverse].
+	Entries []KeyedEntry
+	// Next is where the next page starts, for [Scanner.Page]; More is
+	// false when the scan is complete.
+	Next string
+	More bool
+	// Revision is the bucket's revision when the page was read: [Resume]
+	// from it to see every change after.
+	Revision uint64
+}
+
+// Scanner reads a bucket's entries in key order (the bytes of their UTF-8),
+// like ETS's ordered_set: every key, or those with a prefix or between two
+// keys, upward or downward. Read a page at a time with [Scanner.Page], or
+// every entry with [Scanner.Each]. Each page is read at one revision; a
+// scan of many pages is not one snapshot.
+//
+//	err := watch.Scan("orders").Prefix("c42/").Reverse().Each(func(e watch.KeyedEntry) bool {
+//		...
+//		return true // false stops
+//	})
+type Scanner struct {
+	bucket string
+	query  watch.ScanQuery
+}
+
+// Scan scans bucket; every key, upward, until narrowed.
+func Scan(bucket string) *Scanner {
+	return &Scanner{bucket: bucket}
+}
+
+// Prefix keeps only keys starting with prefix.
+func (s *Scanner) Prefix(prefix string) *Scanner {
+	s.query.Prefix = cm.Some(prefix)
+	return s
+}
+
+// Start keeps only keys from key on (inclusive).
+func (s *Scanner) Start(key string) *Scanner {
+	s.query.Start = cm.Some(key)
+	return s
+}
+
+// End keeps only keys before key (exclusive).
+func (s *Scanner) End(key string) *Scanner {
+	s.query.End = cm.Some(key)
+	return s
+}
+
+// Reverse scans downward, from the last key in range.
+func (s *Scanner) Reverse() *Scanner {
+	s.query.Reverse = true
+	return s
+}
+
+// Limit reads at most n entries per page (the host caps it at 1,000).
+func (s *Scanner) Limit(n uint32) *Scanner {
+	s.query.Limit = n
+	return s
+}
+
+// Page reads one page: from the start when cursor is empty, else from a
+// previous page's Next.
+func (s *Scanner) Page(cursor string) (Page, error) {
+	query := s.query
+	if cursor != "" {
+		query.Cursor = cm.Some(cursor)
+	}
+	r := watch.Scan(s.bucket, query)
+	if e := r.Err(); e != nil {
+		return Page{}, takeError(*e)
+	}
+	got := r.OK()
+	page := Page{Revision: got.Revision}
+	for _, e := range got.Entries.Slice() {
+		page.Entries = append(page.Entries, KeyedEntry{
+			Key:      abi.String(e.Key),
+			Value:    abi.Bytes(e.Value),
+			Revision: e.Revision,
+		})
+	}
+	abi.FreeList(got.Entries)
+	if next := got.Next.Some(); next != nil {
+		page.Next, page.More = abi.String(*next), true
+	}
+	return page, nil
+}
+
+// Each calls f with every entry, reading a page at a time, until f returns
+// false or the scan ends.
+func (s *Scanner) Each(f func(KeyedEntry) bool) error {
+	cursor := ""
+	for {
+		page, err := s.Page(cursor)
+		if err != nil {
+			return err
+		}
+		for _, e := range page.Entries {
+			if !f(e) {
+				return nil
+			}
+		}
+		if !page.More {
+			return nil
+		}
+		cursor = page.Next
+	}
+}
+
+func one(s *Scanner) (KeyedEntry, bool, error) {
+	page, err := s.Page("")
+	if err != nil || len(page.Entries) == 0 {
+		return KeyedEntry{}, false, err
+	}
+	return page.Entries[0], true, nil
+}
+
+// First is the entry with the smallest key (ETS first).
+func First(bucket string) (KeyedEntry, bool, error) {
+	return one(Scan(bucket).Limit(1))
+}
+
+// Last is the entry with the largest key (ETS last).
+func Last(bucket string) (KeyedEntry, bool, error) {
+	return one(Scan(bucket).Reverse().Limit(1))
+}
+
+// Next is the entry with the smallest key after key, which need not exist
+// (ETS next).
+func Next(bucket, key string) (KeyedEntry, bool, error) {
+	page, err := Scan(bucket).Start(key).Limit(2).Page("")
+	if err != nil {
+		return KeyedEntry{}, false, err
+	}
+	for _, e := range page.Entries {
+		if e.Key > key {
+			return e, true, nil
+		}
+	}
+	return KeyedEntry{}, false, nil
+}
+
+// Prev is the entry with the largest key before key, which need not exist
+// (ETS prev).
+func Prev(bucket, key string) (KeyedEntry, bool, error) {
+	return one(Scan(bucket).End(key).Reverse().Limit(1))
+}

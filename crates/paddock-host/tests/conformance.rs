@@ -771,6 +771,43 @@ async fn watch____key_written____change_notice_handled() {
     h.kill();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scan____prefix_bounds_and_direction____entries_in_key_order() {
+    let h = up("c-scan", "").await;
+    for (k, v) in [
+        ("b/2", "two"),
+        ("a", "x"),
+        ("b/1", "one"),
+        ("b/3", "three"),
+        ("c", "y"),
+    ] {
+        ask(&h, &format!("kv-set:data:{k}:{v}")).await;
+    }
+
+    let all = ask(&h, "scan:data:::::2").await;
+    let prefix_down = ask(&h, "scan:data:b/:::down:1").await;
+    let bounded = ask(&h, "scan:data::b/2:c::0").await;
+    let ends = [
+        ask(&h, "first:data").await,
+        ask(&h, "last:data").await,
+        ask(&h, "next:data:b/1").await,
+        ask(&h, "next:data:b/15").await,
+        ask(&h, "prev:data:b/1").await,
+        ask(&h, "prev:data:a").await,
+    ];
+    let unlisted = ask(&h, "scan:elsewhere:::::0").await;
+
+    assert_eq!(all, "a=x,b/1=one,b/2=two,b/3=three,c=y");
+    assert_eq!(prefix_down, "b/3=three,b/2=two,b/1=one");
+    assert_eq!(bounded, "b/2=two,b/3=three");
+    assert_eq!(
+        ends,
+        ["a", "c", "b/2", "b/2", "a", "none"].map(String::from)
+    );
+    assert_eq!(unlisted, "err:access-denied");
+    h.kill();
+}
+
 // --- groups ----------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

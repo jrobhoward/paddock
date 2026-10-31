@@ -30,7 +30,7 @@ use crate::error::HostError;
 use crate::instance::InstanceHandle;
 use crate::pid::Pid;
 
-use storage::{BucketHandle, KvStore, Op, Outcome, SHARED, StoreError};
+use storage::{BucketHandle, KvStore, Op, Outcome, SHARED, ScanQuery, StoreError};
 
 mod bindings {
     // Generated code carries no doc comments.
@@ -506,6 +506,45 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             .await
             .and_then(|o| match o {
                 Outcome::Revision { bucket, .. } => Ok(bucket),
+                other => Err(watch::Error::Other(format!(
+                    "unexpected storage outcome {other:?}"
+                ))),
+            }))
+    }
+
+    async fn scan(
+        &mut self,
+        bucket: String,
+        query: watch::ScanQuery,
+    ) -> Result<std::result::Result<watch::ScanPage, watch::Error>> {
+        let query = ScanQuery {
+            prefix: query.prefix,
+            start: query.start,
+            end: query.end,
+            reverse: query.reverse,
+            limit: query.limit,
+            cursor: query.cursor,
+        };
+        Ok(self
+            .watch_op(&bucket, Op::Scan(query))
+            .await
+            .and_then(|o| match o {
+                Outcome::Page {
+                    entries,
+                    next,
+                    revision,
+                } => Ok(watch::ScanPage {
+                    entries: entries
+                        .into_iter()
+                        .map(|(key, value, revision)| watch::KeyedEntry {
+                            key,
+                            value,
+                            revision,
+                        })
+                        .collect(),
+                    next,
+                    revision,
+                }),
                 other => Err(watch::Error::Other(format!(
                     "unexpected storage outcome {other:?}"
                 ))),

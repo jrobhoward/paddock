@@ -42,6 +42,44 @@ interface watch {
     revision: u64,
   }
 
+  /// What `scan` reads: the keys of a bucket in key order (the bytes of
+  /// their UTF-8, so Unicode code point order), like ETS's `ordered_set`.
+  record scan-query {
+    /// Only keys starting with this.
+    prefix: option<string>,
+    /// Only keys from this one on (inclusive).
+    start: option<string>,
+    /// Only keys before this one (exclusive).
+    end: option<string>,
+    /// Downward, from the last key in range, instead of upward.
+    reverse: bool,
+    /// At most this many entries; 0, or more than the host's page size
+    /// (1,000 entries), is the page size. A page also stops near 1 MiB of
+    /// keys and values, after at least one entry.
+    limit: u32,
+    /// The previous page's `next`, to continue the same scan.
+    cursor: option<string>,
+  }
+
+  /// One entry a scan found.
+  record keyed-entry {
+    key: string,
+    value: list<u8>,
+    revision: u64,
+  }
+
+  /// A page of a scan.
+  record scan-page {
+    /// In key order, or downward with `reverse`.
+    entries: list<keyed-entry>,
+    /// Where the next page starts, to pass as `cursor`; none when the scan
+    /// is complete.
+    next: option<string>,
+    /// The bucket's revision when the page was read: `watch` with this as
+    /// `after` sees every change the page could not.
+    revision: u64,
+  }
+
   /// A started watch.
   record started {
     /// Names the watch for `unwatch`, and in its notices.
@@ -81,6 +119,13 @@ interface watch {
 
   /// The bucket's current revision (0 before its first change).
   revision: func(bucket: string) -> result<u64, error>;
+
+  /// One page of the bucket's entries in key order, read at one revision.
+  /// Pages of one scan are each consistent but may differ in revision; a
+  /// key written between two pages appears if it falls in the part not
+  /// yet read. Reads this node's copy of a replicated bucket, as `get`
+  /// does.
+  scan: func(bucket: string, query: scan-query) -> result<scan-page, error>;
 
   /// Set `key` to `value` if its revision is `expected` (`none`: only if
   /// the key does not exist). Returns the new revision.

@@ -494,7 +494,7 @@ A shared bucket is the bulletin board between apps: the role of a public ETS tab
 - `paddock:watch` is a Paddock interface next to `wasi:keyvalue` (which has no watch), with an `access-denied` error, and counts against the instance's host-object quota. It is covered by the `wasi:keyvalue` capability and reaches the same buckets on the same terms.
 - Notices travel on the instance's signal queue, not its mailbox, so a full mailbox never drops one; conflation bounds the queue by the keys a watch matches. A notice reads its key's latest revision when the instance takes it.
 - Resuming needs no change log: each key keeps its latest revision and each bucket the revision of its latest delete. A watch resuming after revision R gets a notice for every matching key with a later revision, unless a delete happened after R (or R is ahead of the bucket), in which case it gets `too-old` with the current revision and rereads. A delete anywhere in the bucket counts, even outside a prefix watch's keys.
-- Ordered range scans (ETS `ordered_set`, redb's order) and key expiry are later additions to the same interface.
+- Ordered range scans (ETS `ordered_set`) are `paddock:watch`'s `scan`, in each backend's own order (a `BTreeMap` in memory, redb's B-tree on disk): a page of entries in key order with their revisions, read at one revision, by prefix, bounds and direction, resumed from a cursor (decided 2026-10-30). Key expiry is a later addition to the same interface.
 
 This is the platform's job rather than an app's: an app holding the board would serialize every read through one instance on one core, lose the board when it crashes, and turn every subscriber into a message across the network.
 

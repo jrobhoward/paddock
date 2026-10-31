@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Ordered scans of keyvalue buckets, as ETS's `ordered_set`:
+  `paddock:watch`'s `scan` reads a page of entries in key order (the bytes
+  of their UTF-8) with their revisions, by prefix, start and end keys,
+  upward or downward, resumed from a cursor; at most 1,000 entries and
+  about 1 MiB a page, read at one revision. `paddock_sdk::watch::scan`
+  (pages, or an iterator over every entry), `first`, `last`, `next` and
+  `prev`, and the same in the Go SDK's `watch` package. Memory, disk and
+  replicated buckets alike; a replicated bucket is read on this node
+  (ROADMAP H5).
 - `examples/board-go`: the tutorial's board app in Go, on the Go SDK, with
   the board's manifests plus the `wasi:filesystem` declaration TinyGo
   needs. `crates/paddock/tests/board.rs` runs every test against the Rust
@@ -28,10 +37,11 @@ All notable changes are recorded here. The format follows
   `template/paddock.toml` declares what TinyGo's runtime imports. Passes
   the conformance suite (ROADMAP J3).
 - A conformance suite for guest SDKs (`paddock-host`'s
-  `tests/conformance.rs`): 35 cases covering init, calls and casts,
+  `tests/conformance.rs`): 36 cases covering init, calls and casts,
   replies, timers, names, links, monitors and exits, snapshots, upgrade and
   rollback, limits, memory kept flat over many messages, health checks,
-  log levels, keyvalue, watches, groups, config, secrets and metrics, against an app that speaks the command protocol of
+  log levels, keyvalue, watches, scans, groups, config, secrets and
+  metrics, against an app that speaks the command protocol of
   `paddock-fixture-conformance` (the Rust SDK's app, run in CI).
   `PADDOCK_CONFORMANCE_APP=<component.wasm>` runs it against another
   language's app. WRITING_APPS.md has the table of cases each SDK passes

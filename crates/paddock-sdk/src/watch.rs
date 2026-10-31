@@ -237,3 +237,211 @@ pub fn compare_and_swap(
 pub fn compare_and_delete(bucket: &str, key: &str, expected: u64) -> Result<u64, WatchError> {
     Ok(wit::compare_and_delete(bucket, key, expected)?)
 }
+
+/// One entry a scan found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyedEntry {
+    /// The key.
+    pub key: String,
+    /// Its value.
+    pub value: Vec<u8>,
+    /// The revision it was written at.
+    pub revision: u64,
+}
+
+/// One page of a [`Scan`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    /// In key order, or downward with [`Scan::reverse`].
+    pub entries: Vec<KeyedEntry>,
+    /// Where the next page starts (for [`Scan::page`]); `None` when the
+    /// scan is complete.
+    pub next: Option<String>,
+    /// The bucket's revision when the page was read: [`resume`] from it to
+    /// see every change after.
+    pub revision: u64,
+}
+
+/// A bucket's entries in key order (the bytes of their UTF-8), like ETS's
+/// `ordered_set`: every key, or those with a prefix or between two keys,
+/// upward or downward. Read a page at a time with [`Scan::page`], or
+/// iterate over them all with [`Scan::entries`]. Each page is read at one
+/// revision; a scan of many pages is not one snapshot.
+///
+/// ```ignore
+/// // Every order of customer 42, newest key first.
+/// for entry in watch::scan("orders").prefix("c42/").reverse().entries() {
+///     let entry = entry?;
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct Scan {
+    bucket: String,
+    query: wit::ScanQuery,
+}
+
+/// A scan of `bucket`; every key, upward, until narrowed.
+#[must_use]
+pub fn scan(bucket: &str) -> Scan {
+    Scan {
+        bucket: bucket.to_string(),
+        query: wit::ScanQuery {
+            prefix: None,
+            start: None,
+            end: None,
+            reverse: false,
+            limit: 0,
+            cursor: None,
+        },
+    }
+}
+
+impl Scan {
+    /// Only keys starting with `prefix`.
+    #[must_use]
+    pub fn prefix(mut self, prefix: &str) -> Self {
+        self.query.prefix = Some(prefix.to_string());
+        self
+    }
+
+    /// Only keys from `key` on (inclusive).
+    #[must_use]
+    pub fn start(mut self, key: &str) -> Self {
+        self.query.start = Some(key.to_string());
+        self
+    }
+
+    /// Only keys before `key` (exclusive).
+    #[must_use]
+    pub fn end(mut self, key: &str) -> Self {
+        self.query.end = Some(key.to_string());
+        self
+    }
+
+    /// Downward, from the last key in range.
+    #[must_use]
+    pub fn reverse(mut self) -> Self {
+        self.query.reverse = true;
+        self
+    }
+
+    /// At most `n` entries per page (the host caps it at 1,000).
+    #[must_use]
+    pub fn limit(mut self, n: u32) -> Self {
+        self.query.limit = n;
+        self
+    }
+
+    /// One page, from the start or from a previous page's
+    /// [`next`](Page::next).
+    ///
+    /// # Errors
+    ///
+    /// As for [`get`].
+    pub fn page(&self, cursor: Option<&str>) -> Result<Page, WatchError> {
+        let mut query = self.query.clone();
+        query.cursor = cursor.map(str::to_string);
+        let page = wit::scan(&self.bucket, &query)?;
+        Ok(Page {
+            entries: page
+                .entries
+                .into_iter()
+                .map(|e| KeyedEntry {
+                    key: e.key,
+                    value: e.value,
+                    revision: e.revision,
+                })
+                .collect(),
+            next: page.next,
+            revision: page.revision,
+        })
+    }
+
+    /// Every entry, reading a page at a time as the iterator needs it. An
+    /// error ends the iteration after it.
+    #[must_use]
+    pub fn entries(self) -> Entries {
+        Entries {
+            scan: self,
+            buffered: std::collections::VecDeque::new(),
+            cursor: None,
+            done: false,
+        }
+    }
+}
+
+/// The entries of a [`Scan`], from [`Scan::entries`].
+#[derive(Debug)]
+pub struct Entries {
+    scan: Scan,
+    buffered: std::collections::VecDeque<KeyedEntry>,
+    cursor: Option<String>,
+    done: bool,
+}
+
+impl Iterator for Entries {
+    type Item = Result<KeyedEntry, WatchError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.buffered.is_empty() {
+            if self.done {
+                return None;
+            }
+            match self.scan.page(self.cursor.as_deref()) {
+                Ok(page) => {
+                    self.buffered.extend(page.entries);
+                    self.done = page.next.is_none();
+                    self.cursor = page.next;
+                }
+                Err(e) => {
+                    self.done = true;
+                    return Some(Err(e));
+                }
+            }
+        }
+        self.buffered.pop_front().map(Ok)
+    }
+}
+
+fn one(scan: &Scan) -> Result<Option<KeyedEntry>, WatchError> {
+    Ok(scan.page(None)?.entries.into_iter().next())
+}
+
+/// The entry with the smallest key (ETS `first`).
+///
+/// # Errors
+///
+/// As for [`get`].
+pub fn first(bucket: &str) -> Result<Option<KeyedEntry>, WatchError> {
+    one(&scan(bucket).limit(1))
+}
+
+/// The entry with the largest key (ETS `last`).
+///
+/// # Errors
+///
+/// As for [`get`].
+pub fn last(bucket: &str) -> Result<Option<KeyedEntry>, WatchError> {
+    one(&scan(bucket).reverse().limit(1))
+}
+
+/// The entry with the smallest key after `key`, which need not exist (ETS
+/// `next`).
+///
+/// # Errors
+///
+/// As for [`get`].
+pub fn next(bucket: &str, key: &str) -> Result<Option<KeyedEntry>, WatchError> {
+    let page = scan(bucket).start(key).limit(2).page(None)?;
+    Ok(page.entries.into_iter().find(|e| e.key.as_str() > key))
+}
+
+/// The entry with the largest key before `key`, which need not exist (ETS
+/// `prev`).
+///
+/// # Errors
+///
+/// As for [`get`].
+pub fn prev(bucket: &str, key: &str) -> Result<Option<KeyedEntry>, WatchError> {
+    one(&scan(bucket).end(key).reverse().limit(1))
+}

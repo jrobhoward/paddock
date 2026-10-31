@@ -19,6 +19,7 @@
 //! disk reads run on the calling worker, usually from redb's page cache.
 
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Bound;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -33,6 +34,163 @@ use crate::replication::{Handle, Refusal, ReplicationStatus, SPACE};
 
 /// Keys per `list-keys` page.
 pub(crate) const PAGE: usize = 256;
+
+/// Most entries in one page of a scan.
+pub(crate) const SCAN_ENTRIES: usize = 1000;
+
+/// About the most bytes (keys and values) in one page of a scan; a page
+/// always holds at least one entry.
+pub(crate) const SCAN_BYTES: u64 = 1 << 20;
+
+/// What a scan reads (`paddock:watch`'s `scan`): the keys in
+/// `[start, end)` that start with `prefix`, in key order (bytes of the
+/// UTF-8), upward or, with `reverse`, downward, from `cursor` (a previous
+/// page's next key) on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ScanQuery {
+    pub(crate) prefix: Option<String>,
+    pub(crate) start: Option<String>,
+    pub(crate) end: Option<String>,
+    pub(crate) reverse: bool,
+    /// At most this many entries; 0 or more than [`SCAN_ENTRIES`] is
+    /// [`SCAN_ENTRIES`].
+    pub(crate) limit: u32,
+    pub(crate) cursor: Option<String>,
+}
+
+/// One entry a scan found: key, value, revision.
+pub(crate) type Scanned = (String, Vec<u8>, u64);
+
+/// A backend's page of a scan: keys and values, and the first key left.
+pub(crate) type RangePage = (Vec<(String, Vec<u8>)>, Option<String>);
+
+/// The smallest string greater than every string starting with `prefix`,
+/// or `None` if there is none (the prefix is all `char::MAX`).
+pub(crate) fn prefix_end(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let next = match u32::from(last) + 1 {
+            0xD800 => Some('\u{E000}'),
+            n => char::from_u32(n),
+        };
+        if let Some(next) = next {
+            chars.push(next);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
+}
+
+/// The tighter of two lower bounds.
+fn max_lower(a: Bound<String>, b: Bound<String>) -> Bound<String> {
+    match (&a, &b) {
+        (Bound::Unbounded, _) => b,
+        (_, Bound::Unbounded) => a,
+        (Bound::Included(x) | Bound::Excluded(x), Bound::Included(y) | Bound::Excluded(y)) => {
+            match x.cmp(y) {
+                std::cmp::Ordering::Less => b,
+                std::cmp::Ordering::Greater => a,
+                std::cmp::Ordering::Equal if matches!(a, Bound::Excluded(_)) => a,
+                std::cmp::Ordering::Equal => b,
+            }
+        }
+    }
+}
+
+/// The tighter of two upper bounds.
+fn min_upper(a: Bound<String>, b: Bound<String>) -> Bound<String> {
+    match (&a, &b) {
+        (Bound::Unbounded, _) => b,
+        (_, Bound::Unbounded) => a,
+        (Bound::Included(x) | Bound::Excluded(x), Bound::Included(y) | Bound::Excluded(y)) => {
+            match x.cmp(y) {
+                std::cmp::Ordering::Less => a,
+                std::cmp::Ordering::Greater => b,
+                std::cmp::Ordering::Equal if matches!(a, Bound::Excluded(_)) => a,
+                std::cmp::Ordering::Equal => b,
+            }
+        }
+    }
+}
+
+/// The key range `query` reads, or `None` when it is empty.
+pub(crate) fn scan_bounds(query: &ScanQuery) -> Option<(Bound<String>, Bound<String>)> {
+    let mut lower = query
+        .start
+        .clone()
+        .map_or(Bound::Unbounded, Bound::Included);
+    let mut upper = query.end.clone().map_or(Bound::Unbounded, Bound::Excluded);
+    if let Some(prefix) = &query.prefix {
+        lower = max_lower(lower, Bound::Included(prefix.clone()));
+        if let Some(end) = prefix_end(prefix) {
+            upper = min_upper(upper, Bound::Excluded(end));
+        }
+    }
+    // The cursor is the first key the previous page did not return.
+    match (&query.cursor, query.reverse) {
+        (Some(c), false) => lower = max_lower(lower, Bound::Included(c.clone())),
+        (Some(c), true) => upper = min_upper(upper, Bound::Included(c.clone())),
+        (None, _) => {}
+    }
+    let empty = match (&lower, &upper) {
+        (Bound::Included(l), Bound::Included(u)) => l > u,
+        (Bound::Included(l) | Bound::Excluded(l), Bound::Excluded(u))
+        | (Bound::Excluded(l), Bound::Included(u)) => l >= u,
+        _ => false,
+    };
+    (!empty).then_some((lower, upper))
+}
+
+/// Take entries from `entries` (in scan order) until `limit` of them or
+/// about `max_bytes`, at least one; and the first key left, if any.
+fn take_page(
+    entries: impl Iterator<Item = Result<(String, Vec<u8>), String>>,
+    limit: usize,
+    max_bytes: u64,
+) -> Result<RangePage, String> {
+    let mut page = Vec::new();
+    let mut bytes = 0u64;
+    for entry in entries {
+        let (key, value) = entry?;
+        let size = entry_size(&key, &value);
+        if page.len() >= limit || (!page.is_empty() && bytes.saturating_add(size) > max_bytes) {
+            return Ok((page, Some(key)));
+        }
+        bytes = bytes.saturating_add(size);
+        page.push((key, value));
+    }
+    Ok((page, None))
+}
+
+fn str_bounds(bounds: &(Bound<String>, Bound<String>)) -> (Bound<&str>, Bound<&str>) {
+    (
+        bounds.0.as_ref().map(String::as_str),
+        bounds.1.as_ref().map(String::as_str),
+    )
+}
+
+/// One page of a scan of a redb values table.
+fn scan_table<T: ReadableTable<&'static str, &'static [u8]>>(
+    table: &T,
+    bounds: &(Bound<String>, Bound<String>),
+    reverse: bool,
+    limit: usize,
+    max_bytes: u64,
+) -> Result<RangePage, String> {
+    let range = table
+        .range::<&str>(str_bounds(bounds))
+        .map_err(|e| e.to_string())?;
+    let owned = |entry: Result<_, redb::StorageError>| {
+        let (k, v): (redb::AccessGuard<&str>, redb::AccessGuard<&[u8]>) =
+            entry.map_err(|e| e.to_string())?;
+        Ok((k.value().to_string(), v.value().to_vec()))
+    };
+    if reverse {
+        take_page(range.rev().map(owned), limit, max_bytes)
+    } else {
+        take_page(range.map(owned), limit, max_bytes)
+    }
+}
 
 /// The namespace of shared buckets. App names cannot start with `@`.
 pub(crate) const SHARED: &str = "@shared";
@@ -89,6 +247,8 @@ pub(crate) enum Op {
         key: String,
         expected: u64,
     },
+    /// A page of entries in key order, with their revisions.
+    Scan(ScanQuery),
 }
 
 impl Op {
@@ -102,6 +262,7 @@ impl Op {
                 | Self::Revision(_)
                 | Self::Entry(_)
                 | Self::Since { .. }
+                | Self::Scan(_)
         )
     }
 }
@@ -138,6 +299,14 @@ pub(crate) enum Outcome {
     /// A compare-and-swap found the key at another revision (`None`:
     /// absent) and changed nothing.
     Conflict(Option<u64>),
+    /// A page of a scan: its entries, the first key it left (to resume
+    /// from), and the bucket's revision. Read on this node only, never
+    /// forwarded.
+    Page {
+        entries: Vec<Scanned>,
+        next: Option<String>,
+        revision: u64,
+    },
 }
 
 /// What [`apply`] did.
@@ -171,6 +340,15 @@ pub(crate) trait Txn {
     fn set_deleted(&mut self, revision: u64) -> Result<(), String>;
     /// Keys in order, from `offset`, at most `limit`.
     fn keys(&mut self, offset: usize, limit: usize) -> Result<Vec<String>, String>;
+    /// Entries in `bounds`, in key order (downward with `reverse`): at most
+    /// `limit` and about `max_bytes`, at least one; and the first key left.
+    fn range(
+        &mut self,
+        bounds: &(Bound<String>, Bound<String>),
+        reverse: bool,
+        limit: usize,
+        max_bytes: u64,
+    ) -> Result<RangePage, String>;
     /// Bytes stored: the sum of key and value lengths.
     fn bytes(&mut self) -> Result<u64, String>;
 }
@@ -185,6 +363,28 @@ fn current(txn: &mut dyn Txn, key: &str) -> Result<Option<u64>, String> {
         return Ok(None);
     }
     Ok(Some(txn.key_revision(key)?.unwrap_or(0)))
+}
+
+/// One page of a scan, with each entry's revision and the bucket's.
+fn scan(txn: &mut dyn Txn, query: &ScanQuery) -> Result<Outcome, String> {
+    let limit = match usize::try_from(query.limit).unwrap_or(SCAN_ENTRIES) {
+        0 => SCAN_ENTRIES,
+        n => n.min(SCAN_ENTRIES),
+    };
+    let (found, next) = match scan_bounds(query) {
+        Some(bounds) => txn.range(&bounds, query.reverse, limit, SCAN_BYTES)?,
+        None => (Vec::new(), None),
+    };
+    let mut entries = Vec::with_capacity(found.len());
+    for (key, value) in found {
+        let revision = txn.key_revision(&key)?.unwrap_or(0);
+        entries.push((key, value, revision));
+    }
+    Ok(Outcome::Page {
+        entries,
+        next,
+        revision: txn.revision()?,
+    })
 }
 
 /// Run `op` against `txn` as one transaction.
@@ -255,6 +455,7 @@ pub(crate) fn apply(txn: &mut dyn Txn, op: Op, quota: Option<u64>) -> Result<App
                 Outcome::Conflict(found)
             }
         }
+        Op::Scan(query) => scan(txn, &query)?,
         Op::Get(key) => Outcome::Value(txn.get(&key)?),
         Op::Exists(key) => Outcome::Exists(txn.get(&key)?.is_some()),
         Op::Keys(cursor) => {
@@ -443,6 +644,22 @@ impl Txn for MemBucket {
             .take(limit)
             .cloned()
             .collect())
+    }
+
+    fn range(
+        &mut self,
+        bounds: &(Bound<String>, Bound<String>),
+        reverse: bool,
+        limit: usize,
+        max_bytes: u64,
+    ) -> Result<RangePage, String> {
+        let range = self.entries.range::<str, _>(str_bounds(bounds));
+        let owned = |(k, (v, _)): (&String, &(Vec<u8>, u64))| Ok((k.clone(), v.clone()));
+        if reverse {
+            take_page(range.rev().map(owned), limit, max_bytes)
+        } else {
+            take_page(range.map(owned), limit, max_bytes)
+        }
     }
 
     fn bytes(&mut self) -> Result<u64, String> {
@@ -1039,6 +1256,19 @@ impl Txn for DiskRead<'_> {
         }
     }
 
+    fn range(
+        &mut self,
+        bounds: &(Bound<String>, Bound<String>),
+        reverse: bool,
+        limit: usize,
+        max_bytes: u64,
+    ) -> Result<RangePage, String> {
+        match &self.table {
+            Some(t) => scan_table(t, bounds, reverse, limit, max_bytes),
+            None => Ok((Vec::new(), None)),
+        }
+    }
+
     fn bytes(&mut self) -> Result<u64, String> {
         if let Some(b) = self.cached {
             return Ok(b);
@@ -1109,6 +1339,16 @@ impl Txn for DiskWrite<'_, '_> {
 
     fn keys(&mut self, offset: usize, limit: usize) -> Result<Vec<String>, String> {
         read_keys(&self.table, offset, limit)
+    }
+
+    fn range(
+        &mut self,
+        bounds: &(Bound<String>, Bound<String>),
+        reverse: bool,
+        limit: usize,
+        max_bytes: u64,
+    ) -> Result<RangePage, String> {
+        scan_table(&self.table, bounds, reverse, limit, max_bytes)
     }
 
     fn bytes(&mut self) -> Result<u64, String> {

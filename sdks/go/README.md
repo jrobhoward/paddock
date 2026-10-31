@@ -48,7 +48,7 @@ func main() {}
 | `paddock` | Callbacks, `Ctx` (call, cast, reply, links, monitors, timers, names, exit signals), envelopes, snapshots | |
 | `http` | Requests from the HTTP ingress and their responses | (routes in the node's config) |
 | `kv` | Keyvalue buckets | `wasi:keyvalue` |
-| `watch` | Revisions, compare-and-swap, watches and their change notices | `wasi:keyvalue` |
+| `watch` | Revisions, compare-and-swap, watches and their change notices, and scans in key order (`Scan`, `First`, `Last`, `Next`, `Prev`) | `wasi:keyvalue` |
 | `log` | Log records | `wasi:logging` |
 | `config` | The app's configuration | `wasi:config` |
 | `secrets` | Secrets the operator binds | `paddock:secrets` |

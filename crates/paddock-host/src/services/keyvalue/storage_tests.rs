@@ -471,3 +471,249 @@ async fn KvStore____disk_swap_and_delete_revision____kept_across_reopen() {
         }
     );
 }
+
+// --- scans (`paddock:watch`'s `scan`) ----------------------------------------
+
+/// Where a scan test runs: a memory bucket or a disk bucket.
+#[derive(Debug, Clone, Copy)]
+enum Backend {
+    Memory,
+    Disk,
+}
+
+/// A bucket on `backend` holding `keys` (each value is its key).
+struct Filled {
+    mem: MemBucket,
+    disk: Disk,
+    backend: Backend,
+}
+
+impl Filled {
+    fn new(backend: Backend, keys: &[&str]) -> Self {
+        let mut f = Self {
+            mem: MemBucket::default(),
+            disk: Disk::in_memory(),
+            backend,
+        };
+        let pairs = keys
+            .iter()
+            .map(|k| ((*k).to_string(), k.as_bytes().to_vec()))
+            .collect();
+        f.op(Op::SetMany(pairs));
+        f
+    }
+
+    fn op(&mut self, op: Op) -> Outcome {
+        match self.backend {
+            Backend::Memory => run(&mut self.mem, op, None).unwrap(),
+            Backend::Disk => {
+                let key = ("app".to_string(), "b".to_string());
+                self.disk.run(&key, op, None).unwrap().outcome
+            }
+        }
+    }
+
+    /// One page: (keys, next).
+    fn page(&mut self, query: &ScanQuery) -> (Vec<String>, Option<String>) {
+        match self.op(Op::Scan(query.clone())) {
+            Outcome::Page { entries, next, .. } => {
+                (entries.into_iter().map(|(k, _, _)| k).collect(), next)
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Every page from the first, following `next`.
+    fn all(&mut self, query: &ScanQuery) -> (Vec<String>, usize) {
+        let mut q = query.clone();
+        let mut keys = Vec::new();
+        let mut pages = 0;
+        loop {
+            let (found, next) = self.page(&q);
+            pages += 1;
+            keys.extend(found);
+            match next {
+                Some(n) => q.cursor = Some(n),
+                None => return (keys, pages),
+            }
+            assert!(pages < 10_000, "no end");
+        }
+    }
+}
+
+fn q(limit: u32) -> ScanQuery {
+    ScanQuery {
+        limit,
+        ..ScanQuery::default()
+    }
+}
+
+#[rstest::rstest]
+#[case::memory(Backend::Memory)]
+#[case::disk(Backend::Disk)]
+fn scan____paged_both_ways____every_key_once_in_order(#[case] backend: Backend) {
+    let keys: Vec<String> = (0..25).map(|i| format!("k{i:02}")).collect();
+    let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let mut b = Filled::new(backend, &refs);
+
+    let (up, up_pages) = b.all(&q(10));
+    let (down, _) = b.all(&ScanQuery {
+        reverse: true,
+        ..q(10)
+    });
+
+    assert_eq!(up, keys);
+    assert_eq!(up_pages, 3);
+    let mut reversed = keys.clone();
+    reversed.reverse();
+    assert_eq!(down, reversed);
+}
+
+#[rstest::rstest]
+#[case::memory(Backend::Memory)]
+#[case::disk(Backend::Disk)]
+fn scan____prefix_and_bounds____only_keys_inside_both(#[case] backend: Backend) {
+    let mut b = Filled::new(backend, &["a", "b", "b/1", "b/2", "b/3", "b0", "c"]);
+
+    let prefix = b.page(&ScanQuery {
+        prefix: Some("b/".into()),
+        ..q(0)
+    });
+    let bounded = b.page(&ScanQuery {
+        prefix: Some("b".into()),
+        start: Some("b/2".into()),
+        end: Some("b0".into()),
+        ..q(0)
+    });
+    let last = b.page(&ScanQuery {
+        reverse: true,
+        ..q(1)
+    });
+    let empty = b.page(&ScanQuery {
+        start: Some("c".into()),
+        end: Some("a".into()),
+        ..q(0)
+    });
+
+    assert_eq!(
+        prefix,
+        (vec!["b/1".into(), "b/2".into(), "b/3".into()], None)
+    );
+    assert_eq!(bounded, (vec!["b/2".into(), "b/3".into()], None));
+    assert_eq!(last, (vec!["c".into()], Some("b0".into())));
+    assert_eq!(empty, (vec![], None));
+}
+
+#[rstest::rstest]
+#[case::memory(Backend::Memory)]
+#[case::disk(Backend::Disk)]
+fn scan____values_and_revisions____as_written(#[case] backend: Backend) {
+    let mut b = Filled::new(backend, &["a", "b"]);
+    b.op(set("b", "two"));
+
+    let page = b.op(Op::Scan(q(0)));
+
+    assert_eq!(
+        page,
+        Outcome::Page {
+            entries: vec![
+                ("a".into(), b"a".to_vec(), 1),
+                ("b".into(), b"two".to_vec(), 2)
+            ],
+            next: None,
+            revision: 2,
+        }
+    );
+}
+
+#[rstest::rstest]
+#[case::memory(Backend::Memory)]
+#[case::disk(Backend::Disk)]
+fn scan____values_past_the_page_size____one_entry_per_page_at_least(#[case] backend: Backend) {
+    let mut b = Filled::new(backend, &[]);
+    let big = vec![7u8; 700 << 10];
+    b.op(Op::SetMany(vec![
+        ("a".into(), big.clone()),
+        ("b".into(), big.clone()),
+        ("c".into(), vec![1]),
+    ]));
+
+    let first = b.page(&q(0));
+    let (all, pages) = b.all(&q(0));
+
+    assert_eq!(first, (vec!["a".into()], Some("b".into())));
+    assert_eq!(all, ["a", "b", "c"]);
+    assert_eq!(pages, 2);
+}
+
+#[test]
+fn prefix_end____last_char_raised____past_maximum_and_surrogates() {
+    assert_eq!(prefix_end("ab").as_deref(), Some("ac"));
+    assert_eq!(prefix_end("a\u{10FFFF}").as_deref(), Some("b"));
+    assert_eq!(prefix_end("a\u{D7FF}").as_deref(), Some("a\u{E000}"));
+    assert_eq!(prefix_end("\u{10FFFF}"), None);
+    assert_eq!(prefix_end(""), None);
+}
+
+fn scan_model(keys: &BTreeMap<String, ()>, query: &ScanQuery) -> Vec<String> {
+    let mut found: Vec<String> = keys
+        .keys()
+        .filter(|k| {
+            query
+                .prefix
+                .as_ref()
+                .is_none_or(|p| k.starts_with(p.as_str()))
+        })
+        .filter(|k| query.start.as_ref().is_none_or(|s| *k >= s))
+        .filter(|k| query.end.as_ref().is_none_or(|e| *k < e))
+        .cloned()
+        .collect();
+    if query.reverse {
+        found.reverse();
+    }
+    found
+}
+
+fn key_strategy() -> impl proptest::strategy::Strategy<Value = String> {
+    proptest::collection::vec(
+        proptest::sample::select(vec![
+            'a',
+            'b',
+            '/',
+            'é',
+            '\u{D7FF}',
+            '\u{E000}',
+            '\u{10FFFF}',
+        ]),
+        0..4,
+    )
+    .prop_map(|chars| chars.into_iter().collect())
+}
+
+use proptest::prelude::*;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    /// Paging through any query on either backend returns exactly the keys
+    /// a filter over the sorted keys does.
+    #[test]
+    fn scan____any_query_paged____same_keys_as_the_model(
+        keys in proptest::collection::btree_map(key_strategy(), Just(()), 0..30),
+        prefix in proptest::option::of(key_strategy()),
+        start in proptest::option::of(key_strategy()),
+        end in proptest::option::of(key_strategy()),
+        reverse in any::<bool>(),
+        limit in 1u32..5,
+        disk in any::<bool>(),
+    ) {
+        let refs: Vec<&str> = keys.keys().map(String::as_str).collect();
+        let backend = if disk { Backend::Disk } else { Backend::Memory };
+        let mut b = Filled::new(backend, &refs);
+        let query = ScanQuery { prefix, start, end, reverse, limit, cursor: None };
+
+        let (found, _) = b.all(&query);
+
+        prop_assert_eq!(found, scan_model(&keys, &query));
+    }
+}

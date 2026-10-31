@@ -81,6 +81,12 @@ fn op_size(op: &Op) -> usize {
         | Op::SwapDelete { key: k, .. }
         | Op::Since { key: k, .. } => k.len() + 16,
         Op::Keys(_) => 16,
+        // A read: never logged, sized for completeness.
+        Op::Scan(q) => [&q.prefix, &q.start, &q.end, &q.cursor]
+            .iter()
+            .map(|b| b.as_ref().map_or(0, String::len))
+            .sum::<usize>()
+            .saturating_add(16),
     }
 }
 

@@ -34,3 +34,30 @@ type OptionEntryShape struct {
 	_     cm.HostLayout
 	shape [unsafe.Sizeof(cm.Option[Entry]{})]byte
 }
+
+// ScanPageShape is used for storage in variant or result types.
+type ScanPageShape struct {
+	_     cm.HostLayout
+	shape [unsafe.Sizeof(ScanPage{})]byte
+}
+
+func lower_OptionString(v cm.Option[string]) (f0 uint32, f1 *uint8, f2 uint32) {
+	some := v.Some()
+	if some != nil {
+		f0 = 1
+		v1, v2 := cm.LowerString(*some)
+		f1 = (*uint8)(v1)
+		f2 = (uint32)(v2)
+	}
+	return
+}
+
+func lower_ScanQuery(v ScanQuery) (f0 uint32, f1 *uint8, f2 uint32, f3 uint32, f4 *uint8, f5 uint32, f6 uint32, f7 *uint8, f8 uint32, f9 uint32, f10 uint32, f11 uint32, f12 *uint8, f13 uint32) {
+	f0, f1, f2 = lower_OptionString(v.Prefix)
+	f3, f4, f5 = lower_OptionString(v.Start)
+	f6, f7, f8 = lower_OptionString(v.End)
+	f9 = (uint32)(cm.BoolToU32(v.Reverse))
+	f10 = (uint32)(v.Limit)
+	f11, f12, f13 = lower_OptionString(v.Cursor)
+	return
+}

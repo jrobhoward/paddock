@@ -157,6 +157,81 @@ type Entry struct {
 	Revision uint64         `json:"revision"`
 }
 
+// ScanQuery represents the record "paddock:watch/watch@0.1.0#scan-query".
+//
+// What `scan` reads: the keys of a bucket in key order (the bytes of
+// their UTF-8, so Unicode code point order), like ETS's `ordered_set`.
+//
+//	record scan-query {
+//		prefix: option<string>,
+//		start: option<string>,
+//		end: option<string>,
+//		reverse: bool,
+//		limit: u32,
+//		cursor: option<string>,
+//	}
+type ScanQuery struct {
+	_ cm.HostLayout `json:"-"`
+	// Only keys starting with this.
+	Prefix cm.Option[string] `json:"prefix"`
+
+	// Only keys from this one on (inclusive).
+	Start cm.Option[string] `json:"start"`
+
+	// Only keys before this one (exclusive).
+	End cm.Option[string] `json:"end"`
+
+	// Downward, from the last key in range, instead of upward.
+	Reverse bool `json:"reverse"`
+
+	// At most this many entries; 0, or more than the host's page size
+	// (1,000 entries), is the page size. A page also stops near 1 MiB of
+	// keys and values, after at least one entry.
+	Limit uint32 `json:"limit"`
+
+	// The previous page's `next`, to continue the same scan.
+	Cursor cm.Option[string] `json:"cursor"`
+}
+
+// KeyedEntry represents the record "paddock:watch/watch@0.1.0#keyed-entry".
+//
+// One entry a scan found.
+//
+//	record keyed-entry {
+//		key: string,
+//		value: list<u8>,
+//		revision: u64,
+//	}
+type KeyedEntry struct {
+	_        cm.HostLayout  `json:"-"`
+	Key      string         `json:"key"`
+	Value    cm.List[uint8] `json:"value"`
+	Revision uint64         `json:"revision"`
+}
+
+// ScanPage represents the record "paddock:watch/watch@0.1.0#scan-page".
+//
+// A page of a scan.
+//
+//	record scan-page {
+//		entries: list<keyed-entry>,
+//		next: option<string>,
+//		revision: u64,
+//	}
+type ScanPage struct {
+	_ cm.HostLayout `json:"-"`
+	// In key order, or downward with `reverse`.
+	Entries cm.List[KeyedEntry] `json:"entries"`
+
+	// Where the next page starts, to pass as `cursor`; none when the scan
+	// is complete.
+	Next cm.Option[string] `json:"next"`
+
+	// The bucket's revision when the page was read: `watch` with this as
+	// `after` sees every change the page could not.
+	Revision uint64 `json:"revision"`
+}
+
 // Started represents the record "paddock:watch/watch@0.1.0#started".
 //
 // A started watch.
@@ -259,6 +334,24 @@ func GetLinearizable(bucket string, key string) (result cm.Result[OptionEntrySha
 func Revision(bucket string) (result cm.Result[ErrorShape, uint64, Error]) {
 	bucket0, bucket1 := cm.LowerString(bucket)
 	wasmimport_Revision((*uint8)(bucket0), (uint32)(bucket1), &result)
+	return
+}
+
+// Scan represents the imported function "scan".
+//
+// One page of the bucket's entries in key order, read at one revision.
+// Pages of one scan are each consistent but may differ in revision; a
+// key written between two pages appears if it falls in the part not
+// yet read. Reads this node's copy of a replicated bucket, as `get`
+// does.
+//
+//	scan: func(bucket: string, query: scan-query) -> result<scan-page, error>
+//
+//go:nosplit
+func Scan(bucket string, query ScanQuery) (result cm.Result[ScanPageShape, ScanPage, Error]) {
+	bucket0, bucket1 := cm.LowerString(bucket)
+	query0, query1, query2, query3, query4, query5, query6, query7, query8, query9, query10, query11, query12, query13 := lower_ScanQuery(query)
+	wasmimport_Scan((*uint8)(bucket0), (uint32)(bucket1), (uint32)(query0), (*uint8)(query1), (uint32)(query2), (uint32)(query3), (*uint8)(query4), (uint32)(query5), (uint32)(query6), (*uint8)(query7), (uint32)(query8), (uint32)(query9), (uint32)(query10), (uint32)(query11), (*uint8)(query12), (uint32)(query13), &result)
 	return
 }
 

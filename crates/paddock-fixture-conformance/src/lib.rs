@@ -67,6 +67,11 @@
 //! - `kv-set:<bucket>:<key>:<value>`, `kv-delete:<bucket>:<key>`: `ok`.
 //!   `kv-get:<bucket>:<key>`: the value or `none`. `kv-keys:<bucket>`:
 //!   the keys, sorted, joined by `,`.
+//! - `scan:<bucket>:<prefix>:<start>:<end>:<up|down>:<limit>`: every entry
+//!   of a scan (`paddock:watch`'s `scan`; an empty field is none), read in
+//!   pages of `<limit>`: `<key>=<value>` joined by `,`.
+//! - `first:<bucket>`, `last:<bucket>`, `next:<bucket>:<key>`,
+//!   `prev:<bucket>:<key>`: that entry's key, or `none`.
 //! - `watch:<bucket>:<key>`: start a watch; its id. `changes`: each
 //!   `kv-changed` notice handled, `<key>@<revision>`, joined by `,`.
 //! - `join:<group>`, `leave:<group>`: `ok`. `members:<group>`: the
@@ -297,6 +302,46 @@ fn metric(kind: &str, arg: &str) -> String {
     }
 }
 
+fn scan_command(arg: &str) -> Result<String, WatchError> {
+    let f: Vec<&str> = arg.splitn(6, ':').collect();
+    let field = |i: usize| f.get(i).copied().filter(|s| !s.is_empty());
+    let mut scan = watch::scan(field(0).unwrap_or(""));
+    if let Some(p) = field(1) {
+        scan = scan.prefix(p);
+    }
+    if let Some(k) = field(2) {
+        scan = scan.start(k);
+    }
+    if let Some(k) = field(3) {
+        scan = scan.end(k);
+    }
+    if field(4) == Some("down") {
+        scan = scan.reverse();
+    }
+    scan = scan.limit(field(5).and_then(|n| n.parse().ok()).unwrap_or(0));
+    let mut found = Vec::new();
+    for entry in scan.entries() {
+        let entry = entry?;
+        found.push(format!(
+            "{}={}",
+            entry.key,
+            String::from_utf8_lossy(&entry.value)
+        ));
+    }
+    Ok(found.join(","))
+}
+
+fn neighbour(verb: &str, arg: &str) -> Result<String, WatchError> {
+    let (bucket, key) = arg.split_once(':').unwrap_or((arg, ""));
+    let found = match verb {
+        "first" => watch::first(bucket)?,
+        "last" => watch::last(bucket)?,
+        "next" => watch::next(bucket, key)?,
+        _ => watch::prev(bucket, key)?,
+    };
+    Ok(found.map_or_else(|| "none".into(), |e| e.key))
+}
+
 /// What a command does with the call.
 enum Outcome {
     Reply(Envelope),
@@ -441,6 +486,10 @@ impl Conformance {
                 )
             }
             "changes" => reply(self.changes.join(",")),
+            "scan" => reply(scan_command(arg).unwrap_or_else(|e| watch_error(&e))),
+            "first" | "last" | "next" | "prev" => {
+                reply(neighbour(verb, arg).unwrap_or_else(|e| watch_error(&e)))
+            }
             "join" | "leave" | "members" | "publish" => {
                 reply(group_command(verb, arg).unwrap_or_else(|e| group_error(&e)))
             }

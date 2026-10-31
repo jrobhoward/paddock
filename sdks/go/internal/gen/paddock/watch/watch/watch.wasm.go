@@ -28,6 +28,10 @@ func wasmimport_GetLinearizable(bucket0 *uint8, bucket1 uint32, key0 *uint8, key
 //go:noescape
 func wasmimport_Revision(bucket0 *uint8, bucket1 uint32, result *cm.Result[ErrorShape, uint64, Error])
 
+//go:wasmimport paddock:watch/watch@0.1.0 scan
+//go:noescape
+func wasmimport_Scan(bucket0 *uint8, bucket1 uint32, query0 uint32, query1 *uint8, query2 uint32, query3 uint32, query4 *uint8, query5 uint32, query6 uint32, query7 *uint8, query8 uint32, query9 uint32, query10 uint32, query11 uint32, query12 *uint8, query13 uint32, result *cm.Result[ScanPageShape, ScanPage, Error])
+
 //go:wasmimport paddock:watch/watch@0.1.0 compare-and-swap
 //go:noescape
 func wasmimport_CompareAndSwap(bucket0 *uint8, bucket1 uint32, key0 *uint8, key1 uint32, expected0 uint32, expected1 uint64, value0 *uint8, value1 uint32, result *cm.Result[ErrorShape, uint64, Error])

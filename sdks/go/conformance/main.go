@@ -217,6 +217,54 @@ func metricCommand(kind, arg string) (string, error) {
 	}
 }
 
+func scanCommand(arg string) (string, error) {
+	f := strings.SplitN(arg, ":", 6)
+	for len(f) < 6 {
+		f = append(f, "")
+	}
+	s := watch.Scan(f[0])
+	if f[1] != "" {
+		s.Prefix(f[1])
+	}
+	if f[2] != "" {
+		s.Start(f[2])
+	}
+	if f[3] != "" {
+		s.End(f[3])
+	}
+	if f[4] == "down" {
+		s.Reverse()
+	}
+	s.Limit(uint32(number(f[5])))
+	var found []string
+	err := s.Each(func(e watch.KeyedEntry) bool {
+		found = append(found, e.Key+"="+string(e.Value))
+		return true
+	})
+	return strings.Join(found, ","), err
+}
+
+func neighbour(verb, arg string) (string, error) {
+	bucket, key, _ := strings.Cut(arg, ":")
+	var e watch.KeyedEntry
+	var found bool
+	var err error
+	switch verb {
+	case "first":
+		e, found, err = watch.First(bucket)
+	case "last":
+		e, found, err = watch.Last(bucket)
+	case "next":
+		e, found, err = watch.Next(bucket, key)
+	default:
+		e, found, err = watch.Prev(bucket, key)
+	}
+	if !found {
+		return "none", err
+	}
+	return e.Key, err
+}
+
 func orServiceError(reply string, err error) string {
 	if err != nil {
 		return serviceError(err)
@@ -374,6 +422,10 @@ func (c *conformance) run(ctx *paddock.Ctx, caller *paddock.CallRef, msg paddock
 		return reply(orServiceError(strconv.FormatUint(started.ID, 10), err))
 	case "changes":
 		return reply(strings.Join(c.changes, ","))
+	case "scan":
+		return reply(orServiceError(scanCommand(arg)))
+	case "first", "last", "next", "prev":
+		return reply(orServiceError(neighbour(verb, arg)))
 	case "join", "leave", "members", "publish":
 		return reply(orServiceError(groupCommand(verb, arg)))
 	case "config":
