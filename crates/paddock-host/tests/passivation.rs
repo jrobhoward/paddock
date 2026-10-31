@@ -278,6 +278,26 @@ async fn upgrade____no_slot_for_the_new_store____reverts_and_the_old_version_run
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upgrade____then_passivated_and_woken____the_new_version_answers() {
+    let (rt, app) = runtime();
+    let h = rt.spawn(app, passivating(&[])).unwrap();
+    incs(&h, 2).await;
+    let v2 = rt.load(&counter(2)).unwrap();
+    let mut next = passivating(&[]);
+    next.version = "2.0.0".into();
+    h.upgrade(&v2, next, "1.0.0").await.unwrap();
+    let live = ask(&h, "get").await;
+    until_state(&h, LifecycleState::Passive).await;
+
+    let woken = ask(&h, "get").await;
+
+    assert!(live.starts_with("2.0.0 count=2"), "{live}");
+    assert_eq!(woken, live);
+    assert_eq!(h.restarts(), 0);
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn passivation____passivated_and_woken____counted_in_metrics() {
     let (rt, _) = runtime();
     let h = spawn(&[]);

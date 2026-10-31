@@ -311,6 +311,39 @@ async fn exit_criterion_6____v1_v2_then_broken_v3____keeps_identity_and_reverts_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upgrade____passivating_instances____woken_on_the_new_version() {
+    let (rt, _) = shared();
+    let name = "up-sleepy";
+    let v1 = json!({ "instances": { "passivate_after_ms": 50 } });
+    let apps = rt
+        .start_apps(vec![deployment(name, 1, v1.clone())])
+        .await
+        .unwrap();
+    let app = apps.app(name).unwrap().clone();
+    let instance = running(&app).await;
+    ask(&instance, "inc").await;
+    let mut v2 = v1;
+    v2["upgrade"] = snapshot_mode("^1");
+    apps.upgrade(name, deployment(name, 2, v2), &UpgradeOptions::default())
+        .await
+        .unwrap();
+    let mut state = instance.subscribe_state();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        state.wait_for(|s| *s == paddock_host::LifecycleState::Passive),
+    )
+    .await
+    .expect("passivated after the upgrade")
+    .unwrap();
+
+    let woken = ask(&instance, "get").await;
+
+    assert!(woken.starts_with("2.0.0 count=1"), "{woken}");
+    assert_eq!(instance.restarts(), 0);
+    apps.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade____restart_mode____same_ids_next_incarnation_fresh_state() {
     let (rt, _) = shared();
     let name = "up-restart";

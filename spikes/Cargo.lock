@@ -2641,6 +2641,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "s27-bench"
+version = "0.0.0"
+dependencies = [
+ "paddock-host",
+ "tokio",
+]
+
+[[package]]
+name = "s27-guest"
+version = "0.0.0"
+dependencies = [
+ "paddock-sdk",
+]
+
+[[package]]
 name = "s4-guest"
 version = "0.0.0"
 dependencies = [

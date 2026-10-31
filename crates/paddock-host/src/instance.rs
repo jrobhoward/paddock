@@ -621,6 +621,10 @@ pub(crate) struct InstanceTask {
     /// What woke a passivated instance, handled first once it is awake.
     held: Option<Message>,
     held_op: Option<Box<Op>>,
+    /// The code the instance runs, once started: what a wake from
+    /// passivation instantiates. A successful upgrade replaces it, so the
+    /// old version's code and memory image go with its Store.
+    app: Option<LoadedApp>,
     /// The next call reference, unique for the instance's whole life: a
     /// guest woken from a snapshot may still hold the reference of a call
     /// whose caller gave up.
@@ -698,6 +702,7 @@ pub(crate) fn prepare(
         exit: exit_tx,
         held: None,
         held_op: None,
+        app: None,
         next_ref: 1,
     };
     (handle, task)
@@ -714,7 +719,7 @@ impl InstanceTask {
             node = self.pid.node,
         );
         let reason = self
-            .lifecycle(rt.clone(), &app, &spec)
+            .lifecycle(rt.clone(), app, &spec)
             .instrument(span.clone())
             .await;
 
@@ -763,7 +768,7 @@ impl InstanceTask {
     async fn lifecycle(
         &mut self,
         rt: Arc<RuntimeInner>,
-        app: &LoadedApp,
+        app: LoadedApp,
         spec: &InstanceSpec,
     ) -> ExitReason {
         if let Some(code) = app.native() {
@@ -790,10 +795,11 @@ impl InstanceTask {
         let mut store = new_store(&engine, state);
         let mut spec = spec.clone();
 
-        let mut instance = match self.start(&mut store, app, &spec).await {
+        let mut instance = match self.start(&mut store, &app, &spec).await {
             Ok(instance) => instance,
             Err(reason) => return reason,
         };
+        self.app = Some(app);
         self.set_state(LifecycleState::Active);
         self.announce(&store);
         // Ends with the instance, or when this incarnation's lifecycle does.
@@ -830,7 +836,11 @@ impl InstanceTask {
                 Err(no) => return no.reason(),
             };
             store = new_store(&engine, state);
-            instance = match self.wake(&mut store, app, &spec, &snapshot).await {
+            // Set once started; the version running when it passivated.
+            let Some(app) = self.app.clone() else {
+                return ExitReason::Crashed("no_code".into());
+            };
+            instance = match self.wake(&mut store, &app, &spec, &snapshot).await {
                 Ok(instance) => instance,
                 Err(reason) => return reason,
             };
@@ -1103,6 +1113,9 @@ impl InstanceTask {
                     Err(UpgradeError::SaveFailed(reason)) => Some(reason.clone()),
                     _ => None,
                 };
+                if result.is_ok() {
+                    self.app = Some(app);
+                }
                 let _ = reply.send(result);
                 exit
             }

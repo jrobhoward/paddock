@@ -207,6 +207,12 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- An upgraded instance that passivates now wakes on the version it was
+  upgraded to. It woke on the version it was started with, given the new
+  version's snapshot, while `ps` showed the new version, so a release of
+  an app with `passivate_after` reverted at each instance's next wake. The
+  old version's code and memory image are now freed when the upgrade
+  succeeds, not when the instance exits (ROADMAP Q15, found by spike S27).
 - A caller woken by a reply, or an instance woken by a cast, no longer
   waits up to an epoch tick (1 to 2 ms) while the instance that woke it
   goes on with its queued messages: the instance moves the woken task off
