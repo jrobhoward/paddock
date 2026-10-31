@@ -176,6 +176,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   docs are the command protocol every SDK's conformance app speaks, and
   `PADDOCK_CONFORMANCE_APP=<component.wasm>` runs the suite against
   another language's.
+- `crates/paddock-fixture-kvbench`: keyvalue loops timed inside a guest,
+  for `paddock-host`'s `kv_cost` benchmark; `scripts/beam_ets.escript`
+  runs the same loops (keys, values, key sequence) against ETS. Keep the
+  two in step.
 - `crates/paddock-fixture-sdk`: a guest that uses `wasi:config`,
   `wasi:keyvalue`, `paddock:groups`, `wasi:http/outgoing-handler` and the
   other services through `paddock-sdk`'s wrappers (`config`, `kv`,

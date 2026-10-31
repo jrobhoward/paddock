@@ -39,6 +39,8 @@ BENCHES=(
   "restart|crash and kill to the restarted instance's first reply; upgrades by state size|R/examples/restart_cost 1; R/examples/restart_cost 4"
   "heap|heap growth, memory held live and after exit, slot reuse, passivated state by size|R/examples/heap_cost 1"
   "compile|compile time by component size, and loads from the compiled-code cache|R/examples/compile_cost"
+  "kv|keyvalue memory buckets from a guest: single operations, ordered reads, 1 to 16 instances on one bucket, bytes per entry (1 and 4 workers)|R/examples/kv_cost 1; R/examples/kv_cost 4"
+  "beam-ets|ETS reference for kv: the same loops in an Erlang process against set and ordered_set tables (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_ets.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_ets.escript"
   "beam|Erlang/OTP reference: gen_server call, cast, spawn, process memory, send_after lateness (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_baseline.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_baseline.escript"
   "s14|spike S14: storage in the guest and host services|S/s14-bench spikes/target/wasm32-wasip2/release/s14_guest.wasm"
   "s15|spike S15: HTTP in the guest and the host, and the connection sweep|S/s15-bench 4; S/s15-bench 4 sweep"
@@ -79,7 +81,7 @@ fi
 
 echo "bench: building (release)"
 cargo build -q --release --target wasm32-wasip2 -p paddock-fixture-chaos -p paddock-fixture-workload \
-  --target-dir target/fixtures
+  -p paddock-fixture-kvbench --target-dir target/fixtures
 # app_cost's core module: paddock-workload with no imports.
 app_core=0
 if wanted app; then
@@ -131,8 +133,8 @@ for b in "${BENCHES[@]}"; do
   IFS='|' read -r name what commands <<<"$b"
   wanted "$name" || continue
   [ "$name" = app ] && [ "$app_core" = 0 ] && continue
-  if [ "$name" = beam ] && ! command -v escript >/dev/null; then
-    echo "bench: beam skipped (no escript on the PATH)" >&2
+  if [[ "$name" = beam* ]] && ! command -v escript >/dev/null; then
+    echo "bench: $name skipped (no escript on the PATH)" >&2
     continue
   fi
   echo "bench: $name"

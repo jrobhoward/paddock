@@ -2039,6 +2039,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "paddock-fixture-kvbench"
+version = "0.3.0"
+dependencies = [
+ "paddock-sdk",
+]
+
+[[package]]
 name = "paddock-fixture-native"
 version = "0.3.0"
 dependencies = [

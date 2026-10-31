@@ -1934,6 +1934,44 @@ The adopted change, against before:
 - **`pool_load`'s tails under oversubscription are not this.** The busy rows' p99 at 256 clients (12.3 to 12.7 ms) did not move: those are queues, as Little's law predicts.
 - **Not measured:** the 16-core machine (busy with other work this session); work after a cast inside one callback, which still waits for the tick; MMU interruption (B14).
 
+## 2026-10-30: keyvalue buckets against ETS
+
+`scripts/bench.sh kv beam-ets`: `kv_cost` runs loops inside a guest (`paddock-fixture-kvbench`) against memory buckets; `scripts/beam_ets.escript` runs the same loops in an Erlang process against ETS tables. The same keys (`k000000` ...), values of the same sizes (each entry its own), the same pseudo-random key sequence, made before the clock starts on both sides; each loop timed from inside (the guest's clock, `erlang:monotonic_time`), median of 7 runs; the call that starts a loop is not counted. One suite run on each machine, both idle at the start (load 0.25 on the 16-core machine, commit 96bd15e with the benchmark added; 0.08 on the Raspberry Pi 5, OTP 27 there and OTP 28 here). The figures below are with 4 workers or schedulers; the 1-worker single-operation figures are the same within a few per cent. ns per operation; the ratio is the bucket against `ordered_set`, the ETS table with the same structure (a bucket is ordered).
+
+| Operation, keys, value | 16-core: bucket | `set` | `ordered_set` | ratio | Pi: bucket | `set` | `ordered_set` | ratio |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| get, 1,000, 16 B | 1,209 | 118 | 262 | 4.6 | 1,221 | 193 | 325 | 3.8 |
+| get, 100,000, 16 B | 1,523 | 276 | 684 | 2.2 | 1,911 | 446 | 1,157 | 1.7 |
+| get, 1,000, 64 KiB | 7,659 | 212 | 336 | 23 | 12,459 | 354 | 473 | 26 |
+| get of a missing key, 1,000 | 989 | 51 | 181 | 5.5 | 1,032 | 96 | 266 | 3.9 |
+| overwrite, 1,000, 16 B | 1,547 | 136 | 269 | 5.8 | 1,492 | 202 | 382 | 3.9 |
+| overwrite, 100,000, 16 B | 2,221 | 285 | 718 | 3.1 | 2,375 | 490 | 1,234 | 1.9 |
+| overwrite, 1,000, 64 KiB | 10,471 | 139 | 281 | 37 | 34,350 | 201 | 375 | 92 |
+| insert a new key, 100,000, 16 B | 1,707 | 310 | 499 | 3.4 | 1,700 | 533 | 762 | 2.2 |
+| delete, 100,000, 16 B | 1,109 | 248 | 347 | 3.2 | 1,196 | 373 | 476 | 2.5 |
+| increment a counter | 1,384 | 92 | 198 | 7.0 | 1,347 | 132 | 312 | 4.3 |
+| 100 entries from a key (per entry), 100,000 | 572 | | 172 | 3.3 | 817 | | 252 | 3.2 |
+| the whole table (per entry), 100,000 | 535 | | 147 | 3.6 | 790 | | 210 | 3.8 |
+| `next`, one key at a time, 100,000 | 2,882 | | 144 | 20 | 3,352 | | 231 | 15 |
+
+Operations per second, in millions, across 1, 4 and 16 instances or processes on one bucket or public table of 100,000 keys (16 B), ETS with `read_concurrency` and `write_concurrency` off and on:
+
+| Mix | 16-core: bucket | `set` off / on | `ordered_set` off / on | Pi: bucket | `set` off / on | `ordered_set` off / on |
+| --- | --- | --- | --- | --- | --- | --- |
+| 95 reads in 100, 1 / 4 / 16 | 0.46 / 0.58 / 0.57 | 3.40 / 2.85 / 2.25; 1.99 / 4.13 / 5.99 | 1.40 / 1.60 / 1.76; 1.13 / 2.64 / 3.64 | 0.44 / 0.48 / 0.48 | 2.11 / 3.53 / 3.19; 1.95 / 5.13 / 5.52 | 0.81 / 1.68 / 1.80; 0.81 / 2.18 / 2.66 |
+| 50 reads in 100, 1 / 4 / 16 | 0.47 / 0.41 / 0.42 | 2.42 / 0.37 / 0.30; 1.68 / 4.16 / 6.36 | 1.21 / 0.33 / 0.30; 1.00 / 2.33 / 2.59 | 0.40 / 0.40 / 0.41 | 2.01 / 1.37 / 1.29; 1.97 / 4.75 / 5.27 | 0.80 / 0.74 / 0.72; 0.78 / 2.13 / 2.46 |
+| every write to one key, 1 / 4 / 16 | 0.61 / 0.47 / 0.46 | 7.02 / 0.17 / 0.14; 4.37 / 0.20 / 0.15 | 2.87 / 0.17 / 0.15; 2.14 / 0.30 / 0.15 | 0.63 / 1.07 / 1.17 | 4.91 / 1.45 / 1.38; 4.34 / 1.41 / 1.32 | 1.91 / 1.07 / 1.03; 1.71 / 1.48 / 1.47 |
+
+Memory per entry with 100,000 entries: a bucket takes 174 bytes (16-core) and 151 (Pi) for a 16 B value, 1,194 and 1,172 for 1 KiB; ETS 120 and 1,232 on both (the table's words plus, over 64 bytes, the off-heap binary). The bucket's figure is the node's resident memory before and after, so it includes allocator slack.
+
+- **A bucket operation costs about 1 µs before it touches any data:** a missing key takes 0.99 to 1.16 µs, against 51 to 266 ns in ETS. That floor is most of a small operation's cost: the host call and its copies across the sandbox, and per operation the bucket's name copied into a lookup key, the node-wide lock and the bookkeeping (size, revision, the watch registry). Not profiled yet.
+- **Against `ordered_set`, small values cost 1.7 to 7 times as much;** the gap narrows as the table grows, where ETS's own tree walk dominates (get, overwrite, insert and delete at 100,000 keys: 1.7 to 3.4 times). A bucket costs 3 to 19 times `set`, a hash table.
+- **Large values are copied, and ETS's are not:** at 64 KiB a get is 23 to 26 times ETS and an overwrite 37 to 92 times. ETS keeps binaries over 64 bytes by reference; a bucket copies the value into and out of the guest, and an overwrite also reads the old value to keep the bucket's size, a copy that is not needed.
+- **Scans cost about 3 to 4 times ETS per entry** (one call for up to 1,000 entries); **`next` one key at a time costs 14 to 20 times** (a host call and a one-entry scan per step). Read pages, not single steps.
+- **Buckets do not scale with writers or readers:** 0.4 to 0.6 million operations per second from 1 to 16 instances, the node-wide lock of the memory backend. ETS with its concurrency options reaches 2.5 to 6.4 million. With every write to one key, ETS falls to 0.15 million on the 16-core machine, below a bucket's 0.46, and the two are close on the Pi.
+- **Memory is about the same:** 31 to 54 bytes more per small entry, and less at 1 KiB.
+- **What this leaves:** ROADMAP H6.
+
 ## Not measured yet
 
 - B15's fix on the 16-core machine.

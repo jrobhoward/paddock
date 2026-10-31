@@ -9,6 +9,7 @@ members = [
     "crates/paddock-fixture-counter",
     "crates/paddock-fixture-echo",
     "crates/paddock-fixture-http",
+    "crates/paddock-fixture-kvbench",
     "crates/paddock-fixture-native",
     "crates/paddock-fixture-net",
     "crates/paddock-fixture-plugin",

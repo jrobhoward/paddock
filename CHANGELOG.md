@@ -8,6 +8,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `kv_cost` (`paddock-host` example, `bench.sh kv`) and
+  `scripts/beam_ets.escript` (`bench.sh beam-ets`): keyvalue memory buckets
+  from a guest against ETS from an Erlang process, the same loops on both:
+  single operations by bucket and value size, ordered reads, 1 to 16
+  instances or processes on one bucket or table, and bytes per entry
+  (`paddock-fixture-kvbench`).
 - Ordered scans of keyvalue buckets, as ETS's `ordered_set`:
   `paddock:watch`'s `scan` reads a page of entries in key order (the bytes
   of their UTF-8) with their revisions, by prefix, start and end keys,
