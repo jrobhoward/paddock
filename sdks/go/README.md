@@ -34,10 +34,13 @@ func init() {
 func main() {}
 ```
 
+[`examples/board-go`](../../examples/board-go/main.go) is a full app on the SDK: the tutorial's board (HTTP, a shared bucket, a watcher, a hot standby through process groups), run by the same node tests as the Rust board (`crates/paddock/tests/board.rs`).
+
 - **Callbacks.** An app's state implements `App` (`HandleCall`), and any of `CastHandler`, `InfoHandler`, `Terminator`, `HealthChecker` and `Snapshotter`. `Def.Init` builds it; `Def.LoadSnapshot` builds it from a snapshot in an upgrade. The host calls one callback at a time.
 - **Replies.** `paddock.Now(msg)` answers at once; `paddock.Later()` answers later with `ctx.Reply(call, msg)`. A `CallRef` is a number, so it can go in a snapshot.
 - **Memory.** The SDK copies everything the host passes and frees the original (spike S21: TinyGo's allocator keeps it otherwise), so an app keeps what it is given.
 - **Snapshots.** `paddock.EncodeSnapshot(version, state)` and `paddock.LoadSnapshot(bytes, version, &state)` write and read `[version, state]` as the Rust SDK does, so state can cross between the two languages in an upgrade when both read the same shape. Give state structs `cbor:"name"` tags; fields are written in their order.
+- **JSON.** `paddock.MarshalJSON`, behind `paddock.JSON` and `http.JSON`, writes what serde does: no HTML escaping of `<`, `>` and `&` (encoding/json escapes them by default), so a reply's bytes match the Rust SDK's.
 - **Log level.** The SDK handles the `log-level` host event; the `log` package skips records below the level before formatting them.
 
 | Package | What | Capability |

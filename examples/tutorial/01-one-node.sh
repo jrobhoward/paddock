@@ -35,8 +35,8 @@ durability = "disk"
 TOML
 
 start_node 1
-deploy_board 1 "$ROOT/examples/board/paddock.toml"
-deploy_board 1 "$ROOT/examples/board/watch.toml"
+deploy_board 1 "$BOARD_DIR/paddock.toml"
+deploy_board 1 "$BOARD_DIR/watch.toml"
 until_ok 30 curl -sf "$URL"
 
 cat <<EOF

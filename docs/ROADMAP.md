@@ -29,7 +29,7 @@ The failover pair and witness run over QUIC between `paddock node` processes (`e
 
 ## Next
 
-Phase 4 (planned 2026-10-29, below): Go and one more language as SDKs, checked by a conformance suite that any language's app can run. J1 to J3 are done (2026-10-29 and 2026-10-30); J4 next, with J5's Go part beside it.
+Phase 4 (planned 2026-10-29, below): Go and one more language as SDKs, checked by a conformance suite that any language's app can run. J1 to J4 are done (2026-10-29 and 2026-10-30): the Go board passes the Rust board's node tests locally; J5 next, which puts them in CI and meets the exit's first half.
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
@@ -160,14 +160,13 @@ The rustbridge work left from Phase 3 is the guest adapter (`Plugin` → `paddoc
 
 Planned on 2026-10-29. Exit: the tutorial's board app (`examples/board`: an HTTP counter on a shared disk bucket, a watcher, and a hot upgrade that keeps the count) written in Go with a Go SDK passes the same node tests as the Rust one (`crates/paddock/tests/board.rs`), in CI; and a second language's SDK passes the conformance suite (J2). The repository stays private: the SDKs live in it and are not published (decided 2026-10-29).
 
-- [ ] **J4 The board in Go** (`examples/board-go`): the same routes, bucket, watcher and snapshot versions as `examples/board`. `board.rs` runs each test against both builds (the exit), and tutorial chapters 1 and 6 run with either. The first app to run the Go SDK's `http` package in a component (its formats are checked by `go test` only).
 - [ ] **J5 Other languages in CI.** A Linux x86-64 job installing the pinned toolchains (TinyGo, `wit-bindgen-go`, and J6's), cached, that builds `examples/ping-pong/languages`, each SDK's conformance app and the Go board, and runs J2's and J4's tests, and `go vet` and `go test` in `sdks/go`. A `languages` check in `scripts/check.sh` that says which toolchain is missing instead of failing.
 - [ ] **J6 A second SDK: Python or JavaScript**, chosen once J4 is done. Python (componentize-py, S22): calls within 1.5 times Rust's, 12 MiB and 1.6 ms of start per instance, and `max_core_instances_per_component` of 14 or more. JavaScript (jco, S23): calls about 6 times Rust's, and `memory_max` near 96 MiB. The app world, envelopes, J1's snapshots and the services J2 covers; passes J2.
 - [ ] **J7 Node settings for other languages.** For each setting a language needs (Python's core instances, JavaScript's memory, the capabilities TinyGo's runtime imports), either a new default (a higher `max_core_instances_per_component` reserves no memory, S22) or a refusal at bundle or deploy time that names the fix, decided per setting.
 - [ ] **J8 Costs per language** in BASELINE.md: a call, a start, memory per instance, compile time and component size on both machines, from a `languages` benchmark in `scripts/bench.sh` that replaces S21 to S23's harnesses, so that a toolchain update that costs something shows.
-- [ ] **J9 Docs.** In WRITING_APPS.md, a section per SDK (a minimal app, callbacks, messages, state across upgrades, testing at three levels); GETTING_STARTED.md with a Go app beside the Rust one; the tutorial's notes on running chapters 1 and 6 with the Go board.
+- [ ] **J9 Docs.** In WRITING_APPS.md, a section per SDK (a minimal app, callbacks, messages, state across upgrades, testing at three levels); GETTING_STARTED.md with a Go app beside the Rust one; the tutorial's notes on the Go board (`BOARD=go` runs chapters 1, 2, 3 and 5 with it since J4). Chapter 6 upgrades the counter example, not the board, so it runs with Go only given a Go counter in its three versions (from J4, 2026-10-30: decide here whether that is worth it).
 
-Order: J4 first, the exit's first half, with J5's Go part beside it (J1 gave the formats, J2 the conformance suite and J3 the Go SDK); J7 as J3 and J6 find the settings; J6 after J4; J8 and J9 last.
+Order: J5 first, which runs J4's Go board in CI and so meets the exit's first half (J1 gave the formats, J2 the conformance suite, J3 the Go SDK and J4 the Go board); J7 as J3 and J6 find the settings; J6 after J4; J8 and J9 last.
 
 ## Investigations
 

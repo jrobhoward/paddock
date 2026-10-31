@@ -1,6 +1,7 @@
 package paddock
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -42,13 +43,26 @@ func CBOR(v any) (Envelope, error) {
 	return Envelope{ContentType: CBORType, Body: body}, nil
 }
 
-// JSON encodes v as an application/json envelope.
+// JSON encodes v as an application/json envelope (see [MarshalJSON]).
 func JSON(v any) (Envelope, error) {
-	body, err := json.Marshal(v)
+	body, err := MarshalJSON(v)
 	if err != nil {
-		return Envelope{}, fmt.Errorf("JSON encode: %w", err)
+		return Envelope{}, err
 	}
 	return Envelope{ContentType: JSONType, Body: body}, nil
+}
+
+// MarshalJSON encodes v as JSON as the Rust SDK writes it: `<`, `>` and `&`
+// as themselves, not escaped for HTML as encoding/json does by default, and
+// no trailing newline.
+func MarshalJSON(v any) ([]byte, error) {
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, fmt.Errorf("JSON encode: %w", err)
+	}
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
 }
 
 // WithSchema returns e with its schema set.

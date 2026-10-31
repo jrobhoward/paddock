@@ -2,6 +2,11 @@
 //! its manifests bundled with the CLI, served over HTTP from a shared disk
 //! bucket; a crash restarts the instance and the count survives it, the
 //! watcher logs each change, and the count survives a node restart.
+//!
+//! Every test runs against the Rust build and the Go build
+//! (`examples/board-go`, on the Go SDK). The Go cases need TinyGo (on
+//! `PATH`, or `TINYGO`) and pass with a note when it is missing, unless
+//! `PADDOCK_REQUIRE_GO=1`.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -10,17 +15,75 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 mod common;
 
 use paddock::node::{Node, NodeConfig};
+use rstest::rstest;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Which build of the board.
+#[derive(Debug, Clone, Copy)]
+enum Build {
+    Rust,
+    Go,
+}
+
+impl Build {
+    /// The directory with this build's manifests.
+    fn dir(self) -> PathBuf {
+        root().join(match self {
+            Self::Rust => "examples/board",
+            Self::Go => "examples/board-go",
+        })
+    }
+
+    /// The component, or `None` for Go without TinyGo (allowed unless
+    /// `PADDOCK_REQUIRE_GO` is set).
+    fn component(self) -> Option<PathBuf> {
+        match self {
+            Self::Rust => Some(build()),
+            Self::Go => build_go(),
+        }
+    }
+}
+
+/// The Go board, built once per test binary with the Go SDK's `build.sh`.
+fn build_go() -> Option<PathBuf> {
+    static BUILT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let tinygo = std::env::var("TINYGO").unwrap_or_else(|_| "tinygo".into());
+            let found = StdCommand::new(&tinygo).arg("version").output().is_ok();
+            if !found {
+                assert!(
+                    std::env::var_os("PADDOCK_REQUIRE_GO").is_none(),
+                    "PADDOCK_REQUIRE_GO is set and TinyGo ({tinygo}) was not found"
+                );
+                eprintln!("TinyGo not found ({tinygo}): the Go board's case is skipped");
+                return None;
+            }
+            let target = root().join("target/fixtures/examples-board-go");
+            std::fs::create_dir_all(&target).unwrap();
+            let wasm = target.join("board.wasm");
+            let ok = StdCommand::new(root().join("sdks/go/build.sh"))
+                .env("TINYGO", &tinygo)
+                .arg(root().join("examples/board-go"))
+                .arg(&wasm)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "building examples/board-go failed");
+            Some(wasm)
+        })
+        .clone()
 }
 
 fn build() -> PathBuf {
@@ -143,55 +206,89 @@ impl Running {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn board____crash_and_node_restart____count_survives_and_watcher_logs_changes() {
-    let wasm = build();
-    let dir = TempDir::new().unwrap();
-    let socket = dir.path().join("a.sock");
-    let (ok, public, err) = paddock(
-        &socket,
-        &["keygen", "--no-password", s(&dir.path().join("k"))],
-    )
-    .await;
-    assert!(ok, "{err}");
-    let key = dir.path().join("k.key");
-    let mut bundles = Vec::new();
-    for manifest in ["paddock.toml", "watch.toml"] {
-        let out = dir.path().join(manifest.replace(".toml", ".rbp"));
-        let manifest = root().join("examples/board").join(manifest);
+/// A signing key, a policy granting `board` and `board-watch`, and the
+/// config of one node with an HTTP listener and the `board` bucket on disk,
+/// all in `dir`.
+struct OneNode {
+    dir: PathBuf,
+    socket: PathBuf,
+    key: PathBuf,
+    toml: String,
+    port: u16,
+}
+
+impl OneNode {
+    async fn new(dir: &Path) -> Self {
+        let socket = dir.join("a.sock");
+        let (ok, public, err) =
+            paddock(&socket, &["keygen", "--no-password", s(&dir.join("k"))]).await;
+        assert!(ok, "{err}");
+        let policy = dir.join("policy.toml");
+        std::fs::write(
+            &policy,
+            "[apps.board]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"]\n\
+             buckets = [\"board\"]\n\
+             [apps.board-watch]\ngrant = [\"wasi:keyvalue\", \"wasi:logging\"]\nbuckets = [\"board\"]\n",
+        )
+        .unwrap();
+        let port = free_port();
+        let toml = format!(
+            "data_dir = {:?}\nadmin_socket = {socket:?}\ntrusted_keys = [{public:?}]\npolicy = {policy:?}\n\
+             [http.main]\naddress = \"127.0.0.1:{port}\"\n[buckets.board]\ndurability = \"disk\"\n",
+            dir.join("data")
+        );
+        Self {
+            dir: dir.to_path_buf(),
+            socket,
+            key: dir.join("k.key"),
+            toml,
+            port,
+        }
+    }
+
+    /// Bundle `manifest` with `wasm` into `name` in the directory.
+    async fn bundle(&self, manifest: &Path, wasm: &Path, name: &str) -> PathBuf {
+        let out = self.dir.join(name);
         let (ok, _, err) = paddock(
-            &socket,
+            &self.socket,
             &[
                 "bundle",
-                s(&manifest),
-                s(&wasm),
+                s(manifest),
+                s(wasm),
                 "--key",
-                s(&key),
+                s(&self.key),
                 "-o",
                 s(&out),
             ],
         )
         .await;
         assert!(ok, "{err}");
-        bundles.push(out);
+        out
     }
-    let policy = dir.path().join("policy.toml");
-    std::fs::write(
-        &policy,
-        "[apps.board]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"]\n\
-         buckets = [\"board\"]\n\
-         [apps.board-watch]\ngrant = [\"wasi:keyvalue\", \"wasi:logging\"]\nbuckets = [\"board\"]\n",
-    )
-    .unwrap();
-    let port = free_port();
-    let toml = format!(
-        "data_dir = {:?}\nadmin_socket = {socket:?}\ntrusted_keys = [{public:?}]\npolicy = {policy:?}\n\
-         [http.main]\naddress = \"127.0.0.1:{port}\"\n[buckets.board]\ndurability = \"disk\"\n",
-        dir.path().join("data")
-    );
-    let node = Running::open(&toml, &socket).await;
+}
+
+#[rstest]
+#[case::rust(Build::Rust)]
+#[case::go(Build::Go)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board____crash_and_node_restart____count_survives_and_watcher_logs_changes(
+    #[case] build: Build,
+) {
+    let Some(wasm) = build.component() else {
+        return;
+    };
+    let dir = TempDir::new().unwrap();
+    let one = OneNode::new(dir.path()).await;
+    let bundles = [
+        one.bundle(&build.dir().join("paddock.toml"), &wasm, "board.rbp")
+            .await,
+        one.bundle(&build.dir().join("watch.toml"), &wasm, "watch.rbp")
+            .await,
+    ];
+    let (socket, toml, port) = (&one.socket, &one.toml, one.port);
+    let node = Running::open(toml, socket).await;
     for b in &bundles {
-        let (ok, _, err) = paddock(&socket, &["deploy", s(b)]).await;
+        let (ok, _, err) = paddock(socket, &["deploy", s(b)]).await;
         assert!(ok, "{err}");
     }
 
@@ -201,9 +298,9 @@ async fn board____crash_and_node_restart____count_survives_and_watcher_logs_chan
     let before = board(port).await;
     let crash = http(port, "POST", "/board/crash").await.unwrap();
     let after_crash = board(port).await;
-    let (_, logs, _) = paddock(&socket, &["logs", "board-watch"]).await;
+    let (_, logs, _) = paddock(socket, &["logs", "board-watch"]).await;
     node.close().await;
-    let node = Running::open(&toml, &socket).await;
+    let node = Running::open(toml, socket).await;
     let after_restart = board(port).await;
 
     assert_eq!(before.0, 3);
@@ -231,6 +328,55 @@ async fn board____crash_and_node_restart____count_survives_and_watcher_logs_chan
     );
     assert!(logs.contains("count is 3"), "{logs}");
     assert_eq!(after_restart.0, 3);
+    node.close().await;
+}
+
+/// The exit's hot upgrade across languages: the Rust board on a running
+/// node, upgraded to the Go board in `restart` mode (the manifests' default).
+/// The count lives on the board, so it carries over. The Go build declares
+/// `wasi:filesystem`, which the Rust build does not, so the upgrade waits
+/// for approval.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn board____upgraded_from_rust_to_go____count_kept_once_approved() {
+    let Some(go) = Build::Go.component() else {
+        return;
+    };
+    let dir = TempDir::new().unwrap();
+    let one = OneNode::new(dir.path()).await;
+    let rust = one
+        .bundle(
+            &Build::Rust.dir().join("paddock.toml"),
+            &build(),
+            "rust.rbp",
+        )
+        .await;
+    let go_manifest = dir.path().join("go.toml");
+    let base = std::fs::read_to_string(Build::Go.dir().join("paddock.toml")).unwrap();
+    std::fs::write(
+        &go_manifest,
+        base.replace("version = \"1.0.0\"", "version = \"1.1.0\""),
+    )
+    .unwrap();
+    let go = one.bundle(&go_manifest, &go, "go.rbp").await;
+    let node = Running::open(&one.toml, &one.socket).await;
+    let (ok, _, err) = paddock(&one.socket, &["deploy", s(&rust)]).await;
+    assert!(ok, "{err}");
+    for _ in 0..3 {
+        http(one.port, "POST", "/board").await.unwrap();
+    }
+
+    let unapproved = paddock(&one.socket, &["upgrade", "board", s(&go)]).await;
+    let approved = paddock(&one.socket, &["upgrade", "board", s(&go), "--approve"]).await;
+    let after = board(one.port).await;
+    let (_, status, _) = paddock(&one.socket, &["status", "board"]).await;
+    let written = write(one.port).await;
+
+    assert!(!unapproved.0, "{}", unapproved.1);
+    assert!(unapproved.2.contains("wasi:filesystem"), "{}", unapproved.2);
+    assert!(approved.0, "{}", approved.2);
+    assert_eq!(after.0, 3, "the count carried over");
+    assert!(status.contains("1.1.0"), "{status}");
+    assert_eq!((written.0, written.1), (200, 4));
     node.close().await;
 }
 
@@ -337,6 +483,7 @@ struct Pair {
 
 async fn start_pair(
     d: &Path,
+    wasm: &Path,
     manifest: &Path,
     grant: &str,
     http_extra: impl Fn(u32, &[u16; 2]) -> String,
@@ -344,7 +491,6 @@ async fn start_pair(
 ) -> Pair {
     use std::os::unix::fs::PermissionsExt;
 
-    let wasm = build();
     let socket = d.join("cli.sock");
     let (ok, signer, err) = paddock(&socket, &["keygen", "--no-password", s(&d.join("k"))]).await;
     assert!(ok, "{err}");
@@ -354,7 +500,7 @@ async fn start_pair(
         &[
             "bundle",
             s(manifest),
-            s(&wasm),
+            s(wasm),
             "--key",
             s(&d.join("k.key")),
             "-o",
@@ -432,10 +578,18 @@ fn short_dir() -> tempfile::TempDir {
 /// HA pair. The primary puts each write on the standby's board, through a
 /// process group across the nodes, before it answers, so the count survives
 /// `kill -9` of the primary.
+#[rstest]
+#[case::rust(Build::Rust)]
+#[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn board____hot_standby_primary_killed____count_survives_on_the_standby() {
+async fn board____hot_standby_primary_killed____count_survives_on_the_standby(
+    #[case] build: Build,
+) {
+    let Some(wasm) = build.component() else {
+        return;
+    };
     let dir = short_dir();
-    let manifest = root().join("examples/board/hot-standby.toml");
+    let manifest = build.dir().join("hot-standby.toml");
     let grant =
         "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\", \"paddock:groups\"";
     let Pair {
@@ -443,7 +597,15 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby() 
         mut n1,
         n2,
         ports,
-    } = start_pair(dir.path(), &manifest, grant, |_, _| String::new(), "").await;
+    } = start_pair(
+        dir.path(),
+        &wasm,
+        &manifest,
+        grant,
+        |_, _| String::new(),
+        "",
+    )
+    .await;
     // The primary must see the standby's instance in the group first.
     until("a write reaches the standby", || async {
         write(ports[0]).await.2 == 1
@@ -503,12 +665,20 @@ async fn location(port: u16, method: &str, path: &str) -> (u16, String) {
 /// chapter 2) with `partner_url` on each listener. The standby redirects
 /// the board's requests to the primary (307, path and query kept); after
 /// the primary is killed, node 2 serves the board itself.
+#[rstest]
+#[case::rust(Build::Rust)]
+#[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_the_primary() {
+async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_the_primary(
+    #[case] build: Build,
+) {
+    let Some(wasm) = build.component() else {
+        return;
+    };
     let dir = short_dir();
     let d = dir.path();
     let manifest = d.join("singleton.toml");
-    let base = std::fs::read_to_string(root().join("examples/board/paddock.toml")).unwrap();
+    let base = std::fs::read_to_string(build.dir().join("paddock.toml")).unwrap();
     std::fs::write(
         &manifest,
         format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
@@ -522,6 +692,7 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
         ports,
     } = start_pair(
         d,
+        &wasm,
         &manifest,
         grant,
         |n, ports| {
@@ -550,12 +721,20 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
 /// `standby = "forward"` on each listener. The standby's ingress sends the
 /// board's requests over the cluster to the primary's board, so either
 /// address serves it; after the primary is killed, node 2 serves its own.
+#[rstest]
+#[case::rust(Build::Rust)]
+#[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn board____singleton_on_a_pair_with_standby_forward____either_address_serves_the_primary() {
+async fn board____singleton_on_a_pair_with_standby_forward____either_address_serves_the_primary(
+    #[case] build: Build,
+) {
+    let Some(wasm) = build.component() else {
+        return;
+    };
     let dir = short_dir();
     let d = dir.path();
     let manifest = d.join("singleton.toml");
-    let base = std::fs::read_to_string(root().join("examples/board/paddock.toml")).unwrap();
+    let base = std::fs::read_to_string(build.dir().join("paddock.toml")).unwrap();
     std::fs::write(
         &manifest,
         format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
@@ -569,6 +748,7 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
         ports,
     } = start_pair(
         d,
+        &wasm,
         &manifest,
         grant,
         |_, _| "standby = \"forward\"\n".into(),
@@ -604,10 +784,18 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
 /// The board on a `cluster` bucket: the bucket itself is
 /// replicated between the pair, so the count survives `kill -9` of the
 /// primary without the app replicating anything.
+#[rstest]
+#[case::rust(Build::Rust)]
+#[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby() {
+async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby(
+    #[case] build: Build,
+) {
+    let Some(wasm) = build.component() else {
+        return;
+    };
     let dir = short_dir();
-    let manifest = root().join("examples/board/paddock.toml");
+    let manifest = build.dir().join("paddock.toml");
     let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
     let Pair {
         _witness,
@@ -616,6 +804,7 @@ async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby
         ports,
     } = start_pair(
         dir.path(),
+        &wasm,
         &manifest,
         grant,
         |_, _| String::new(),

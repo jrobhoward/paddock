@@ -1,7 +1,9 @@
 # Shared by the tutorial chapters; sourced, not run.
 #
-# Sets ROOT, DEMO_DIR, PADDOCK and BOARD_WASM, builds paddock and the board
-# example, and makes a signing key. Defines:
+# Sets ROOT, DEMO_DIR, PADDOCK, BOARD_DIR and BOARD_WASM, builds paddock and
+# the board example, and makes a signing key. BOARD=go uses the Go build
+# (examples/board-go, on the Go SDK; needs TinyGo, on PATH or in TINYGO)
+# instead of the Rust one. Defines:
 #   sock N           the admin socket of node N
 #   p N ARGS...      run the paddock CLI against node N
 #   start_node N     start `paddock node` on $DEMO_DIR/node-N.toml
@@ -15,13 +17,28 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DEMO_DIR=${DEMO_DIR:-$(mktemp -d -t paddock-tutorial-XXXXXX)}
 PADDOCK="$ROOT/target/release/paddock"
-BOARD_WASM="$ROOT/target/wasm32-wasip2/release/example_board.wasm"
 AUTO=${AUTO:-0}
 
 echo "building (release; the first build takes a few minutes)..."
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p paddock
-cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
-  --target wasm32-wasip2 -p example-board
+case "${BOARD:-rust}" in
+  rust)
+    BOARD_DIR="$ROOT/examples/board"
+    BOARD_WASM="$ROOT/target/wasm32-wasip2/release/example_board.wasm"
+    cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
+      --target wasm32-wasip2 -p example-board
+    ;;
+  go)
+    BOARD_DIR="$ROOT/examples/board-go"
+    BOARD_WASM="$ROOT/target/tutorial-board-go/board.wasm"
+    mkdir -p "$(dirname "$BOARD_WASM")"
+    "$ROOT/sdks/go/build.sh" "$BOARD_DIR" "$BOARD_WASM"
+    ;;
+  *)
+    echo "BOARD is rust or go, not $BOARD" >&2
+    exit 2
+    ;;
+esac
 
 cd "$DEMO_DIR"
 [ -f signer.key ] || "$PADDOCK" keygen signer --no-password >/dev/null

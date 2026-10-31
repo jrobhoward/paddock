@@ -21,7 +21,9 @@ AUTO=1 examples/tutorial/02-failover.sh    # no pauses: kills node 1 itself
 ```
 
 The app is [`examples/board`](../board): one component deployed as two
-apps. `board` serves `GET`, `POST` and `DELETE /board` over the node's HTTP
+apps. `BOARD=go` runs chapters 1, 2, 3 and 5 with the same app written in
+Go ([`examples/board-go`](../board-go), on the Go SDK; needs TinyGo, on
+`PATH` or in `TINYGO`); the commands and replies are the same. `board` serves `GET`, `POST` and `DELETE /board` over the node's HTTP
 ingress and keeps the count in the node's `board` bucket, not in its own
 memory; `POST /board/crash` makes it trap. Every reply names the instance
 that answered (`"pid"`, and the `x-paddock-pid` header). `board-watch`

@@ -305,7 +305,7 @@ An unmodified `wasi:http` component, built with any toolchain that targets the `
 
 ## Apps in other languages
 
-Go apps use the Go SDK, [`sdks/go`](../sdks/go/README.md), built with TinyGo: the same callbacks, process functions, envelopes, snapshot format and services as `paddock-sdk`, with S21's two fixes inside it (it frees what the host passes, and its `build.sh` sets `-scheduler=none`) and a manifest template that declares what TinyGo's runtime imports.
+Go apps use the Go SDK, [`sdks/go`](../sdks/go/README.md), built with TinyGo: the same callbacks, process functions, envelopes, snapshot format and services as `paddock-sdk`, with S21's two fixes inside it (it frees what the host passes, and its `build.sh` sets `-scheduler=none`) and a manifest template that declares what TinyGo's runtime imports. [`examples/board-go`](../examples/board-go/main.go) is the tutorial's board app on it, run by the same node tests as the Rust board.
 
 Any language whose tooling builds a WASI 0.2 component can implement `paddock:runtime/app` from [`wit/runtime.wit`](../wit/runtime.wit). Go (TinyGo), Python (componentize-py) and JavaScript (jco) are tried: [`examples/ping-pong/languages`](../examples/ping-pong/languages/README.md) has the `pong` app in each, called by the Rust `ping`, with a demo that upgrades one app across all four languages on a running node. Each language's runtime brings a requirement of its own:
 

@@ -8,6 +8,13 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `examples/board-go`: the tutorial's board app in Go, on the Go SDK, with
+  the board's manifests plus the `wasi:filesystem` declaration TinyGo
+  needs. `crates/paddock/tests/board.rs` runs every test against the Rust
+  and the Go build, and upgrades a running Rust board to the Go one with
+  the count kept; the tutorial's chapters 1, 2, 3 and 5 run with it
+  (`BOARD=go`). The Go SDK's JSON now writes `<`, `>` and `&` unescaped,
+  as serde does (`paddock.MarshalJSON`) (ROADMAP J4).
 - `wake_cost` (`paddock-host` example, `bench.sh wake`): how long an
   instance woken by a cast, or a caller woken by a reply, waits while the
   instance that woke it keeps running. About 1 ms at p50 and 2 ms at p99

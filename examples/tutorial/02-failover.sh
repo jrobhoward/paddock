@@ -71,8 +71,8 @@ start_node 2
 # runs on the primary only.
 SINGLETON='[appserver.placement]
 mode = "singleton"'
-deploy_board 1 "$ROOT/examples/board/paddock.toml" "$SINGLETON"
-deploy_board 2 "$ROOT/examples/board/paddock.toml" "$SINGLETON"
+deploy_board 1 "$BOARD_DIR/paddock.toml" "$SINGLETON"
+deploy_board 2 "$BOARD_DIR/paddock.toml" "$SINGLETON"
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }
 # Node N serves the board itself (not a redirect).
 serves() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$(url "$1")")" = 200 ]; }

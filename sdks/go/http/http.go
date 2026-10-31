@@ -14,7 +14,6 @@
 package http
 
 import (
-	"encoding/json"
 	"strings"
 	"unicode/utf8"
 
@@ -190,7 +189,7 @@ func Text(status uint16, body string) Response {
 
 // JSON is an application/json response with v encoded.
 func JSON(status uint16, v any) (Response, error) {
-	body, err := json.Marshal(v)
+	body, err := paddock.MarshalJSON(v)
 	if err != nil {
 		return Response{}, err
 	}

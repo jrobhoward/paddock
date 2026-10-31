@@ -68,8 +68,8 @@ start_node 1
 start_node 2
 # The board as a hot standby (examples/board/hot-standby.toml): on both
 # nodes, told its role, in the `board` process group across the pair.
-deploy_board 1 "$ROOT/examples/board/hot-standby.toml"
-deploy_board 2 "$ROOT/examples/board/hot-standby.toml"
+deploy_board 1 "$BOARD_DIR/hot-standby.toml"
+deploy_board 2 "$BOARD_DIR/hot-standby.toml"
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }
 # A write on node N that reached a standby.
 replicated() { curl -sf -X POST "$(url "$1")" | grep -q '"replicas":1'; }

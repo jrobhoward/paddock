@@ -74,3 +74,11 @@ func TestCBOR_NilSlice_EncodedEmpty(t *testing.T) {
 		t.Errorf("%x %v", body, err)
 	}
 }
+
+func TestJSON_PidLikeText_NotEscapedForHTML(t *testing.T) {
+	body, err := MarshalJSON(map[string]string{"pid": "<1.1.1@1>"})
+
+	if err != nil || string(body) != `{"pid":"<1.1.1@1>"}` {
+		t.Errorf("%s %v", body, err)
+	}
+}

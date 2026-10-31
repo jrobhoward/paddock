@@ -142,8 +142,13 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `node` is a node binary with it, whose test runs all three.
   `examples/board` is the tutorial's app (a counter on a shared disk
   bucket over HTTP; `paddock.toml`, `watch.toml` and `hot-standby.toml`, one
-  component), run by `crates/paddock/tests/board.rs`; `examples/tutorial/` is its chapter
-  scripts (`common.sh` shared), not a crate. `examples/tally` keeps a
+  component), run by `crates/paddock/tests/board.rs`; `examples/board-go`
+  is the same app in Go on the Go SDK (a Go module, not a crate; its
+  manifests add `wasi:filesystem`), and `board.rs` runs every test against
+  both builds (the Go cases pass with a note without TinyGo, unless
+  `PADDOCK_REQUIRE_GO=1`). Keep the two builds' behaviour the same.
+  `examples/tutorial/` is its chapter scripts (`common.sh` shared, `BOARD=go`
+  for the Go build), not a crate. `examples/tally` keeps a
   counter in Postgres (`paddock:sql`, tutorial chapter 4), run by
   `crates/paddock/tests/tally.rs` against a scratch Postgres
   (`crates/paddock-host/tests/common/pg.rs`, shared by path).
