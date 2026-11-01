@@ -765,6 +765,10 @@ impl SocketsCeiling {
     }
 }
 
+/// The longest `[native] spin_us`: past it a waiting side burns a core
+/// for what a wake-up costs many times over.
+const MAX_SPIN_US: u64 = 10_000;
+
 /// `[native]`: how the node runs native-process apps.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -785,6 +789,9 @@ pub struct NativeBinding {
     pub ping_timeout_ms: u64,
     /// Run native apps on a kernel without Landlock.
     pub landlock_optional: bool,
+    /// How long, in microseconds, the node and a native app spin waiting
+    /// for each other before they sleep; 0 always sleeps.
+    pub spin_us: u64,
 }
 
 impl Default for NativeBinding {
@@ -797,6 +804,7 @@ impl Default for NativeBinding {
             ping_interval_ms: 10_000,
             ping_timeout_ms: 5_000,
             landlock_optional: false,
+            spin_us: u64::try_from(host.spin.as_micros()).unwrap_or(20),
         }
     }
 }
@@ -812,6 +820,7 @@ impl NativeBinding {
         native.ping_interval = std::time::Duration::from_millis(self.ping_interval_ms);
         native.ping_timeout = std::time::Duration::from_millis(self.ping_timeout_ms);
         native.landlock_optional = self.landlock_optional;
+        native.spin = std::time::Duration::from_micros(self.spin_us);
         native
     }
 }
@@ -1016,6 +1025,11 @@ impl NodeConfig {
                     "node config: native.{name} must be more than 0"
                 )));
             }
+        }
+        if n.spin_us > MAX_SPIN_US {
+            return Err(NodeError::Invalid(format!(
+                "node config: native.spin_us must be at most {MAX_SPIN_US}"
+            )));
         }
         Ok(())
     }

@@ -208,6 +208,13 @@ fn free_udp() -> SocketAddr {
 fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
     let mut native = NativeConfig::default();
     native.runner = Some(Path::new(TARGET).join("release/bulkhead-runner"));
+    // `NATIVE_SPIN_US`: the node's `[native] spin_us` (T1); unset, 20.
+    if let Some(us) = std::env::var("NATIVE_SPIN_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        native.spin = Duration::from_micros(us);
+    }
     let rt = Runtime::new(RuntimeConfig {
         node: n,
         max_instances: 64,

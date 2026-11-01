@@ -24,7 +24,7 @@ use std::io::{self, Read, Write};
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 4;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.

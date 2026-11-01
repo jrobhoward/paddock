@@ -710,6 +710,7 @@ runner = "/opt/bulkhead/bulkhead-runner"
 cgroup = "/sys/fs/cgroup/system.slice/bulkhead.service"
 pids_max = 32
 ping_interval_ms = 2000
+spin_us = 50
 "#,
     )
     .unwrap();
@@ -724,12 +725,26 @@ ping_interval_ms = 2000
     assert_eq!(n.ping_interval, std::time::Duration::from_secs(2));
     assert_eq!(n.ping_timeout, std::time::Duration::from_secs(5));
     assert!(!n.landlock_optional);
+    assert_eq!(n.spin, std::time::Duration::from_micros(50));
+}
+
+#[rstest::rstest]
+#[case("", 20)]
+#[case("spin_us = 0", 0)]
+fn native____spin_unset_or_zero____default_or_always_sleep(#[case] line: &str, #[case] us: u64) {
+    let config =
+        NodeConfig::from_toml_str(&format!("data_dir = \"/d\"\n[native]\n{line}\n")).unwrap();
+
+    let n = config.native.runtime();
+
+    assert_eq!(n.spin, std::time::Duration::from_micros(us));
 }
 
 #[rstest::rstest]
 #[case("pids_max = 0", "native.pids_max")]
 #[case("ping_interval_ms = 0", "native.ping_interval_ms")]
 #[case("ping_timeout_ms = 0", "native.ping_timeout_ms")]
+#[case("spin_us = 10001", "native.spin_us")]
 fn native____zero____refused(#[case] line: &str, #[case] path: &str) {
     let err = NodeConfig::from_toml_str(&format!("data_dir = \"/d\"\n[native]\n{line}\n"))
         .unwrap_err()

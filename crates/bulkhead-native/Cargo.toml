@@ -11,8 +11,12 @@ publish = false
 
 [features]
 default = ["runner"]
-# `bulkhead_native::app`: a native app as an executable (Unix).
-app = ["dep:rustix", "rustix/stdio"]
+# `bulkhead_native::channel`: the shared-memory rings between a node and
+# an app (Linux).
+channel = ["dep:rustix", "rustix/fs", "rustix/mm", "rustix/thread", "rustix/pipe"]
+# `bulkhead_native::app`: a native app as an executable (Unix; it serves
+# a node on Linux only).
+app = ["channel", "dep:rustix", "rustix/stdio"]
 # `bulkhead-runner`, the launcher a node runs native apps through (Linux).
 runner = [
     "app",

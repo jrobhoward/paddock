@@ -24,10 +24,10 @@
 //!
 //! The node runs one callback at a time, as for a component. The process
 //! functions are on [`Ctx`], valid during a callback; [`log`] works from
-//! any thread at any time. Frames go over the stdout the node gave the
-//! process, which [`serve`] moves to a descriptor of its own, pointing
-//! stdout at stderr: what the app prints becomes log lines, never a
-//! corrupt frame. The app must not read stdin.
+//! any thread at any time. Frames go over the channel the node gave the
+//! process (`crate::channel`, Linux only): two rings in shared memory,
+//! each waiting side spinning briefly before it sleeps. What the app
+//! prints, on stdout or stderr, becomes log lines; stdin is empty.
 //!
 //! A panic in a callback crashes the instance with the panic's message.
 //!
@@ -38,13 +38,12 @@
 //! there).
 
 use std::cell::RefCell;
-use std::fs::File;
-use std::io::StdinLock;
-use std::io::{self, Write};
-use std::os::fd::AsFd;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::sync::{Mutex, OnceLock, PoisonError};
+
+#[cfg(target_os = "linux")]
+use crate::channel::{AppEnd, FromNode, ToNode};
 
 use crate::protocol::{
     self, Answer, Bytes, CallError, ConfigError, Envelope, ExitReason, FromApp, GroupsAnswer,
@@ -107,23 +106,27 @@ pub trait App: Sized {
     }
 }
 
-/// The descriptor frames go out on.
-static OUT: OnceLock<Mutex<File>> = OnceLock::new();
+/// The channel to the node, once [`serve`] has opened it.
+#[cfg(target_os = "linux")]
+static END: OnceLock<AppEnd> = OnceLock::new();
 
-/// Send one frame to the node. Without a node (before [`serve`], or once
-/// the node has gone) a log record goes to stderr and anything else is
-/// dropped.
+/// One frame at a time to the node, whichever thread sends it.
+#[cfg(target_os = "linux")]
+static SENDING: Mutex<()> = Mutex::new(());
+
+/// Send one frame to the node. Without a node (before [`serve`]) a log
+/// record goes to stderr and anything else is dropped.
 fn send(frame: &FromApp) {
-    let Some(out) = OUT.get() else {
-        if let FromApp::Log { level, message } = frame {
-            eprintln!("{level:?}: {message}");
-        }
+    #[cfg(target_os = "linux")]
+    if let Some(end) = END.get() {
+        let _one = SENDING.lock().unwrap_or_else(PoisonError::into_inner);
+        // A broken ring means the node broke it; it ends this process.
+        let _ = protocol::write(&mut ToNode(end), frame);
         return;
-    };
-    let mut out = out.lock().unwrap_or_else(PoisonError::into_inner);
-    // A failed write means the node has gone; the reader sees the end of
-    // stdin and the process exits.
-    let _ = protocol::write(&mut *out, frame);
+    }
+    if let FromApp::Log { level, message } = frame {
+        eprintln!("{level:?}: {message}");
+    }
 }
 
 /// Log a record through the node's logging, from any thread.
@@ -134,11 +137,10 @@ pub fn log(level: Level, message: impl Into<String>) {
     });
 }
 
-/// The connection to the node, owned by the thread [`serve`] runs on:
-/// the frames it reads, its requests' ids, and the callback's metric
-/// updates.
+/// The connection to the node, owned by the thread [`serve`] runs on: its
+/// requests' ids and the callback's metric updates. It alone reads the
+/// node's frames.
 struct Conn {
-    input: StdinLock<'static>,
     next_id: u64,
     metrics: Vec<MetricUpdate>,
 }
@@ -157,19 +159,22 @@ fn with_conn<R>(f: impl FnOnce(&mut Conn) -> R) -> R {
     })
 }
 
-/// The node's next frame, answering pings on the way; the end of stdin
-/// means the node has gone, and the process exits.
+/// The node's next frame, answering pings on the way; the end of the
+/// channel means the node stopped this instance, and the process exits.
 fn next_frame() -> ToApp {
-    with_conn(|conn| {
+    with_conn(|_| ());
+    #[cfg(target_os = "linux")]
+    if let Some(end) = END.get() {
         loop {
-            match protocol::read::<ToApp>(&mut conn.input) {
+            match protocol::read::<ToApp>(&mut FromNode(end)) {
                 Ok(Some(ToApp::Ping { id })) => send(&FromApp::Pong { id }),
                 Ok(Some(frame)) => return frame,
                 Ok(None) => gone(),
                 Err(e) => protocol_error(&e.to_string()),
             }
         }
-    })
+    }
+    protocol_error("no channel to the node")
 }
 
 /// Ask the node and wait for its answer. Anything else from the node here
@@ -812,7 +817,7 @@ fn protocol_error(what: &str) -> ! {
     std::process::exit(3)
 }
 
-/// The node closed stdin: it has gone, or stopped this instance.
+/// The node closed the channel: it stopped this instance.
 fn gone() -> ! {
     std::process::exit(0)
 }
@@ -833,17 +838,30 @@ fn guarded<R>(f: impl FnOnce() -> R) -> R {
     }
 }
 
-/// Take stdout for frames, pointing stdout itself at stderr.
-fn take_stdout() -> io::Result<File> {
-    let stdout = io::stdout();
-    let mut locked = stdout.lock();
-    locked.flush()?;
-    let frames = rustix::io::dup(locked.as_fd())?;
-    rustix::stdio::dup2_stdout(io::stderr().as_fd())?;
-    Ok(File::from(frames))
+/// Break this process's ring to the node, as an app writing nonsense
+/// there would: for tests of the node's checks only.
+#[doc(hidden)]
+pub fn break_channel_for_tests() {
+    #[cfg(target_os = "linux")]
+    if let Some(end) = END.get() {
+        end.break_for_tests();
+    }
 }
 
-/// Serve `A` to the node over stdin and stdout until the node stops it.
+/// Open the channel the node handed this process.
+#[cfg(target_os = "linux")]
+fn open_channel() -> Result<(), String> {
+    let end = AppEnd::inherited().map_err(|e| e.to_string())?;
+    END.set(end).map_err(|_| "served twice".to_string())
+}
+
+/// Native apps run on Linux only.
+#[cfg(not(target_os = "linux"))]
+fn open_channel() -> Result<(), String> {
+    Err("native apps run on Linux only".into())
+}
+
+/// Serve `A` to the node over its channel until the node stops it.
 #[must_use]
 pub fn serve<A: App>() -> ExitCode {
     // Not dumpable again: the runner made itself so, but `execve` resets
@@ -857,19 +875,13 @@ pub fn serve<A: App>() -> ExitCode {
     {
         eprintln!("bulkhead-native: not dumpable: {e}");
     }
-    match take_stdout() {
-        Ok(out) => {
-            let _ = OUT.set(Mutex::new(out));
-        }
-        Err(e) => {
-            eprintln!("bulkhead-native: stdout: {e}");
-            return ExitCode::from(2);
-        }
+    if let Err(e) = open_channel() {
+        eprintln!("bulkhead-native: channel: {e}");
+        return ExitCode::from(2);
     }
     send(&FromApp::Hello { version: VERSION });
     CONN.with(|cell| {
         *cell.borrow_mut() = Some(Conn {
-            input: io::stdin().lock(),
             next_id: 0,
             metrics: Vec::new(),
         });

@@ -340,6 +340,12 @@ pub struct NativeConfig {
     /// Whether to run native apps on a kernel without Landlock (which the
     /// runner then cannot restrict to its files): off by default.
     pub landlock_optional: bool,
+    /// How long a side of a native instance's channel spins waiting for
+    /// the other before it sleeps: the node's instance task and the app's
+    /// waiting thread. It must outlast a wake-up to help (about 20 µs on
+    /// an x86 machine with deep C-states, 7 µs on a Raspberry Pi 5; spike
+    /// S32); zero always sleeps.
+    pub spin: Duration,
 }
 
 impl Default for NativeConfig {
@@ -351,6 +357,7 @@ impl Default for NativeConfig {
             ping_interval: Duration::from_secs(10),
             ping_timeout: Duration::from_secs(5),
             landlock_optional: false,
+            spin: Duration::from_micros(20),
         }
     }
 }

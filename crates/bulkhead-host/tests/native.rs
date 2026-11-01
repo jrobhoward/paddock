@@ -213,6 +213,36 @@ async fn executable____spins_past_deadline____killed_with_timeout() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn executable____breaks_its_channel____crashed_as_corrupt() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+
+    let _ = instance.call(text("break-channel"), LONG).await;
+    let reason = instance.wait().await;
+
+    let ExitReason::Crashed(why) = &reason else {
+        panic!("expected a crash, got {reason:?}");
+    };
+    assert!(why.contains("corrupt"), "{why}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn executable____spin_zero____calls_and_requests_answered_sleeping() {
+    let rt = runtime(|n| n.spin = Duration::ZERO);
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+
+    let echoed = ask(&instance, "echo slept").await;
+    let me = ask(&instance, "self").await;
+    let requests = ask(&instance, "selfs 200").await;
+
+    assert_eq!(echoed, "slept");
+    assert_eq!(me, fixture_pid(instance.pid()));
+    assert!(requests.parse::<u64>().is_ok(), "{requests}");
+}
+
 #[tokio::test]
 async fn executable____allocates_over_memory_max____crashed() {
     let rt = runtime(|_| {});

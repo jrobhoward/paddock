@@ -135,8 +135,10 @@ pub fn main() -> ExitCode {
             // what the app may know.
             let mut cmd = std::process::Command::new(&path);
             cmd.env_clear();
-            if let Some(dir) = std::env::var_os(crate::protocol::PRIV_ENV) {
-                cmd.env(crate::protocol::PRIV_ENV, dir);
+            for var in [crate::protocol::PRIV_ENV, crate::channel::SPIN_ENV] {
+                if let Some(value) = std::env::var_os(var) {
+                    cmd.env(var, value);
+                }
             }
             let err = cmd.exec();
             eprintln!("bulkhead-runner: {}: {err}", path.display());

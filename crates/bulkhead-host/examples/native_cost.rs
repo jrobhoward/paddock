@@ -113,6 +113,13 @@ fn spec() -> InstanceSpec {
 async fn run(workers: usize) {
     let mut native = NativeConfig::default();
     native.runner = Some(release("bulkhead-runner"));
+    // `NATIVE_SPIN_US`: the node's `[native] spin_us` (T1); unset, 20.
+    if let Some(us) = std::env::var("NATIVE_SPIN_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        native.spin = Duration::from_micros(us);
+    }
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 256,
         native,

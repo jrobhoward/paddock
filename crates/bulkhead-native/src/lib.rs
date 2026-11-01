@@ -1,10 +1,12 @@
 //! Native-process apps for Bulkhead (spike S19).
 //!
 //! A native app runs as a process the node spawns and supervises like an
-//! instance, talking to the node over its stdin and stdout: an
-//! Erlang-style port.
+//! instance, talking to the node over a channel of its own (two rings in
+//! shared memory): an Erlang-style port.
 //!
 //! - [`protocol`]: the frames both sides exchange.
+//! - `channel` (feature `channel`, Linux): the shared-memory rings they
+//!   travel over.
 //! - `app` (feature `app`): a native app as an executable, with the
 //!   process functions.
 //! - `runner` (feature `runner`, Linux): `bulkhead-runner`, the launcher
@@ -12,6 +14,9 @@
 //!   the app.
 
 pub mod protocol;
+
+#[cfg(all(target_os = "linux", feature = "channel"))]
+pub mod channel;
 
 #[cfg(all(unix, feature = "app"))]
 pub mod app;

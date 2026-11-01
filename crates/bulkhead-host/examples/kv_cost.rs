@@ -165,6 +165,13 @@ async fn run(workers: usize) {
         )
         .into(),
     );
+    // `NATIVE_SPIN_US`: the node's `[native] spin_us` (T1); unset, 20.
+    if let Some(us) = std::env::var("NATIVE_SPIN_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        runner.spin = Duration::from_micros(us);
+    }
     let rt = Runtime::new(RuntimeConfig {
         native: runner,
         max_instances: 32,

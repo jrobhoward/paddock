@@ -202,12 +202,14 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   UDP through `bulkhead-sdk`'s `net` module and waits on its sockets with
   `bulkhead:io` (`bulkhead-host`'s `tests/sockets.rs`).
 - `crates/bulkhead-native`: native-process apps: `protocol`
-  (CBOR frames between a node and a native app), `app` (feature `app`: an
-  executable's App trait and process functions) and `runner` (feature
-  `runner`, default; Linux): `bulkhead-runner`, which restricts itself
-  (Landlock, seccomp, non-dumpable) before loading a rustbridge plugin or
-  executing the program. bulkhead-host depends on it without default
-  features (the protocol only). The host side is
+  (CBOR frames between a node and a native app), `channel` (feature
+  `channel`, Linux: the shared-memory rings the frames travel over, and
+  their spin-then-sleep waits), `app` (feature `app`: an executable's
+  App trait and process functions) and `runner` (feature `runner`,
+  default; Linux): `bulkhead-runner`, which restricts itself (Landlock,
+  seccomp, non-dumpable) before loading a rustbridge plugin or executing
+  the program. bulkhead-host depends on it without default features (the
+  protocol and the channel). The host side is
   `crates/bulkhead-host/src/native/` (the port, cgroups, conversions) and
   `src/instance_native.rs` (the lifecycle, a child module of `instance`).
 - `crates/bulkhead-fixture-native` (an executable on the app API) and
@@ -389,6 +391,19 @@ Yielding instead cost a busy instance half its throughput, and tokio's
 `disable_lifo_slot` is unstable and slowed sequential calls by a third
 (B15, `docs/BASELINE.md`, 2026-10-30). `tests/messaging.rs` guards it;
 rerun `wake_cost` after a tokio upgrade.
+
+**A native instance's waits spin, then sleep.** Each side of a native
+instance's channel spins for `[native] spin_us` (default 20 µs) before it
+sleeps: a blocking round trip between processes costs two wake-ups of a
+sleeping thread whatever carries the bytes (S30, S32). The app spins with
+`sched_yield`, not a pause instruction, which starves the other side when
+busy processes outnumber cores (S32). Each side sleeps on a pipe the
+other writes a byte to. The node's instance task spins between callbacks too, which keeps its worker awake for the instance's
+next message. Native instances stay on the multi-threaded runtime: a
+current-thread runtime of their own made every call from other tasks cross
+two threads and put all their node-side work on one core (T1). Rerun
+`native_cost` and `cluster_throughput` natively, with `NATIVE_SPIN_US` 0
+and 20, before changing the budget or the waits.
 
 **A component imports only what its code calls.** An app that never calls a
 `process` function has no `process` import, so deploy-time checks treat an

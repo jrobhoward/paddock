@@ -1,16 +1,19 @@
 //! `bulkhead-runner` end to end, without a node: the test plays the node
-//! over the runner's stdin and stdout.
+//! over the runner's channel, polling where the node would sleep.
 
 #![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
+use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use bulkhead_native::channel::{self, Channel};
 use bulkhead_native::protocol::{
     self, Answer, Envelope, ExitReason, FromApp, Level, Pid, Request, ToApp, VERSION,
 };
@@ -53,11 +56,36 @@ fn fixtures() -> &'static (PathBuf, PathBuf) {
     })
 }
 
+/// The runner's frames to the node, read as they come; the end once the
+/// runner has exited (its bell's end of file) and the ring is empty.
+struct FromRunner {
+    channel: Arc<Channel>,
+    bell: OwnedFd,
+}
+
+impl Read for FromRunner {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let ring = self.channel.to_node();
+        loop {
+            let n = ring.read(buf)?;
+            if n > 0 {
+                channel::wake_writer(ring.writer_waiting());
+                return Ok(n);
+            }
+            match rustix::io::read(&self.bell, &mut [0u8; 64]) {
+                Ok(0) if !ring.is_readable() => return Ok(0),
+                _ => std::thread::sleep(std::time::Duration::from_micros(50)),
+            }
+        }
+    }
+}
+
 /// One runner, played as its node.
 struct Port {
     child: Child,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
+    channel: Arc<Channel>,
+    door: OwnedFd,
+    from: FromRunner,
     logs: Arc<Mutex<Vec<(Level, String)>>>,
     stderr: Arc<Mutex<Vec<String>>>,
     /// Copies the runner's stderr into `stderr`; done once the runner has
@@ -67,25 +95,42 @@ struct Port {
 
 impl Port {
     fn spawn(program: &str, path: &PathBuf) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_bulkhead-runner"))
-            .arg(program)
+        let (channel, memfd) = Channel::create().unwrap();
+        let (bell, bell_app) = channel::bell().unwrap();
+        rustix::fs::fcntl_setfl(&bell, rustix::fs::OFlags::NONBLOCK).unwrap();
+        let (door_app, door) = channel::door().unwrap();
+        let (log, log_app) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC).unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_bulkhead-runner"));
+        cmd.arg(program)
             .arg(path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log_app.try_clone().unwrap()))
+            .stderr(Stdio::from(log_app));
+        // SAFETY: the closure makes system calls only.
+        unsafe {
+            cmd.pre_exec(move || {
+                channel::install(memfd.as_fd(), bell_app.as_fd(), door_app.as_fd())
+            });
+        }
+        let child = cmd.spawn().unwrap();
+        // The child's ends close with the command.
+        drop(cmd);
         let stderr = Arc::new(Mutex::new(Vec::new()));
-        let lines = child.stderr.take().unwrap();
+        let lines = std::fs::File::from(log);
         let sink = stderr.clone();
         let stderr_copy = std::thread::spawn(move || {
             for line in BufReader::new(lines).lines().map_while(Result::ok) {
                 sink.lock().unwrap().push(line);
             }
         });
+        let channel = Arc::new(channel);
         let mut port = Self {
-            stdin: child.stdin.take().unwrap(),
-            stdout: child.stdout.take().unwrap(),
+            from: FromRunner {
+                channel: channel.clone(),
+                bell,
+            },
+            channel,
+            door,
             child,
             logs: Arc::default(),
             stderr,
@@ -96,20 +141,26 @@ impl Port {
     }
 
     fn send(&mut self, frame: &ToApp) {
-        protocol::write(&mut self.stdin, frame).unwrap();
+        let ring = self.channel.to_app();
+        let bytes = protocol::encode(frame);
+        let mut sent = 0;
+        while sent < bytes.len() {
+            sent += ring.write(&bytes[sent..]).unwrap();
+            channel::wake_reader(ring.reader_waiting(), self.door.as_fd());
+            if sent < bytes.len() {
+                std::thread::yield_now();
+            }
+        }
     }
 
     /// The next frame that is not a log or a request; requests are
     /// answered as a node would for pid `ME`.
     fn next(&mut self) -> FromApp {
         loop {
-            let frame = protocol::read::<FromApp>(&mut self.stdout)
+            let frame = protocol::read::<FromApp>(&mut self.from)
                 .unwrap()
                 .unwrap_or_else(|| {
-                    panic!(
-                        "runner closed stdout; stderr: {:?}",
-                        self.stderr.lock().unwrap()
-                    )
+                    panic!("runner exited; stderr: {:?}", self.stderr.lock().unwrap())
                 });
             match frame {
                 FromApp::Log { level, message } => self.logs.lock().unwrap().push((level, message)),
@@ -147,7 +198,9 @@ impl Port {
     /// Wait for the runner to exit, and for every line it wrote to stderr
     /// to reach `stderr`.
     fn exit_code(mut self) -> Option<i32> {
-        drop(self.stdin);
+        let ring = self.channel.to_app();
+        ring.close();
+        channel::wake_reader(ring.reader_waiting(), self.door.as_fd());
         let code = self.child.wait().unwrap().code();
         self.stderr_copy.join().unwrap();
         code
@@ -205,10 +258,7 @@ fn executable____noreply_then_cast____reply_requested_later() {
     });
     let mut requested = None;
     let done = loop {
-        match protocol::read::<FromApp>(&mut port.stdout)
-            .unwrap()
-            .unwrap()
-        {
+        match protocol::read::<FromApp>(&mut port.from).unwrap().unwrap() {
             FromApp::Request { id, request } => {
                 requested = Some(request);
                 port.send(&ToApp::Answer {

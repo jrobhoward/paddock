@@ -116,6 +116,10 @@ impl Fixture {
             }
             "panic" => panic!("asked to"),
             "abort" => std::process::abort(),
+            "break-channel" => {
+                app::break_channel_for_tests();
+                "ok".into()
+            }
             "spin" => loop {
                 std::hint::spin_loop();
             },

@@ -98,6 +98,11 @@ Requests per second from 16 and 64 apps each making 20,000, at a 20 µs budget; 
 
 ## What it changes
 
+Corrected 2026-11-01 by T1 (BASELINE.md, "native apps' frames over shared memory"):
+- **The current-thread runtime below lost in the node.** Every call from the node's other tasks (the host, components, other nodes) crossed two threads, and one core did every native instance's node-side work: a third of the throughput with 16 callers. The spike measured calls between its own apps only. T1 keeps the instances' tasks on the multi-threaded runtime, spinning there by yielding, between callbacks too.
+- **The app sleeps on a pipe the node writes a byte to, not a futex.**
+
+
 - **T1's shape:**
   - **The channel:** S32's rings in a memfd, with each waiting side spinning with `sched_yield`, then sleeping (a futex in the app; epoll on the apps' eventfds in the node).
   - **Node config:** `[native] spin_us`, default 20.

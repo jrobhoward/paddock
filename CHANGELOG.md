@@ -8,6 +8,21 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Native-process apps exchange frames with the node over a channel of
+  shared memory instead of stdin and stdout (ROADMAP T1, spike S32): two
+  byte rings in a memfd the app inherits as descriptor 3, with a pipe
+  each way to wake a sleeping side (descriptors 4 and 5). Each side spins
+  for `[native] spin_us` (new; default 20, 0 always sleeps) before it
+  sleeps. At the default, a call to a busy instance costs 5 to 7 µs
+  (from 17 to 20), a call between instances 13 µs (from 41 to 51) and a
+  request from an app 4 to 5 µs (from 11 to 25) on the 16-core machine
+  and the Raspberry Pi 5, for 1.5 to 1.9 times the CPU per call when many
+  instances are busy; on the Pi with 100 busy instances that cost
+  throughput, and `spin_us = 0` is about where things were (BASELINE.md).
+  The protocol is version 4: native apps built
+  against an earlier `bulkhead-native` or `bulkhead-sdk` must be rebuilt.
+  What a native app prints on stdout now goes to the log with its stderr,
+  and its stdin is empty.
 - A native-process singleton's process is killed when the node's lease
   ends while it is idle, not only during a callback: unlike a component,
   a native process can run threads between callbacks (ROADMAP Z4).

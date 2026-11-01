@@ -2165,7 +2165,42 @@ Memory per entry with 100,000 entries of 16 B: 174 and 190 bytes (component and 
   - **A writer beside 16 readers:** its writes fall to 9,100 to 17,600 per second, a tenth to a twentieth of a component's. Each of its requests waits behind the readers' on the node's workers.
 - **Spread:** within 10% except Erlang's casts within a node (0.78 to 1.58 million per second on the 16-core machine) and a native call from outside on the 16-core machine in the runs to the Pi (13.6 to 24.5 µs).
 
+## 2026-11-01: native apps' frames over shared memory (T1)
+
+The channel S32 prototyped, built: a native app's frames go through two byte rings in a memfd instead of its stdin and stdout, each waiting side spinning for `[native] spin_us`, then sleeping on a pipe the other side writes a byte to. Three builds, alternating, three rounds each: before (the commit before T1), and T1 with `spin_us` 20 (the default) and 0.
+- **`cluster_throughput`'s rows within a node** (`CLUSTER_NATIVE=1`): 16 instances of `bulkhead-fixture-msgbench`, calls from the host to one instance at a time and with 16 and 64 in flight, and calls and casts between instances.
+- **`native_cost`:** 100 instances of `bulkhead-fixture-native`. Its single calls go to a random one of the 100 each time, so each reaches an instance idle since its last call.
+- **Machines:** the 16-core machine, starting at load 2.1 to 11.2, and the Raspberry Pi 5 at nice 10, 1.5 to 20.6. A run that spins raises the load average, and each round ran its builds back to back. The Pi's CPU peaked at 61 °C.
+
+Medians of the three rounds; the spread is within 10% unless a bullet says otherwise:
+
+| | 16-core: before | T1, 20 µs | T1, 0 | Pi: before | T1, 20 µs | T1, 0 |
+| --- | --- | --- | --- | --- | --- | --- |
+| call from the host to one instance, p50 / p99 µs | 20.2 / 26.4 | 5.2 / 10.4 | 14.3 / 20.6 | 16.9 / 22.0 | 6.9 / 9.8 | 19.2 / 26.4 |
+| call between instances, p50 / p99 µs | 51.4 / 68.1 | 13.3 / 22.7 | 52.9 / 74.1 | 41.3 / 53.7 | 12.7 / 26.6 | 42.1 / 55.3 |
+| a request from a callback (own pid), µs | 24.8 | 4.8 | 27.8 | 11.1 | 4.3 | 12.4 |
+| a bucket get from a callback, µs | 27.3 | 5.5 | 29.8 | 12.5 | 4.8 | 14.0 |
+| a call to an idle instance (one of 100), p50 µs | 28.2 | 27.6 | 23.3 | 30.5 | 27.0 | 33.2 |
+| 16 / 64 callers from the host, calls/s | 256,000 / 272,000 | 331,000 / 357,000 | 237,000 / 250,000 | 141,000 / 152,000 | 123,000 / 148,000 | 139,000 / 152,000 |
+| 16 instances calling, calls/s | 142,000 | 220,000 | 131,000 | 67,000 | 83,000 | 67,000 |
+| casts from the host, handled/s | 337,000 | 825,000 | 313,000 | 189,000 | 312,000 | 201,000 |
+| casts from 16 instances, handled/s | 179,000 | 566,000 | 160,000 | 86,000 | 133,000 | 93,000 |
+| casts to one instance (`native_cost`), handled/s | 68,000 | 192,000 | 38,000 | 88,000 | 209,000 | 79,000 |
+| 16 / 64 calls in flight over 100 instances, calls/s | 252,000 / 289,000 | 249,000 / 311,000 | 233,000 / 253,000 | 101,000 / 102,000 | 56,000 / 58,000 | 97,000 / 97,000 |
+| CPU per call with 16 / 64 in flight, µs | 28.8 / 26.2 | 45.0 / 39.9 | 30.7 / 28.8 | 37.4 / 37.0 | 69.4 / 66.0 | 38.6 / 39.4 |
+
+- **Spinning is what pays:** at 20 µs a call to a busy instance costs a quarter to two fifths of what it did, a call between instances 13 µs on both machines (from 41 to 51), and a request from a callback 4 to 5 µs (from 11 to 25). Casts are handled 1.5 to 3.2 times as fast. At 0 the channel costs about what the pipes did: a blocking round trip is two wake-ups whatever carries the bytes (S30).
+- **A call to an idle instance gains nothing:** its app and the node's task both sleep, and waking them is the cost.
+- **Spinning costs CPU:** with 16 or 64 calls in flight, 1.5 to 1.9 times the CPU per call. On the 16-core machine the throughput still held or rose, by up to 31%. On the Pi's 4 cores, 100 instances' tasks and apps spinning took cores the work needed: calls in flight over 100 instances fell to 55 to 57% of before (`native_cost`), 16 callers over 16 instances to 87% (`cluster_throughput`). A small machine with many busy native instances does better at `spin_us = 0`.
+- **Spread:** before's call from the host on the 16-core machine ranged 13.6 to 24.0 µs, and T1 at 0's from 14.2 to 26.9; before's request from a callback 13.5 to 25.1 µs (one round of three was fast).
+
+Found while measuring:
+- **A call to an idle instance first cost twice what it did** (41 against 21 µs on the 16-core machine). The node grew its input buffer by the ring's 64 KiB, zeroed, on every look at the ring: 24% of its samples and about 15 µs of CPU per call. It now grows by what the ring holds. The app also moved from sleeping on a futex to sleeping on a pipe, whose writer wakes it with the scheduler's sync hint; that change's own share was not measured apart from the buffer's.
+- **S32's current-thread runtime for native instances lost:** a third of the throughput with 16 callers from the host (93,000 calls/s against 260,000), and a call from the host 21 µs against 10 with the instances on the multi-threaded runtime. Every call from the node's other tasks crossed two threads, and one core did all the native instances' node-side work. With the task spinning only during callbacks, a call between instances cost 39 µs against 19 spinning between callbacks too: a spinning task keeps its worker awake for the instance's next message.
+
 ## Not measured yet
+
+- Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
 
 - What makes Erlang's TLS distribution twice its plain TCP with 16 and 64 callers between two processes on the 16-core machine (C4), and only there.
 - Why Bulkhead's calls between nodes gain little or nothing from 16 to 64 callers, where Erlang's double (C4).
