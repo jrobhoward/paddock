@@ -2259,6 +2259,74 @@ Keyvalue, ns per operation from inside the app (100,000 keys and 16 B values unl
 - **A published bucket reads in 0.16 to 0.39 µs,** below a component's host call and in ETS `set`'s range, and 16 readers reach 30.7 million reads a second on the 16-core machine, 5 times ETS with `read_concurrency` and 1.9 times `persistent_term` (C4: 6.0 and 16.5 million). On the Pi's 4 cores they reach 5.1 million: ETS's 4.7, below `persistent_term`'s 8.5. Its price is staleness, up to the publish interval.
 - **Between two node processes on one host,** the network dominates as in C4: a native call from the host costs 116 µs on the 16-core machine (C4: 160) and 124 on the Pi (C4: 148), and app to app 167 and 158 µs (C4: 202 and 185), against components' 148 and 136. A native app's casts to the other node still all arrive on the 16-core machine; on the Pi 93 to 100% did.
 
+## 2026-11-01: summary: BEAM, Paddock's components and Bulkhead's native apps
+
+Two questions, answered from the day's runs:
+- **Keyvalue:** how many ETS or bucket operations per second.
+- **Messaging:** how many calls and casts per second between two separate OS processes on one host, over each system's cluster transport on localhost.
+
+Where the figures come from:
+- **BEAM:** C4 ("components, native apps and BEAM"), with OTP 28 on the 16-core machine and 27 on the Pi:
+  - ETS through `beam_ets.escript`;
+  - two Erlang nodes through `beam_cluster.escript`, distributed Erlang over TCP or over TLS.
+- **Paddock's components and Bulkhead's native apps:** T5 ("native apps within a node after T1 and T4"), at commit 51c1a8b. The components are Bulkhead's component path, the WebAssembly runtime Paddock runs as forked; Paddock itself was not run again.
+- **Bulkhead's transport:** QUIC with mutual TLS between two `cluster_throughput` processes (`scripts/cluster_pair.sh`).
+- **How:** 4 workers or schedulers everywhere, five rounds of each configuration, medians. The Pi ran at nice 10.
+
+The ETS figures are from public tables, with `read_concurrency` and `write_concurrency` off and on. "Native, published" is a bucket with `publish_ms`, read from the app's mapped snapshot (T4). It answers reads only, so its rows are reads; a component reads the same bucket through the host.
+
+### Keyvalue operations per second
+
+Millions per second, on one bucket or table of 100,000 keys with 16-byte values, from 1 or 16 instances or processes:
+
+| Workload | 16-core: ETS `set`, off / on | component | native | native, published | Pi: ETS `set`, off / on | component | native | native, published |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 95 reads in 100, 1 instance | 3.33 / 1.98 | 0.76 | 0.18 | | 2.00 / 1.85 | 0.52 | 0.16 | |
+| 95 reads in 100, 16 instances | 2.04 / 6.04 | 0.69 | 0.46 | | 3.10 / 4.74 | 0.53 | 0.23 | |
+| 50 reads in 100, 1 instance | 2.42 / 1.70 | 0.62 | 0.13 | | 2.07 / 1.88 | 0.45 | 0.14 | |
+| 50 reads in 100, 16 instances | 0.33 / 6.09 | 0.50 | 0.40 | | 1.29 / 4.59 | 0.44 | 0.21 | |
+| every write to one key, 1 instance | 6.89 / 4.22 | 0.92 | 0.13 | | 4.95 / 4.39 | 0.73 | 0.17 | |
+| every write to one key, 16 instances | 0.16 / 0.15 | 0.77 | 0.52 | | 1.34 / 1.32 | 1.44 | 0.24 | |
+| 16 readers beside one writer: reads, writes | 6.10, 0.57 (on) | 0.63, 0.18 | 0.45, 0.025 | | 4.50, 0.38 (on) | 0.49, 0.16 | 0.21, 0.013 | |
+| reads only, 1 instance (ETS: `persistent_term`) | 4.38 | 0.76 | | 2.93 | 2.27 | 0.55 | | 1.78 |
+| reads only, 16 instances (ETS: `persistent_term`) | 16.45 | 0.74 | | 30.67 | 8.54 | 0.57 | | 5.09 |
+
+- **ETS leads every mix, read or write, by 4 to 12 times over components and 12 to 53 times over native requests.** The exception is many writers on one key: there a bucket's single writer lock beats ETS's contended table on the 16-core machine (0.77 against 0.16 million a second) and matches it on the Pi.
+- **A component's bucket costs about 1 µs an operation through the host call,** and does not scale with instances: one lock per bucket.
+- **A native app's bucket operation is a request to the node, about 5 to 7 µs,** so one instance manages 0.13 to 0.18 million a second. Sixteen overlap on the node to reach 0.21 to 0.52 million. A writer beside 16 readers is the weakest case: 13,000 to 25,000 writes a second.
+- **For data read far more than it is written, a published bucket beats them all on the 16-core machine:** 30.7 million reads a second from 16 instances, against `persistent_term`'s 16.5 million and ETS's 6.0. On the Pi's 4 cores it reaches 5.1 million, ETS's level and below `persistent_term`'s 8.5. Its reads may be up to the publish interval old.
+
+### Calls and casts between two OS processes on one host
+
+Node 1's callers and node 2's servers, over each system's transport on localhost:
+
+| | 16-core: BEAM, TCP | BEAM, TLS | component | native | Pi: BEAM, TCP | BEAM, TLS | component | native |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| call one at a time from outside, p50 µs | 57 | 94 | 134 | 116 | 53 | 137 | 114 | 124 |
+| call one at a time between instances, p50 µs | 71 | 92 | 148 | 167 | 53 | 136 | 136 | 158 |
+| 16 / 64 callers from outside, calls/s | 35,000 / 36,000 | 78,000 / 131,000 | 51,000 / 65,000 | 38,000 / 48,000 | 72,000 / 65,000 | 44,000 / 68,000 | 39,000 / 61,000 | 23,000 / 35,000 |
+| 16 instances calling, calls/s | 37,000 | 77,000 | 47,000 | 32,000 | 67,000 | 43,000 | 33,000 | 14,000 |
+| casts from outside, handled/s (arrived) | 120,000 (100%) | 529,000 (100%) | 287,000 (68%) | 278,000 (65%) | 267,000 (100%) | 292,000 (100%) | 268,000 (64%) | 144,000 (53%) |
+| casts from instances, handled/s (arrived) | 134,000 (100%) | 322,000 (100%) | 61,000 (17%) | 218,000 (100%) | 277,000 (100%) | 173,000 (100%) | 42,000 (17%) | 85,000 (96%) |
+| 1 KiB / 64 KiB bodies, 16 callers, calls/s | 29,000 / 10,600 | 55,000 / 5,100 | 41,000 / 4,500 | 30,000 / 4,000 | 35,000 / 10,500 | 22,000 / 1,200 | 30,000 / 1,800 | 19,000 / 1,300 |
+
+- **Between processes, the transport sets the pace, and Erlang's is cheaper per message:**
+  - **One call at a time:** 53 to 71 µs over TCP, against 114 to 167 µs for Bulkhead's QUIC with mutual TLS.
+  - **Against TLS distribution:** Bulkhead is close on the Pi (114 to 158 against 136 to 137) and slower on the 16-core machine (116 to 167 against 92 to 94).
+- **Throughput with many callers:**
+  - **16-core machine:** Bulkhead's components (51,000 to 65,000 calls a second) sit between Erlang over TCP (35,000) and over TLS (78,000 to 131,000; TLS beating TCP there is not explained). Native apps reach 68 to 75% of components.
+  - **Pi:** Erlang leads, and native apps reach 42 to 59% of components, since their spinning takes cores the work needs (T1b).
+- **Erlang delivers every cast and Bulkhead does not:**
+  - **Erlang:** a process sending to a busy distribution port waits.
+  - **Bulkhead:** refuses casts once a link's queue is full (at most once), so 53 to 68% arrived from outside, and 17% of a component instance's.
+  - **A native instance's casts are paced by its requests to the node:** all or nearly all arrived, at 85,000 to 218,000 a second, more than a component's.
+- **Large bodies:** over TCP, Erlang carried 64 KiB bodies 2.4 to 8 times faster than Bulkhead. Over TLS it was close to Bulkhead on both machines.
+- **Within one node,** where Erlang's messages are cheapest (2 to 3 µs) and native apps' most expensive (6 to 13 µs), see T5.
+- **Not measured:**
+  - Paddock's own build, separately from Bulkhead's component path.
+  - Native apps between the 16-core machine and the Pi since T1 (C4's cross-machine runs predate it).
+  - Erlang's TLS beating its TCP on the 16-core machine, which is unexplained (C4).
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
