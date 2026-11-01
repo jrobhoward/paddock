@@ -31,7 +31,7 @@ The failover pair and witness run over QUIC between `bulkhead node` processes (`
 
 ## Next
 
-Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1, Z2 and Z3 done the same day (a native call about half what it cost, BASELINE.md; native apps reach keyvalue, groups, config, secrets and metrics; one SDK source builds both ways, checked by the conformance suite; Z4, HTTP routes and a singleton's lease for native apps); Z5, the exit, on 2026-11-01: the board built natively passes all five of its node tests' cases beside the component and Go builds; Z6, its docs, the same day (the README and DESIGN.md describe native processes, DESIGN.md's "Instance model" says why a process per instance, and the tutorial runs the native board with `BOARD=native`); Z7 the same day (snapshots for native executables over the protocol: snapshot upgrades, passivation and moves, each load in a new process; the conformance suite's snapshot cases pass natively). Z8, native parity, planned the same day as Z8a to Z8k (phase 5b). Ahead of it, decided with the user on 2026-11-01: a comparison of components, native apps and BEAM (C1 to C4, below): calls and casts between nodes (two node processes on one host, and the 16-core machine and the Pi), and keyvalue buckets; C1 to C4 done the same day (BASELINE.md, 2026-11-01: within a node a native call costs 3 to 4 times a component's and a bucket operation 7 to 29 times; between nodes the transport dominates, a native call within 5 to 11% of a component's between the machines; Erlang over TCP is faster between nodes and delivers every cast). Z8a done the same day (a bundle carries a native program per platform, checked to be an ELF file for its architecture; one bundle built on the 16-core machine ran on both machines). Next, decided with the user on 2026-11-01, ahead of the rest of Z8: native costs within a node, where C4 found native apps furthest behind (a call between instances about 41 µs against a component's 5 to 7 and BEAM's 2; a bucket operation 13 to 16 µs, a request each), to be planned. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
+Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1, Z2 and Z3 done the same day (a native call about half what it cost, BASELINE.md; native apps reach keyvalue, groups, config, secrets and metrics; one SDK source builds both ways, checked by the conformance suite; Z4, HTTP routes and a singleton's lease for native apps); Z5, the exit, on 2026-11-01: the board built natively passes all five of its node tests' cases beside the component and Go builds; Z6, its docs, the same day (the README and DESIGN.md describe native processes, DESIGN.md's "Instance model" says why a process per instance, and the tutorial runs the native board with `BOARD=native`); Z7 the same day (snapshots for native executables over the protocol: snapshot upgrades, passivation and moves, each load in a new process; the conformance suite's snapshot cases pass natively). Z8, native parity, planned the same day as Z8a to Z8k (phase 5b). Ahead of it, decided with the user on 2026-11-01: a comparison of components, native apps and BEAM (C1 to C4, below): calls and casts between nodes (two node processes on one host, and the 16-core machine and the Pi), and keyvalue buckets; C1 to C4 done the same day (BASELINE.md, 2026-11-01: within a node a native call costs 3 to 4 times a component's and a bucket operation 7 to 29 times; between nodes the transport dominates, a native call within 5 to 11% of a component's between the machines; Erlang over TCP is faster between nodes and delivers every cast). Z8a done the same day (a bundle carries a native program per platform, checked to be an ELF file for its architecture; one bundle built on the 16-core machine ran on both machines). Next, decided with the user on 2026-11-01, ahead of the rest of Z8: native costs within a node, where C4 found native apps furthest behind (a call between instances about 41 µs against a component's 5 to 7 and BEAM's 2; a bucket operation 13 to 16 µs, a request each), planned the same day as S32 and T1 to T6 (spin-then-sleep waiting, mapped bucket snapshots over a descriptor channel moved forward from Z8e, calls still through the node). Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
@@ -177,7 +177,7 @@ Order: J5 first, which runs J4's Go board in CI and so meets the exit's first ha
 
 ## Keyvalue track: fast reads of shared buckets
 
-Narrowed by Phase 5 (2026-10-31): the host-side items (H6, H7, H11) stay; H8 can build on Z2's watch notices, which carry the value; H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch for mapped snapshots) are replaced by S31's mapped snapshot in a memfd (this track, once Z8e passes descriptors).
+Narrowed by Phase 5 (2026-10-31): the host-side items (H6, H7, H11) stay; H8 can build on Z2's watch notices, which carry the value; H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch for mapped snapshots) are replaced by S31's mapped snapshot in a memfd (T4, under "Native costs within a node", 2026-11-01).
 
 Planned on 2026-10-30, from the comparison with ETS (BASELINE.md, 2026-10-30, "keyvalue buckets against ETS"). A memory-bucket operation from a guest costs about 1 µs before it touches data, against 50 to 270 ns for ETS and about 250 ns for a bare host call (S14); 1.7 to 7 times `ordered_set` for small values, 23 to 92 times for 64 KiB values (copied across the sandbox; ETS keeps them by reference); and 0.4 to 0.6 million operations per second from 1 to 16 instances, where ETS with `read_concurrency` scales to 2.5 to 6.4 million. Every memory bucket on a node shares one lock (`storage::Memory`).
 
@@ -233,7 +233,7 @@ Decided with this plan (2026-10-31):
 - The keyvalue track keeps its host-side items (H6, H7, H11). H8 (a mirror in the SDKs) can build on Z2's watch notices, which carry the value. H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch) are replaced by S31's mapped snapshot.
 - B14 (wasmtime's MMU interruption) is parked: it speeds up guests only. The wasmtime 50.0.1 upgrade stays while components run.
 
-Order: S30, S31 and Z1 to Z4 done (2026-10-31), Z5 (the exit), Z6 (its docs) and Z7 (snapshots) on 2026-11-01; the comparison (C1 to C4, below) and Z8a the same day; native costs within a node next (to be planned, decided 2026-11-01), then Z8b to Z8k, Z9 last.
+Order: S30, S31 and Z1 to Z4 done (2026-10-31), Z5 (the exit), Z6 (its docs) and Z7 (snapshots) on 2026-11-01; the comparison (C1 to C4, below) and Z8a the same day; native costs within a node next (S32 and T1 to T6, planned 2026-11-01, below), then Z8b to Z8k, Z9 last.
 
 ### The comparison: components, native apps and BEAM
 
@@ -250,6 +250,50 @@ What exists: within a node, `baseline` and `native_cost` and `beam_baseline.escr
 
 Order: C1 to C4 (done 2026-11-01); then Z8a.
 
+### Native costs within a node
+
+Planned on 2026-11-01, from C4: within a node, native apps are furthest behind components and BEAM.
+- **A call between native instances:** about 41 µs, against a component's 5 to 7 and BEAM's 2.
+- **A request from an app to the node:** 13 to 16 µs, and every bucket operation is one.
+- **Why:** both sit at the floor of a blocking round trip between processes. Spike S30 measured 11 to 20 µs with pipes or with a ring woken by eventfd, since each round trip is two wake-ups of a sleeping thread. A call between instances is two round trips.
+- **What gets below the floor:** only spinning (a ring with both sides spinning: 0.3 to 1.4 µs), or not asking at all (S31's snapshot mapped read-only: a read in 21 to 69 ns).
+
+Goal, revised by S32: a request under 3 µs and a call between instances under 10 µs on both machines while traffic flows, with no CPU spent while idle, and reads of a published bucket within twice ETS's time.
+
+Decided with the user (2026-11-01):
+- **Waiting:** spin, then sleep. A waiting thread, the app's and a poller's on the node, spins for a bounded time (node config) before sleeping on a futex. CPU goes to waiting only while traffic flows.
+- **Mapped reads:** included. The descriptor channel moves forward from Z8e to pass each new snapshot's memfd, and Z8e reuses it for sockets.
+- **Calls between instances stay mediated by the node.** It keeps owning mailboxes, ordering, links, monitors, timeouts and sender identity. The gain comes from the channel and fewer hand-offs, not a direct path between processes.
+
+Items, in order:
+
+- [ ] **S32 A channel that spins, then sleeps** (M; time-box 2 days). A prototype in `spikes/s32`:
+  - **The channel:** a pair of rings in a memfd the app inherits at spawn, a futex word per direction, and the waiting side spinning up to a budget before it sleeps.
+  - **The node side:** one poller thread, spinning across the active instances' rings while any has traffic.
+  - **What it measures, against today's pipes on both machines:** a request (the app's own pid), a bucket get, a call from the node, and a call between instances. Each with spin budgets of 0, 2, 5, 20 and 50 µs, with the CPU per operation and while idle.
+  - **Load cases:** more active instances than cores (16 and 64 on the Pi's 4), where spinning must not cost throughput (yielding while spinning, and a budget that shrinks under load). Also 100 idle instances.
+  - **Questions it answers:** whether the poller should answer requests that need no instance task (pid, names, bucket operations) itself, and what the node must check of a ring the app can write. A ring's indices and lengths are untrusted, like the pipe's bytes.
+  - **Decides:** the default budget, and T1's and T2's shapes. Areas: spikes.
+- [ ] **T1 Frames over the channel** (L; if S32 says so). The app's frames and the node's move from the pipes to S32's rings, with spin-then-sleep on both sides:
+  - **Node config:** `[native] spin_us`, where 0 always sleeps.
+  - **The runner:** passes the memfd, and its seccomp filter allows what the channel needs (futex).
+  - **Unchanged:** stderr stays a pipe; the ping, callback deadline and exit detection work as now.
+  - **Tests and checks:** `native_cost` and the conformance suite's native mode, with fuzzing of the ring's reader (SECURITY.md).
+  - Areas: `bulkhead-native` (protocol, app, runner), `crates/bulkhead-host/src/native/`, `instance_native.rs`.
+- [ ] **T2 Requests answered without the instance task** (M; if S32 says so). The poller answers a request that needs no instance state itself: the app's own pid, names, and bucket and watch operations. One hand-off fewer per request, and two per call between instances. Areas: host.
+- [ ] **T3 The descriptor channel** (M; Z8e's first half). A Unix socket beside each instance's channel, for descriptors only (`SCM_RIGHTS`), opened at spawn. A frame names each descriptor sent, so frames and descriptors cannot be paired wrongly. The SDK receives descriptors. Areas: runner, protocol, host, SDK.
+- [ ] **T4 Mapped bucket snapshots** (L). On T3:
+  - **Which buckets:** an operator marks a shared bucket as published.
+  - **Publishing:** the node builds each version into a sealed memfd (S31's format: records and a hash index), at most once per publish interval, and passes it to every instance granted the bucket.
+  - **Reading:** the SDK's `get` and `get_many` read the mapping in both builds (a component keeps the host call). Reads may be one interval stale; writes stay requests, and so do ordered reads and scans, unless S32's harness says otherwise.
+  - **Accounting:** each version's memory is counted to the node, not to the instances.
+  - **Tests:** `kv_cost` and `beam_ets.escript` gain the published read, and a conformance case covers it.
+  - Areas: keyvalue service, host, SDK, conformance.
+- [ ] **T5 The comparison again** (S). C4's within-node rows (calls, casts, payloads) and its keyvalue rows, natively, on both machines, five rounds: BASELINE.md and DESIGN.md's "Instance model". Areas: docs.
+- [ ] **T6 Docs** (S). Covers the channel and spin budget (OPERATIONS.md, node config), published buckets (MANIFEST.md, WRITING_APPS.md: which read path for which data), and SECURITY.md's native boundary (shared memory between node and app; the poller's CPU). Areas: docs.
+
+Order: S32, then T1 and T2 as it decides, T3, T4, T5 and T6; then Z8b.
+
 ### Z8: native parity
 
 Planned on 2026-11-01. What native apps still lack, against components: bundles for the other architecture; volumes (`wasi:filesystem`); dynamic children (`bulkhead:runtime/supervisor`); SQL (`bulkhead:sql`); HTTP egress (`wasi:http/outgoing-handler`); guest sockets (`wasi:sockets`, `bulkhead:io`); listeners and connection handlers; extensions (the Modbus extension, `examples/greeter`); and examples built natively (`ping-pong`, `counter`, `chaos`, `ledger`, `tally`, `line-server`, `greeter`, the three `scada` apps; `board` and `http-counter` already are), and `board-go`, which needs a native Go SDK.
@@ -262,7 +306,7 @@ Decided with this plan (2026-11-01, with the user):
 - **HTTP handlers** (`wasi:http/proxy` components) have no native counterpart: requests as calls to an app's pool (Z4) serve native apps, and the handler kind goes with WebAssembly in Z9.
 - **Extensions:** requests over the protocol. An extension serves named functions with CBOR arguments and results through a native method on the `Extension` trait, granted per app as now; node-level work (Modbus polling) stays in the node.
 - **The network fence:** sockets come only from the node. The runner's seccomp filter already refuses `socket`, so a passed socket is all an app can use: a connected TCP socket cannot be moved to another address, and UDP sockets are passed connected only (an unconnected one could send anywhere). No network namespace is needed, contrary to S31's note.
-- **Descriptors travel on a Unix socket beside the pipes** (`SCM_RIGHTS`), not on the frames' channel: frames over a socketpair cost a call 40% more (BASELINE.md, 2026-10-31).
+- **Descriptors travel on a Unix socket beside the pipes** (`SCM_RIGHTS`), not on the frames' channel: frames over a socketpair cost a call 40% more (BASELINE.md, 2026-10-31). Built as T3, ahead of Z8 (2026-11-01).
 
 Items, in order:
 
@@ -270,7 +314,7 @@ Items, in order:
 - [ ] **Z8b Volumes** (S). A native app's granted volumes become Landlock rules (read-only or read-write on the operator's host directory, `[volumes]`), and the app finds each in an environment variable (`BULKHEAD_VOLUME_<NAME>`); the SDK gives one function for both builds (`bulkhead_sdk::volume(name)`: the preopen's path in a component, the variable natively). Quotas stay the operator's filesystem quota, as now. Areas: runner, host, SDK.
 - [ ] **Z8c Dynamic children** (S). `bulkhead:runtime/supervisor` over the protocol: start and stop children of the app's own supervisor, as a component does; conformance cases for it run in both modes. Areas: protocol, host, SDK.
 - [ ] **Z8d SQL** (M). `bulkhead:sql` over the protocol: query, execute and transactions, held by the node per instance as now (the node's pool and credentials, the app's connection cap); a transaction left open when the instance exits is rolled back. `examples/tally` natively, `tally.rs` against both builds. Areas: protocol, host, SDK, examples.
-- [ ] **Z8e The descriptor channel and guest sockets** (L). A Unix socket beside each instance's pipes, for descriptors only. `wasi:sockets` natively: the app asks to connect or bind (TCP, connected UDP) and the node checks the manifest's rules inside `[sockets]`, the address guard and `max_sockets`, opens the socket and passes it. Readiness: the app waits on its sockets on a thread of its own and asks for an `io-ready` notice to itself with a frame from any thread (Erlang's `{active, once}`, as `bulkhead:io` gives a component), so the instance still handles one message at a time. The SDK's `net` keeps its API in both builds. `sockets.rs` against both builds. Areas: runner, protocol, host, SDK.
+- [ ] **Z8e Guest sockets** (L; the descriptor channel moved to T3, 2026-11-01). `wasi:sockets` natively, over T3's channel: the app asks to connect or bind (TCP, connected UDP) and the node checks the manifest's rules inside `[sockets]`, the address guard and `max_sockets`, opens the socket and passes it. Readiness: the app waits on its sockets on a thread of its own and asks for an `io-ready` notice to itself with a frame from any thread (Erlang's `{active, once}`, as `bulkhead:io` gives a component), so the instance still handles one message at a time. The SDK's `net` keeps its API in both builds. `sockets.rs` against both builds. Areas: runner, protocol, host, SDK.
 - [ ] **Z8f HTTP egress** (M). On Z8e: the app asks for a connection to a URL's origin, the node checks the allow lists, resolves the name with the address guard, connects and passes the socket; the SDK's `http_client` speaks HTTP/1.1 and TLS (rustls) over it natively, with the system's roots and node config's CA file readable through Landlock. `egress.rs`' cases against the native build where they still apply (the gaps above recorded in SECURITY.md). Areas: host, runner, SDK.
 - [ ] **Z8g Connections** (L). A listener whose app is native passes each accepted connection over the descriptor channel to an instance of the app's pool (round robin, or by the peer's address with hash routing), with the connection's info; `max_connections` and the idle timeout stay the node's (the app reports a connection's activity, or the node watches its own copy of the socket). The SDK's `Connection` API as a native trait serving many connections per instance. `examples/line-server` natively, `listeners.rs` against both builds. Areas: host, SDK, examples.
 - [ ] **Z8h Extensions** (M). A native method on `Extension` (named functions, CBOR in and out, the app's grant and scope as now); the SDK's extension calls over the protocol; the Modbus extension and `examples/greeter` ported, with their tests in both builds. Areas: host, `bulkhead-modbus`, SDK, examples.
@@ -278,7 +322,7 @@ Items, in order:
 - [ ] **Z8j A native Go SDK** (L). Plain Go (no TinyGo): the protocol's frames in Go with a CBOR library, the same callbacks, process functions, services and snapshot format as the Rust SDK; `examples/board-go` natively, passing `board.rs` and the conformance suite's native mode with a Go reference app. Areas: `sdks/go`, tests.
 - [ ] **Z8k Docs for parity** (S). MANIFEST.md's native section without its exceptions, WRITING_APPS.md (connections, sockets, egress as passed sockets), SECURITY.md's native boundary (sockets from the node only, egress's gaps), DESIGN.md's decisions above; then Z9 is planned. Areas: docs.
 
-Not in Z8: mapped bucket snapshots (S31's memfd, over Z8e's channel) move to the keyvalue track with H8, when a read-heavy app needs them; `bulkhead:admin` stays unenforced, as for components.
+Not in Z8: mapped bucket snapshots (S31's memfd) are T4, ahead of Z8 (2026-11-01); `bulkhead:admin` stays unenforced, as for components.
 
 ## Investigations
 
