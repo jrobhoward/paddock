@@ -4,17 +4,36 @@
 //! returning the same generated types, so the modules above them read the
 //! same either way.
 
+// Each service only with its feature, as its module above it.
+#[cfg(all(feature = "groups", not(all(unix, not(target_arch = "wasm32")))))]
+pub(crate) use crate::bindings::bulkhead::groups::groups;
+#[cfg(all(feature = "metrics", not(all(unix, not(target_arch = "wasm32")))))]
+pub(crate) use crate::bindings::bulkhead::metrics::metrics;
+#[cfg(all(feature = "secrets", not(all(unix, not(target_arch = "wasm32")))))]
+pub(crate) use crate::bindings::bulkhead::secrets::store as secrets_store;
+#[cfg(all(feature = "watch", not(all(unix, not(target_arch = "wasm32")))))]
+pub(crate) use crate::bindings::bulkhead::watch::watch;
+#[cfg(all(feature = "config", not(all(unix, not(target_arch = "wasm32")))))]
+pub(crate) use crate::bindings::wasi::config::store as config_store;
+#[cfg(all(feature = "keyvalue", not(all(unix, not(target_arch = "wasm32")))))]
+pub(crate) use crate::bindings::wasi::keyvalue;
 #[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-pub(crate) use crate::bindings::{
-    bulkhead::groups::groups, bulkhead::metrics::metrics, bulkhead::runtime::process,
-    bulkhead::secrets::store as secrets_store, bulkhead::watch::watch,
-    wasi::config::store as config_store, wasi::keyvalue, wasi::logging::logging,
-};
+pub(crate) use crate::bindings::{bulkhead::runtime::process, wasi::logging::logging};
 
+#[cfg(all(feature = "config", unix, not(target_arch = "wasm32")))]
+pub(crate) use native::config_store;
+#[cfg(all(feature = "groups", unix, not(target_arch = "wasm32")))]
+pub(crate) use native::groups;
+#[cfg(all(feature = "keyvalue", unix, not(target_arch = "wasm32")))]
+pub(crate) use native::keyvalue;
+#[cfg(all(feature = "metrics", unix, not(target_arch = "wasm32")))]
+pub(crate) use native::metrics;
+#[cfg(all(feature = "secrets", unix, not(target_arch = "wasm32")))]
+pub(crate) use native::secrets_store;
+#[cfg(all(feature = "watch", unix, not(target_arch = "wasm32")))]
+pub(crate) use native::watch;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
-pub(crate) use native::{
-    config_store, groups, keyvalue, logging, metrics, process, secrets_store, watch,
-};
+pub(crate) use native::{logging, process};
 
 /// The native halves, and the conversions between the protocol's types
 /// and the generated ones.
@@ -187,6 +206,7 @@ pub(crate) mod native {
     }
 
     /// One keyvalue request; its answer, or the error.
+    #[cfg(any(feature = "keyvalue", feature = "watch"))]
     fn kv(request: p::KvRequest) -> Result<p::KvAnswer, p::KvError> {
         Ctx::current().kv(request)
     }
@@ -194,6 +214,7 @@ pub(crate) mod native {
     /// `wasi:keyvalue`, over the protocol. A bucket is its name: opening
     /// one asks the node nothing, so an unlisted bucket's error comes with
     /// its first operation.
+    #[cfg(feature = "keyvalue")]
     pub(crate) mod keyvalue {
         pub(crate) mod store {
             pub(crate) use crate::bindings::wasi::keyvalue::store::{Error, KeyResponse};
@@ -335,6 +356,7 @@ pub(crate) mod native {
     }
 
     /// `bulkhead:watch`, over the protocol.
+    #[cfg(feature = "watch")]
     pub(crate) mod watch {
         pub(crate) use crate::bindings::bulkhead::watch::watch::*;
 
@@ -476,6 +498,7 @@ pub(crate) mod native {
     }
 
     /// `bulkhead:groups`, over the protocol.
+    #[cfg(feature = "groups")]
     pub(crate) mod groups {
         pub(crate) use crate::bindings::bulkhead::groups::groups::*;
 
@@ -509,6 +532,7 @@ pub(crate) mod native {
     }
 
     /// `wasi:config`, over the protocol.
+    #[cfg(feature = "config")]
     pub(crate) mod config_store {
         pub(crate) use crate::bindings::wasi::config::store::*;
 
@@ -532,6 +556,7 @@ pub(crate) mod native {
     }
 
     /// `bulkhead:secrets`, over the protocol.
+    #[cfg(feature = "secrets")]
     pub(crate) mod secrets_store {
         pub(crate) use crate::bindings::bulkhead::secrets::store::*;
 
@@ -548,6 +573,7 @@ pub(crate) mod native {
 
     /// `bulkhead:metrics`, over the protocol: updates go with the
     /// callback's result, so they report no error here.
+    #[cfg(feature = "metrics")]
     pub(crate) mod metrics {
         pub(crate) use crate::bindings::bulkhead::metrics::metrics::*;
 

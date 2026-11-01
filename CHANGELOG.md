@@ -8,6 +8,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- A native-process singleton's process is killed when the node's lease
+  ends while it is idle, not only during a callback: unlike a component,
+  a native process can run threads between callbacks (ROADMAP Z4).
 - A native-process app's call costs about half what it did: the node's
   instance task writes the app's stdin and reads its stdout itself, the
   app's callback thread reads its frames itself, and an instance keeps one
@@ -27,6 +30,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- HTTP routes for native-process apps: a native app may declare
+  `wasi:http/incoming-handler`, and its requests arrive as calls, as a
+  component's do. `examples/http-counter` builds as a native program too
+  (feature `native`), and `tests/http.rs` serves it through a node
+  (ROADMAP Z4).
 - `bulkhead-sdk` apps build as native programs from the same source: on
   Unix, `app!` also generates `bulkhead_main()` for a binary's `main`, and the
   SDK's process functions, keyvalue, watch, groups, config, secrets,

@@ -469,6 +469,14 @@ impl InstanceTask {
         // One timer, moved when it fires before a ping is due, rather than
         // armed for every message (Z1).
         let mut ping_timer = std::pin::pin!(tokio::time::sleep_until(idle_since + ping_interval));
+        // A singleton's lease. A native process can run threads between
+        // callbacks, where a component runs nothing, so a lease ending
+        // while it is idle kills it as one ending in a callback does.
+        let mut lease = state.lease.clone();
+        let never = || Instant::now() + Duration::from_secs(365 * 86_400);
+        let mut lease_timer = std::pin::pin!(tokio::time::sleep_until(
+            lease_end(lease.as_ref()).unwrap_or_else(never)
+        ));
         loop {
             match self.control.borrow_and_update().clone() {
                 Control::Run => {}
@@ -485,6 +493,21 @@ impl InstanceTask {
                         port.kill();
                         return Err(ExitReason::Killed);
                     }
+                    continue;
+                }
+                () = lease_timer.as_mut(), if lease.is_some() => {
+                    match lease_end(lease.as_ref()) {
+                        Some(end) if end <= Instant::now() => {
+                            state.lease_ended = true;
+                            port.kill();
+                            return Err(ExitReason::Crashed("lease_ended".into()));
+                        }
+                        end => lease_timer.as_mut().reset(end.unwrap_or_else(never)),
+                    }
+                    continue;
+                }
+                () = lease_changed(lease.as_mut()) => {
+                    lease_timer.as_mut().reset(lease_end(lease.as_ref()).unwrap_or_else(never));
                     continue;
                 }
                 Some(op) = self.ops.recv() => {

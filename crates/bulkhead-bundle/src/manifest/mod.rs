@@ -70,6 +70,7 @@ pub const NATIVE_CAPABILITIES: &[Capability] = &[
     Capability::Config,
     Capability::Secrets,
     Capability::Metrics,
+    Capability::HttpIncoming,
 ];
 
 /// The `appserver` section of a bundle manifest: everything the server needs

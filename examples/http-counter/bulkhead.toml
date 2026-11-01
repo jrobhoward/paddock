@@ -11,6 +11,11 @@
 #   bulkhead bundle examples/http-counter/bulkhead.toml target/wasm32-wasip2/release/example_http_counter.wasm --key bulkhead.key
 #
 # Then: curl localhost:8080/counter ; curl -X POST localhost:8080/counter
+#
+# As a native program instead, add `kind = "native-process"` and
+# `native = { program = "executable" }` under [appserver], and bundle
+#   cargo build -p example-http-counter --features native --release
+#   target/release/example-http-counter
 [app]
 name = "http-counter"
 version = "1.0.0"

@@ -13,6 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bulkhead::node::{LogRing, Node, NodeConfig};
+
+mod common;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -33,6 +35,29 @@ fn build() -> PathBuf {
         .success();
     assert!(ok, "building example-http-counter failed");
     target.join("wasm32-wasip2/release/example_http_counter.wasm")
+}
+
+/// The counter built as a native program (its `native` feature).
+#[cfg(target_os = "linux")]
+fn build_native() -> PathBuf {
+    let target = root().join("target/fixtures/examples-http-native");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let ok = StdCommand::new(cargo)
+        .current_dir(root())
+        .args(["build", "--release", "-p", "example-http-counter"])
+        .args([
+            "--features",
+            "native",
+            "--bin",
+            "example-http-counter",
+            "--target-dir",
+        ])
+        .arg(&target)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "building example-http-counter natively failed");
+    target.join("release/example-http-counter")
 }
 
 struct Run {
@@ -216,6 +241,55 @@ async fn http_counter____deployed_with_policy____served_and_routes_follow_the_ap
     assert_eq!(not_routed.0, 404);
     assert_eq!(stopped.0, 404);
     assert_eq!(started, (200, r#"{"count":0}"#.to_string()));
+    node.shutdown().await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http_counter____native_build____served_as_the_component_is() {
+    let setup = setup().await;
+    let program = build_native();
+    let port = free_port();
+    let runner = &common::native_fixtures().0;
+    let (node, socket) = node(
+        &setup,
+        "native",
+        &format!("[http.main]\naddress = \"127.0.0.1:{port}\"\n[native]\nrunner = {runner:?}\n"),
+    )
+    .await;
+    let manifest = setup.dir.path().join("native-counter.toml");
+    std::fs::write(
+        &manifest,
+        "[app]\nname = \"http-counter\"\nversion = \"1.0.0\"\n\
+         [appserver]\nkind = \"native-process\"\nnative = { program = \"executable\" }\n\
+         [appserver.capabilities.\"wasi:http/incoming-handler\"]\nroutes = [{ path_prefix = \"/counter\" }]\n",
+    )
+    .unwrap();
+    let bundled = setup.dir.path().join("native-counter.rbp");
+    let r = bulkhead(
+        &setup.dir.path().join("x.sock"),
+        &[
+            "bundle",
+            s(&manifest),
+            s(&program),
+            "--key",
+            s(&setup.key),
+            "-o",
+            s(&bundled),
+        ],
+    )
+    .await;
+    assert!(r.ok, "{}", r.stderr);
+
+    let deployed = bulkhead(&socket, &["deploy", s(&bundled)]).await;
+    let first = http(port, "GET", "/counter", "").await;
+    let posted = http(port, "POST", "/counter", "5").await;
+    let wrong = http(port, "PUT", "/counter", "").await;
+
+    assert!(deployed.ok, "{}", deployed.stderr);
+    assert_eq!(first, (200, r#"{"count":0}"#.to_string()));
+    assert_eq!(posted, (200, r#"{"count":5}"#.to_string()));
+    assert_eq!(wrong.0, 405);
     node.shutdown().await;
 }
 
