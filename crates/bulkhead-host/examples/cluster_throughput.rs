@@ -237,6 +237,9 @@ fn spec() -> InstanceSpec {
         memory_max: 64 << 20,
         mailbox_max: 1 << 16,
         message_max_bytes: 1 << 20,
+        // A native instance's casts are answered requests: its 25,000 to
+        // another node outlast the default deadline on the Pi.
+        callback_deadline: Duration::from_secs(600),
         ..InstanceSpec::new("bench", "0.1.0")
     }
 }

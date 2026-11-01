@@ -15,7 +15,10 @@ bin=target/release/examples/cluster_throughput
 dir=$(mktemp -d -t bulkhead-cluster-XXXXXX)
 serve=
 cleanup() {
-  [ -n "$serve" ] && kill "$serve" 2>/dev/null && wait "$serve" 2>/dev/null
+  # Node 2 ends by SIGTERM; under set -e its status would become ours.
+  if [ -n "$serve" ] && kill "$serve" 2>/dev/null; then
+    wait "$serve" 2>/dev/null || true
+  fi
   rm -rf "$dir"
 }
 trap cleanup EXIT

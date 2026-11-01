@@ -30,6 +30,14 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- A comparison of components, native apps and BEAM: calls, casts and
+  payloads within a node, between two node processes on one host and
+  between a 16-core machine and a Raspberry Pi 5, and keyvalue buckets
+  against ETS, five rounds each (BASELINE.md, 2026-11-01; ROADMAP C4).
+  `cluster_throughput`'s instances get a 600 s callback deadline, since a
+  native instance's casts to another node outlasted the default on the
+  Pi, and `scripts/cluster_pair.sh` exits 0 after a successful run instead
+  of with its second node's SIGTERM status.
 - `scripts/beam_cluster.escript`: BEAM's reference for `cluster_throughput`,
   the same runs between two Erlang nodes over distributed Erlang, from a
   plain process and from gen_servers, over plain TCP or TLS distribution

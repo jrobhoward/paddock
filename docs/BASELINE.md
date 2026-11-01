@@ -2052,8 +2052,123 @@ Raspberry Pi 5, at nice 10, load 0.4 to 0.9 at the start; one run before, four o
 - **A stream socket costs the kernel more per write than a pipe:** a call 40% more and a quarter of the throughput. Frames stay on the pipes; passing descriptors gets a socket of its own when it is needed (ROADMAP Z8).
 - **A bucket read from a native callback** (`kv gets`, 16 B values, a memory bucket) costs 12.8 to 13.3 µs on the Pi, about what a request for the instance's own pid does (11.3 to 11.5 µs): the request is the cost, not the storage. A component's read is about 1.2 µs (S25).
 
+## 2026-11-01: components, native apps and BEAM (C4)
+
+Calls, casts and payloads within a node, between two node processes on one host and between the two machines, and keyvalue buckets, for each kind of app and for Erlang. Each node runs 4 tokio workers, and Erlang runs 4 schedulers (`+S 4:4`).
+- **Bulkhead:** `cluster_throughput` with node 2 as its own process (`scripts/bench.sh cluster-pair`; between the machines, the example's `serve` on one and `connect` on the other). Its instances are `bulkhead-fixture-msgbench` built as a component or as a native program (`CLUSTER_NATIVE=1`), linked by QUIC with mutual TLS.
+- **Erlang:** `scripts/beam_cluster.escript` runs the same loads against 16 gen_servers over distributed Erlang, on plain TCP and on TLS distribution (`bench.sh beam-cluster`).
+- **Keyvalue:** `kv_cost` in a component and in a native program (`kv`, `kv-native`), against `beam_ets.escript` (`beam-ets`).
+
+Five rounds of every configuration, one configuration after another within each round. The tables give the median of the five, and the spread is within 10% except where a bullet says otherwise.
+
+The machines and their conditions:
+- **16-core machine:** Threadripper 1950X, OTP 28. A browser and an idle VM were open, and the load was 0.43 at the start.
+- **Raspberry Pi 5:** OTP 27, every run at nice 10 and idle I/O priority, load 0.51 at the start. Its CPU peaked at 61 °C, with no throttling.
+- **Load recorded before each run:** up to 7.5 on the 16-core machine and 8.1 on the Pi, mostly the tail of the run before it.
+- **The link:** 1 Gbit/s Ethernet.
+- **Code:** commit 22be54f, plus a 600 s callback deadline in `cluster_throughput`. Without it, a native instance's 25,000 casts to another node outlast the default deadline on the Pi.
+
+In the tables below:
+- **"From outside":** calls and casts come from a task on the node (in Erlang, a plain process).
+- **"From instances":** they come from 16 instances (in Erlang, gen_servers), each sending to its own target.
+- **Payload rows:** 16 callers echoing 1 KiB and 64 KiB bodies.
+- **Casts:** handled per second, with the share that arrived.
+
+Within a node:
+
+| | 16-core: component | native | BEAM | Pi: component | native | BEAM |
+| --- | --- | --- | --- | --- | --- | --- |
+| call from outside, p50 / p99 µs | 3.3 / 6.0 | 13.4 / 18.4 | 3.4 / 5.0 | 4.6 / 6.8 | 16.6 / 23.2 | 2.3 / 4.2 |
+| call from an instance, p50 / p99 µs | 4.9 / 6.4 | 42 / 65 | 2.0 / 3.8 | 7.0 / 12.7 | 41 / 53 | 2.3 / 4.3 |
+| 16 / 64 callers from outside, calls/s | 0.66M / 0.67M | 0.26M / 0.28M | 0.39M / 0.49M | 0.85M / 0.89M | 0.14M / 0.15M | 0.87M / 1.08M |
+| 16 instances calling, calls/s | 0.69M | 0.15M | 0.44M | 0.63M | 0.067M | 0.78M |
+| casts from outside, handled/s | 1.14M | 0.34M | 1.14M | 1.02M | 0.18M | 1.25M |
+| casts from instances, handled/s | 1.22M | 0.18M | 5.7M | 1.41M | 0.084M | 4.4M |
+| 1 KiB / 64 KiB bodies, calls/s | 642,000 / 154,000 | 239,000 / 44,000 | 381,000 / 369,000 | 799,000 / 24,600 | 127,000 / 3,500 | 820,000 / 783,000 |
+
+Every cast within a node arrived.
+
+Two node processes on one host:
+
+| | 16-core: component | native | BEAM TCP | BEAM TLS | Pi: component | native | BEAM TCP | BEAM TLS |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| call from outside, p50 / p99 µs | 134 / 168 | 160 / 203 | 57 / 100 | 94 / 172 | 112 / 166 | 148 / 228 | 53 / 82 | 137 / 186 |
+| call from an instance, p50 / p99 µs | 147 / 182 | 202 / 260 | 71 / 92 | 92 / 138 | 133 / 162 | 185 / 286 | 53 / 69 | 136 / 186 |
+| 16 / 64 callers from outside, calls/s | 51,000 / 65,000 | 40,000 / 52,000 | 35,000 / 36,000 | 78,000 / 131,000 | 39,000 / 61,000 | 29,000 / 46,000 | 72,000 / 65,000 | 44,000 / 68,000 |
+| 16 instances calling, calls/s | 47,000 | 33,000 | 37,000 | 77,000 | 34,000 | 18,000 | 67,000 | 43,000 |
+| casts from outside, handled/s (arrived) | 281,000 (68%) | 293,000 (80%) | 120,000 (100%) | 529,000 (100%) | 268,000 (61%) | 121,000 (54%) | 267,000 (100%) | 292,000 (100%) |
+| casts from instances, handled/s (arrived) | 59,000 (18%) | 167,000 (100%) | 134,000 (100%) | 322,000 (100%) | 47,000 (17%) | 63,000 (100%) | 277,000 (100%) | 173,000 (100%) |
+| 1 KiB / 64 KiB bodies, calls/s | 41,000 / 4,400 | 32,000 / 4,000 | 29,000 / 10,600 | 55,000 / 5,100 | 30,000 / 1,650 | 22,000 / 1,190 | 35,000 / 10,500 | 22,000 / 1,190 |
+
+Between the machines. "16-core to Pi" puts node 1 (the caller) on the 16-core machine and node 2 on the Pi; "Pi to 16-core" is the reverse:
+
+| | 16-core to Pi: component | native | BEAM TCP | BEAM TLS | Pi to 16-core: component | native | BEAM TCP | BEAM TLS |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| call from outside, p50 / p99 µs | 285 / 336 | 299 / 365 | 212 / 257 | 276 / 332 | 284 / 333 | 302 / 372 | 188 / 258 | 278 / 345 |
+| call from an instance, p50 / p99 µs | 305 / 355 | 340 / 410 | 212 / 257 | 274 / 349 | 305 / 361 | 337 / 403 | 192 / 257 | 276 / 399 |
+| 16 / 64 callers from outside, calls/s | 36,000 / 43,000 | 30,000 / 44,000 | 60,000 / 86,000 | 45,000 / 110,000 | 40,000 / 34,000 | 41,000 / 39,000 | 57,000 / 112,000 | 38,000 / 104,000 |
+| 16 instances calling, calls/s | 34,000 | 28,000 | 57,000 | 44,000 | 34,000 | 29,000 | 55,000 | 39,000 |
+| casts from outside, handled/s (arrived) | 240,000 (78%) | 149,000 (54%) | 666,000 (100%) | 502,000 (100%) | 272,000 (62%) | 283,000 (65%) | 472,000 (100%) | 380,000 (100%) |
+| casts from instances, handled/s (arrived) | 47,000 (17%) | 149,000 (100%) | 711,000 (100%) | 324,000 (100%) | 53,000 (17%) | 108,000 (100%) | 698,000 (100%) | 189,000 (100%) |
+| 1 KiB / 64 KiB bodies, calls/s | 26,800 / 1,630 | 22,200 / 1,260 | 36,700 / 1,780 | 26,600 / 1,510 | 27,300 / 1,710 | 26,700 / 1,720 | 28,100 / 1,780 | 26,800 / 1,350 |
+
+Keyvalue, ns per operation from inside the app; a memory bucket against ETS (a bucket is ordered, so `ordered_set` is its match):
+
+| Operation, keys, value | 16-core: component | native | `set` | `ordered_set` | Pi: component | native | `set` | `ordered_set` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| get, 1,000, 16 B | 668 | 15,564 | 125 | 244 | 860 | 13,494 | 198 | 324 |
+| get, 100,000, 16 B | 1,046 | 15,201 | 265 | 681 | 1,546 | 14,590 | 443 | 1,135 |
+| get, 1,000, 64 KiB | 7,172 | 58,193 | 220 | 343 | 11,634 | 67,357 | 358 | 481 |
+| get of a missing key, 1,000 | 493 | 14,371 | 51 | 176 | 657 | 13,270 | 97 | 268 |
+| overwrite, 100,000, 16 B | 1,499 | 16,333 | 274 | 715 | 2,157 | 15,785 | 469 | 1,220 |
+| overwrite, 1,000, 64 KiB | 9,189 | 80,261 | 140 | 279 | 33,982 | 78,289 | 201 | 374 |
+| increment, 100,000 | 908 | 15,835 | 96 | 280 | 1,172 | 14,366 | 130 | 453 |
+| `get_many` of 100, per key, 100,000 | 889 | 1,358 | | | 1,414 | 1,645 | | |
+| 100 entries from a key, per entry, 100,000 | 569 | 1,395 | | 174 | 813 | 1,156 | | 261 |
+| the whole bucket, per entry, 100,000 | 546 | 1,100 | | 144 | 787 | 1,002 | | 211 |
+| `next`, one key at a time, 100,000 | 2,421 | 20,900 | | 142 | 2,974 | 19,004 | | 238 |
+| dependent reads along a chain, 100,000 | 908 | 15,041 | | 404 | 1,519 | 14,695 | | 704 |
+
+Across instances or processes on one bucket or public table of 100,000 keys (16 B; ETS with `read_concurrency` and `write_concurrency`), operations per second:
+
+| Workload | 16-core: component | native | `set` | `ordered_set` | Pi: component | native | `set` | `ordered_set` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 95 reads in 100, 16 instances | 0.67M | 0.29M | 6.0M | 3.7M | 0.55M | 0.15M | 4.7M | 2.5M |
+| every write to one key, 1 instance | 0.95M | 0.043M | 4.2M | | 0.73M | 0.071M | 4.4M | |
+| 16 readers beside one writer: reads/s, writes/s | 0.62M, 167,000 | 0.28M, 17,600 | 6.1M, 573,000 | 3.5M, 352,000 | 0.51M, 170,000 | 0.14M, 9,100 | 4.5M, 378,000 | 2.4M, 185,000 |
+
+Memory per entry with 100,000 entries of 16 B: 174 and 190 bytes (component and native, 16-core), 149 and 187 (Pi), ETS 120; the node holds the bucket either way.
+
+- **Within a node, a native call costs 3 to 4 times a component's from outside** (13.4 against 3.3 µs on the 16-core machine, 16.6 against 4.6 on the Pi). Between instances it costs 6 to 9 times (42 against 4.9, 41 against 7.0). Each call between native instances is two requests and two process hops. Throughput is a third (16-core) to a sixth (Pi) of a component's. A component costs 2.5 to 3 times BEAM between instances, and BEAM's 2.0 to 2.3 µs is the floor.
+- **Between node processes, the transport dominates and the kinds come close:**
+  - **Two processes on one host:** a call costs 112 to 134 µs for a component and 148 to 160 for a native instance. Erlang takes 53 to 57 over TCP and 94 to 137 over TLS. Bulkhead's QUIC with mutual TLS sits beside Erlang's TLS distribution: faster on the Pi, 1.4 times on the 16-core machine.
+  - **Between the machines:** a component's call costs 284 to 285 µs and a native's 299 to 302. Erlang takes 276 to 278 over TLS and 188 to 212 over TCP. The native premium falls from 4 times within a node to 5 to 11%.
+- **Bulkhead's throughput between nodes rises little past 16 callers;** Erlang's goes on rising:
+  - **16 callers:** 29,000 to 51,000 calls per second for either kind.
+  - **64 callers:** Bulkhead reaches 34,000 to 65,000. From the Pi to the 16-core machine it falls (40,000 to 34,000 for a component). Between the machines, Erlang reaches 86,000 to 112,000 over TCP and 104,000 to 110,000 over TLS.
+  - **BEAM on the 16-core machine:** with two processes there, TLS distribution runs at twice plain TCP with 16 and 64 callers (78,000 and 131,000 against 35,000 and 36,000). It does not do so on the Pi or between the machines. Not investigated.
+- **Erlang delivers every cast and Bulkhead does not:**
+  - **Erlang:** a process sending to a busy distribution port is suspended until the port drains.
+  - **Bulkhead:** a cast is at most once (DESIGN.md, "Distribution"), and casts are refused when the link's queue is full. From outside, 54 to 80% arrived, for either kind.
+  - **Bulkhead components:** from 16 component instances casting as fast as they can, 17 to 18% arrived.
+  - **Bulkhead native apps:** a native instance's cast is a request to the node, which paces the sender, so all of them arrived (one run of five to the Pi: 79%). That made more casts per second than a component's (63,000 to 167,000 against 47,000 to 59,000).
+- **Payloads:**
+  - **Within a node:** Erlang shares binaries over 64 bytes by reference, so its 64 KiB figures (369,000 and 783,000 calls per second) are not comparable. A component copies the body into and out of the guest (154,000 and 24,600), and a native app also through its pipe (44,000 and 3,500). On the Pi, every 64 KiB copy is several times slower than on the 16-core machine.
+  - **Between the machines:** all four configurations reach 1,260 to 1,780 calls per second at 64 KiB. At 1,780 calls per second, 64 KiB each way is 0.93 Gbit/s, the line rate.
+  - **Two processes on one host:** Erlang over TCP reaches 10,500 on both machines, against 1,190 to 5,100 for the rest.
+- **A native bucket operation costs 13 to 16 µs whatever it does,** 7 to 29 times a component's and 34 to 280 times ETS `set`. Each operation is a request to the node (Z2: 12.8 to 13.3 µs for a read). What a native app can do about it:
+  - **Batch:** `get_many` of 100 costs 1.4 to 1.6 µs a key, within 1.2 to 1.5 times a component's.
+  - **Scan:** a scan costs 1.0 to 1.4 µs an entry.
+  - **Avoid** `next` one key at a time, and chains of dependent reads: each step is a request.
+- **Instances' requests overlap on the node:**
+  - **Readers:** 16 native instances reach 0.15 to 0.29 million operations per second against 0.05 to 0.07 million for one. A component's stay flat behind the bucket's lock.
+  - **A writer beside 16 readers:** its writes fall to 9,100 to 17,600 per second, a tenth to a twentieth of a component's. Each of its requests waits behind the readers' on the node's workers.
+- **Spread:** within 10% except Erlang's casts within a node (0.78 to 1.58 million per second on the 16-core machine) and a native call from outside on the 16-core machine in the runs to the Pi (13.6 to 24.5 µs).
+
 ## Not measured yet
 
+- What makes Erlang's TLS distribution twice its plain TCP with 16 and 64 callers between two processes on the 16-core machine (C4), and only there.
+- Why Bulkhead's calls between nodes gain little or nothing from 16 to 64 callers, where Erlang's double (C4).
 - B15's fix on the 16-core machine.
 - S25's changes in a run of the whole harness repeated (one suite run each so far).
 - What limits 16 concurrent callers between machines to 67 to 75% of loopback's rate.
