@@ -18,6 +18,7 @@
 //! | `alloc MIB` | `ok` once allocated and touched |
 //! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID` | `ok` or `err:` and the OS error |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
+//! | `dumpable` | `no` if the process is not dumpable, else `yes` (Linux) |
 //!
 //! Init arguments `fail` make `init` fail.
 //!

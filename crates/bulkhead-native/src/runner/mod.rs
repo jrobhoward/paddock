@@ -22,8 +22,10 @@
 //!
 //! Then `--library` loads a rustbridge plugin and serves it
 //! ([`library`]), and `--executable` replaces the runner with the
-//! program, which serves itself through [`crate::app`]. Both restrictions
-//! stay in force across the exec.
+//! program, which serves itself through [`crate::app`]. Landlock and
+//! seccomp stay in force across the exec; not being dumpable does not
+//! (`execve` resets it for a readable program), so [`crate::app::serve`]
+//! sets it again.
 
 pub mod library;
 pub mod sandbox;

@@ -217,6 +217,12 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A native-process app run as an executable is no longer dumpable.
+  `bulkhead-runner` made itself so, but `execve` reset it for the app, so
+  a crashing app went through the system's core handler (the node saw the
+  exit 0.1 to 0.3 s late) and other processes of the node's user could
+  trace it. `bulkhead_native::app::serve` sets it again first (ROADMAP Q17,
+  found by spike S30).
 - On a `read_concurrency` memory bucket, `bulkhead:watch`'s `get` and
   `scan` read a key's value and its revision in two lookups, so a write
   between them returned the old value with the new revision: a mirror

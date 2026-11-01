@@ -266,6 +266,17 @@ fn take_stdout() -> io::Result<File> {
 /// Serve `A` to the node over stdin and stdout until the node stops it.
 #[must_use]
 pub fn serve<A: App>() -> ExitCode {
+    // Not dumpable again: the runner made itself so, but `execve` resets
+    // it for a readable program. Without this a crash went through the
+    // system's core handler (the node saw the exit 0.1 to 0.3 s late,
+    // spike S30) and other processes of the node's user could trace the
+    // app.
+    #[cfg(target_os = "linux")]
+    if let Err(e) =
+        rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
+    {
+        eprintln!("bulkhead-native: not dumpable: {e}");
+    }
     match take_stdout() {
         Ok(out) => {
             let _ = OUT.set(Mutex::new(out));

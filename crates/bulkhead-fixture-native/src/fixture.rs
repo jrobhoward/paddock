@@ -108,6 +108,7 @@ impl Fixture {
                 Ok(dir) => outcome(std::fs::read(std::path::Path::new(&dir).join(rest))),
                 Err(_) => "err:no priv".into(),
             },
+            "dumpable" => dumpable(),
             "kill" => {
                 let target: i32 = rest.parse().unwrap_or(0);
                 // SAFETY: `kill` takes no pointers; any pid and signal 0
@@ -170,4 +171,20 @@ impl App for Fixture {
 /// Serve the fixture on stdin and stdout.
 pub(crate) fn main() -> ExitCode {
     app::serve::<Fixture>()
+}
+
+/// Whether the kernel would dump this process's core: `yes` or `no`.
+#[cfg(target_os = "linux")]
+fn dumpable() -> String {
+    use rustix::process::{DumpableBehavior, dumpable_behavior};
+    match dumpable_behavior() {
+        Ok(DumpableBehavior::NotDumpable) => "no".into(),
+        Ok(_) => "yes".into(),
+        Err(e) => format!("err:{e}"),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn dumpable() -> String {
+    "err:linux only".into()
 }

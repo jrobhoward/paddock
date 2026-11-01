@@ -1,0 +1,11 @@
+[package]
+name = "s30-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+libc = "0.2"
+bulkhead-bundle = { path = "../../../crates/bulkhead-bundle" }
+bulkhead-host = { path = "../../../crates/bulkhead-host" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process", "io-util", "sync", "net"] }

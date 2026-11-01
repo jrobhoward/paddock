@@ -30,7 +30,7 @@ The failover pair and witness run over QUIC between `bulkhead node` processes (`
 
 ## Next
 
-Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. S30 next (what an instance is), with S31 beside it (host services for native apps); the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is proposed to be parked behind it.
+Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. S30 done (2026-10-31: a process per instance for the exit, a process per app later for density); S31 next (host services for native apps); the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is proposed to be parked behind it.
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
@@ -220,12 +220,12 @@ Decided 2026-10-31:
 
 Spikes:
 
-- [ ] **S30 What an instance is (M).** Two prototypes against the same workloads on both machines: today's process per instance, and one process per app running many instances on an SDK scheduler, the host keeping pids, mailboxes, supervision and routing and each frame naming its instance. Start time; idle memory per instance at 1, 100, 1,000 and 5,000 instances; a call and a cast between instances in one process and across two; `pool_load` throughput; how far a crash reaches (one instance, or the process and every instance in it) and how long the restart takes. Also the frame transport: S19's pipe against a shared-memory ring, since a ping through the pipes and the frame code alone took 31 of a call's 37 µs. Answers: what an instance is. Feeds Z1.
+- [x] **S30 What an instance is** (done 2026-10-31; [spikes/s30](../spikes/s30/README.md)). A process per instance costs about 0.25 to 0.5 MiB once the kernel's share is counted (1.4 to 2.4 MiB on the Pi, whose glibc 2.43 gives each malloc arena a 2 MiB huge page), 0.7 to 1.2 ms to start bare and 5.7 to 14 ms through today's runner, and about 50 µs per call (70 µs through today's runner), against a component's 56 KiB, 77 µs and 3.8 µs. A process per app starts an instance in 30 to 110 µs and holds it in 5 to 55 KiB, but an abort, a segfault or the process's memory limit ends every instance in it, and with the SDK's synchronous API each instance needs a stack of its own (a thread here): on shared workers a call to an instance on the same worker never returns. The pipe is not the cost (a round trip 11 to 20 µs; a ring in shared memory woken by an eventfd no faster); the hand-offs between tasks and threads are. Found Q17 (fixed 2026-10-31, CHANGELOG): executable apps were dumpable again after the runner's exec, so the node saw a crash 0.1 to 0.3 s late.
 - [ ] **S31 Host services for native apps (S).** For each service, whether it goes over the protocol (a request answered by the host code a component's import runs, as the process functions are now) or the process uses the OS directly, fenced by the runner: files through Landlock, sockets through Landlock's TCP port rules or a network namespace, clocks and random as they are. A keyvalue `get` and a watch notice over S30's transport against a component's (about 1.2 µs, S25; about 9 µs per notice, S28), and a read from a bucket snapshot mapped read-only into the process (S29's idea, which needs no wasmtime patch for a native process). What the manifest's socket rules need that Landlock on Linux 6.8 and 7.0 cannot express. Answers: the transport for each service in Z2.
 
 Items (sizes after the spikes):
 
-- [ ] **Z1 The instance model** as S30 decides: the runner, the protocol, the host's native instance (`instance_native.rs`) and `bulkhead-native`'s app API. Areas: `crates/bulkhead-native`, Process core, Orchestration.
+- [ ] **Z1 A process per instance, cheaper** (S30, 2026-10-31; recommended, to confirm). Keep today's model for the exit and cut its costs: fewer hand-offs per call (the host's instance, writer and reader tasks and the app's reading, worker and writing threads: about six wake-ups, most of a call's 50 to 70 µs); the app's malloc arenas off huge pages (`GLIBC_TUNABLES=glibc.malloc.hugetlb=0` in the environment the runner gives the app, or documented; about 2 MiB per instance on glibc 2.43); where the runner's 5.7 to 14 ms start goes, against a bare process's 0.7 to 1.2 ms. Frames name their instance, so Z10 can follow without a new protocol. Areas: `crates/bulkhead-native`, Process core, Orchestration.
 - [ ] **Z2 Host services for native apps.** Keyvalue and watch, groups, config, secrets and metrics first (the board needs the first two and groups), over S31's transport and answered by the services' existing host code. The manifest's rule that a native app declares only `wasi:logging` widens to them, each with its deny, limit and release-on-exit tests (CLAUDE.md, "A new host service"). SQL, HTTP egress and sockets after the exit (Z8). Areas: Host services, Manifest and bundle, `crates/bulkhead-native`.
 - [ ] **Z3 One SDK for both kinds.** `bulkhead-sdk`'s API (`App`, `Ctx`, envelopes, `kv`, `watch`, `groups`, `http`, the log macros) on native targets through `bulkhead-native`'s protocol, so one app's source builds for `wasm32-wasip2` and as a program, `app!` giving a program its `main`. `bulkhead bundle` packs the native variants for x86-64 and aarch64. Areas: Guest SDK, `crates/bulkhead-native`, `bulkhead` (bundle).
 - [ ] **Z4 HTTP routes and placement for native apps.** A route to a native pool (a request is a call, so likely only the manifest's rule), and placement on a pair: `singleton`, hot standby, `partner_url` and standby forwarding, the lease ending a native singleton's process outside a callback as well as in one. Areas: I/O and protocols, Orchestration, Manifest and bundle.
@@ -236,6 +236,7 @@ After the exit, each planned when reached:
 
 - **Z7 Snapshots for native apps:** `save-snapshot` and `load-snapshot` over the protocol (the SDK's `Snapshot` derive), for snapshot upgrades, passivation and moving a singleton with its state.
 - **Z8 The rest of the platform natively:** listeners and connection handlers, HTTP handlers, SQL, HTTP egress, sockets; every example and the conformance suite as native apps; a native Go SDK (plain Go, without TinyGo).
+- **Z10 A process per app** (from S30), for apps that need thousands of instances or an instance per connection: many instances in one app process, each on a stack of its own while the SDK's API stays synchronous (a thread each in S30: 16 to 55 KiB and about 100 µs per instance), chosen per app in the manifest, with its isolation caveat (a panic ends one instance, an abort or the memory limit every instance in the process). Shared workers only with asynchronous callbacks in the SDK.
 - **Z9 WebAssembly out:** wasmtime, the WIT contract and its rules test, deny stubs, the pooling allocator, epochs and the compile cache, the wasm fixtures and the `guests` check; CLAUDE.md's constraints from the spikes that measured wasmtime (S1 to S4, S24, S25's sync imports) go with the code they guarded.
 
 Proposed with this plan (2026-10-31), to confirm:
@@ -243,7 +244,7 @@ Proposed with this plan (2026-10-31), to confirm:
 - The keyvalue track keeps its host-side items (H6, H7, H11). H8 (a mirror in the SDKs) waits for Z1 and S31's numbers. H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch) are replaced by S31's mapped snapshot.
 - B14 (wasmtime's MMU interruption) is parked: it speeds up guests only. The wasmtime 50.0.1 upgrade stays while components run.
 
-Order: S30 first, since the instance model shapes everything after it, with S31 beside it; Z1; then Z2, Z3 and Z4 in parallel; Z5, the exit, with Z6. Z7 to Z9 after.
+Order: S30 done (2026-10-31); S31 next; Z1; then Z2, Z3 and Z4 in parallel; Z5, the exit, with Z6. Z7, Z8 and Z10 after, Z9 last.
 
 ## Investigations
 
@@ -350,5 +351,5 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | S27 | Read-only reference data inside the component | Done 2026-10-31: data segments stay shared between instances; reads below `persistent_term`'s with a hash index; found Q15, fixed |
 | S28 | A guest-side mirror kept by watches | Done 2026-10-31: reads 5 to 7 times faster than the bucket, about 9 µs per change per mirror; owner shards slower than the bucket; found Q16, fixed |
 | S29 | Read-only snapshots mapped into instances (wasmtime patch) | Planned, conditional (keyvalue track); proposed to be replaced by S31's mapped snapshot (2026-10-31) |
-| S30 | What an instance is: a process per instance or per app | Planned (Phase 5) |
+| S30 | What an instance is: a process per instance or per app | Done 2026-10-31: a process per instance for Phase 5 (about 0.25 to 0.5 MiB, 1 to 14 ms to start, 50 to 70 µs a call); a process per app later for density (5 to 55 KiB), with a stack per instance; the pipe is not the cost; found Q17, fixed |
 | S31 | Host services for native apps: over the protocol or the OS directly | Planned (Phase 5) |

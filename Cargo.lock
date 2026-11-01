@@ -390,6 +390,7 @@ name = "bulkhead-fixture-native"
 version = "0.3.0"
 dependencies = [
  "bulkhead-native",
+ "rustix",
 ]
 
 [[package]]

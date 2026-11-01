@@ -287,6 +287,17 @@ async fn cgroup____allocates_over_memory_max____memory_limit_and_cgroup_removed(
 }
 
 #[tokio::test]
+async fn executable____after_the_runner_execs_it____not_dumpable() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+
+    let dumpable = ask(&instance, "dumpable").await;
+
+    assert_eq!(dumpable, "no");
+}
+
+#[tokio::test]
 async fn executable____priv_files____readable_at_bulkhead_priv() {
     let rt = runtime(|_| {});
     let app = executable(&rt);
