@@ -37,6 +37,7 @@
 //! is answered between callbacks (or, if one arrives during a request,
 //! there).
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::StdinLock;
 use std::io::{self, Write};
@@ -105,40 +106,86 @@ pub fn log(level: Level, message: impl Into<String>) {
     });
 }
 
-/// The process functions, during a callback.
-#[derive(Debug)]
-pub struct Ctx {
+/// The connection to the node, owned by the thread [`serve`] runs on:
+/// the frames it reads, its requests' ids, and the callback's metric
+/// updates.
+struct Conn {
     input: StdinLock<'static>,
     next_id: u64,
-    /// Metric updates, sent together before the callback's result.
     metrics: Vec<MetricUpdate>,
 }
 
-impl Ctx {
-    /// The node's next frame, answering pings on the way; the end of
-    /// stdin means the node has gone, and the process exits.
-    fn next_frame(&mut self) -> ToApp {
+thread_local! {
+    static CONN: RefCell<Option<Conn>> = const { RefCell::new(None) };
+}
+
+/// Run `f` on this thread's connection; on a thread without one (not the
+/// one [`serve`] runs callbacks on) there is no node to ask, and the
+/// process exits with a protocol error.
+fn with_conn<R>(f: impl FnOnce(&mut Conn) -> R) -> R {
+    CONN.with(|cell| match cell.borrow_mut().as_mut() {
+        Some(conn) => f(conn),
+        None => protocol_error("a request from a thread that does not run the callbacks"),
+    })
+}
+
+/// The node's next frame, answering pings on the way; the end of stdin
+/// means the node has gone, and the process exits.
+fn next_frame() -> ToApp {
+    with_conn(|conn| {
         loop {
-            match protocol::read::<ToApp>(&mut self.input) {
+            match protocol::read::<ToApp>(&mut conn.input) {
                 Ok(Some(ToApp::Ping { id })) => send(&FromApp::Pong { id }),
                 Ok(Some(frame)) => return frame,
                 Ok(None) => gone(),
                 Err(e) => protocol_error(&e.to_string()),
             }
         }
+    })
+}
+
+/// Ask the node and wait for its answer. Anything else from the node here
+/// breaks the protocol, and the end of stdin means the node has gone: the
+/// process exits either way.
+fn request(request: Request) -> Answer {
+    let id = with_conn(|conn| {
+        conn.next_id += 1;
+        conn.next_id
+    });
+    send(&FromApp::Request { id, request });
+    match next_frame() {
+        ToApp::Answer { id: got, answer } if got == id => answer,
+        other => protocol_error(&format!("expected answer {id}, got {other:?}")),
+    }
+}
+
+/// Send the callback's metric updates, if any.
+fn flush_metrics() {
+    let updates = with_conn(|conn| std::mem::take(&mut conn.metrics));
+    if !updates.is_empty() {
+        send(&FromApp::Metrics(updates));
+    }
+}
+
+/// The process functions and host services, during a callback. Every
+/// `Ctx` is the same: [`Ctx::current`] gives one to code the callback does
+/// not hand its own.
+#[derive(Debug)]
+pub struct Ctx {
+    _private: (),
+}
+
+impl Ctx {
+    /// The context of the callback running on this thread, for code not
+    /// handed the callback's (an SDK's free functions). Its requests from
+    /// any other thread end the process with a protocol error.
+    #[must_use]
+    pub fn current() -> Self {
+        Self { _private: () }
     }
 
-    /// Ask the node and wait for its answer. Anything else from the node
-    /// here breaks the protocol, and the end of stdin means the node has
-    /// gone: the process exits either way.
-    fn request(&mut self, request: Request) -> Answer {
-        self.next_id += 1;
-        let id = self.next_id;
-        send(&FromApp::Request { id, request });
-        match self.next_frame() {
-            ToApp::Answer { id: got, answer } if got == id => answer,
-            other => protocol_error(&format!("expected answer {id}, got {other:?}")),
-        }
+    fn request(&mut self, r: Request) -> Answer {
+        request(r)
     }
 
     /// This instance's pid.
@@ -385,25 +432,28 @@ impl Ctx {
     /// cost no request each; the node logs one it refuses (an unknown id,
     /// a counter going down).
     pub fn metric_add(&mut self, metric: u32, delta: f64) {
-        self.metrics.push(MetricUpdate::Add(metric, delta));
+        with_conn(|conn| conn.metrics.push(MetricUpdate::Add(metric, delta)));
     }
 
     /// Set a gauge (sent as [`Ctx::metric_add`]'s updates are).
     pub fn metric_set(&mut self, metric: u32, value: f64) {
-        self.metrics.push(MetricUpdate::Set(metric, value));
+        with_conn(|conn| conn.metrics.push(MetricUpdate::Set(metric, value)));
     }
 
     /// Record a histogram observation (sent as [`Ctx::metric_add`]'s
     /// updates are).
     pub fn metric_observe(&mut self, metric: u32, value: f64) {
-        self.metrics.push(MetricUpdate::Observe(metric, value));
+        with_conn(|conn| conn.metrics.push(MetricUpdate::Observe(metric, value)));
     }
 
-    /// Send the callback's metric updates, if any.
-    fn flush_metrics(&mut self) {
-        if !self.metrics.is_empty() {
-            send(&FromApp::Metrics(std::mem::take(&mut self.metrics)));
-        }
+    /// One keyvalue request as the protocol has it, for an SDK that wraps
+    /// the operations itself; [`Ctx::bucket`] is the typed form.
+    ///
+    /// # Errors
+    ///
+    /// The [`KvError`] the node answers.
+    pub fn kv(&mut self, request: KvRequest) -> Result<KvAnswer, KvError> {
+        kv(self, request)
     }
 
     /// End a watch; notices for it still queued are dropped.
@@ -789,15 +839,18 @@ pub fn serve<A: App>() -> ExitCode {
         }
     }
     send(&FromApp::Hello { version: VERSION });
-    let mut ctx = Ctx {
-        input: io::stdin().lock(),
-        next_id: 0,
-        metrics: Vec::new(),
-    };
-    let mut app = match ctx.next_frame() {
+    CONN.with(|cell| {
+        *cell.borrow_mut() = Some(Conn {
+            input: io::stdin().lock(),
+            next_id: 0,
+            metrics: Vec::new(),
+        });
+    });
+    let mut ctx = Ctx::current();
+    let mut app = match next_frame() {
         ToApp::Init { args } => match guarded(|| A::init(&mut ctx, args)) {
             Ok(app) => {
-                ctx.flush_metrics();
+                flush_metrics();
                 send(&FromApp::Init(Ok(())));
                 app
             }
@@ -809,25 +862,25 @@ pub fn serve<A: App>() -> ExitCode {
         other => protocol_error(&format!("expected init, got {other:?}")),
     };
     loop {
-        match ctx.next_frame() {
+        match next_frame() {
             ToApp::Call { call_ref, msg } => {
                 let reply = guarded(|| app.handle_call(&mut ctx, call_ref, msg));
-                ctx.flush_metrics();
+                flush_metrics();
                 send(&FromApp::Reply(reply));
             }
             ToApp::Cast { msg } => {
                 guarded(|| app.handle_cast(&mut ctx, msg));
-                ctx.flush_metrics();
+                flush_metrics();
                 send(&FromApp::Done);
             }
             ToApp::Info { info } => {
                 guarded(|| app.handle_info(&mut ctx, info));
-                ctx.flush_metrics();
+                flush_metrics();
                 send(&FromApp::Done);
             }
             ToApp::Terminate { reason } => {
                 guarded(|| app.terminate(&mut ctx, reason));
-                ctx.flush_metrics();
+                flush_metrics();
                 send(&FromApp::Done);
                 return ExitCode::SUCCESS;
             }

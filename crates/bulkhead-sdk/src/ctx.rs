@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use crate::bindings::bulkhead::runtime::process;
 use crate::envelope::Envelope;
+use crate::host::process;
 use crate::types::{CallError, CallRef, ExitReason, MonitorRef, Pid, RegisterError, TimerRef};
 
 /// Messaging, links, monitors, timers and the registry, passed to every

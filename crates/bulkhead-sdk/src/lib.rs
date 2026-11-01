@@ -27,7 +27,11 @@
 //! bulkhead_sdk::app!(Counter);
 //! ```
 //!
-//! Build for `wasm32-wasip2` and bundle with `bulkhead bundle`.
+//! Build for `wasm32-wasip2` and bundle with `bulkhead bundle`. On Unix the
+//! same source also builds as a native program: `app!` then generates
+//! `bulkhead_main()` for a binary's `main`, and the SDK's calls go over
+//! `bulkhead-native`'s protocol (`kind = "native-process"`; WRITING_APPS.md,
+//! "Native-process apps").
 //!
 //! Host services, each needing its capability in the manifest:
 //! - [`log`] and its macros (`info!` and friends): `wasi:logging`, always
@@ -71,6 +75,7 @@ mod ctx;
 mod envelope;
 #[cfg(feature = "groups")]
 pub mod groups;
+mod host;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http-client")]
@@ -126,6 +131,8 @@ pub use types::{CallError, CallRef, ExitReason, Info, MonitorRef, Pid, RegisterE
 #[doc(hidden)]
 pub mod __private {
     pub use crate::app::dispatch::*;
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    pub use crate::app::native::serve;
 }
 
 #[cfg(test)]

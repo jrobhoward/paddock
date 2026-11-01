@@ -134,7 +134,12 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   its functions, never anyprobe directly.
 - `crates/bulkhead-sdk`, `crates/bulkhead-sdk-macros`: the Rust guest SDK and
   its `Snapshot` derive. The SDK owns the wit-bindgen bindings (with
-  `default_bindings_module`), so app crates have no WIT.
+  `default_bindings_module`), so app crates have no WIT. Its modules call
+  the host through `src/host.rs`: the bindings in a component, and on Unix
+  (not wasm32) the same functions over `bulkhead-native`'s protocol, so one
+  app source builds both ways; `app!` adds `bulkhead_main()` for a native binary.
+  `bulkhead-fixture-conformance` has such a binary (feature `native`), and
+  the conformance suite's native mode runs it.
 - `examples/`: apps written with the SDK, each with a `bulkhead.toml`.
   `bulkhead`'s `tests/examples.rs` builds, bundles, deploys and drives them.
   `examples/greeter/` is an extension (a host service from outside

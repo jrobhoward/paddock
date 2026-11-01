@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use crate::bindings::wasi::config::store;
+use crate::host::config_store as store;
 
 /// Why a config read failed.
 #[derive(Debug, Clone, PartialEq, Eq)]

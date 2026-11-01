@@ -27,6 +27,16 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `bulkhead-sdk` apps build as native programs from the same source: on
+  Unix, `app!` also generates `bulkhead_main()` for a binary's `main`, and the
+  SDK's process functions, keyvalue, watch, groups, config, secrets,
+  metrics and logging go over the native protocol
+  (`bulkhead_native::app::Ctx::current` reaches it from any code on the
+  callback thread). `watch::Change` gains `carried`, `value` and
+  `current()` for notices that bring the value. The conformance suite runs
+  against the reference app built that way (`BULKHEAD_CONFORMANCE_NATIVE=1`,
+  and in `scripts/check.sh test` on Linux); its snapshot cases pass with a
+  note there (ROADMAP Z3).
 - Process groups, config, secrets and metrics for native-process apps: a
   native app may declare `bulkhead:groups`, `wasi:config`,
   `bulkhead:secrets` and `bulkhead:metrics`, and `bulkhead_native::app::Ctx`

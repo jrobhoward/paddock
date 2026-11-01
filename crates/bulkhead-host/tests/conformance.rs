@@ -9,6 +9,10 @@
 //!     cargo test -p bulkhead-host --test conformance
 //! ```
 //!
+//! `BULKHEAD_CONFORMANCE_NATIVE=1` runs it against the Rust reference app
+//! built as a native program (Linux), through `bulkhead-runner`; the cases
+//! about snapshots pass with a note there, since native apps have none.
+//!
 //! Each test is one case; the case names are the rows of WRITING_APPS.md's
 //! table of SDKs.
 
@@ -31,6 +35,26 @@ use bulkhead_host::{
     Runtime, RuntimeConfig, SecretSource, UpgradeError, UpgradeOptions,
 };
 use common::{LONG, app_manifest, ask, ask_until, body, fixture, text};
+
+/// The native mode: the reference app as a native program.
+fn native() -> bool {
+    std::env::var_os("BULKHEAD_CONFORMANCE_NATIVE").is_some_and(|v| v == "1")
+}
+
+/// Whether a crash's reason is the app's own failure: a trap in a
+/// component, a panic in a native app.
+fn crashed_in_app(why: &str) -> bool {
+    why.starts_with("trap:") || (native() && why.starts_with("panic:"))
+}
+
+/// In the native mode, a case about what native apps do not have: it
+/// passes with a note.
+fn not_native(what: &str) -> bool {
+    if native() {
+        eprintln!("not run in the native mode: {what}");
+    }
+    native()
+}
 use serde_json::json;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
@@ -78,12 +102,44 @@ fn shared() -> &'static (Runtime, LoadedApp) {
                     SecretSource::File(dir.join("missing")),
                 ),
             ]),
+            native: native_config(),
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let app = rt.load(&component()).unwrap();
+        let app = if native() {
+            native_app(&rt)
+        } else {
+            rt.load(&component()).unwrap()
+        };
         (rt, app)
     })
+}
+
+#[cfg(target_os = "linux")]
+fn native_config() -> bulkhead_host::NativeConfig {
+    let mut config = bulkhead_host::NativeConfig::default();
+    if native() {
+        config.runner = Some(common::native_fixtures().0.clone());
+    }
+    config
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native_config() -> bulkhead_host::NativeConfig {
+    bulkhead_host::NativeConfig::default()
+}
+
+#[cfg(target_os = "linux")]
+fn native_app(rt: &Runtime) -> LoadedApp {
+    rt.load_native(bulkhead_host::NativeCode {
+        path: common::native_conformance().clone(),
+        kind: bulkhead_bundle::manifest::NativeProgram::Executable,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native_app(_rt: &Runtime) -> LoadedApp {
+    panic!("native apps run on Linux only")
 }
 
 /// Room for a language runtime's own heap, under the default pool.
@@ -187,7 +243,7 @@ async fn init____traps____exits_crashed_with_a_trap() {
     let ExitReason::Crashed(why) = reason else {
         panic!("expected crashed, got {reason:?}");
     };
-    assert!(why.starts_with("trap:"), "{why}");
+    assert!(crashed_in_app(&why), "{why}");
 }
 
 // --- messages ----------------------------------------------------------------
@@ -346,7 +402,7 @@ async fn link____partner_crashes____non_trapping_instance_exits_too() {
     let reason = a.wait().await;
 
     assert!(
-        matches!(&reason, ExitReason::Crashed(why) if why.starts_with("trap:")),
+        matches!(&reason, ExitReason::Crashed(why) if crashed_in_app(why)),
         "{reason:?}"
     );
 }
@@ -361,7 +417,11 @@ async fn link____partner_crashes____trapping_instance_gets_an_exit_info() {
     let infos = ask_until(&a, "infos", |i| !i.is_empty()).await;
 
     let prefix = format!("exit:{}:crashed(trap:", pid(&b));
-    assert!(infos.starts_with(&prefix), "{infos}");
+    let native_prefix = format!("exit:{}:crashed(panic:", pid(&b));
+    assert!(
+        infos.starts_with(&prefix) || (native() && infos.starts_with(&native_prefix)),
+        "{infos}"
+    );
     a.kill();
 }
 
@@ -436,6 +496,9 @@ async fn terminate____graceful_shutdown____runs_with_the_reason() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn snapshot____state____in_the_guest_formats_layout() {
+    if not_native("snapshots (ROADMAP Z7)") {
+        return;
+    }
     let h = up("c-snapshot", "").await;
     ask(&h, "count").await;
     ask(&h, "count").await;
@@ -462,6 +525,9 @@ async fn snapshot____state____in_the_guest_formats_layout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade____snapshot_mode____state_deferred_callers_and_pid_kept() {
+    if not_native("snapshots (ROADMAP Z7)") {
+        return;
+    }
     let (_, app) = shared();
     let h = up("c-upgrade", "").await;
     ask(&h, "count").await;
@@ -492,6 +558,9 @@ async fn upgrade____snapshot_mode____state_deferred_callers_and_pid_kept() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade____snapshot_refused____old_version_keeps_running() {
+    if not_native("snapshots (ROADMAP Z7)") {
+        return;
+    }
     let (_, app) = shared();
     let h = up("c-refuse", "").await;
     ask(&h, "count").await;
@@ -513,6 +582,9 @@ async fn upgrade____snapshot_refused____old_version_keeps_running() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rollback____after_snapshot_upgrade____previous_version_with_state() {
+    if not_native("snapshots (ROADMAP Z7)") {
+        return;
+    }
     let (rt, _) = shared();
     let name = "c-rollback";
     let base = json!({
@@ -560,7 +632,7 @@ async fn trap____in_a_call____caller_gets_crashed_and_instance_exits() {
     let Err(CallError::Exited(ExitReason::Crashed(why))) = &result else {
         panic!("expected exited(crashed), got {result:?}");
     };
-    assert!(why.starts_with("trap:"), "{why}");
+    assert!(crashed_in_app(why), "{why}");
     assert_eq!(reason, ExitReason::Crashed(why.clone()));
 }
 
@@ -571,12 +643,17 @@ async fn memory_max____allocation_beyond____crashes_with_memory_limit() {
     let small = ask(&h, "alloc:4").await;
     let big = h.call(text("alloc:256"), LONG).await;
 
+    // A native app without a cgroup is held to `memory_max` by
+    // `RLIMIT_DATA`: the failed allocation aborts it (MANIFEST.md).
+    let reason = if native() {
+        "killed by signal 6"
+    } else {
+        "memory_limit"
+    };
     assert_eq!(small, "ok");
     assert_eq!(
         big,
-        Err(CallError::Exited(ExitReason::Crashed(
-            "memory_limit".into()
-        )))
+        Err(CallError::Exited(ExitReason::Crashed(reason.into())))
     );
 }
 

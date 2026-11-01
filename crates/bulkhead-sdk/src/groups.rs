@@ -17,8 +17,8 @@
 
 use std::fmt;
 
-use crate::bindings::bulkhead::groups::groups as wit;
 use crate::envelope::Envelope;
+use crate::host::groups as wit;
 use crate::types::Pid;
 
 /// Why a group operation failed.

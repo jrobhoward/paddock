@@ -514,6 +514,7 @@ dependencies = [
 name = "bulkhead-sdk"
 version = "0.3.0"
 dependencies = [
+ "bulkhead-native",
  "bulkhead-sdk-macros",
  "ciborium",
  "rstest",

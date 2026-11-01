@@ -29,7 +29,8 @@
 #                probes or Modbus), and with HTTP but no TLS, each builds
 #                clean; the first has none of their dependencies
 #   test         cargo test --workspace --all-features (needs the
-#                wasm32-wasip2 target)
+#                wasm32-wasip2 target), then on Linux the conformance
+#                suite against the reference app built as a native program
 #   doc          rustdoc with warnings as errors
 #   deny         cargo-deny: licences, bans, sources, advisories
 #   msrv         cargo check on the workspace's rust-version, in its own
@@ -157,7 +158,13 @@ check_features() {
 # Every feature, so the Modbus tests run too.
 check_test() {
     need_target wasm32-wasip2 || return 1
-    cargo test --workspace --all-features --locked --no-fail-fast
+    local status=0
+    cargo test --workspace --all-features --locked --no-fail-fast || status=1
+    # The same SDK source served as a native program (Linux only).
+    if [ "$(uname -s)" = Linux ]; then
+        BULKHEAD_CONFORMANCE_NATIVE=1 cargo test -p bulkhead-host --test conformance --locked || status=1
+    fi
+    return $status
 }
 
 check_doc() {

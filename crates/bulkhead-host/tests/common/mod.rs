@@ -190,6 +190,37 @@ pub fn app_manifest(name: &str, appserver: serde_json::Value) -> AppManifest {
     }
 }
 
+/// The conformance app built as a native program (its `native` feature),
+/// on first use, into its own target directory.
+pub fn native_conformance() -> &'static PathBuf {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let root = workspace_root();
+        let target = root.join("target/fixtures/native-conformance");
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let status = Command::new(cargo)
+            .current_dir(&root)
+            .args([
+                "build",
+                "-p",
+                "bulkhead-fixture-conformance",
+                "--features",
+                "native",
+                "--bin",
+                "bulkhead-fixture-conformance",
+                "--target-dir",
+            ])
+            .arg(&target)
+            .status()
+            .expect("run cargo to build the native conformance app");
+        assert!(
+            status.success(),
+            "building the native conformance app failed"
+        );
+        target.join("debug/bulkhead-fixture-conformance")
+    })
+}
+
 /// `bulkhead-runner`, the native fixture executable and the rustbridge
 /// fixture plugin, built natively on first use into their own target
 /// directory.

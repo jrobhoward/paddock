@@ -10,7 +10,17 @@ repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+# The same app as a native program, for the conformance suite's native
+# mode (`BULKHEAD_CONFORMANCE_NATIVE=1`).
+[[bin]]
+name = "bulkhead-fixture-conformance"
+path = "src/main.rs"
+required-features = ["native"]
+
+[features]
+native = []
 
 [dependencies]
 bulkhead-sdk = { workspace = true, features = ["config", "groups", "keyvalue", "metrics", "secrets", "watch"] }

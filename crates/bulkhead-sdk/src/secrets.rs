@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use crate::bindings::bulkhead::secrets::store;
+use crate::host::secrets_store as store;
 
 /// Why a secret could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]

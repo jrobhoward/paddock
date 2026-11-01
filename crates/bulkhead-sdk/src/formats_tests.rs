@@ -147,6 +147,8 @@ fn kv_changed____documented_example____read_as_a_change() {
             bucket: "board".into(),
             key: "count".into(),
             revision: 7,
+            carried: false,
+            value: None,
         }
     );
 }

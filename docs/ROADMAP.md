@@ -30,7 +30,7 @@ The failover pair and witness run over QUIC between `bulkhead node` processes (`
 
 ## Next
 
-Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1 and Z2 done the same day (a native call about half what it cost, BASELINE.md; native apps reach keyvalue, groups, config, secrets and metrics); Z3 and Z4 next; the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
+Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1, Z2 and Z3 done the same day (a native call about half what it cost, BASELINE.md; native apps reach keyvalue, groups, config, secrets and metrics; one SDK source builds both ways, checked by the conformance suite); Z4 next; the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
@@ -89,6 +89,7 @@ Done on 2026-10-15: E5, SQL datasources (`bulkhead:sql`, Postgres): `query`, `ex
 - [ ] **Smaller open items.**
   - wasmtime 50.0.1 (found 2026-10-30): RUSTSEC-2026-0420 to 0424 against 50.0.0 make `cargo deny` fail; two touch paths Bulkhead uses (borrowed resources passed between components, `wasi:http` outgoing `content-length`). Move the wasmtime crates to 50.0.1 together, then rerun the checks (decided 2026-10-30: later, as its own change).
   - Failover test timing (2026-10-30): `switchover____on_the_primary____standby_runs_the_singleton_old_primary_rejoins` asserts the handover under 800 ms and took 833 ms once while the whole suite ran (`scripts/check.sh`); alone it passed 5 times of 5. Widen the bound or measure it from the release at the witness if it recurs.
+  - Failover test ports (2026-10-31): `release_upgrade____primary_lost_between_steps____rerun_finishes_on_the_new_roles` failed once while the whole suite ran, a node exiting with `Address already in use` for a cluster port picked free just before; alone it passed 3 times of 3. Bind port 0 and read the port back, or retry the start, if it recurs.
   - Cluster connections (from the redial fix, 2026-10-29): with the accepting side's setup of a replacing connection delayed artificially by 900 ms (near the 1 s node timeout of `tests/quic.rs`), one round in six still ended the session three times: the old connection closed there as `closed`, not the peer's `replaced`, so the 100 ms redial ran. Not seen without the delay; not followed.
   - Cluster calls: writing frames from the sender's task when the stream is free would save a hand-off each way (B8 measured about 25 to 50 µs of hand-offs over the QUIC floor). Not done (2026-10-16): it touches the ordering the failover and remote-link rules rely on, for about 10 to 25 µs on an idle runtime and less under load; only for a site with a latency target between nodes.
   - HTTP handlers: reusing an instance across requests (opt-in, once wasmtime's reusing `ProxyHandler` runs without `component-model-async`, or with WASI 0.3); probes for handler requests; a guest that drops its response body without `finish` and returns normally ends the body cleanly, because wasmtime 49 does not tell that from `finish` (a trap or timeout does cut it).
@@ -222,7 +223,6 @@ Spikes:
 
 Items (sizes after the spikes):
 
-- [ ] **Z3 One SDK for both kinds.** `bulkhead-sdk`'s API (`App`, `Ctx`, envelopes, `kv`, `watch`, `groups`, `http`, the log macros) on native targets through `bulkhead-native`'s protocol, so one app's source builds for `wasm32-wasip2` and as a program, `app!` giving a program its `main`. `bulkhead bundle` packs the native variants for x86-64 and aarch64. Areas: Guest SDK, `crates/bulkhead-native`, `bulkhead` (bundle).
 - [ ] **Z4 HTTP routes and placement for native apps.** A route to a native pool (a request is a call, so likely only the manifest's rule), and placement on a pair: `singleton`, hot standby, `partner_url` and standby forwarding, the lease ending a native singleton's process outside a callback as well as in one. Areas: I/O and protocols, Orchestration, Manifest and bundle.
 - [ ] **Z5 The board native, in CI.** `examples/board` built natively from its source; `board.rs` running its Rust cases against both builds, as it runs the Go ones; a Linux x86-64 CI job; a run on the Pi. Phase 5's exit. Areas: Fixtures and examples, `crates/bulkhead/tests`, CI.
 - [ ] **Z6 Docs for the exit.** README and DESIGN.md say what Bulkhead is (native processes, the instance model and why); MANIFEST.md's native section; WRITING_APPS.md and the tutorial with the native board; SECURITY.md's boundary for native apps (the runner's restrictions in place of the sandbox). Areas: docs.
@@ -230,7 +230,7 @@ Items (sizes after the spikes):
 After the exit, each planned when reached:
 
 - **Z7 Snapshots for native apps:** `save-snapshot` and `load-snapshot` over the protocol (the SDK's `Snapshot` derive), for snapshot upgrades, passivation and moving a singleton with its state.
-- **Z8 The rest of the platform natively:** listeners and connection handlers, HTTP handlers, SQL over the protocol, HTTP egress and sockets as sockets the node opens and passes over a Unix socket beside the frames' pipes (S31; frames over a socketpair cost a call 40% more, BASELINE.md 2026-10-31; a network namespace with no network would complete the runner's fence), mapped bucket snapshots for read-heavy data; every example and the conformance suite as native apps; a native Go SDK (plain Go, without TinyGo).
+- **Z8 The rest of the platform natively:** `bulkhead bundle` packing a native app's variants for both x86-64 and aarch64 (today the machine's own); listeners and connection handlers, HTTP handlers, SQL over the protocol, HTTP egress and sockets as sockets the node opens and passes over a Unix socket beside the frames' pipes (S31; frames over a socketpair cost a call 40% more, BASELINE.md 2026-10-31; a network namespace with no network would complete the runner's fence), mapped bucket snapshots for read-heavy data; every example and the conformance suite as native apps; a native Go SDK (plain Go, without TinyGo).
 - **Z9 WebAssembly out:** wasmtime, the WIT contract and its rules test, deny stubs, the pooling allocator, epochs and the compile cache, the wasm fixtures and the `guests` check; CLAUDE.md's constraints from the spikes that measured wasmtime (S1 to S4, S24, S25's sync imports) go with the code they guarded.
 
 Decided with this plan (2026-10-31):
@@ -238,7 +238,7 @@ Decided with this plan (2026-10-31):
 - The keyvalue track keeps its host-side items (H6, H7, H11). H8 (a mirror in the SDKs) can build on Z2's watch notices, which carry the value. H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch) are replaced by S31's mapped snapshot.
 - B14 (wasmtime's MMU interruption) is parked: it speeds up guests only. The wasmtime 50.0.1 upgrade stays while components run.
 
-Order: S30, S31, Z1 and Z2 done (2026-10-31); Z3 and Z4 next, in parallel; Z5, the exit, with Z6. Z7 and Z8 after, Z9 last.
+Order: S30, S31, Z1, Z2 and Z3 done (2026-10-31); Z4 next; Z5, the exit, with Z6. Z7 and Z8 after, Z9 last.
 
 ## Investigations
 

@@ -17,7 +17,7 @@
 
 use std::fmt;
 
-use crate::bindings::bulkhead::metrics::metrics as wit;
+use crate::host::metrics as wit;
 
 /// Why a metric could not be made.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -15,7 +15,7 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::bindings::wasi::logging::logging;
+use crate::host::logging;
 
 /// The host event that carries the effective level.
 pub(crate) const LEVEL_EVENT: &str = "log-level";

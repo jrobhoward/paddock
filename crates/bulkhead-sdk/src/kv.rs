@@ -18,7 +18,7 @@ use std::fmt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::bindings::wasi::keyvalue::{atomics, batch, store};
+use crate::host::keyvalue::{atomics, batch, store};
 
 /// Why a keyvalue operation failed.
 #[derive(Debug, Clone, PartialEq, Eq)]

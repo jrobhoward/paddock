@@ -29,7 +29,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
-use crate::bindings::bulkhead::watch::watch as wit;
+use crate::host::watch as wit;
 use crate::types::Info;
 
 /// The host event a change notice arrives as.
@@ -119,9 +119,34 @@ pub struct Change {
     pub key: String,
     /// The key's latest revision when the notice was taken.
     pub revision: u64,
+    /// Whether the notice carries the key's value in [`Change::value`], as
+    /// a native app's do (read by the node when it delivered the notice,
+    /// with `revision` the value's own). A component's notices do not:
+    /// read the value with [`get`], or with [`Change::current`] either way.
+    #[serde(default)]
+    pub carried: bool,
+    /// The key's value when `carried`; `None` if it was deleted.
+    #[serde(default)]
+    pub value: Option<Vec<u8>>,
 }
 
 impl Change {
+    /// The key's value now: the one the notice carries, or read with
+    /// [`get`] when it carries none. `None` if the key was deleted.
+    ///
+    /// # Errors
+    ///
+    /// As for [`get`], when it has to read.
+    pub fn current(&self) -> Result<Option<Entry>, WatchError> {
+        if self.carried {
+            return Ok(self.value.clone().map(|value| Entry {
+                value,
+                revision: self.revision,
+            }));
+        }
+        get(&self.bucket, &self.key)
+    }
+
     /// The change an [`Info`] carries, if it is a change notice.
     #[must_use]
     pub fn from_info(info: &Info) -> Option<Self> {

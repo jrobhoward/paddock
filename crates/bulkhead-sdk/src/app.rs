@@ -133,6 +133,14 @@ macro_rules! app {
         }
 
         $crate::bindings::export!(__BulkheadApp with_types_in $crate::bindings);
+
+        /// Serve this app as a native program: call from `main` in a
+        /// binary of the app's crate, run with `native.program =
+        /// "executable"`.
+        #[cfg(all(unix, not(target_arch = "wasm32")))]
+        pub fn bulkhead_main() -> ::std::process::ExitCode {
+            $crate::__private::serve::<$ty>()
+        }
     };
 }
 
@@ -245,5 +253,128 @@ pub mod dispatch {
         let app = A::load_snapshot(&mut Ctx::new(), from_version, snapshot)?;
         *cell.borrow_mut() = Some(app);
         Ok(())
+    }
+}
+
+/// The same callbacks served as a native program, over
+/// `bulkhead-native`'s protocol.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub mod native {
+    use std::process::ExitCode;
+
+    use bulkhead_native::app as n;
+    use bulkhead_native::protocol as p;
+
+    use super::{App, HEALTH_SCHEMA, Reply};
+    use crate::bindings::bulkhead::runtime::types as wit;
+    use crate::ctx::Ctx;
+    use crate::envelope::Envelope;
+    use crate::host::native::{wit_envelope, wit_exit_reason, wit_pid};
+    use crate::types::{CallRef, Info};
+
+    fn sdk_envelope(env: p::Envelope) -> Envelope {
+        wit_envelope(env).into()
+    }
+
+    fn native_envelope(env: Envelope) -> p::Envelope {
+        crate::host::native::envelope(&env.into())
+    }
+
+    /// An SDK app as a `bulkhead-native` one.
+    struct Adapter<A>(A);
+
+    impl<A: App> n::App for Adapter<A> {
+        fn init(_ctx: &mut n::Ctx, args: Vec<u8>) -> Result<Self, String> {
+            A::init(&mut Ctx::new(), &args).map(Adapter)
+        }
+
+        fn handle_call(
+            &mut self,
+            _ctx: &mut n::Ctx,
+            call: n::CallRef,
+            msg: p::Envelope,
+        ) -> Option<p::Envelope> {
+            // The host's health check goes to `App::health`.
+            if msg.schema.as_deref() == Some(HEALTH_SCHEMA) {
+                let body = match self.0.health(&mut Ctx::new()) {
+                    Ok(()) => "ok".to_string(),
+                    Err(why) => why,
+                };
+                return Some(native_envelope(
+                    Envelope::new("text/plain", body).with_schema(HEALTH_SCHEMA),
+                ));
+            }
+            match self
+                .0
+                .handle_call(&mut Ctx::new(), CallRef(call), sdk_envelope(msg))
+            {
+                Reply::Now(env) => Some(native_envelope(env)),
+                Reply::Later => None,
+            }
+        }
+
+        fn handle_cast(&mut self, _ctx: &mut n::Ctx, msg: p::Envelope) {
+            self.0.handle_cast(&mut Ctx::new(), sdk_envelope(msg));
+        }
+
+        fn handle_info(&mut self, _ctx: &mut n::Ctx, info: p::Info) {
+            let info = match info {
+                // The SDK's own event: the host's effective log level.
+                p::Info::HostEvent { name, msg } if name == crate::log::LEVEL_EVENT => {
+                    crate::log::set_from_host(&msg.body);
+                    return;
+                }
+                p::Info::HostEvent { name, msg } => wit::Info::HostEvent((name, wit_envelope(msg))),
+                p::Info::Exit { from, reason } => {
+                    wit::Info::Exit((wit_pid(from), wit_exit_reason(reason)))
+                }
+                p::Info::Down {
+                    reference,
+                    pid,
+                    reason,
+                } => wit::Info::Down((reference, wit_pid(pid), wit_exit_reason(reason))),
+                p::Info::Timer { reference, msg } => {
+                    wit::Info::Timer((reference, wit_envelope(msg)))
+                }
+                p::Info::KvChanged {
+                    watch,
+                    bucket,
+                    key,
+                    entry,
+                    revision,
+                } => {
+                    // As a component's notice, plus what the node read
+                    // when it delivered it (`watch::Change::carried`).
+                    let (value, revision) = match entry {
+                        Some((value, at)) => (Some(value.0), at),
+                        None => (None, revision),
+                    };
+                    let body = serde_json::json!({
+                        "watch": watch,
+                        "bucket": bucket,
+                        "key": key,
+                        "revision": revision,
+                        "carried": true,
+                        "value": value,
+                    });
+                    wit::Info::HostEvent((
+                        "kv-changed".to_string(),
+                        wit_envelope(p::Envelope::new("application/json", body.to_string())),
+                    ))
+                }
+            };
+            self.0.handle_info(&mut Ctx::new(), Info::from(info));
+        }
+
+        fn terminate(&mut self, _ctx: &mut n::Ctx, reason: p::ExitReason) {
+            self.0
+                .terminate(&mut Ctx::new(), wit_exit_reason(reason).into());
+        }
+    }
+
+    /// Serve `A` as a native program until the node stops it.
+    #[must_use]
+    pub fn serve<A: App>() -> ExitCode {
+        n::serve::<Adapter<A>>()
     }
 }
