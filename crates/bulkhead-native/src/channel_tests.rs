@@ -4,6 +4,7 @@
 
 use super::*;
 use rstest::rstest;
+use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -14,14 +15,98 @@ fn pattern(n: usize) -> Vec<u8> {
 /// A channel and the app's end of it, with the bell's read end and the
 /// door's write end.
 fn app_end(spin: Duration) -> (Arc<AppEnd>, OwnedFd, OwnedFd) {
+    let (app, bell, door, _fds) = app_end_with_fds(spin);
+    (app, bell, door)
+}
+
+/// As [`app_end`], with the node's end of the descriptor socket too.
+fn app_end_with_fds(spin: Duration) -> (Arc<AppEnd>, OwnedFd, OwnedFd, OwnedFd) {
     let (channel, _memfd) = Channel::create().unwrap();
     let (bell_read, bell_write) = bell().unwrap();
     let (door_read, door_write) = door().unwrap();
+    let (fds_node, fds_app) = descriptors().unwrap();
     (
-        Arc::new(AppEnd::new(channel, bell_write, door_read, Spin(spin))),
+        Arc::new(AppEnd::new(
+            channel,
+            bell_write,
+            door_read,
+            fds_app,
+            Spin(spin),
+        )),
         bell_read,
         door_write,
+        fds_node,
     )
+}
+
+/// A pipe holding `text`: its read end, to pass.
+fn holding(text: &str) -> OwnedFd {
+    let (read, write) = rustix::pipe::pipe().unwrap();
+    rustix::io::write(&write, text.as_bytes()).unwrap();
+    read
+}
+
+fn read_all(fd: OwnedFd) -> String {
+    let mut text = String::new();
+    std::fs::File::from(fd).read_to_string(&mut text).unwrap();
+    text
+}
+
+#[test]
+fn take_fd____passed_descriptor____reads_what_the_node_put_there() {
+    let (app, _bell, _door, node) = app_end_with_fds(DEFAULT_SPIN);
+    send_fd(node.as_fd(), 7, holding("through the socket").as_fd()).unwrap();
+
+    let fd = app.take_fd(7).unwrap();
+
+    assert_eq!(read_all(fd), "through the socket");
+}
+
+#[test]
+fn take_fd____out_of_order____each_by_its_id() {
+    let (app, _bell, _door, node) = app_end_with_fds(DEFAULT_SPIN);
+    send_fd(node.as_fd(), 1, holding("one").as_fd()).unwrap();
+    send_fd(node.as_fd(), 2, holding("two").as_fd()).unwrap();
+
+    let second = app.take_fd(2).unwrap();
+    let first = app.take_fd(1).unwrap();
+    let again = app.take_fd(1);
+
+    assert_eq!(
+        (read_all(first), read_all(second)),
+        ("one".into(), "two".into())
+    );
+    assert_eq!(again.unwrap_err().kind(), io::ErrorKind::NotFound);
+}
+
+#[test]
+fn take_fd____never_passed____not_found_without_waiting() {
+    let (app, _bell, _door, _node) = app_end_with_fds(DEFAULT_SPIN);
+
+    let taken = app.take_fd(3);
+
+    assert_eq!(taken.unwrap_err().kind(), io::ErrorKind::NotFound);
+}
+
+#[test]
+fn take_fd____more_than_max_untaken_ahead____refused() {
+    let (app, _bell, _door, node) = app_end_with_fds(DEFAULT_SPIN);
+    for id in 1..=(MAX_UNTAKEN as u64 + 2) {
+        send_fd(node.as_fd(), id, holding("x").as_fd()).unwrap();
+    }
+
+    let last = app.take_fd(MAX_UNTAKEN as u64 + 2);
+
+    assert!(last.is_err());
+}
+
+#[test]
+fn descriptors____app_sends_to_the_node____refused() {
+    let (_node, app) = descriptors().unwrap();
+
+    let sent = send_fd(app.as_fd(), 1, holding("back").as_fd());
+
+    assert!(sent.is_err());
 }
 
 #[test]

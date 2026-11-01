@@ -45,6 +45,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- A native app gets a descriptor socket beside its channel (descriptor 6,
+  ROADMAP T3): the node passes descriptors there (`SCM_RIGHTS`), each
+  before the frame that names it by id (`bulkhead_native::protocol::FdRef`),
+  and the app takes one with `bulkhead_native::app::take_fd`. Nothing sends
+  descriptors yet: published buckets (T4) and sockets (Z8e) will.
 - `bulkhead bundle --program PLATFORM=PATH`, repeated, packs a
   native-process app's program for each platform (`linux-x86_64`,
   `linux-aarch64`), so one bundle serves a cluster of both architectures

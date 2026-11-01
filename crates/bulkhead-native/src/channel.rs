@@ -18,7 +18,18 @@
 //! - [`MEMFD_FD`]: a memfd of [`CHANNEL_BYTES`], the ring to the app at
 //!   offset 0 and the ring to the node at [`RING_BYTES`];
 //! - [`BELL_FD`]: the write end of the node's bell pipe, non-blocking;
-//! - [`DOOR_FD`]: the read end of its own door pipe.
+//! - [`DOOR_FD`]: the read end of its own door pipe;
+//! - [`FDS_FD`]: its end of the descriptor socket (ROADMAP T3).
+//!
+//! Descriptors the node passes (a bucket's published snapshot, a socket
+//! it opened) travel on the descriptor socket, a `SOCK_SEQPACKET` pair,
+//! not on the rings: one message per descriptor, its id (8 bytes, little
+//! endian) and the descriptor as `SCM_RIGHTS`. The node sends the
+//! descriptor first, then a frame that names it by id
+//! ([`crate::protocol::FdRef`]), so a frame and a descriptor cannot be
+//! paired wrongly: the app takes the descriptor the frame names
+//! ([`AppEnd::take_fd`]), keeping any that came first. The node's end
+//! only sends: an app cannot pass descriptors to the node.
 //!
 //! Each ring is a [`HEADER`] of words, then [`RING_CAP`] bytes of data
 //! that wrap:
@@ -39,14 +50,21 @@
 //! more than [`RING_CAP`] bytes ([`Corrupt`]), every copy stays inside the
 //! data area, and the node decodes frames only from its own copy.
 
-use std::io::{self, Read, Write};
+use std::collections::HashMap;
+use std::io::{self, IoSlice, IoSliceMut, Read, Write};
+use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd, RawFd};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use rustix::fs::{MemfdFlags, memfd_create};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
+use rustix::net::{
+    AddressFamily, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags,
+    SendAncillaryBuffer, SendAncillaryMessage, SendFlags, Shutdown, SocketFlags, SocketType,
+};
 use rustix::thread::futex;
 
 /// The words at the start of each ring, a page.
@@ -63,6 +81,10 @@ pub const MEMFD_FD: RawFd = 3;
 pub const BELL_FD: RawFd = 4;
 /// The descriptor the app finds its door's read end at.
 pub const DOOR_FD: RawFd = 5;
+/// The descriptor the app finds its end of the descriptor socket at.
+pub const FDS_FD: RawFd = 6;
+/// Most descriptors an app keeps received and not yet taken.
+pub const MAX_UNTAKEN: usize = 64;
 /// The environment variable holding the spin budget in microseconds.
 pub const SPIN_ENV: &str = "BULKHEAD_SPIN_US";
 /// The spin budget without one configured: it must outlast a wake-up,
@@ -366,9 +388,96 @@ pub fn bell() -> io::Result<(OwnedFd, OwnedFd)> {
     Ok((read, write))
 }
 
-/// Put `memfd`, `bell` (its write end) and `door` (its read end) at
-/// [`MEMFD_FD`], [`BELL_FD`] and [`DOOR_FD`], open across exec, in a
-/// child between fork and exec: system calls only, no allocation.
+/// The descriptor socket: the node's end, which only sends and does not
+/// block, and the app's, for [`FDS_FD`].
+///
+/// # Errors
+///
+/// The socket could not be made.
+pub fn descriptors() -> io::Result<(OwnedFd, OwnedFd)> {
+    let (node, app) = rustix::net::socketpair(
+        AddressFamily::UNIX,
+        SocketType::SEQPACKET,
+        SocketFlags::CLOEXEC,
+        None,
+    )?;
+    rustix::net::shutdown(&node, Shutdown::Read)?;
+    rustix::fs::fcntl_setfl(&node, rustix::fs::OFlags::NONBLOCK)?;
+    Ok((node, app))
+}
+
+/// Pass `fd` as `id` on the node's end of a descriptor socket.
+///
+/// # Errors
+///
+/// The socket refused it: full (an app that takes no descriptors), or the
+/// app gone.
+pub fn send_fd(socket: BorrowedFd<'_>, id: u64, fd: BorrowedFd<'_>) -> io::Result<()> {
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
+    let mut control = SendAncillaryBuffer::new(&mut space);
+    let fds = [fd];
+    if !control.push(SendAncillaryMessage::ScmRights(&fds)) {
+        return Err(io::Error::other("no room for the descriptor"));
+    }
+    let bytes = id.to_le_bytes();
+    let sent = rustix::net::sendmsg(
+        socket,
+        &[IoSlice::new(&bytes)],
+        &mut control,
+        SendFlags::DONTWAIT | SendFlags::NOSIGNAL,
+    )?;
+    if sent != bytes.len() {
+        return Err(io::Error::other("the descriptor's message was cut short"));
+    }
+    Ok(())
+}
+
+/// The next descriptor on the app's end of a descriptor socket, without
+/// waiting: its id and the descriptor (close-on-exec), or `None`.
+///
+/// # Errors
+///
+/// The message is not one id and one descriptor.
+pub fn recv_fd(socket: BorrowedFd<'_>) -> io::Result<Option<(u64, OwnedFd)>> {
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
+    let mut control = RecvAncillaryBuffer::new(&mut space);
+    let mut bytes = [0u8; 8];
+    let msg = match rustix::net::recvmsg(
+        socket,
+        &mut [IoSliceMut::new(&mut bytes)],
+        &mut control,
+        RecvFlags::DONTWAIT | RecvFlags::CMSG_CLOEXEC,
+    ) {
+        Ok(msg) => msg,
+        Err(rustix::io::Errno::AGAIN) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut fds: Vec<OwnedFd> = Vec::new();
+    for message in control.drain() {
+        if let RecvAncillaryMessage::ScmRights(received) = message {
+            fds.extend(received);
+        }
+    }
+    let cut = msg
+        .flags
+        .intersects(ReturnFlags::TRUNC | ReturnFlags::CTRUNC);
+    match (msg.bytes, fds.pop()) {
+        (8, Some(fd)) if fds.is_empty() && !cut => Ok(Some((u64::from_le_bytes(bytes), fd))),
+        (0, None) => Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "the node closed the descriptor socket",
+        )),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "a descriptor message is not one id and one descriptor",
+        )),
+    }
+}
+
+/// Put `memfd`, `bell` (its write end), `door` (its read end) and `fds`
+/// (the app's end) at [`MEMFD_FD`], [`BELL_FD`], [`DOOR_FD`] and
+/// [`FDS_FD`], open across exec, in a child between fork and exec: system
+/// calls only, no allocation.
 ///
 /// # Errors
 ///
@@ -377,13 +486,20 @@ pub fn install(
     memfd: BorrowedFd<'_>,
     bell: BorrowedFd<'_>,
     door: BorrowedFd<'_>,
+    fds: BorrowedFd<'_>,
 ) -> io::Result<()> {
     // Above every target first, so no `dup2` overwrites another's source;
     // the copies close at exec.
-    let memfd = rustix::io::fcntl_dupfd_cloexec(memfd, DOOR_FD + 1)?;
-    let bell = rustix::io::fcntl_dupfd_cloexec(bell, DOOR_FD + 1)?;
-    let door = rustix::io::fcntl_dupfd_cloexec(door, DOOR_FD + 1)?;
-    for (from, to) in [(&memfd, MEMFD_FD), (&bell, BELL_FD), (&door, DOOR_FD)] {
+    let memfd = rustix::io::fcntl_dupfd_cloexec(memfd, FDS_FD + 1)?;
+    let bell = rustix::io::fcntl_dupfd_cloexec(bell, FDS_FD + 1)?;
+    let door = rustix::io::fcntl_dupfd_cloexec(door, FDS_FD + 1)?;
+    let fds = rustix::io::fcntl_dupfd_cloexec(fds, FDS_FD + 1)?;
+    for (from, to) in [
+        (&memfd, MEMFD_FD),
+        (&bell, BELL_FD),
+        (&door, DOOR_FD),
+        (&fds, FDS_FD),
+    ] {
         // SAFETY: `to` is a descriptor number this child owns from here
         // on; whatever it held is replaced, as `dup2` does, and the
         // `OwnedFd` is forgotten, so nothing closes it before exec.
@@ -458,6 +574,10 @@ pub struct AppEnd {
     channel: Channel,
     bell: OwnedFd,
     door: OwnedFd,
+    /// The app's end of the descriptor socket.
+    fds: OwnedFd,
+    /// Descriptors received before the one asked for, by id.
+    untaken: Mutex<HashMap<u64, OwnedFd>>,
     spin: Spin,
 }
 
@@ -471,36 +591,70 @@ impl AppEnd {
     pub fn inherited() -> io::Result<Self> {
         // SAFETY: the node put the memfd, the bell and the door at these
         // numbers before exec, and nothing else in this process uses them.
-        let (memfd, bell, door) = unsafe {
+        let (memfd, bell, door, fds) = unsafe {
             (
                 <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(MEMFD_FD),
                 <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(BELL_FD),
                 <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(DOOR_FD),
+                <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(FDS_FD),
             )
         };
         let channel = Channel::open(memfd.as_fd())?;
         // Not for anything this process might start: the bell's end of
         // file tells the node this process has exited.
-        for fd in [&bell, &door] {
+        for fd in [&bell, &door, &fds] {
             rustix::io::fcntl_setfd(fd, rustix::io::FdFlags::CLOEXEC)?;
         }
-        Ok(Self {
-            channel,
-            bell,
-            door,
-            spin: Spin::from_env(),
-        })
+        Ok(Self::new(channel, bell, door, fds, Spin::from_env()))
     }
 
     /// An app's end of `channel`, for tests: `bell` is the bell's write
-    /// end, `door` the door's read end.
+    /// end, `door` the door's read end, `fds` the app's end of the
+    /// descriptor socket.
     #[must_use]
-    pub fn new(channel: Channel, bell: OwnedFd, door: OwnedFd, spin: Spin) -> Self {
+    pub fn new(channel: Channel, bell: OwnedFd, door: OwnedFd, fds: OwnedFd, spin: Spin) -> Self {
         Self {
             channel,
             bell,
             door,
+            fds,
+            untaken: Mutex::new(HashMap::new()),
             spin,
+        }
+    }
+
+    /// The descriptor the node passed as `id`, which a frame named: the
+    /// node sends it before the frame, so it is there by now. Those that
+    /// came first are kept, up to [`MAX_UNTAKEN`], for when their frames
+    /// are read.
+    ///
+    /// # Errors
+    ///
+    /// The node passed no descriptor `id`, more than [`MAX_UNTAKEN`] came
+    /// first, or the socket broke.
+    pub fn take_fd(&self, id: u64) -> io::Result<OwnedFd> {
+        let mut untaken = self.untaken.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(fd) = untaken.remove(&id) {
+            return Ok(fd);
+        }
+        loop {
+            match recv_fd(self.fds.as_fd())? {
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("the node passed no descriptor {id}"),
+                    ));
+                }
+                Some((got, fd)) if got == id => return Ok(fd),
+                Some((got, fd)) => {
+                    if untaken.len() >= MAX_UNTAKEN {
+                        return Err(io::Error::other(format!(
+                            "more than {MAX_UNTAKEN} descriptors passed and not taken"
+                        )));
+                    }
+                    untaken.insert(got, fd);
+                }
+            }
         }
     }
 

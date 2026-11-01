@@ -17,6 +17,7 @@
 //! | `log TEXT`, `print TEXT` | `ok`, after a warn record or a line on stdout |
 //! | `panic`, `abort`, `spin` | never |
 //! | `break-channel` | `ok`, after claiming more in its ring to the node than the ring holds; the node ends it |
+//! | `fd ID` | what the descriptor the node passed as `ID` reads (up to 1 KiB), or `err:` |
 //! | `alloc MIB` | `ok` once allocated and touched |
 //! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID` | `ok` or `err:` and the OS error |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |

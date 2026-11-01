@@ -85,6 +85,8 @@ struct Port {
     child: Child,
     channel: Arc<Channel>,
     door: OwnedFd,
+    /// The node's end of the descriptor socket.
+    fds: OwnedFd,
     from: FromRunner,
     logs: Arc<Mutex<Vec<(Level, String)>>>,
     stderr: Arc<Mutex<Vec<String>>>,
@@ -99,6 +101,7 @@ impl Port {
         let (bell, bell_app) = channel::bell().unwrap();
         rustix::fs::fcntl_setfl(&bell, rustix::fs::OFlags::NONBLOCK).unwrap();
         let (door_app, door) = channel::door().unwrap();
+        let (fds, fds_app) = channel::descriptors().unwrap();
         let (log, log_app) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC).unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_bulkhead-runner"));
         cmd.arg(program)
@@ -109,7 +112,12 @@ impl Port {
         // SAFETY: the closure makes system calls only.
         unsafe {
             cmd.pre_exec(move || {
-                channel::install(memfd.as_fd(), bell_app.as_fd(), door_app.as_fd())
+                channel::install(
+                    memfd.as_fd(),
+                    bell_app.as_fd(),
+                    door_app.as_fd(),
+                    fds_app.as_fd(),
+                )
             });
         }
         let child = cmd.spawn().unwrap();
@@ -131,6 +139,7 @@ impl Port {
             },
             channel,
             door,
+            fds,
             child,
             logs: Arc::default(),
             stderr,
@@ -236,6 +245,25 @@ fn executable____calls_requests_and_terminate____served_in_order() {
     assert_eq!(me, "1.42.1");
     assert_eq!(done, FromApp::Done);
     assert_eq!(port.exit_code(), Some(0));
+}
+
+#[test]
+fn executable____descriptors_passed____each_read_by_the_id_its_frame_names() {
+    let mut port = executable();
+    let holding = |text: &str| {
+        let (read, write) = rustix::pipe::pipe().unwrap();
+        rustix::io::write(&write, text.as_bytes()).unwrap();
+        read
+    };
+    channel::send_fd(port.fds.as_fd(), 1, holding("first").as_fd()).unwrap();
+    channel::send_fd(port.fds.as_fd(), 2, holding("second").as_fd()).unwrap();
+
+    let second = port.command("fd 2");
+    let first = port.command("fd 1");
+    let never = port.command("fd 3");
+
+    assert_eq!((first.as_str(), second.as_str()), ("first", "second"));
+    assert!(never.starts_with("err:"), "{never}");
 }
 
 #[test]

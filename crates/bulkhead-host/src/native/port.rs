@@ -90,6 +90,10 @@ mod linux {
         bell: pipe::Receiver,
         /// The app's door's write end: a byte wakes it for a frame.
         door: std::os::fd::OwnedFd,
+        /// The node's end of the descriptor socket (T3), and the id the
+        /// next descriptor passed gets.
+        fds: std::os::fd::OwnedFd,
+        next_fd: u64,
         /// The app's end of the bell is closed: it exited.
         exited: bool,
         input: Input,
@@ -159,6 +163,7 @@ mod linux {
             let (channel, memfd) = Channel::create().map_err(|e| format!("channel: {e}"))?;
             let (bell, bell_app) = channel::bell().map_err(|e| format!("channel: {e}"))?;
             let (door_app, door) = channel::door().map_err(|e| format!("channel: {e}"))?;
+            let (fds, fds_app) = channel::descriptors().map_err(|e| format!("channel: {e}"))?;
             let (log, log_app) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)
                 .map_err(|e| format!("log pipe: {e}"))?;
             let log_out = log_app.try_clone().map_err(|e| format!("log pipe: {e}"))?;
@@ -216,7 +221,12 @@ mod linux {
                         )?;
                         rustix::io::write(&fd, b"0")?;
                     }
-                    channel::install(memfd.as_fd(), bell_app.as_fd(), door_app.as_fd())?;
+                    channel::install(
+                        memfd.as_fd(),
+                        bell_app.as_fd(),
+                        door_app.as_fd(),
+                        fds_app.as_fd(),
+                    )?;
                     Ok(())
                 });
             }
@@ -235,6 +245,8 @@ mod linux {
                 channel,
                 bell,
                 door,
+                fds,
+                next_fd: 1,
                 exited: false,
                 input: Input {
                     buf: Vec::with_capacity(RING_CAP),
@@ -276,6 +288,25 @@ mod linux {
                 self.pending.extend_from_slice(&bytes[written..]);
                 self.pending_at = 0;
             }
+        }
+
+        /// Pass `fd` to the app, for a frame sent after this one to name.
+        ///
+        /// # Errors
+        ///
+        /// The socket refused it: full (an app that takes no
+        /// descriptors), or the app gone.
+        // Used by T4's published buckets and Z8e's sockets.
+        #[allow(dead_code)]
+        pub(crate) fn send_fd(
+            &mut self,
+            fd: std::os::fd::BorrowedFd<'_>,
+        ) -> Result<bulkhead_native::protocol::FdRef, String> {
+            let id = self.next_fd;
+            channel::send_fd(self.fds.as_fd(), id, fd)
+                .map_err(|e| format!("pass a descriptor: {e}"))?;
+            self.next_fd += 1;
+            Ok(bulkhead_native::protocol::FdRef(id))
         }
 
         /// Write what waits for the app's ring, as far as it fits.

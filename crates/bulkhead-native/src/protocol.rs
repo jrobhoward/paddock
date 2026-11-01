@@ -69,6 +69,13 @@ impl Envelope {
     }
 }
 
+/// A descriptor the node passed on the app's descriptor socket, named by
+/// the frame it goes with (`channel` module, ROADMAP T3). The node sends
+/// the descriptor before the frame; the app takes it with
+/// `app::take_fd`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FdRef(pub u64);
+
 /// Bytes, encoded as a CBOR byte string wherever they sit (in an
 /// `Option`, a list or a pair).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

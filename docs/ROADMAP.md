@@ -290,7 +290,7 @@ Items, in order:
   - **Left:** fuzzing the ring's reader (unit tests cover impossible positions, and a test app that breaks its ring is ended as corrupt); spinning that adapts to a busy machine (T1b).
 - [ ] **T1b Spinning that adapts** (M; from T1, 2026-11-01). On the Pi's 4 cores, 100 busy native instances spinning took the cores their work needed (calls in flight at 55% of before at `spin_us = 20`). Spin less, or not at all, while the node's cores are busy; measured as T1 was, on both machines. And a fuzz target for the ring's reader (`fuzz/`). Areas: `bulkhead-native` channel, `native::port`, fuzz.
 - [ ] **T2 Requests answered without the instance task** (M; deferred by S32, 2026-11-01: answering inside the poller gained little over the instance's task on the same thread; T1 then kept the tasks on the multi-threaded runtime, where a request costs 4 to 5 µs). The poller answers a request that needs no instance state itself: the app's own pid, names, and bucket and watch operations. One hand-off fewer per request, and two per call between instances. Areas: host.
-- [ ] **T3 The descriptor channel** (M; Z8e's first half). A Unix socket beside each instance's channel, for descriptors only (`SCM_RIGHTS`), opened at spawn. A frame names each descriptor sent, so frames and descriptors cannot be paired wrongly. The SDK receives descriptors. Areas: runner, protocol, host, SDK.
+- [x] **T3 The descriptor channel** (M; Z8e's first half; done 2026-11-01). A `SOCK_SEQPACKET` socket beside each instance's channel, the app's end at descriptor 6: one message per descriptor, its id and the descriptor as `SCM_RIGHTS`, sent before the frame that names it (`protocol::FdRef`); the node's end only sends. The app takes a descriptor by the id its frame names (`bulkhead_native::app::take_fd`), keeping up to 64 that came first. No frame names one yet: T4's published buckets and Z8e's sockets add those, with `Port::send_fd`. Tested end to end through the runner's sandbox with a fixture command that reads a passed pipe. Areas: runner, protocol, host, SDK.
 - [ ] **T4 Mapped bucket snapshots** (L). On T3:
   - **Which buckets:** an operator marks a shared bucket as published.
   - **Publishing:** the node builds each version into a sealed memfd (S31's format: records and a hash index), at most once per publish interval, and passes it to every instance granted the bucket.
@@ -301,7 +301,7 @@ Items, in order:
 - [ ] **T5 The comparison again** (S). C4's within-node rows (calls, casts, payloads) and its keyvalue rows, natively, on both machines, five rounds: BASELINE.md and DESIGN.md's "Instance model". Areas: docs.
 - [ ] **T6 Docs** (S). Covers the channel and spin budget (OPERATIONS.md, node config), published buckets (MANIFEST.md, WRITING_APPS.md: which read path for which data), and SECURITY.md's native boundary (shared memory between node and app; the poller's CPU). Areas: docs.
 
-Order: S32 and T1 (done 2026-11-01), T3, T4, T5 and T6, T1b when a busy small machine needs it; T2 deferred; then Z8b.
+Order: S32, T1 and T3 (done 2026-11-01), T4, T5 and T6, T1b when a busy small machine needs it; T2 deferred; then Z8b.
 
 ### Z8: native parity
 
@@ -315,7 +315,7 @@ Decided with this plan (2026-11-01, with the user):
 - **HTTP handlers** (`wasi:http/proxy` components) have no native counterpart: requests as calls to an app's pool (Z4) serve native apps, and the handler kind goes with WebAssembly in Z9.
 - **Extensions:** requests over the protocol. An extension serves named functions with CBOR arguments and results through a native method on the `Extension` trait, granted per app as now; node-level work (Modbus polling) stays in the node.
 - **The network fence:** sockets come only from the node. The runner's seccomp filter already refuses `socket`, so a passed socket is all an app can use: a connected TCP socket cannot be moved to another address, and UDP sockets are passed connected only (an unconnected one could send anywhere). No network namespace is needed, contrary to S31's note.
-- **Descriptors travel on a Unix socket beside the pipes** (`SCM_RIGHTS`), not on the frames' channel: frames over a socketpair cost a call 40% more (BASELINE.md, 2026-10-31). Built as T3, ahead of Z8 (2026-11-01).
+- **Descriptors travel on a Unix socket beside the pipes** (`SCM_RIGHTS`), not on the frames' channel: frames over a socketpair cost a call 40% more (BASELINE.md, 2026-10-31). Built as T3, ahead of Z8 (done 2026-11-01).
 
 Items, in order:
 

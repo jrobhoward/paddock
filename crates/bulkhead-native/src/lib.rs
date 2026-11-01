@@ -6,7 +6,7 @@
 //!
 //! - [`protocol`]: the frames both sides exchange.
 //! - `channel` (feature `channel`, Linux): the shared-memory rings they
-//!   travel over.
+//!   travel over, and the socket descriptors are passed on.
 //! - `app` (feature `app`): a native app as an executable, with the
 //!   process functions.
 //! - `runner` (feature `runner`, Linux): `bulkhead-runner`, the launcher

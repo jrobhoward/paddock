@@ -1,9 +1,10 @@
 //! The fixture's commands, on `bulkhead_native::app` (Unix only).
 
+use std::io::Read;
 use std::process::ExitCode;
 
 use bulkhead_native::app::{self, App, CallRef, Ctx};
-use bulkhead_native::protocol::{Envelope, ExitReason, Info, Level, Pid};
+use bulkhead_native::protocol::{Envelope, ExitReason, FdRef, Info, Level, Pid};
 
 #[derive(Default)]
 struct Fixture {
@@ -120,6 +121,10 @@ impl Fixture {
                 app::break_channel_for_tests();
                 "ok".into()
             }
+            "fd" => match first.parse() {
+                Ok(id) => read_passed(FdRef(id)),
+                Err(_) => "err:fd ID".into(),
+            },
             "spin" => loop {
                 std::hint::spin_loop();
             },
@@ -391,5 +396,18 @@ fn metric(ctx: &mut Ctx, op: &str, rest: &str) -> String {
             "queued".into()
         }
         other => format!("err:unknown metric op {other}"),
+    }
+}
+
+/// What the descriptor the node passed as `fd` reads, up to 1 KiB.
+fn read_passed(fd: FdRef) -> String {
+    let mut file = match app::take_fd(fd) {
+        Ok(owned) => std::fs::File::from(owned),
+        Err(e) => return format!("err:{e}"),
+    };
+    let mut buf = vec![0; 1024];
+    match file.read(&mut buf) {
+        Ok(n) => String::from_utf8_lossy(&buf[..n]).into_owned(),
+        Err(e) => format!("err:{e}"),
     }
 }

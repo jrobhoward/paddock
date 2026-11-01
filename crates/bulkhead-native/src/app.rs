@@ -38,6 +38,8 @@
 //! there).
 
 use std::cell::RefCell;
+use std::io;
+use std::os::fd::OwnedFd;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -46,9 +48,10 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use crate::channel::{AppEnd, FromNode, ToNode};
 
 use crate::protocol::{
-    self, Answer, Bytes, CallError, ConfigError, Envelope, ExitReason, FromApp, GroupsAnswer,
-    GroupsError, GroupsRequest, Info, KvAnswer, KvError, KvRequest, Level, MetricError, MetricKind,
-    MetricUpdate, Pid, RegisterError, Request, ScanPage, ScanQuery, SecretError, ToApp, VERSION,
+    self, Answer, Bytes, CallError, ConfigError, Envelope, ExitReason, FdRef, FromApp,
+    GroupsAnswer, GroupsError, GroupsRequest, Info, KvAnswer, KvError, KvRequest, Level,
+    MetricError, MetricKind, MetricUpdate, Pid, RegisterError, Request, ScanPage, ScanQuery,
+    SecretError, ToApp, VERSION,
 };
 
 /// A call's reference, for a later [`Ctx::reply`].
@@ -836,6 +839,25 @@ fn guarded<R>(f: impl FnOnce() -> R) -> R {
             std::process::exit(101)
         }
     }
+}
+
+/// The descriptor a frame from the node names, from any thread: each can
+/// be taken once.
+///
+/// # Errors
+///
+/// The node passed no such descriptor, the app runs without a node, or
+/// on a system without native apps.
+pub fn take_fd(fd: FdRef) -> io::Result<OwnedFd> {
+    #[cfg(target_os = "linux")]
+    if let Some(end) = END.get() {
+        return end.take_fd(fd.0);
+    }
+    let _ = fd;
+    Err(io::Error::new(
+        io::ErrorKind::NotConnected,
+        "no node has passed descriptors to this process",
+    ))
 }
 
 /// Break this process's ring to the node, as an app writing nonsense
