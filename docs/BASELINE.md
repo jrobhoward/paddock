@@ -2222,6 +2222,43 @@ ns per read, and reads per second across instances:
 - **Readers scale with cores:** 30 to 35 million reads a second from 16 instances on the 16-core machine, and 5.3 million on the Pi's 4 cores, against 0.6 to 0.7 million for components, which share the bucket's lock. ETS with `read_concurrency` read 6.0 and 4.7 million (95 reads in 100, C4), `persistent_term` 16.5 and 8.5 million.
 - **Not measured:** how long a write takes to reach a reader (up to `publish_ms` plus the build, by design), the build's cost for large buckets (S31: 0.1 to 0.25 µs per entry), and memory per version.
 
+## 2026-11-01: native apps within a node after T1 and T4 (T5)
+
+C4's rows within a node and its keyvalue rows again, natively, with T1's channel and T4's published buckets (commit 51c1a8b): `scripts/cluster_pair.sh` and `kv_cost`, natively and as components, five rounds each, one after another within each round. Components did not change, and ran as a control: their figures match C4's within its spread. BEAM's are C4's, from the same day. Medians of five. The 16-core machine started at load 0.5 to 9.9, the Raspberry Pi 5 (nice 10) at 0.2 to 11.0; a run that spins raises the load average, and the Pi's CPU peaked at 61 °C.
+
+Within a node:
+
+| | 16-core: component | native, C4 | native, T5 | BEAM | Pi: component | native, C4 | native, T5 | BEAM |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| call from outside, p50 / p99 µs | 3.3 / 5.7 | 13.4 / 18.4 | 6.1 / 10.7 | 3.4 / 5.0 | 4.8 / 7.2 | 16.6 / 23.2 | 6.8 / 8.7 | 2.3 / 4.2 |
+| call from an instance, p50 / p99 µs | 4.9 / 6.0 | 42 / 65 | 12.8 / 20.8 | 2.0 / 3.8 | 7.0 / 12.0 | 41 / 53 | 13.1 / 19.8 | 2.3 / 4.3 |
+| 16 / 64 callers from outside, calls/s | 0.65M / 0.67M | 0.26M / 0.28M | 0.32M / 0.35M | 0.39M / 0.49M | 0.85M / 0.89M | 0.14M / 0.15M | 0.13M / 0.15M | 0.87M / 1.08M |
+| 16 instances calling, calls/s | 0.70M | 0.15M | 0.17M | 0.44M | 0.62M | 0.067M | 0.083M | 0.78M |
+| casts from outside, handled/s | 1.08M | 0.34M | 0.81M | 1.14M | 1.05M | 0.18M | 0.31M | 1.25M |
+| casts from instances, handled/s | 1.30M | 0.18M | 0.42M | 5.7M | 1.40M | 0.084M | 0.13M | 4.4M |
+| 1 KiB / 64 KiB bodies, calls/s | 642,000 / 159,000 | 239,000 / 44,000 | 270,000 / 51,000 | 381,000 / 369,000 | 801,000 / 26,000 | 127,000 / 3,500 | 101,000 / 4,600 | 820,000 / 783,000 |
+
+Keyvalue, ns per operation from inside the app (100,000 keys and 16 B values unless the row says), and operations per second across 16 instances:
+
+| | 16-core: component | native, C4 | native, T5 | native, published | ETS `set` / `ordered_set` | Pi: component | native, C4 | native, T5 | native, published | ETS `set` / `ordered_set` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| get, 1,000 keys | 676 | 15,564 | 5,282 | | 125 / 244 | 849 | 13,494 | 5,100 | | 198 / 324 |
+| get | 1,053 | 15,201 | 6,848 | 221 | 265 / 681 | 1,532 | 14,590 | 5,941 | 392 | 443 / 1,135 |
+| a missing key, 1,000 keys (published: 100,000) | 497 | 14,371 | 5,293 | 162 | 51 / 176 | 649 | 13,270 | 5,105 | 251 | 97 / 268 |
+| overwrite | 1,544 | 16,333 | 7,042 | | 274 / 715 | 2,134 | 15,785 | 7,152 | | 469 / 1,220 |
+| `get_many` of 100, per key | 906 | 1,358 | 1,336 | 231 | | 1,417 | 1,645 | 1,966 | 426 | |
+| `next`, one key at a time | 2,450 | 20,900 | 8,181 | | 142 (`ordered_set`) | 3,031 | 19,004 | 8,366 | | 238 (`ordered_set`) |
+| dependent reads along a chain | 919 | 15,041 | 5,734 | | 404 | 1,483 | 14,695 | 5,996 | | 704 |
+| reads, 16 instances (95 in 100; published: every one), ops/s | 0.69M | 0.29M | 0.46M | 30.7M | 6.0M / 3.7M | 0.53M | 0.15M | 0.23M | 5.1M | 4.7M / 2.5M |
+| 16 readers beside one writer: reads/s, writes/s | 0.63M, 178,000 | 0.28M, 17,600 | 0.45M, 24,700 | | 6.1M, 573,000 / 3.5M, 352,000 | 0.49M, 158,000 | 0.14M, 9,100 | 0.21M, 13,400 | | 4.5M, 378,000 / 2.4M, 185,000 |
+
+- **Within a node, a native call costs half to two fifths of what it did,** and a call between instances a third: 6 to 7 µs from outside and 13 µs between instances on both machines, against a component's 3 to 5 and 5 to 7 and BEAM's 2 to 3. A native call between instances still costs 2 to 2.6 times a component's and about 6 times BEAM's: two requests and two process hops, each a few microseconds while both sides spin.
+- **Casts gained most:** 2.4 times as many handled from outside on the 16-core machine and 1.7 times on the Pi; from instances, 2.3 and 1.5 times. A component's are still faster, BEAM's within a node faster again.
+- **Throughput with many calls in flight barely moved:** 1.1 to 1.3 times on the 16-core machine, 0.9 to 1.2 times on the Pi, where spinning takes cores the work needs (T1, T1b), and 1 KiB bodies there fell to 80%. 64 KiB bodies rose 15 to 30%.
+- **A bucket request costs a third to a half of what it did, 5 to 7 µs,** still 4 to 8 times a component's host call. Ordered reads, chains and writes stay requests.
+- **A published bucket reads in 0.16 to 0.39 µs,** below a component's host call and in ETS `set`'s range, and 16 readers reach 30.7 million reads a second on the 16-core machine, 5 times ETS with `read_concurrency` and 1.9 times `persistent_term` (C4: 6.0 and 16.5 million). On the Pi's 4 cores they reach 5.1 million: ETS's 4.7, below `persistent_term`'s 8.5. Its price is staleness, up to the publish interval.
+- **Between two node processes on one host,** the network dominates as in C4: a native call from the host costs 116 µs on the 16-core machine (C4: 160) and 124 on the Pi (C4: 148), and app to app 167 and 158 µs (C4: 202 and 185), against components' 148 and 136. A native app's casts to the other node still all arrive on the 16-core machine; on the Pi 93 to 100% did.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
