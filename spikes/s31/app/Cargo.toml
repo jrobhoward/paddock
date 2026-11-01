@@ -1,0 +1,8 @@
+[package]
+name = "s31-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bulkhead-native = { path = "../../../crates/bulkhead-native", default-features = false, features = ["app"] }

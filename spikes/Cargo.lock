@@ -240,6 +240,7 @@ name = "bulkhead-native"
 version = "0.3.0"
 dependencies = [
  "ciborium",
+ "rustix",
  "serde",
 ]
 
@@ -2686,6 +2687,30 @@ dependencies = [
  "bulkhead-host",
  "libc",
  "tokio",
+]
+
+[[package]]
+name = "s31-app"
+version = "0.0.0"
+dependencies = [
+ "bulkhead-native",
+]
+
+[[package]]
+name = "s31-bench"
+version = "0.0.0"
+dependencies = [
+ "bulkhead-bundle",
+ "bulkhead-host",
+ "libc",
+ "tokio",
+]
+
+[[package]]
+name = "s31-probe"
+version = "0.0.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
