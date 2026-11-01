@@ -398,7 +398,7 @@ fn AppManifest____invalid_app_name____invalid_at_plugin_name() {
 }
 
 #[rstest]
-#[case(json!({ "kind": "native-process", "capabilities": { "wasi:keyvalue": {} } }), "capabilities.wasi:keyvalue")]
+#[case(json!({ "kind": "native-process", "capabilities": { "wasi:http/outgoing-handler": {} } }), "capabilities.wasi:http/outgoing-handler")]
 #[case(json!({ "kind": "native-process", "capabilities": { "wasi:sockets": {} } }), "capabilities.wasi:sockets")]
 #[case(json!({ "kind": "native-process", "capabilities": { "extensions": { "acme:x": {} } } }), "capabilities.extensions.\"acme:x\"")]
 #[case(json!({ "kind": "native-process", "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
@@ -428,4 +428,16 @@ fn validate____native_process_with_logging____accepted_with_program() {
 
     assert_eq!(found.native.unwrap().program, NativeProgram::Executable);
     assert!(found.unenforced_fields().is_empty());
+}
+
+#[test]
+fn validate____native_process_with_keyvalue____accepted() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": { "wasi:keyvalue": { "buckets": { "state": {} }, "shared": { "board": "rw" } } },
+        "upgrade": { "mode": "blue-green" }
+    }));
+
+    assert!(found.is_ok(), "{found:?}");
 }

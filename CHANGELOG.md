@@ -27,6 +27,13 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Keyvalue for native-process apps: a native app may declare
+  `wasi:keyvalue`, and `bulkhead_native::app::Ctx::bucket` gives it
+  `wasi:keyvalue`'s and `bulkhead:watch`'s operations on the buckets its
+  manifest lists, on a component's terms. A watch notice arrives as
+  `Info::KvChanged` with the key's value and revision, so a copy kept by a
+  watch needs no request per change. The native protocol is version 2
+  (ROADMAP Z2).
 - `native_cost` (`bulkhead-host` example, `bench.sh native`): native
   instances through `bulkhead-runner`: calls from the host and between
   instances, requests from a callback, casts and start time.

@@ -116,6 +116,7 @@ impl Fixture {
                 Err(_) => "err:no priv".into(),
             },
             "dumpable" => dumpable(),
+            "kv" => kv(ctx, rest),
             "kill" => {
                 let target: i32 = rest.parse().unwrap_or(0);
                 // SAFETY: `kill` takes no pointers; any pid and signal 0
@@ -171,6 +172,19 @@ impl App for Fixture {
                 format!("timer {reference} {}", String::from_utf8_lossy(&msg.body))
             }
             Info::HostEvent { name, .. } => format!("event {name}"),
+            Info::KvChanged {
+                watch,
+                bucket,
+                key,
+                entry,
+                ..
+            } => match entry {
+                Some((value, revision)) => format!(
+                    "kv {watch} {bucket} {key} {}@{revision}",
+                    String::from_utf8_lossy(&value.0)
+                ),
+                None => format!("kv {watch} {bucket} {key} deleted"),
+            },
         });
     }
 }
@@ -194,4 +208,81 @@ fn dumpable() -> String {
 #[cfg(not(target_os = "linux"))]
 fn dumpable() -> String {
     "err:linux only".into()
+}
+
+/// `kv OP BUCKET ...`: the keyvalue requests, answered as text (`err:` and
+/// the error for a failure).
+fn kv(ctx: &mut Ctx, command: &str) -> String {
+    let words: Vec<&str> = command.split(' ').collect();
+    let (op, bucket) = (words[0], words.get(1).copied().unwrap_or(""));
+    let arg = |i: usize| words.get(i).copied().unwrap_or("");
+    let text = |v: Vec<u8>| String::from_utf8_lossy(&v).into_owned();
+    let out = if op == "unwatch" {
+        ctx.unwatch(bucket.parse().unwrap_or(0))
+            .map(|()| "ok".to_string())
+    } else {
+        let mut b = ctx.bucket(bucket);
+        match op {
+            "get" => b.get(arg(2)).map(|v| v.map_or_else(|| "none".into(), text)),
+            "set" => b.set(arg(2), arg(3).as_bytes()).map(|()| "ok".into()),
+            "del" => b.delete(arg(2)).map(|()| "ok".into()),
+            "incr" => b
+                .increment(arg(2), arg(3).parse().unwrap_or(1))
+                .map(|n| n.to_string()),
+            "many" => {
+                let keys: Vec<String> = arg(2).split(',').map(str::to_string).collect();
+                b.get_many(&keys).map(|vs| {
+                    vs.into_iter()
+                        .map(|v| v.map_or_else(|| "-".into(), text))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+            }
+            "setmany" => {
+                let entries: Vec<(String, Vec<u8>)> = arg(2)
+                    .split(',')
+                    .filter_map(|kv| kv.split_once('='))
+                    .map(|(k, v)| (k.to_string(), v.as_bytes().to_vec()))
+                    .collect();
+                b.set_many(&entries).map(|()| "ok".into())
+            }
+            "entry" => b
+                .entry(arg(2))
+                .map(|e| e.map_or_else(|| "none".into(), |(v, r)| format!("{}@{r}", text(v)))),
+            "rev" => b.revision().map(|r| r.to_string()),
+            "scan" => b
+                .scan(bulkhead_native::protocol::ScanQuery {
+                    prefix: Some(arg(2).to_string()),
+                    ..Default::default()
+                })
+                .map(|page| {
+                    page.entries
+                        .into_iter()
+                        .map(|(k, v, r)| format!("{k}={}@{r}", text(v.0)))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                }),
+            "cas" => {
+                let expected = arg(3).parse().ok();
+                b.compare_and_swap(arg(2), expected, arg(4).as_bytes())
+                    .map(|r| r.to_string())
+            }
+            "watch" => b.watch(arg(2)).map(|w| w.id.to_string()),
+            "gets" => {
+                let n: u64 = arg(2).parse().unwrap_or(0);
+                let started = std::time::Instant::now();
+                let mut out = Ok(String::new());
+                for _ in 0..n {
+                    if let Err(e) = b.get("t") {
+                        out = Err(e);
+                        break;
+                    }
+                }
+                out.map(|_| started.elapsed().as_nanos().to_string())
+            }
+            "watchp" => b.watch_prefix(arg(2)).map(|w| w.id.to_string()),
+            other => return format!("err:unknown kv op {other}"),
+        }
+    };
+    out.unwrap_or_else(|e| format!("err:{e:?}"))
 }

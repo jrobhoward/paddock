@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use bulkhead_bundle::manifest::NativeProgram;
+use bulkhead_bundle::manifest::{Bucket, Capability, Durability, NativeProgram};
 use bulkhead_host::{
     Envelope, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, NativeConfig, Runtime,
     RuntimeConfig,
@@ -89,14 +89,25 @@ impl Lcg {
 }
 
 fn spec() -> InstanceSpec {
-    InstanceSpec {
+    let mut spec = InstanceSpec {
         memory_max: 64 << 20,
         callback_deadline: LONG,
         init_timeout: LONG,
         // Room for the cast burst below.
         mailbox_max: 100_000,
+        granted: [Capability::KeyValue].into(),
         ..InstanceSpec::new("native", "1.0.0")
-    }
+    };
+    spec.services.keyvalue.buckets = [(
+        "data".to_string(),
+        Bucket {
+            durability: Durability::Memory,
+            quota: None,
+            read_concurrency: false,
+        },
+    )]
+    .into();
+    spec
 }
 
 async fn run(workers: usize) {
@@ -161,6 +172,18 @@ async fn run(workers: usize) {
     per.sort_by(f64::total_cmp);
     println!(
         "request from a callback (its own pid): {:.1} µs (median of 5 runs of 20,000)",
+        per[2] / 1e3
+    );
+
+    ask(&pool[0], "kv set data t 0123456789abcdef").await;
+    let mut per = Vec::new();
+    for _ in 0..5 {
+        let ns: f64 = ask(&pool[0], "kv gets data 20000").await.parse().unwrap();
+        per.push(ns / 20_000.0);
+    }
+    per.sort_by(f64::total_cmp);
+    println!(
+        "bucket get from a callback (16 B, memory bucket): {:.1} µs (median of 5 runs of 20,000)",
         per[2] / 1e3
     );
 

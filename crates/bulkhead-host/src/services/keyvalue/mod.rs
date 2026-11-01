@@ -14,8 +14,12 @@
 //! callback deadline. Bulkhead's own host on the vendored
 //! `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (spike S7).
 
+mod native;
 pub(crate) mod storage;
 mod watches;
+
+/// The host event a watch notice arrives as.
+pub(crate) use watches::EVENT as WATCH_EVENT;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

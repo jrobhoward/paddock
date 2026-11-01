@@ -10,7 +10,7 @@
 //! | `cast PID TEXT` | `ok` |
 //! | `after MS TEXT` | the timer's reference |
 //! | `link PID`, `monitor PID`, `trap` | `ok`, or the monitor's reference |
-//! | `infos` | each info received so far, one per line |
+//! | `infos` | each info received so far, one per line (a watch notice as `kv WATCH BUCKET KEY VALUE@REV` or `... deleted`) |
 //! | `register NAME`, `whereis NAME` | `ok` or `err:...`, the pid or `none` |
 //! | `exit PID REASON` | `ok` (`normal`, `kill` or any text as `crashed`) |
 //! | `noreply` | nothing now: the reply comes from a cast `reply TEXT` |
@@ -20,6 +20,7 @@
 //! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID` | `ok` or `err:` and the OS error |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
 //! | `dumpable` | `no` if the process is not dumpable, else `yes` (Linux) |
+//! | `kv OP BUCKET ...` | a keyvalue request: `get K`, `set K V`, `del K`, `incr K N`, `many K1,K2`, `setmany K1=V1,K2=V2`, `entry K` (`V@REV`), `rev`, `scan PREFIX`, `cas K EXPECTED V` (`none` for absent), `watch K`, `watchp PREFIX`, `gets N` (the nanoseconds `N` gets of key `t` took); `kv unwatch ID`. A failure is `err:` and the error |
 //!
 //! Init arguments `fail` make `init` fail.
 //!

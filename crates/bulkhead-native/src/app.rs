@@ -46,8 +46,8 @@ use std::process::ExitCode;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::protocol::{
-    self, Answer, CallError, Envelope, ExitReason, FromApp, Info, Level, Pid, RegisterError,
-    Request, ToApp, VERSION,
+    self, Answer, Bytes, CallError, Envelope, ExitReason, FromApp, Info, KvAnswer, KvError,
+    KvRequest, Level, Pid, RegisterError, Request, ScanPage, ScanQuery, ToApp, VERSION,
 };
 
 /// A call's reference, for a later [`Ctx::reply`].
@@ -239,6 +239,335 @@ impl Ctx {
     /// Send an exit signal to `to`; to this instance's own pid, stop it.
     pub fn exit(&mut self, to: Pid, reason: ExitReason) {
         self.request(Request::Exit { to, reason });
+    }
+
+    /// A keyvalue bucket the manifest lists (the app's own, or a shared
+    /// one its grant includes). Each operation is one request to the
+    /// node, about 13 µs on a Raspberry Pi 5: read many keys with
+    /// [`Bucket::get_many`] or [`Bucket::scan`] rather than one at a time.
+    pub fn bucket(&mut self, name: impl Into<String>) -> Bucket<'_> {
+        Bucket {
+            ctx: self,
+            name: name.into(),
+        }
+    }
+
+    /// End a watch; notices for it still queued are dropped.
+    ///
+    /// # Errors
+    ///
+    /// None today; reserved.
+    pub fn unwatch(&mut self, id: u64) -> Result<(), KvError> {
+        kv(self, KvRequest::Unwatch(id)).map(|_| ())
+    }
+}
+
+/// One keyvalue request.
+fn kv(ctx: &mut Ctx, request: KvRequest) -> Result<KvAnswer, KvError> {
+    match ctx.request(Request::Kv(request)) {
+        Answer::Kv(result) => result,
+        other => unexpected(&other),
+    }
+}
+
+fn unexpected_kv(answer: &KvAnswer) -> ! {
+    protocol_error(&format!("unexpected keyvalue answer {answer:?}"))
+}
+
+/// A bucket, from [`Ctx::bucket`]: `wasi:keyvalue`'s operations and
+/// `bulkhead:watch`'s (revisions, compare-and-swap, scans, watches).
+///
+/// Every method fails with [`KvError::AccessDenied`] for a bucket the
+/// manifest does not list or the grant does not include, and for a write
+/// to a read-only shared bucket; [`KvError::NoSuchBucket`] for a shared
+/// bucket the node does not configure.
+#[derive(Debug)]
+pub struct Bucket<'a> {
+    ctx: &'a mut Ctx,
+    name: String,
+}
+
+/// A started watch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Watched {
+    /// Its id, for [`Ctx::unwatch`] and in its notices.
+    pub id: u64,
+    /// The bucket's revision when it started.
+    pub revision: u64,
+}
+
+impl Bucket<'_> {
+    fn kv(&mut self, request: KvRequest) -> Result<KvAnswer, KvError> {
+        kv(self.ctx, request)
+    }
+
+    fn bucket(&self) -> String {
+        self.name.clone()
+    }
+
+    /// A key's value.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        match self.kv(KvRequest::Get { bucket, key })? {
+            KvAnswer::Value(v) => Ok(v.map(|b| b.0)),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// Set a key.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`]; [`KvError::Other`] over the bucket's quota.
+    pub fn set(&mut self, key: &str, value: &[u8]) -> Result<(), KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        let value = Bytes::from(value);
+        self.kv(KvRequest::Set { bucket, key, value }).map(|_| ())
+    }
+
+    /// Delete a key; deleting a missing key succeeds.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn delete(&mut self, key: &str) -> Result<(), KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        self.kv(KvRequest::Delete { bucket, key }).map(|_| ())
+    }
+
+    /// Whether a key exists.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn exists(&mut self, key: &str) -> Result<bool, KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        match self.kv(KvRequest::Exists { bucket, key })? {
+            KvAnswer::Exists(e) => Ok(e),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// A page of the bucket's keys from `cursor` (`None`: the first), and
+    /// the next page's cursor.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn keys(&mut self, cursor: Option<u64>) -> Result<(Vec<String>, Option<u64>), KvError> {
+        let bucket = self.bucket();
+        match self.kv(KvRequest::Keys { bucket, cursor })? {
+            KvAnswer::Keys(keys, next) => Ok((keys, next)),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// Add `delta` to a counter (missing: 0); its new value.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`]; [`KvError::Other`] if the value is not a
+    /// counter.
+    pub fn increment(&mut self, key: &str, delta: u64) -> Result<u64, KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        match self.kv(KvRequest::Increment { bucket, key, delta })? {
+            KvAnswer::Count(n) => Ok(n),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// Several keys' values in one request, in the order given.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn get_many(&mut self, keys: &[String]) -> Result<Vec<Option<Vec<u8>>>, KvError> {
+        let (bucket, keys) = (self.bucket(), keys.to_vec());
+        match self.kv(KvRequest::GetMany { bucket, keys })? {
+            KvAnswer::Values(found) => Ok(found.into_iter().map(|v| v.map(|b| b.0)).collect()),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// Set several keys as one change.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket::set`]; nothing is written if any fails.
+    pub fn set_many(&mut self, entries: &[(String, Vec<u8>)]) -> Result<(), KvError> {
+        let bucket = self.bucket();
+        let entries = entries
+            .iter()
+            .map(|(k, v)| (k.clone(), Bytes(v.clone())))
+            .collect();
+        self.kv(KvRequest::SetMany { bucket, entries }).map(|_| ())
+    }
+
+    /// Delete several keys as one change.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn delete_many(&mut self, keys: &[String]) -> Result<(), KvError> {
+        let (bucket, keys) = (self.bucket(), keys.to_vec());
+        self.kv(KvRequest::DeleteMany { bucket, keys }).map(|_| ())
+    }
+
+    fn entry_of(
+        &mut self,
+        key: &str,
+        linearizable: bool,
+    ) -> Result<Option<(Vec<u8>, u64)>, KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        match self.kv(KvRequest::Entry {
+            bucket,
+            key,
+            linearizable,
+        })? {
+            KvAnswer::Entry(e) => Ok(e.map(|(v, r)| (v.0, r))),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// A key's value and the revision it was written at.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn entry(&mut self, key: &str) -> Result<Option<(Vec<u8>, u64)>, KvError> {
+        self.entry_of(key, false)
+    }
+
+    /// As [`Bucket::entry`], served by a replicated bucket's primary, so it
+    /// reflects every write committed before it.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`]; [`KvError::Unavailable`] with no primary.
+    pub fn entry_linearizable(&mut self, key: &str) -> Result<Option<(Vec<u8>, u64)>, KvError> {
+        self.entry_of(key, true)
+    }
+
+    /// The bucket's revision (0 before its first change).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn revision(&mut self) -> Result<u64, KvError> {
+        let bucket = self.bucket();
+        match self.kv(KvRequest::Revision { bucket })? {
+            KvAnswer::Revision(r) => Ok(r),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// One page of the bucket's entries in key order.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`].
+    pub fn scan(&mut self, query: ScanQuery) -> Result<ScanPage, KvError> {
+        let bucket = self.bucket();
+        match self.kv(KvRequest::Scan { bucket, query })? {
+            KvAnswer::Page(page) => Ok(page),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// Set a key if its revision is `expected` (`None`: only if absent);
+    /// its new revision.
+    ///
+    /// # Errors
+    ///
+    /// [`KvError::Conflict`] with the key's revision if it differs; as for
+    /// [`Bucket::set`] otherwise.
+    pub fn compare_and_swap(
+        &mut self,
+        key: &str,
+        expected: Option<u64>,
+        value: &[u8],
+    ) -> Result<u64, KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        let value = Bytes::from(value);
+        match self.kv(KvRequest::CompareAndSwap {
+            bucket,
+            key,
+            expected,
+            value,
+        })? {
+            KvAnswer::Revision(r) => Ok(r),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// Delete a key if its revision is `expected`; the bucket's new
+    /// revision.
+    ///
+    /// # Errors
+    ///
+    /// [`KvError::Conflict`] with the key's revision if it differs.
+    pub fn compare_and_delete(&mut self, key: &str, expected: u64) -> Result<u64, KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        match self.kv(KvRequest::CompareAndDelete {
+            bucket,
+            key,
+            expected,
+        })? {
+            KvAnswer::Revision(r) => Ok(r),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    fn start(&mut self, key: &str, prefix: bool, after: Option<u64>) -> Result<Watched, KvError> {
+        let (bucket, key) = (self.bucket(), key.to_string());
+        match self.kv(KvRequest::Watch {
+            bucket,
+            key,
+            prefix,
+            after,
+        })? {
+            KvAnswer::Started { id, revision } => Ok(Watched { id, revision }),
+            other => unexpected_kv(&other),
+        }
+    }
+
+    /// Watch a key from now: each change arrives in `handle_info` as
+    /// [`Info::KvChanged`], with the
+    /// key's value.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket`]; [`KvError::LimitReached`] over
+    /// `limits.watches_max`.
+    pub fn watch(&mut self, key: &str) -> Result<Watched, KvError> {
+        self.start(key, false, None)
+    }
+
+    /// Watch every key starting with `prefix` (all of them for `""`), from
+    /// now. To keep a copy of the keys, watch first and then
+    /// [`scan`](Bucket::scan): a change during the scan arrives as a
+    /// notice (spike S28).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Bucket::watch`].
+    pub fn watch_prefix(&mut self, prefix: &str) -> Result<Watched, KvError> {
+        self.start(prefix, true, None)
+    }
+
+    /// Watch a key (or prefix), first noticing every matching key changed
+    /// after revision `after`.
+    ///
+    /// # Errors
+    ///
+    /// [`KvError::TooOld`] if the bucket cannot replay from `after` (any
+    /// key in it was deleted since); as for [`Bucket::watch`] otherwise.
+    pub fn resume(&mut self, key: &str, prefix: bool, after: u64) -> Result<Watched, KvError> {
+        self.start(key, prefix, Some(after))
     }
 }
 

@@ -38,6 +38,7 @@ use crate::output::{CapturedOutput, Tags};
 use crate::probe;
 use crate::runtime::RuntimeInner;
 use crate::services::HostState;
+use crate::services::keyvalue::{KeyValue, WATCH_EVENT};
 use crate::services::logging::{self, LogRate, Logging};
 use crate::spec::InstanceSpec;
 use crate::state::{InstanceState, ProcessContext};
@@ -192,6 +193,9 @@ async fn answer(state: &mut InstanceState, request: Request) -> Result<Answer, S
                 .await
                 .map_err(e)?;
             Answer::Unit
+        }
+        Request::Kv(request) => {
+            Answer::Kv(HostState::<KeyValue>::service(state).native(request).await)
         }
     })
 }
@@ -567,7 +571,14 @@ impl InstanceTask {
                 if let Info::Timer { reference, .. } = &info {
                     state.timers.fired(*reference);
                 }
-                match convert::info(info) {
+                // A watch notice goes with the key's value (spike S31).
+                let notice = match &info {
+                    Info::HostEvent { name, msg } if name == WATCH_EVENT => {
+                        HostState::<KeyValue>::service(state).native_notice(msg)
+                    }
+                    _ => None,
+                };
+                match notice.or_else(|| convert::info(info)) {
                     Some(info) => {
                         port.send(&ToApp::Info { info });
                         self.native_done(state, port, deadline).await

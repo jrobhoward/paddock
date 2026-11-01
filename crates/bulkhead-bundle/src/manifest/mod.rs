@@ -61,6 +61,10 @@ use validate::Validator;
 /// Name of the `.rbp` manifest extension that holds the [`AppSpec`].
 pub const SECTION: &str = "appserver";
 
+/// The capabilities a `native-process` app may declare: the services the
+/// node answers over the native protocol.
+pub const NATIVE_CAPABILITIES: &[Capability] = &[Capability::Logging, Capability::KeyValue];
+
 /// The `appserver` section of a bundle manifest: everything the server needs
 /// to place, limit, wire and upgrade an app. Every section is optional and
 /// has defaults; unknown fields are rejected.
@@ -192,10 +196,10 @@ impl AppSpec {
         self.check_native(v);
     }
 
-    /// What a `native-process` app may not have: any capability but
-    /// `wasi:logging` (no network, filesystem or other service yet),
-    /// listeners, passivation and snapshot upgrades; and the `native`
-    /// section on any other kind.
+    /// What a `native-process` app may not have: any capability outside
+    /// [`NATIVE_CAPABILITIES`] (no network, filesystem or other service
+    /// yet), listeners, passivation and snapshot upgrades; and the
+    /// `native` section on any other kind.
     fn check_native(&self, v: &mut Validator) {
         if self.kind != Kind::NativeProcess {
             if self.native.is_some() {
@@ -203,18 +207,23 @@ impl AppSpec {
             }
             return;
         }
+        let only = format!(
+            "a native-process app may declare only {}",
+            NATIVE_CAPABILITIES
+                .iter()
+                .map(|c| c.key())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         for c in self.capabilities.declared() {
-            if c != Capability::Logging {
-                v.error_at(
-                    format!("capabilities.{}", c.key()),
-                    "a native-process app may declare only wasi:logging",
-                );
+            if !NATIVE_CAPABILITIES.contains(&c) {
+                v.error_at(format!("capabilities.{}", c.key()), only.clone());
             }
         }
         for package in self.capabilities.extensions.keys() {
             v.error_at(
                 format!("capabilities.extensions.\"{package}\""),
-                "a native-process app may declare only wasi:logging",
+                only.clone(),
             );
         }
         if !self.listeners.is_empty() {

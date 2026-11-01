@@ -1444,7 +1444,7 @@ async fn native____executable_deployed____answers_and_network_refused() {
     assert_eq!(echo, "native");
     assert!(read.contains("Permission denied"), "{read}");
     assert!(
-        format!("{sockets:?}").contains("a native-process app may declare only wasi:logging"),
+        format!("{sockets:?}").contains("a native-process app may declare only"),
         "{sockets:?}"
     );
 }

@@ -12,14 +12,15 @@
 //! during a request as well.
 //!
 //! The types mirror `bulkhead:runtime`'s (pids, envelopes, exit reasons,
-//! info, call errors).
+//! info, call errors). Version 2 added the keyvalue service
+//! ([`Request::Kv`], [`Info::KvChanged`]).
 
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -61,6 +62,23 @@ impl Envelope {
             schema: None,
             body: body.into(),
         }
+    }
+}
+
+/// Bytes, encoded as a CBOR byte string wherever they sit (in an
+/// `Option`, a list or a pair).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Bytes(#[serde(with = "bytes")] pub Vec<u8>);
+
+impl From<Vec<u8>> for Bytes {
+    fn from(v: Vec<u8>) -> Self {
+        Self(v)
+    }
+}
+
+impl From<&[u8]> for Bytes {
+    fn from(v: &[u8]) -> Self {
+        Self(v.to_vec())
     }
 }
 
@@ -109,6 +127,24 @@ pub enum Info {
         reference: u64,
         /// The message it was given.
         msg: Envelope,
+    },
+    /// A watched key changed ([`KvRequest::Watch`]), with what it holds
+    /// now. Changes to one key are conflated while their notice waits, so
+    /// a slow instance misses intermediate values but always gets the
+    /// latest.
+    KvChanged {
+        /// The watch's id.
+        watch: u64,
+        /// The bucket, as the app named it.
+        bucket: String,
+        /// The key.
+        key: String,
+        /// Its value and the revision it was written at, read when the
+        /// notice was delivered; `None` if it was deleted.
+        entry: Option<(Bytes, u64)>,
+        /// The bucket's revision the notice reported; at least the
+        /// change that raised it.
+        revision: u64,
     },
     /// A named event from the node (`log-level`, and others an app may
     /// ignore).
@@ -309,6 +345,221 @@ pub enum Request {
         /// The reason.
         reason: ExitReason,
     },
+    /// A keyvalue operation (`wasi:keyvalue` and `bulkhead:watch`):
+    /// [`Answer::Kv`].
+    Kv(KvRequest),
+}
+
+/// A keyvalue operation on a bucket the manifest lists, named on each
+/// request. Its answer, on success, is the [`KvAnswer`] each names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KvRequest {
+    /// A key's value: [`KvAnswer::Value`].
+    Get {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+    },
+    /// Set a key: [`KvAnswer::Unit`].
+    Set {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+        /// Its new value.
+        value: Bytes,
+    },
+    /// Delete a key: [`KvAnswer::Unit`].
+    Delete {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+    },
+    /// Whether a key exists: [`KvAnswer::Exists`].
+    Exists {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+    },
+    /// A page of the bucket's keys: [`KvAnswer::Keys`].
+    Keys {
+        /// The bucket.
+        bucket: String,
+        /// The previous page's cursor; `None` for the first page.
+        cursor: Option<u64>,
+    },
+    /// Add `delta` to a counter: [`KvAnswer::Count`].
+    Increment {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+        /// How much to add.
+        delta: u64,
+    },
+    /// Several keys' values in one request: [`KvAnswer::Values`].
+    GetMany {
+        /// The bucket.
+        bucket: String,
+        /// The keys.
+        keys: Vec<String>,
+    },
+    /// Set several keys as one change: [`KvAnswer::Unit`].
+    SetMany {
+        /// The bucket.
+        bucket: String,
+        /// Keys and their values.
+        entries: Vec<(String, Bytes)>,
+    },
+    /// Delete several keys as one change: [`KvAnswer::Unit`].
+    DeleteMany {
+        /// The bucket.
+        bucket: String,
+        /// The keys.
+        keys: Vec<String>,
+    },
+    /// A key's value and revision: [`KvAnswer::Entry`].
+    Entry {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+        /// Served by a replicated bucket's primary, reflecting every write
+        /// committed before the request.
+        linearizable: bool,
+    },
+    /// The bucket's revision: [`KvAnswer::Revision`].
+    Revision {
+        /// The bucket.
+        bucket: String,
+    },
+    /// One page of the bucket's entries in key order: [`KvAnswer::Page`].
+    Scan {
+        /// The bucket.
+        bucket: String,
+        /// Which entries.
+        query: ScanQuery,
+    },
+    /// Set a key if its revision is `expected` (`None`: only if absent):
+    /// [`KvAnswer::Revision`], the new one.
+    CompareAndSwap {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+        /// The revision it must have.
+        expected: Option<u64>,
+        /// Its new value.
+        value: Bytes,
+    },
+    /// Delete a key if its revision is `expected`: [`KvAnswer::Revision`],
+    /// the bucket's new one.
+    CompareAndDelete {
+        /// The bucket.
+        bucket: String,
+        /// The key.
+        key: String,
+        /// The revision it must have.
+        expected: u64,
+    },
+    /// Watch a key, or every key starting with it: [`KvAnswer::Started`].
+    /// Changes arrive as [`Info::KvChanged`].
+    Watch {
+        /// The bucket.
+        bucket: String,
+        /// The key or prefix.
+        key: String,
+        /// Every key starting with `key`.
+        prefix: bool,
+        /// First notice every matching key changed after this revision,
+        /// or fail with [`KvError::TooOld`].
+        after: Option<u64>,
+    },
+    /// End a watch: [`KvAnswer::Unit`].
+    Unwatch(u64),
+}
+
+/// What a scan reads: as `bulkhead:watch`'s `scan-query`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ScanQuery {
+    /// Only keys starting with this.
+    pub prefix: Option<String>,
+    /// Only keys from this one on (inclusive).
+    pub start: Option<String>,
+    /// Only keys before this one (exclusive).
+    pub end: Option<String>,
+    /// Downward, from the last key in range.
+    pub reverse: bool,
+    /// At most this many entries; 0 is the node's page size (1,000).
+    pub limit: u32,
+    /// The previous page's `next`.
+    pub cursor: Option<String>,
+}
+
+/// One page of a scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanPage {
+    /// Key, value and revision, in key order (downward with `reverse`).
+    pub entries: Vec<(String, Bytes, u64)>,
+    /// Where the next page starts; `None` when the scan is complete.
+    pub next: Option<String>,
+    /// The bucket's revision when the page was read: watching from it
+    /// sees every change the page could not.
+    pub revision: u64,
+}
+
+/// A successful keyvalue operation's result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KvAnswer {
+    /// Done; nothing to return.
+    Unit,
+    /// A value, if the key exists.
+    Value(Option<Bytes>),
+    /// Whether the key exists.
+    Exists(bool),
+    /// A page of keys, and the cursor of the next page.
+    Keys(Vec<String>, Option<u64>),
+    /// A counter's new value.
+    Count(u64),
+    /// Each key's value, in the order asked; `None` for a missing key.
+    Values(Vec<Option<Bytes>>),
+    /// A value and its revision, if the key exists.
+    Entry(Option<(Bytes, u64)>),
+    /// A revision.
+    Revision(u64),
+    /// A page of a scan.
+    Page(ScanPage),
+    /// A started watch: its id and the bucket's revision then.
+    Started {
+        /// For [`KvRequest::Unwatch`] and in its notices.
+        id: u64,
+        /// The bucket's revision when the watch started.
+        revision: u64,
+    },
+}
+
+/// Why a keyvalue operation failed: as `bulkhead:watch`'s `error`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KvError {
+    /// Not granted, not in the manifest, or a write to a read-only shared
+    /// bucket.
+    AccessDenied,
+    /// A shared bucket the node does not configure.
+    NoSuchBucket,
+    /// Over the instance's `limits.watches_max`.
+    LimitReached,
+    /// The bucket cannot replay changes after that revision; carries its
+    /// current one.
+    TooOld(u64),
+    /// Compare-and-swap found another revision (`None`: the key is absent).
+    Conflict(Option<u64>),
+    /// A replicated bucket with no primary that can take the operation.
+    Unavailable,
+    /// Storage failed, or a quota was exceeded.
+    Other(String),
 }
 
 /// The node's answer to a [`Request`].
@@ -326,6 +577,8 @@ pub enum Answer {
     Called(Result<Envelope, CallError>),
     /// A registration's outcome.
     Registered(Result<(), RegisterError>),
+    /// A keyvalue operation's outcome.
+    Kv(Result<KvAnswer, KvError>),
 }
 
 /// A frame that could not be read.

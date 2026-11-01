@@ -20,6 +20,10 @@ fn pid() -> Pid {
 #[case(ToApp::Info { info: Info::Down { reference: 3, pid: pid(), reason: ExitReason::Crashed("boom".into()) } })]
 #[case(ToApp::Answer { id: 4, answer: Answer::Called(Err(CallError::Exited(ExitReason::Timeout))) })]
 #[case(ToApp::Ping { id: 5 })]
+#[case(ToApp::Info { info: Info::KvChanged { watch: 2, bucket: "b".into(), key: "k".into(), entry: Some((Bytes(vec![0, 255]), 7)), revision: 7 } })]
+#[case(ToApp::Answer { id: 6, answer: Answer::Kv(Ok(KvAnswer::Values(vec![Some(Bytes(vec![1])), None]))) })]
+#[case(ToApp::Answer { id: 7, answer: Answer::Kv(Ok(KvAnswer::Page(ScanPage { entries: vec![("k".into(), Bytes(vec![2]), 3)], next: Some("l".into()), revision: 3 }))) })]
+#[case(ToApp::Answer { id: 8, answer: Answer::Kv(Err(KvError::Conflict(Some(4)))) })]
 fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
     let bytes = encode(&frame);
 
@@ -34,6 +38,8 @@ fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
 #[case(FromApp::Request { id: 1, request: Request::SendAfter { ms: 10, msg: Envelope::new("x", vec![0, 255]) } })]
 #[case(FromApp::Request { id: 2, request: Request::Exit { to: pid(), reason: ExitReason::Killed } })]
 #[case(FromApp::Log { level: Level::Warn, message: "careful".into() })]
+#[case(FromApp::Request { id: 3, request: Request::Kv(KvRequest::SetMany { bucket: "b".into(), entries: vec![("k".into(), Bytes(vec![0, 255]))] }) })]
+#[case(FromApp::Request { id: 4, request: Request::Kv(KvRequest::Scan { bucket: "b".into(), query: ScanQuery { prefix: Some("p".into()), limit: 10, ..ScanQuery::default() } }) })]
 fn encode____from_app_frames____read_back_unchanged(#[case] frame: FromApp) {
     let bytes = encode(&frame);
 
@@ -50,6 +56,16 @@ fn encode____envelope_body____cbor_byte_string_not_array() {
 
     // As an array, each byte over 23 would take two: over 200 in all.
     assert!(bytes.len() < 4 + 100 + 50, "{} bytes", bytes.len());
+}
+
+#[test]
+fn encode____bytes_in_a_list____cbor_byte_strings_not_arrays() {
+    let value = KvAnswer::Values(vec![Some(Bytes(vec![1, 2, 3]))]);
+
+    let cbor = encode(&value);
+
+    // A byte string of three: 0x43 then the bytes.
+    assert!(cbor.windows(4).any(|w| w == [0x43, 1, 2, 3]), "{cbor:x?}");
 }
 
 #[test]
