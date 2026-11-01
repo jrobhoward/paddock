@@ -386,6 +386,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulkhead-fixture-msgbench"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk",
+]
+
+[[package]]
 name = "bulkhead-fixture-native"
 version = "0.3.0"
 dependencies = [

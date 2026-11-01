@@ -29,7 +29,9 @@ BENCHES=(
   "ingress|HTTP ingress throughput: requests as calls to a pool, the ingress with a guest doing no CBOR, S15's bare shape, and an HTTP handler's instance per request|R/examples/ingress_throughput 4 4; R/examples/ingress_throughput 4 4 chaos; R/examples/ingress_throughput 4 4 s15; R/examples/ingress_throughput 4 4 handler"
   "batch|points per second between apps, one cast each or batched|R/examples/batch_cost 1; R/examples/batch_cost 4"
   "egress|outgoing HTTP from a guest through the pool|R/examples/egress_cost 1; R/examples/egress_cost 4; R/examples/egress_cost 4 nopool"
-  "cluster|calls, casts and payloads between two nodes over QUIC, and bare quinn's floor|R/examples/cluster_throughput 4; R/examples/quic_floor 4"
+  "cluster|calls, casts and payloads between two nodes over QUIC, from the host and from instances (components), and bare quinn's floor|R/examples/cluster_throughput 4; R/examples/quic_floor 4"
+  "cluster-native|cluster with native programs for instances|CLUSTER_NATIVE=1 R/examples/cluster_throughput 4"
+  "cluster-pair|cluster with the two nodes as two processes on this machine, components then native programs|scripts/cluster_pair.sh 4; CLUSTER_NATIVE=1 scripts/cluster_pair.sh 4"
   "replication|writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket|R/examples/replication_cost 4"
   "passivation|wake cost, instances per Store slot, random calls|R/examples/passivation_cost 4 1000 100000; R/examples/passivation_cost 4 100 2000; R/examples/passivation_cost 4 1000 1000 off"
   "modbus|Modbus points through the scada pool|R/examples/modbus_load 16 100 10 4 4; R/examples/modbus_load 64 125 1 4 4; R/examples/modbus_load 64 125 1 8 8"
@@ -84,7 +86,7 @@ fi
 
 echo "bench: building (release)"
 cargo build -q --release --target wasm32-wasip2 -p bulkhead-fixture-chaos -p bulkhead-fixture-workload \
-  -p bulkhead-fixture-kvbench --target-dir target/fixtures
+  -p bulkhead-fixture-kvbench -p bulkhead-fixture-msgbench --target-dir target/fixtures
 # app_cost's core module: bulkhead-workload with no imports.
 app_core=0
 if wanted app; then
@@ -106,6 +108,7 @@ cargo build -q --release -p bulkhead-host --examples
 cargo build -q --release -p bulkhead-native --bin bulkhead-runner
 cargo build -q --release -p bulkhead-fixture-native
 cargo build -q --release -p bulkhead-fixture-kvbench --features native --bin bulkhead-fixture-kvbench
+cargo build -q --release -p bulkhead-fixture-msgbench --features native --bin bulkhead-fixture-msgbench
 cargo build -q --release -p bulkhead --example admin_latency
 cargo build -q --release -p bulkhead-modbus --example modbus_load
 if wanted s14 || wanted s15; then
@@ -150,6 +153,8 @@ for b in "${BENCHES[@]}"; do
   for cmd in "${cmds[@]}"; do
     cmd=$(echo "$cmd" | sed 's/^ *//')
     shown=${cmd/#R\//target\/release\/}
+    # After a variable assignment too (`KV_NATIVE=1 R/...`).
+    shown=${shown// R\// target\/release\/}
     shown=${shown/#S\//spikes\/target\/release\/}
     run=${shown}
     dir=$ROOT

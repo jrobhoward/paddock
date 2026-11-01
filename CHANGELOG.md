@@ -30,6 +30,14 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `cluster_throughput` measures calls and casts between instances as
+  apps make them, beside the host's, and runs native apps too
+  (`CLUSTER_NATIVE=1`); its fixture is now `bulkhead-fixture-msgbench`,
+  one SDK source built as a component and as a native program, in place
+  of the chaos fixture. `scripts/cluster_pair.sh` runs its two nodes as
+  two processes on one machine; `scripts/bench.sh` gains `cluster-native`
+  and `cluster-pair`, and expands `R/` after a variable assignment, which
+  `kv-rc` needed too (ROADMAP C2).
 - `kv_cost` runs its keyvalue loops in a native app too (`KV_NATIVE=1`,
   `scripts/bench.sh kv-native`): `bulkhead-fixture-kvbench` builds as a
   native program from its source (feature `native`), and its `fill`

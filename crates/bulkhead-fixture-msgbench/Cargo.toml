@@ -1,0 +1,29 @@
+[package]
+name = "bulkhead-fixture-msgbench"
+version.workspace = true
+description = "Test fixture: calls and casts timed inside an app, for the cluster_throughput benchmark, as a component and a native program"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The same app as a native program, for cluster_throughput's native mode
+# (`CLUSTER_NATIVE=1`).
+[[bin]]
+name = "bulkhead-fixture-msgbench"
+path = "src/main.rs"
+required-features = ["native"]
+
+[features]
+native = []
+
+[dependencies]
+bulkhead-sdk = { workspace = true }
+
+[lints]
+workspace = true

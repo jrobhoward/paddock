@@ -10,6 +10,7 @@ members = [
     "crates/bulkhead-fixture-echo",
     "crates/bulkhead-fixture-http",
     "crates/bulkhead-fixture-kvbench",
+    "crates/bulkhead-fixture-msgbench",
     "crates/bulkhead-fixture-native",
     "crates/bulkhead-fixture-net",
     "crates/bulkhead-fixture-plugin",
