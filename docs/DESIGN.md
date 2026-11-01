@@ -1,17 +1,19 @@
 # Bulkhead: Design
 
-2026-10-05 · kept current through Phase 3 (reviewed against the code 2026-10-25)
+2026-10-05 · kept current through Phase 3 (reviewed against the code 2026-10-25) and Phase 5's exit (native apps, 2026-11-01)
 
 
 ## Summary
 
-Bulkhead is a clustered application server that hosts sandboxed WebAssembly apps with OTP-style semantics: mailboxes, call/cast, links, monitors, supervisors, and hot upgrade. Nodes connect over QUIC with mutual TLS. Apps are WebAssembly components that see only the capabilities their manifest declares and an operator grants. rustbridge supplies the bundle format, signing, and a native-plugin path.
+Bulkhead is a clustered application server that runs apps as native OS processes with OTP-style semantics: mailboxes, call/cast, links, monitors, supervisors, and hot upgrade. Each instance of an app is one long-lived process, restricted by `bulkhead-runner` before the app's code runs, and talks to its node over a pipe; the node keeps the mailboxes, supervision, registry, storage and policy. Nodes connect over QUIC with mutual TLS. Apps see only the capabilities their manifest declares and an operator grants. rustbridge supplies the bundle format and signing.
 
-The model is coarse-grained: tens to a few thousand app instances per node, not millions of processes. That choice removes Wasm's main weakness (per-instance memory and address-space cost) and keeps BEAM's main strength (fault isolation and supervision).
+Bulkhead is a fork of Paddock (2026-10-31), which runs apps as sandboxed WebAssembly components. Components still run beside native apps until native apps reach parity, so most of this document describes both; where it describes wasmtime, the WIT contract or guest code, it describes components, which go last (ROADMAP Z9). "Instance model" below says why a process per instance.
+
+The model is coarse-grained: tens to a few thousand long-lived instances per node, not millions of processes spawned and discarded. That keeps BEAM's main strength (fault isolation and supervision) with the OS as the isolation boundary, and suits apps that pass messages and reach a database efficiently over a long life.
 
 ## Goals
 
-- Host Wasm apps written in any Component Model language, Rust first.
+- Run apps as native processes, one per instance, written with an SDK (Rust first); run WebAssembly components until native apps reach parity.
 - Give each app enforced limits on memory, CPU time, filesystem, and network.
 - Let apps send each other messages with call (request/reply with timeout) and cast (fire and forget), locally or across nodes.
 - Detect crashed or unresponsive apps, restart them under supervision, and notify linked and monitoring apps.
@@ -44,19 +46,19 @@ Bulkhead takes the failure model from Erlang/OTP, the deployment model from JBos
 
 ## Architecture
 
-Each node is one OS process: a host runtime in Rust that runs many sandboxed Wasm app instances and joins a QUIC mesh with other nodes. Apps reach the outside world only through WIT imports the operator granted.
+Each node is one OS process: a host runtime in Rust that runs many app instances and joins a QUIC mesh with other nodes. A native instance is a process of its own, started through `bulkhead-runner`; a component instance runs inside the node in wasmtime. Either reaches the outside world only through the node, and only as the operator granted: a native app by requests on its pipe, a component through WIT imports.
 
 ```mermaid
 flowchart TB
     subgraph A["Node A"]
-        orders["orders<br/>Wasm component<br/>own memory, mailbox"]
-        billing["billing<br/>Wasm component<br/>own memory, mailbox"]
-        web["web<br/>Wasm component<br/>own memory, mailbox"]
-        host["Host runtime (wasmtime, tokio)<br/>mailboxes, timers · supervision · registry<br/>term storage · logging, config · capability policy"]
+        orders["orders<br/>native process per instance<br/>Landlock, seccomp, cgroup"]
+        billing["billing<br/>native process per instance<br/>Landlock, seccomp, cgroup"]
+        web["web<br/>Wasm component<br/>own memory"]
+        host["Host runtime (tokio; wasmtime for components)<br/>mailboxes, timers · supervision · registry<br/>term storage · logging, config · capability policy"]
         dist["Distribution: QUIC + mTLS, heartbeats, registry sync"]
-        orders --> host
-        billing -->|"WIT imports, granted only"| host
-        web --> host
+        orders -->|"frames on its pipes, granted only"| host
+        billing --> host
+        web -->|"WIT imports, granted only"| host
         host --- dist
     end
     dist <--> B["Node B"]
@@ -64,26 +66,36 @@ flowchart TB
     B <--> C
 ```
 
-Apps sit inside the sandbox; mailboxes, supervision, registry, storage, logging and policy all live in the trusted host. The distribution layer carries messages, links and registry updates between nodes. Native rustbridge plugins run as separate OS processes that the host supervises like any instance.
+Apps sit inside their fence (a restricted process, or wasmtime's sandbox); mailboxes, supervision, registry, storage, logging and policy all live in the trusted host. The distribution layer carries messages, links and registry updates between nodes.
+
+## Instance model
+
+Decided 2026-10-31 with Phase 5, from spike S30: **a process per instance**, started when the instance starts and kept for its life.
+
+- **What it is.** The node spawns `bulkhead-runner`, which restricts itself (SECURITY.md, "Native-process apps") and executes the app's program; the program serves one instance's callbacks, one at a time, over CBOR frames on its stdin and stdout. The instance's pid, mailbox, links, monitors, registered names, timers and supervision stay on the node, as for a component, so a restart is a new process under the same supervisor.
+- **Why.** Bulkhead's aim is long-lived processes with efficient message passing and database access, not Erlang's lightweight processes spawned by the thousand. A process per instance gives each instance the OS's isolation: an abort, a segfault or its memory limit ends that instance only, as a trap ends one component instance, and the SDK's synchronous API keeps its own stack and thread with no scheduler in the app.
+- **What it costs.** About 0.25 to 0.5 MiB per instance once the kernel's share is counted (1.4 to 2.4 MiB on a Raspberry Pi 5, whose glibc gives each malloc arena a 2 MiB huge page) and a few milliseconds to start, against a component's 56 KiB and 77 µs. A call costs about 30 µs on the Pi and a request from the app to the node 11 to 13 µs, against a component's 4.2 to 4.5 µs and about 1.2 µs for a bucket read (BASELINE.md, 2026-10-31). The pipes are not the cost (a round trip 11 to 20 µs); the hand-offs between threads and tasks are, which Z1 cut from six wake-ups per call to two. The app's own code runs at native speed, where a component's runs at 1.4 to 2.6 times native time.
+- **Not chosen.** A process per app, running many instances, starts one in 30 to 110 µs and holds it in 5 to 55 KiB, but an abort, a segfault or the process's memory limit ends every instance in it, and each instance still needs a stack of its own for the synchronous API: on shared workers, a call to an instance on the same worker never returns. It stays an option for density later. A process per connection or per request (as HTTP handlers and connection handlers are for components) does not fit the cost of a start.
+- **Consequences.** Services the node owns go over the protocol, batched where they are called often (spike S31): a native app reads many keys at once with `get_many` or a scan. Files, clocks and random are the OS's. Sockets, when they come (ROADMAP Z8), are opened by the node and passed over a Unix socket, since Landlock fences TCP by port only. Read-heavy bucket data can be a snapshot the node seals in a memfd and every instance maps read-only (S31: a read in 21 to 69 ns).
 
 ## App model
 
-An app is a WebAssembly component that implements a `gen_server`-style callback world. The host drives it one message at a time, so timeouts, preemption, crash attribution and upgrades all happen between callbacks.
+An app implements a `gen_server`-style set of callbacks: as a native program over `bulkhead-native`'s protocol, or as a WebAssembly component implementing the WIT world below; `bulkhead-sdk` builds either from one source. The host drives it one message at a time, so timeouts, preemption, crash attribution and upgrades all happen between callbacks.
 
 **Terms**
 
 | Term | Meaning | OTP analogue |
 | --- | --- | --- |
-| Bundle | Signed, versioned artifact: manifest plus component(s) | Release package, `.ez` |
+| Bundle | Signed, versioned artifact: manifest plus a native program per platform, or a component | Release package, `.ez` |
 | App | A named, versioned unit described by one manifest | Application (`.app`) |
-| Instance | One running copy of an app's component, with its own Store, memory and mailbox | Process running a `gen_server` |
+| Instance | One running copy of an app, with its own memory and mailbox: a native process, or a component's Store | Process running a `gen_server` |
 | Pid | `{node, instance-id, incarnation}`; incarnation changes on every restart so stale pids never reach a new instance | Pid |
 | Supervisor | Host-side process that owns child specs and restart policy | `supervisor` |
 | Node | One app server process in a cluster | Node |
 
 **Callback, not receive loop.** Lunatic gave each process a blocking `receive()`, which needs async stack switching and makes upgrades hard. Bulkhead uses callbacks: `init`, `handle-call`, `handle-cast`, `handle-info`, `terminate`, and the snapshot pair. The host never interrupts a callback except to kill it.
 
-**Concurrency inside an instance.** An instance is single-threaded. While it waits on an outbound `call`, the host suspends it (wasmtime async) without blocking a host thread. It does not process other messages meanwhile, matching `gen_server`. Parallelism comes from running a pool of instances under one supervisor.
+**Concurrency inside an instance.** An instance handles one callback at a time. While a component waits on an outbound `call`, the host suspends it (wasmtime async) without blocking a host thread; a native instance's callback thread waits on its pipe for the answer. It does not process other messages meanwhile, matching `gen_server`. Parallelism comes from running a pool of instances under one supervisor.
 
 **Deferred replies.** `handle-call` may return `noreply` and answer later with `reply(ref, msg)`, so an app can serve a call after its own outbound call finishes.
 
@@ -164,7 +176,7 @@ A capability key covers a whole WIT package (`wasi:keyvalue` covers `store`, `at
 
 ## Isolation and resource limits
 
-Every instance gets its own wasmtime `Store`, linear memory and limits, and sees no host resource it was not granted. A violation traps the instance, and the host treats a trap as a crash.
+Every component instance gets its own wasmtime `Store`, linear memory and limits, and sees no host resource it was not granted. A violation traps the instance, and the host treats a trap as a crash. Where the table names wasmtime or WASI, it describes components: a native instance's memory, CPU, filesystem and network limits come from the OS ("Native-process apps" below, and SECURITY.md's comparison), while mailboxes, links, storage, host calls and host objects work the same for both.
 
 | Resource | Mechanism | Notes |
 | --- | --- | --- |
@@ -182,7 +194,7 @@ Every instance gets its own wasmtime `Store`, linear memory and limits, and sees
 
 **Address space.** Wasm32 memories reserve large guard regions (several GB of virtual space each) to avoid bounds checks. At thousands of instances per node this is fine. Configure the pooling allocator's guard size and the max instance count together, and alert near the limit.
 
-**Native plugins.** A rustbridge `.so` can't be sandboxed or unloaded safely in-process. Run it as a separate OS process (`native-process` kind) and talk to it over a pipe with the same envelope protocol, as Erlang does with ports. Limits then come from the OS: cgroups for memory and CPU, seccomp or Landlock for syscalls and files, and kill for timeouts.
+**Native apps.** Native code can't be sandboxed or unloaded safely in the node's process. It runs as a separate OS process per instance (`native-process` kind), talking to the node over a pipe, as Erlang does with ports. Limits then come from the OS: a cgroup for memory and process count, Landlock for files, a seccomp filter for signals, tracing and sockets, and a kill for deadlines. There is no CPU limit yet.
 
 ## Failure handling
 
@@ -198,10 +210,12 @@ The host detects every failure, converts it to an exit reason, and propagates it
 | `init` fails or times out | Return value or init timeout | `crashed(...)`; supervisor counts it as a restart |
 | Health check fails N times in a row (manifest `health`: a `bulkhead/health` call, answered by `App::health` in the SDK) | Host timer | `crashed("unhealthy")` |
 | Mailbox full | `DROPPED` in `bulkhead ps`, `bulkhead_mailbox_depth` and `bulkhead_mailbox_dropped_total` | None: casts are dropped and calls refused, and the instance runs on (an alarm or a kill policy is not built) |
-| Native-process plugin exits or stops answering pings | Pipe EOF, ping timeout | `crashed(...)` or `timeout` |
+| Native process panics, aborts, exits or is killed by a signal | A `Failed` frame with the panic's message, or the process's exit status | `crashed("panic: ...")`, `crashed("killed by signal N")` or `crashed("exited with status N")` |
+| Native process over `memory_max` | The cgroup's OOM kill (or a failed allocation under `RLIMIT_DATA`, which aborts) | `crashed("memory_limit")` (or a signal) |
+| Native callback runs too long, or an idle process misses a ping | The instance's deadline timer, the ping timer | `timeout`, by a kill |
 | Remote node lost | QUIC idle timeout or connection close | `noconnection` for every remote link and monitor through that node |
 
-This is stronger than BEAM in one way: BEAM cannot stop a NIF stuck in a loop, while epoch interruption always gets control back.
+This is stronger than BEAM in one way: BEAM cannot stop a NIF stuck in a loop, while epoch interruption, or a kill of a native instance's process, always gets control back.
 
 **Links and monitors**
 
@@ -285,10 +299,10 @@ An upgrade swaps an instance's component between messages, carrying state throug
 
 **Native-process apps** (decided 2026-10-23 after spike S19). A native program runs as a port: a process the node spawns and talks to over stdin and stdout, owned and supervised like an instance, rather than a process joining as a cluster node, since only a spawned process can be limited and stopped by the node and a member's stamps are trusted.
 - **One launcher.** `bulkhead-runner` (`crates/bulkhead-native`) is the only thing the node executes: it restricts itself (non-dumpable, Landlock, a seccomp filter) while it has one thread, then loads a rustbridge plugin (`native.program = "library"`) or executes the bundle's program (`"executable"`). Landlock covers only the calling thread and those it starts until Linux 7.1, so the order matters; seccomp, not Landlock scopes, stops signals, so Linux 6.8 works.
-- **Two shapes.** rustbridge's FFI has no call into the host, so a plugin answers calls and casts only; an executable links `bulkhead-native`'s app API and gets the process functions, answered by the same host code as a component's imports.
-- **Protocol.** CBOR frames with a length prefix (`bulkhead_native::protocol`, version 1): the callbacks one at a time, the app's requests during a callback, logs at any time, pings while the instance is idle. The app's callback thread reads the frames itself and the node's instance task writes and reads the pipes itself, so a call wakes no thread or task in between (Z1, 2026-10-31). The types mirror `bulkhead:runtime`'s.
-- **Limits.** A callback's deadline is wall time less time answering requests, then a kill; pings while idle; `memory_max` as a delegated cgroup's `memory.max` or `RLIMIT_DATA`. No snapshots, so no passivation, snapshot upgrades or moves.
-- **Capabilities.** `wasi:logging` only for now; the network, the filesystem and other services are refused at deploy (Landlock restricts TCP by port, not address, so `wasi:sockets` rules could not be enforced).
+- **Two shapes.** rustbridge's FFI has no call into the host, so a plugin answers calls and casts only; an executable links `bulkhead-native`'s app API, directly or through `bulkhead-sdk` (Z3: `app!` generates `bulkhead_main()` on Unix, and the SDK's functions go over the protocol there), and gets the process functions and services, answered by the same host code as a component's imports.
+- **Protocol.** CBOR frames with a length prefix (`bulkhead_native::protocol`, version 2): the callbacks one at a time, the app's requests during a callback (the process functions and services), metric updates in one unanswered frame per callback, logs at any time, pings while the instance is idle. The app's callback thread reads the frames itself and the node's instance task writes and reads the pipes itself, so a call wakes no thread or task in between (Z1, 2026-10-31). Frames stay on pipes: a socketpair cost a call 40% more (BASELINE.md). The types mirror `bulkhead:runtime`'s.
+- **Limits.** A callback's deadline is wall time less time answering requests, then a kill; pings while idle; `memory_max` as a delegated cgroup's `memory.max` or `RLIMIT_DATA`. A singleton's process is killed when the node's lease ends, idle or not, since it may run threads between callbacks. No snapshots yet (ROADMAP Z7), so no passivation, snapshot upgrades or moves.
+- **Capabilities.** Logging, keyvalue with watches, process groups, config, secrets, metrics and HTTP routes (each request a call to the app's pool), each request answered by the code a component's import runs, on the same checks (Z2, Z4). The network, the filesystem, SQL, listeners and extensions are refused at deploy until Z8; Landlock restricts TCP by port, not address, so sockets will be opened by the node and passed (S31).
 
 **Guest sockets** (decided 2026-10-23). Apps that speak a protocol themselves (MQTT, OPC UA, a database's wire protocol) use `wasi:sockets` under the manifest's rules.
 - **Waiting.** An instance does not block between callbacks on a socket: it hands the host a pollable with `bulkhead:io/ready.notify` and a tag, and the host polls the instance's pollables beside its mailbox while it waits, delivering the host event `io-ready` once one is ready (Erlang's `{active, once}`). The guest reads without blocking and asks again. Notices are one-shot so a busy socket does not flood the mailbox; they are taken ahead of the mailbox. `bulkhead:io` is a package of its own because it uses `wasi:io` types, which `bulkhead:runtime` excludes, and is granted to every app, since it gives no access the pollable did not.
@@ -308,7 +322,7 @@ An upgrade swaps an instance's component between messages, carrying state throug
 - `#[derive(Snapshot)]` with `#[snapshot(version = N, migrate = path)]` writes state as CBOR `[format_version, state]`. Loading an older format hands the raw CBOR value to `migrate`. The snapshot's own format version is independent of the app version, which `load_snapshot` also receives.
 - The bindings live inside the SDK, so app crates carry no WIT. A component still imports only what its code calls: an app that never logs has no `wasi:logging` import.
 
-**Native-process plugins** upgrade with `restart` or `blue-green` only, because their memory can't be snapshotted by the host. A plugin may implement the snapshot messages itself over its pipe.
+**Native-process apps** upgrade with `restart` or `blue-green` only for now, because the host cannot snapshot a process's memory; Z7 brings `save-snapshot` and `load-snapshot` over the protocol, written by the SDK as for a component.
 
 ## Scaling and where code runs
 
@@ -521,7 +535,7 @@ Decided 2026-10-09, from S15's measurements: the host terminates HTTP and delive
 
 ## Security model
 
-Security rests on three hard boundaries: the Wasm sandbox around each app, mutually authenticated TLS between nodes (pinned keys), and signatures on every bundle. Policy narrows what crosses those boundaries; it never substitutes for them.
+Security rests on three hard boundaries: the fence around each app (for a native app, its own process restricted by `bulkhead-runner` with Landlock, seccomp and a cgroup; for a component, wasmtime's sandbox), mutually authenticated TLS between nodes (pinned keys), and signatures on every bundle. Policy narrows what crosses those boundaries; it never substitutes for them.
 
 **Trust levels**
 
@@ -536,7 +550,7 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mutua
 **Deployment checks**
 
 1. Verify the manifest and component signatures against trusted signer keys, plus checksums.
-2. Compare the component's actual WIT imports against `capabilities` in the manifest. An import the manifest doesn't declare fails the deploy.
+2. Compare the component's actual WIT imports against `capabilities` in the manifest. An import the manifest doesn't declare fails the deploy. A native program has no imports to inspect: it declares its capabilities, and each request it makes is checked against the grant when the node answers it.
 3. Intersect with operator policy (for example, "apps from signer X may use HTTP egress to \*.internal only"). Ungranted imports are linked to `access-denied` stubs.
 4. Record the effective grant with the deployment, for audit. An upgrade that asks for more needs explicit approval.
 
@@ -548,7 +562,7 @@ Security rests on three hard boundaries: the Wasm sandbox around each app, mutua
 - Secrets are resolved by the host at the moment of use and never written to the manifest, logs or snapshots.
 - Every grant check, denial, deploy and upgrade is logged to an audit stream.
 
-**Out of scope for now:** multi-tenant isolation strong enough for mutually hostile customers on shared nodes. Wasm gives a good base, but side channels (Spectre-class timing) need further mitigation before that claim. The first target is one organization's apps with mixed trust levels.
+**Out of scope for now:** multi-tenant isolation strong enough for mutually hostile customers on shared nodes. Neither a restricted process nor Wasm is enough on its own: a native app reaches the kernel's interface beyond the seccomp filter's list, and side channels (Spectre-class timing) need further mitigation before that claim. The first target is one organization's apps with mixed trust levels.
 
 ## Operating a node
 
@@ -637,6 +651,8 @@ Bulkhead reuses rustbridge's bundle format, signing, lifecycle and transport, an
 - **S16 (failover): a lease keeps one runner.** A TLA+ model of an HA pair and a witness: with a lease renewed through the partner or the witness (only at the witness's epoch), and promotions granted only once the old primary's lease is gone, no reachable state runs a singleton on two nodes under crashes, restarts, and network, serial, WAN and witness failures. Without the lease, network and serial cut together while both nodes live gives two runners; with a serial line that fails only with a node, the lease is not needed. Each of the four lease guards is needed. Details: `spikes/s16/README.md`.
 - **S20 (replication within the pair): a Raft-shaped log plus a record at the witness.** A TLA+ model of a replicated bucket on the failover pair, on S16's layer: with seven rules (commit on the standby's ack, or alone once the witness records the standby out of date; back to sync before clearing the record; disk before ack; a no-op per epoch; a read barrier and the lease for reads; catch-up by entries or a snapshot, resent on a timeout; a snapshot that keeps the suffix it matches), no committed write is lost or replaced and every linearizable read sees exactly the committed history, with one failure at a time and planned switchovers, exhaustive to about 2.2 billion states. Each rule switched off gives a counterexample, two of them with no failure at all. Writes need no lease; reads do, once three links fail at once. The log's length is a performance choice. The implementation changed two rules for availability, both checked in the model: a promotion clears the record and the new primary starts in sync mode, and an alone primary returns to sync mode while writes continue. Details: `spikes/s20/README.md`.
 - **S19 (ports or nodes for native processes): a port.** A rustbridge plugin run by a runner the node spawns, over stdin and stdout, answers a call in about 37 µs at p50 (a call between nodes over QUIC takes 106 µs, within a node 3.5 µs), reaches about 400,000 calls/s with calls in flight on one thread, starts in 1.9 ms and holds 3.8 MiB; the node sees a crash through the pipe in about 0.3 ms once the runner is non-dumpable (a core dump piped to apport held it for a second). Only a process the node spawns can be limited and stopped by it (Landlock in the runner before the plugin loads, a cgroup with `memory.max` and `pids.max` under a delegated subtree, rlimits, the parent-death signal), and a cluster member's stamps are trusted, so a plugin joined as a node would pass the messaging ACLs on its own word. Gaps: Landlock restricts TCP by port, not address, and before Linux 6.12 cannot stop signals to the node. Details: `spikes/s19/README.md`.
+- **S30 (what an instance is): a process per instance.** About 0.25 to 0.5 MiB once the kernel's share is counted, 0.7 to 1.2 ms to start bare and 5.7 to 14 ms through the runner as it was then, and about 50 µs per call (70 µs through that runner); a process per app starts an instance in 30 to 110 µs and holds it in 5 to 55 KiB, but one abort ends every instance in it and each still needs its own stack. The pipe is not the cost (11 to 20 µs a round trip; a ring in shared memory woken by an eventfd no faster); the hand-offs are. "Instance model" above; details: `spikes/s30/README.md`.
+- **S31 (host services for native apps): over the protocol, batched.** A request costs about 18 to 19 µs before Z1 (about 120 times a component's import), so services go over the protocol batched where called often; read-heavy data can be a sealed memfd snapshot mapped read-only (21 to 31 ns a read on the 16-core machine, 69 ns on the Pi). Landlock fences TCP by port only, so the node opens sockets and passes them over a Unix socket (3 to 20 µs more per connection). Files, clocks and random stay the OS's. Details: `spikes/s31/README.md`.
 - **Interface rule (from S4, S7):** every `bulkhead:*` capability function returns `result<T, error>` where `error` has an `access-denied` case (the name `wasi:keyvalue` and `wasi:sockets` use), so a denied capability is an error value, not a trap. The generic deny stub also accepts `permission-denied` and `access`.
 
 ## WASI 0.2 to 0.3 migration
@@ -692,7 +708,7 @@ Apps will move from WASI 0.2 to 0.3 one at a time, with no cluster-wide cutover.
 
 ## Phases
 
-Phases 1 to 3 are done: a single node, then the platform on one node and a cluster with an HA pair and a witness, then replicated state and releases across the pair. [ROADMAP.md](ROADMAP.md) has each phase's scope and exit, what is left, and what is parked.
+Phases 1 to 3 are done: a single node, then the platform on one node and a cluster with an HA pair and a witness, then replicated state and releases across the pair. Phase 5's exit, native apps, was met on 2026-11-01: the board app built as a native program passes its node tests. [ROADMAP.md](ROADMAP.md) has each phase's scope and exit, what is left, and what is parked.
 
 ## Sources
 

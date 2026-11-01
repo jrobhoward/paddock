@@ -7,8 +7,8 @@ memory, carried through a hot upgrade.
 Each chapter is a script that starts the nodes, prints the commands to
 try, and pauses between steps; it stops everything at the end or on
 Ctrl-C. Run the scripts from the repository root. They need the
-`wasm32-wasip2` target and `curl`, and the first build takes a few
-minutes.
+`wasm32-wasip2` target and `curl` (`BOARD=native` needs no target), and
+the first build takes a few minutes.
 
 ```bash
 examples/tutorial/01-one-node.sh
@@ -18,12 +18,19 @@ examples/tutorial/04-database.sh             # needs Postgres's server programs
 examples/tutorial/05-replicated.sh
 examples/tutorial/06-hot-upgrade.sh
 AUTO=1 examples/tutorial/02-failover.sh    # no pauses: kills node 1 itself
+BOARD=native examples/tutorial/01-one-node.sh   # the board as a native program
 ```
 
 The app is [`examples/board`](../board): one component deployed as two
-apps. `BOARD=go` runs chapters 1, 2, 3 and 5 with the same app written in
-Go ([`examples/board-go`](../board-go), on the Go SDK; needs TinyGo, on
-`PATH` or in `TINYGO`); the commands and replies are the same. `board` serves `GET`, `POST` and `DELETE /board` over the node's HTTP
+apps. `BOARD=native` runs chapters 1, 2, 3 and 5 with the same Rust
+source built as a native program instead (Linux): each instance is a
+process of its own, started through `bulkhead-runner`, which the script
+builds beside `bulkhead`, and each manifest gets `kind = "native-process"`.
+`BOARD=go` runs the same chapters with the app written in Go
+([`examples/board-go`](../board-go), on the Go SDK; needs TinyGo, on
+`PATH` or in `TINYGO`). The commands and replies are the same with each,
+except that the native board's crash is an abort, which the node logs as
+`crashed: killed by signal 6` where the component's is a trap. `board` serves `GET`, `POST` and `DELETE /board` over the node's HTTP
 ingress and keeps the count in the node's `board` bucket, not in its own
 memory; `POST /board/crash` makes it trap. Every reply names the instance
 that answered (`"pid"`, and the `x-bulkhead-pid` header). `board-watch`

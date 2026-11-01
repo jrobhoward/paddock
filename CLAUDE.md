@@ -155,8 +155,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   by the test) and the Go build (the Go cases pass with a note without
   TinyGo, unless `BULKHEAD_REQUIRE_GO=1`). Keep the builds' behaviour the
   same.
-  `examples/tutorial/` is its chapter scripts (`common.sh` shared, `BOARD=go`
-  for the Go build), not a crate. `examples/tally` keeps a
+  `examples/tutorial/` is its chapter scripts (`common.sh` shared,
+  `BOARD=native` for the native build, `BOARD=go` for the Go build), not a
+  crate. `examples/tally` keeps a
   counter in Postgres (`bulkhead:sql`, tutorial chapter 4), run by
   `crates/bulkhead/tests/tally.rs` against a scratch Postgres
   (`crates/bulkhead-host/tests/common/pg.rs`, shared by path).

@@ -10,14 +10,14 @@ Two words have more than one meaning:
 
 ## Apps and instances
 
-- **App:** a deployed WebAssembly component (or a native program) with its manifest, run as one or more instances. Named by the manifest, versioned by semver.
-- **Bundle:** an `.rbp` file (rustbridge's bundle format) holding an app's component, manifest (the `appserver` section), checksums and signature. A node opens only bundles signed by a key in its `trusted_keys`. [MANIFEST.md](MANIFEST.md).
+- **App:** a deployed native program (or a WebAssembly component) with its manifest, run as one or more instances. Named by the manifest, versioned by semver.
+- **Bundle:** an `.rbp` file (rustbridge's bundle format) holding an app's native program for each platform or its component, manifest (the `appserver` section), checksums and signature. A node opens only bundles signed by a key in its `trusted_keys`. [MANIFEST.md](MANIFEST.md).
 - **Manifest:** the app's declaration of what it needs: capabilities, limits, instances, placement, upgrade mode, routes. [MANIFEST.md](MANIFEST.md).
 - **Component:** a WebAssembly component (WASI 0.2) exporting the `bulkhead:runtime/app` world, or the `bulkhead:connection` or `wasi:http/proxy` world for listeners and HTTP handlers.
 - **Guest:** code running inside a component instance, as opposed to the host. "Guest time" is time spent running that code.
 - **Host:** `bulkhead-host`, the runtime that runs guests and implements their imports. "Host time" is time a callback spends waiting in a host function a guest called; it does not count against the callback deadline. Work a host function does without waiting counts with the guest's time.
 - **Instance:** one running copy of an app, with its own pid, mailbox, memory and state; Erlang's process. A component instance runs in a wasmtime Store; a native instance is an OS process.
-- **Native-process app:** an app shipped as a native program (a rustbridge plugin or an executable on `bulkhead-native`'s app API) rather than a component. Each instance is a process started through `bulkhead-runner`, which sandboxes itself first. No snapshots, so no passivation or snapshot upgrades. [ARCHITECTURE.md](ARCHITECTURE.md), "Native-process apps".
+- **Native-process app:** an app shipped as a native program (an executable on `bulkhead-sdk` or `bulkhead-native`'s app API, or a rustbridge plugin) rather than a component: where Bulkhead is going. Each instance is a long-lived process started through `bulkhead-runner`, which sandboxes itself first. No snapshots yet, so no passivation or snapshot upgrades. [DESIGN.md](DESIGN.md), "Instance model"; [ARCHITECTURE.md](ARCHITECTURE.md), "Native-process apps".
 - **Pid:** an instance's address, written `node.serial.incarnation@creation`. The serial stays across restarts; the incarnation grows by one on each restart. [OBSERVABILITY.md](OBSERVABILITY.md).
 - **Incarnation:** the part of a pid counting restarts of one instance, so a message for a crashed incarnation never reaches its replacement.
 - **Pool:** an app's set of instances behind one name. A message to the app picks one, round robin or by a hash of a routing key. During a blue-green upgrade a pool has two sides and a weight.

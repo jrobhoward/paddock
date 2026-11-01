@@ -8,35 +8,46 @@
 > but there is no support, and the project may stop at any time. Use it at
 > your own risk.
 
-> **Fork in progress.** Bulkhead is a fork of Paddock (`../paddock`, commit
-> 657ae61) that will run apps as native OS processes instead of WebAssembly
-> components, and be benchmarked against it. So far only the names have
-> changed; the rest of this README still describes Paddock's design.
+> **A fork in progress.** Bulkhead is a fork of Paddock (`../paddock`,
+> commit 657ae61) that runs apps as native OS processes instead of
+> WebAssembly components. Native apps passed their first exit on
+> 2026-11-01 (the tutorial's board app, built natively, passes its node
+> tests); components still run beside them until native apps reach
+> parity, and then go (`docs/ROADMAP.md`, Z7 to Z9).
 
-Bulkhead is a clustered application server for sandboxed WebAssembly
-components, with Erlang/OTP-style semantics:
+Bulkhead is a clustered application server that runs each app instance as
+a restricted native process, with Erlang/OTP-style semantics:
 
-- **Apps** are WebAssembly components (WASI 0.2) that implement a
-  `gen_server`-style set of callbacks and receive messages one at a time.
+- **Apps** implement a `gen_server`-style set of callbacks and receive
+  messages one at a time. Each instance is one long-lived OS process
+  (Linux), started through `bulkhead-runner`, which fences it with
+  Landlock and seccomp before the app's code runs; it talks to its node
+  over a pipe. Instances are meant to live long and pass messages and
+  reach databases efficiently, not to be spawned by the thousand as
+  Erlang's processes are. With `bulkhead-sdk` the same Rust source also
+  builds as a WebAssembly component (WASI 0.2), which nodes still run.
 - **Messaging** is call (request and reply, with a timeout) and cast (fire and
   forget), locally or across nodes.
 - **Failure handling** uses links, monitors and supervisors. A crashed or
   runaway app is killed and restarted, and linked apps are told.
 - **Hot upgrade** swaps an app's component between messages, carrying state
-  through snapshot functions, and reverts if the new version fails to load it.
+  through snapshot functions, and reverts if the new version fails to load it
+  (native apps upgrade by restart or blue-green until snapshots reach them).
 - **Blue-green upgrades** run both versions side by side and move traffic in
   steps, for apps whose state lives outside the instance.
-- **Isolation**: each app gets its own memory, a CPU deadline per callback,
-  and only the capabilities its manifest declares and the operator grants.
+- **Isolation**: each instance gets its own memory (a process, or a
+  component's Store) with a limit, a deadline per callback, and only the
+  capabilities its manifest declares and the operator grants.
 - **Host services** behind those capabilities: key-value buckets (memory,
   disk, or replicated across a pair), watches, process groups, config,
   secrets, logging, metrics, timers, HTTP ingress and allow-listed HTTP
   egress, Postgres datasources, guest sockets, and a Modbus TCP extension.
-- **Connections**: a connection-handler app serves TCP connections on
-  listeners the node owns, one sandboxed instance per connection, at native
-  throughput (spike S13).
-- **Native-process apps** run a native program or rustbridge plugin as a
-  restricted process per instance (Linux), supervised like any other app.
+  Native apps reach logging, keyvalue with watches, groups, config,
+  secrets, metrics and HTTP routes so far; the rest is components only
+  until it comes to them.
+- **Connections**: a connection-handler component serves TCP connections
+  on listeners the node owns, one sandboxed instance per connection, at
+  native throughput (spike S13).
 - **Distribution** runs over QUIC with mutual TLS, nodes trusting each other
   by pinned public keys (no certificate authority). An HA pair and a witness
   fail over singletons and replicated state, and `bulkhead release` upgrades
@@ -49,8 +60,9 @@ and formats. Phases 1 to 3 are done: a single node (`bulkhead node` deploys
 signed bundles and supervises their instances, and the `bulkhead` CLI manages
 it), clusters with an HA pair and a witness for failover, replicated shared
 buckets, and releases across the pair without downtime. The docs were
-checked against the code for all three on 2026-10-25; `docs/ROADMAP.md` has
-what is left. rustbridge's
+checked against the code for all three on 2026-10-25. Phase 5's exit,
+native apps, was met on 2026-11-01; `docs/DESIGN.md` ("Instance model")
+says why a process per instance, and `docs/ROADMAP.md` has what is left. rustbridge's
 bundle format 1.2 comes from its `experiment/wasm` branch on GitHub until it
 is released.
 
@@ -83,10 +95,13 @@ is released.
 
 ## Building
 
-Rust 1.99.0 or newer. Guest components build for `wasm32-wasip2`:
+Rust 1.99.0 or newer. A node runs native apps through `bulkhead-runner`
+(Linux), by default the one beside the `bulkhead` executable, so build the
+two together. Components build for `wasm32-wasip2`:
 
 ```sh
 cargo test --workspace --all-features
+cargo build --release -p bulkhead -p bulkhead-native   # bulkhead, bulkhead-runner
 rustup target add wasm32-wasip2
 cargo build -p bulkhead-fixture-echo --target wasm32-wasip2 --release
 ```
@@ -144,8 +159,8 @@ set `admin_socket` if `data_dir` is long.
 
 ## Writing an app
 
-Apps are written with `bulkhead-sdk` and built for `wasm32-wasip2`; see
-[`examples/`](examples/): `counter` and `ping-pong` to start, `http-counter`,
+Apps are written with `bulkhead-sdk`, built as a native program or for
+`wasm32-wasip2`; see [`examples/`](examples/): `counter` and `ping-pong` to start, `http-counter`,
 `board` (state in a shared disk bucket), `ledger` (a replicated bucket),
 `tally` (Postgres), `line-server` (a connection handler), `greeter` (a host
 extension built into a node) and `scada`, the reference app.
@@ -173,7 +188,8 @@ bulkhead_sdk::app!(Counter);
 ```
 
 The app's `bulkhead.toml` holds its name, version and `appserver` section
-(limits, capabilities, upgrade mode). To build, key and bundle it:
+(limits, capabilities, upgrade mode). To build, key and bundle it as a
+component:
 
 ```sh
 cargo build -p example-counter --target wasm32-wasip2 --release
@@ -181,6 +197,18 @@ bulkhead keygen signer                   # signer.key, signer.pub; prints the pu
 bulkhead bundle examples/counter/bulkhead.toml \
   target/wasm32-wasip2/release/example_counter.wasm --key signer.key
 bulkhead deploy counter-1.0.0.rbp
+```
+
+As a native program, the crate adds a binary that calls the
+`bulkhead_main()` that `app!` generates, behind a feature, and the manifest
+adds `kind = "native-process"` and `native = { program = "executable" }`
+under `[appserver]`; `examples/board` and `examples/http-counter` are set
+up this way ([`docs/WRITING_APPS.md`](docs/WRITING_APPS.md#native-process-apps)):
+
+```sh
+cargo build -p example-board --features native --release
+# board-native.toml: examples/board/bulkhead.toml with those two fields
+bulkhead bundle board-native.toml target/release/example-board --key signer.key
 ```
 
 `bulkhead bundle` refuses a component that imports an interface its manifest

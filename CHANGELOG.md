@@ -30,6 +30,16 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- The tutorial runs with the board as a native program: `BOARD=native`
+  builds `bulkhead-runner` beside `bulkhead` and the board with its
+  `native` feature, and bundles each manifest with
+  `kind = "native-process"`; chapters 1, 2, 3 and 5 pass with it.
+- The docs say what Bulkhead is now (ROADMAP Z6): the README and
+  DESIGN.md describe apps as native processes, with components until
+  parity, and DESIGN.md's "Instance model" says why a process per
+  instance (spike S30's numbers) and what it costs; SECURITY.md compares
+  the runner's fence with wasmtime's sandbox; MANIFEST.md, WRITING_APPS.md,
+  ARCHITECTURE.md (the port's tasks since Z1) and the glossary follow.
 - `examples/board` builds as a native program from the same source
   (feature `native`), and `crates/bulkhead/tests/board.rs` runs each of its
   node tests against that build too, on Linux: crash and restart with the

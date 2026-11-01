@@ -1,6 +1,6 @@
 # Writing an app
 
-A Bulkhead app is a WebAssembly component that implements the `bulkhead:runtime/app` world ([`wit/runtime.wit`](../wit/runtime.wit)). In Rust, `bulkhead-sdk` hides the bindings: you implement the `App` trait and export it with `app!`. Go has an SDK of its own ([`sdks/go`](../sdks/go/README.md)); apps in other languages implement the WIT directly. Native code that cannot be a component (a vendor library, a driver) runs as a native-process app instead (below).
+A Bulkhead app implements a `gen_server`-style set of callbacks. In Rust, `bulkhead-sdk` gives you the `App` trait and the `app!` macro, and one source builds two ways: as a native program, run as one restricted process per instance (Linux; "Native-process apps" below), and as a WebAssembly component implementing the `bulkhead:runtime/app` world ([`wit/runtime.wit`](../wit/runtime.wit)). Native programs are where Bulkhead is going; components still run beside them until native apps reach parity (ROADMAP Z7 to Z9), and some features are components only until then. Go has an SDK of its own for components ([`sdks/go`](../sdks/go/README.md)); apps in other languages implement the WIT directly. An existing rustbridge plugin runs natively too.
 
 ## The model
 
@@ -8,8 +8,8 @@ Like an Erlang `gen_server`:
 
 - The host keeps each instance's mailbox and hands it **one message at a time**. Callbacks never run concurrently within an instance, so state needs no locks.
 - **Calls** expect a reply and the caller waits, up to a timeout. **Casts** are fire and forget. **Infos** are notifications from the host: link exits, monitor downs, timers and named host events.
-- Each callback has a **CPU deadline** (`limits.callback_deadline_ms`). Overrunning it kills the instance with reason `timeout`. Time spent waiting in a host call, such as a call to another instance, does not count.
-- A **trap** (a panic in Rust), an out-of-memory error or a deadline kill ends the instance. Its supervisor restarts it from `init`, with fresh memory. State that must outlive a crash belongs in a keyvalue bucket or a file.
+- Each callback has a **deadline** (`limits.callback_deadline_ms`): CPU time for a component, wall time for a native process. Overrunning it kills the instance with reason `timeout`. Time spent waiting in a host call, such as a call to another instance, does not count.
+- A **trap** (a panic in Rust, or an abort in a native program), an out-of-memory error or a deadline kill ends the instance. Its supervisor restarts it from `init`, with fresh memory. State that must outlive a crash belongs in a keyvalue bucket or a file.
 - Instances share nothing. They talk only through messages, by **pid** or by **registered name**.
 
 ## A minimal app
@@ -370,7 +370,7 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
-`cargo build --release --features native --bin my-app` builds the program, bundled with `native.program = "executable"`; `examples/http-counter` and `examples/board` are built both ways (their `bulkhead.toml` has the native lines), and the board's node tests run each case against both. The SDK's calls go over the native protocol there, with these differences from a component: each host call is a request to the node (about 13 µs on a Raspberry Pi 5, against about 1.2 µs for a component's bucket read), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...` where a component's trap reads `crashed: trap: ...`; there are no snapshots, so no `save_snapshot` upgrades or passivation; a watch notice carries the key's value (`watch::Change::current` reads it either way); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite runs the same reference app both ways (`BULKHEAD_CONFORMANCE_NATIVE=1`).
+`cargo build --release --features native --bin my-app` builds the program, bundled with `native.program = "executable"`; `examples/http-counter` and `examples/board` are built both ways (their `bulkhead.toml` has the native lines), the board's node tests run each case against both, and `BOARD=native` runs [the tutorial](../examples/tutorial/README.md) with the native board. The SDK's calls go over the native protocol there, with these differences from a component: each host call is a request to the node (about 13 µs on a Raspberry Pi 5, against about 1.2 µs for a component's bucket read), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...` where a component's trap reads `crashed: trap: ...`; there are no snapshots, so no `save_snapshot` upgrades or passivation; a watch notice carries the key's value (`watch::Change::current` reads it either way); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite runs the same reference app both ways (`BULKHEAD_CONFORMANCE_NATIVE=1`).
 
 Two shapes, chosen by `native.program`:
 
@@ -424,6 +424,7 @@ While debugging, `bulkhead state <pid>` shows an SDK app's state through its `sa
 
 ## Limits to design around
 
-- Calls cost about 2 µs, plus the copy. Bulkhead suits work that takes tens of microseconds or more per message, not chatty fine-grained calls.
-- Compute runs at about 1.4 to 2.6 times native time on ordinary app code (JSON with serde, regex, Markdown, maps; `app_cost`, [BASELINE.md](BASELINE.md)), and further behind when native code would use SHA or AES instructions ([spike S8](../spikes/s8/README.md)). Byte-at-a-time loops such as string comparison in sorted maps pay most.
+- Calls to a component cost about 2 µs, plus the copy. Bulkhead suits work that takes tens of microseconds or more per message, not chatty fine-grained calls.
+- A native instance is a process: a call to it costs about 30 µs on a Raspberry Pi 5 (frames through two pipes and two wake-ups), a request from it to the node about 11 to 13 µs, and an instance about 0.25 to 0.5 MiB (1.4 to 2.4 MiB on the Pi) and a few milliseconds to start (BASELINE.md, 2026-10-31; spike S30). Its code runs at native speed. Keep instances long-lived, and batch reads (`get_many`, scans) rather than reading key by key.
+- A component's compute runs at about 1.4 to 2.6 times native time on ordinary app code (JSON with serde, regex, Markdown, maps; `app_cost`, [BASELINE.md](BASELINE.md)), and further behind when native code would use SHA or AES instructions ([spike S8](../spikes/s8/README.md)). Byte-at-a-time loops such as string comparison in sorted maps pay most.
 - A full mailbox drops casts and fails calls with `overloaded`. Size `limits.mailbox_max` to absorb bursts, and treat `Overloaded` as back-pressure.

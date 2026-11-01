@@ -1,9 +1,11 @@
 # Shared by the tutorial chapters; sourced, not run.
 #
-# Sets ROOT, DEMO_DIR, BULKHEAD, BOARD_DIR and BOARD_WASM, builds bulkhead and
-# the board example, and makes a signing key. BOARD=go uses the Go build
-# (examples/board-go, on the Go SDK; needs TinyGo, on PATH or in TINYGO)
-# instead of the Rust one. Defines:
+# Sets ROOT, DEMO_DIR, BULKHEAD, BOARD_DIR and BOARD_PROGRAM, builds bulkhead
+# and the board example, and makes a signing key. BOARD=native builds the
+# same Rust source as a native program (Linux) with bulkhead-runner beside
+# bulkhead, and bundles it with `kind = "native-process"`; BOARD=go uses the
+# Go build (examples/board-go, on the Go SDK; needs TinyGo, on PATH or in
+# TINYGO). Defines:
 #   sock N           the admin socket of node N
 #   p N ARGS...      run the bulkhead CLI against node N
 #   start_node N     start `bulkhead node` on $DEMO_DIR/node-N.toml
@@ -21,21 +23,34 @@ AUTO=${AUTO:-0}
 
 echo "building (release; the first build takes a few minutes)..."
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead
+BOARD_KIND=
 case "${BOARD:-rust}" in
   rust)
     BOARD_DIR="$ROOT/examples/board"
-    BOARD_WASM="$ROOT/target/wasm32-wasip2/release/example_board.wasm"
+    BOARD_PROGRAM="$ROOT/target/wasm32-wasip2/release/example_board.wasm"
     cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
       --target wasm32-wasip2 -p example-board
     ;;
+  native)
+    BOARD_DIR="$ROOT/examples/board"
+    BOARD_PROGRAM="$ROOT/target/release/example-board"
+    BOARD_KIND='[appserver]
+kind = "native-process"
+native = { program = "executable" }'
+    # The node runs native apps through the bulkhead-runner beside it.
+    cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
+      -p bulkhead-native --bin bulkhead-runner
+    cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
+      -p example-board --features native --bin example-board
+    ;;
   go)
     BOARD_DIR="$ROOT/examples/board-go"
-    BOARD_WASM="$ROOT/target/tutorial-board-go/board.wasm"
-    mkdir -p "$(dirname "$BOARD_WASM")"
-    "$ROOT/sdks/go/build.sh" "$BOARD_DIR" "$BOARD_WASM"
+    BOARD_PROGRAM="$ROOT/target/tutorial-board-go/board.wasm"
+    mkdir -p "$(dirname "$BOARD_PROGRAM")"
+    "$ROOT/sdks/go/build.sh" "$BOARD_DIR" "$BOARD_PROGRAM"
     ;;
   *)
-    echo "BOARD is rust or go, not $BOARD" >&2
+    echo "BOARD is rust, native or go, not $BOARD" >&2
     exit 2
     ;;
 esac
@@ -107,13 +122,15 @@ showp() {
   echo
 }
 
-# Sign a board manifest (with extra TOML appended) and deploy it to node N.
+# Sign a board manifest (with extra TOML appended, and the native build's
+# kind) and deploy it to node N.
 deploy_board() {
   local n=$1 manifest=$2 extra=${3:-}
   local name
   name=$(basename "$manifest" .toml)
   cp "$manifest" "$name.toml"
   [ -n "$extra" ] && printf '\n%s\n' "$extra" >> "$name.toml"
-  "$BULKHEAD" bundle "$name.toml" "$BOARD_WASM" --key signer.key --out "$name.rbp" >/dev/null
+  [ -n "$BOARD_KIND" ] && printf '\n%s\n' "$BOARD_KIND" >> "$name.toml"
+  "$BULKHEAD" bundle "$name.toml" "$BOARD_PROGRAM" --key signer.key --out "$name.rbp" >/dev/null
   p "$n" deploy "$name.rbp" >/dev/null
 }

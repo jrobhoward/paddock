@@ -267,7 +267,15 @@ A component exporting `wasi:http/incoming-handler` (any 0.2 version; the `wasi:h
 
 ### Native-process apps
 
-`kind = "native-process"` runs native code as a process the node spawns, an Erlang-style port, instead of a component. The bundle carries a release variant for the node's platform (`linux-x86_64`, `linux-aarch64`) in place of `wasm32-wasip2`; deploy writes it under `data_dir`, readable and executable by the node's user only.
+`kind = "native-process"` runs native code as a process the node spawns, an Erlang-style port, instead of a component: one process per instance, for the instance's life. It is the kind Bulkhead is moving to; components run beside it until native apps reach parity (ROADMAP Z7 to Z9). An app on `bulkhead-sdk` builds both ways from one source (WRITING_APPS.md, "Native-process apps"), and the same manifest serves both, with two fields set in `[appserver]`:
+
+```toml
+[appserver]
+kind = "native-process"
+native = { program = "executable" }
+```
+
+The bundle carries a release variant for the node's platform (`linux-x86_64`, `linux-aarch64`) in place of `wasm32-wasip2`; deploy writes it under `data_dir`, readable and executable by the node's user only. The node runs it through `bulkhead-runner` (node config `[native]`, below).
 
 - `native.program = "library"` is a rustbridge plugin (`.so`), loaded by `bulkhead-runner`: calls and casts go to its `handle_request` with the envelope's schema id as the type tag, in JSON (`application/json`); a reply carries the same schema id, and an error the schema id `rustbridge.error` with `{"error": "..."}`. The init arguments become the plugin's config `data`. It cannot call other apps, since rustbridge's interface has no call into the host.
 - The process's environment holds only `BULKHEAD_PRIV`, the directory of the bundle's `priv/` files when it has any. `bulkhead bundle` packs a native app's program as the variant for the machine it runs on.

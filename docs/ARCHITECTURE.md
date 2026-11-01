@@ -35,7 +35,7 @@ Solid arrows point from a crate to the crates it depends on; dotted arrows are w
 | `bulkhead-host` | library | The runtime: engine, epoch ticker, process table, instances (components and native processes), passivation, links and monitors, supervisors, app sets and pools, host services, the HTTP ingress and handlers, listeners, the cluster transport, liveness, membership, failover, replication, moving singletons and release versions. |
 | `bulkhead-native` | library and `bulkhead-runner` | The frame protocol between a node and a native app, the app API for native executables (feature `app`), and `bulkhead-runner` (feature `runner`, default), the launcher that sandboxes itself and loads or executes a native app. `bulkhead-host` takes the protocol only. |
 | `bulkhead-modbus` | library | The Modbus TCP extension; depends on `bulkhead-host` alone. |
-| `bulkhead-sdk`, `bulkhead-sdk-macros` | guest libraries | The Rust guest SDK: the `App` trait, envelopes, snapshots, service wrappers by feature. The SDK owns the generated bindings. |
+| `bulkhead-sdk`, `bulkhead-sdk-macros` | app libraries | The Rust SDK: the `App` trait, envelopes, snapshots, service wrappers by feature. On `wasm32` it owns the generated bindings; on Unix the same functions go over `bulkhead-native`'s protocol, and `app!` also generates `bulkhead_main()`, so one source builds as a component and as a native program. |
 | `bulkhead-fixture-*` | guests and native test apps | Components (echo, chaos, counter in three versions, services, sdk, conn, http, net), a native executable (`native`) and a rustbridge plugin (`plugin`). |
 | `bulkhead-soak` | binary | Fault injection against `bulkhead node` processes (`scripts/soak.sh`): failover, replication and the SCADA release cycle. |
 | `examples/*` | guests and scripts | SDK examples, the tutorial's apps, the SCADA reference app, the greeter extension, the failover demo, systemd units. |
@@ -131,17 +131,17 @@ sequenceDiagram
     R->>I: Hello
     I->>R: Init
     I->>R: Call / Cast / Info, one callback at a time
-    R->>I: Request (process.*), during a callback
+    R->>I: Request (process.*, services), during a callback
     I->>R: Answer
     R->>I: Reply / Done / Failed
     I->>R: Ping (idle), answered between callbacks
 ```
 
-- **The port** (`native::port`) holds the child and three tasks: a writer (frames queued without blocking the instance task), a reader (decoding frames), and stderr copied into log lines as a component's stderr is.
-- **The lifecycle** (`instance_native`, a child module of `instance`) uses the instance's own channels, so pids, links, monitors, supervision and exit reasons work as for a component. Requests are answered by the same `process::Host` functions a component's imports run, on an `InstanceState` the task holds without a Store. A callback's deadline is wall time less the time spent answering requests; past it, or past a ping's deadline while idle, the process is killed (`timeout`). Its exit is a crash with its status or signal, a panic is a crash with the panic's message, and an OOM kill in its cgroup is `memory_limit`.
+- **The port** (`native::port`) holds the child and two tasks: a writer, which has work only while the app's stdin pipe is full, so a stalled app never blocks the instance task, and stderr copied into log lines as a component's stderr is. The instance task writes frames to the pipe itself while it has room, and reads and decodes the app's frames itself through a buffer, so a call wakes no other task on the node's side (Z1). On the app's side, its callback thread reads stdin itself.
+- **The lifecycle** (`instance_native`, a child module of `instance`) uses the instance's own channels, so pids, links, monitors, supervision and exit reasons work as for a component. Requests are answered by the same host code a component's imports run (`process::Host`, and the keyvalue, groups, config, secrets and metrics services), on an `InstanceState` the task holds without a Store; metric updates come in one unanswered frame before the callback's result. One callback-deadline timer and one ping timer per instance are re-armed when they fire early, rather than a timer per frame. A callback's deadline is wall time less the time spent answering requests; past it, or past a ping's deadline while idle, the process is killed (`timeout`). Its exit is a crash with its status or signal, a panic is a crash with the panic's message, and an OOM kill in its cgroup is `memory_limit`.
 - **Limits** (`native::cgroup`): with node config `[native] cgroup`, the node moves itself into `<cgroup>/node` at start and gives each instance `<cgroup>/native/<pid>` with `memory.max`, no swap and `pids.max`; the child is placed there between fork and exec. Without it, `memory_max` is the process's `RLIMIT_DATA`.
 
-No snapshots, so no passivation, snapshot upgrades or moves; upgrade operations are refused.
+No snapshots yet (ROADMAP Z7), so no passivation, snapshot upgrades or moves; upgrade operations are refused. A singleton's process is killed when the node's lease ends, idle or not (`crashed: lease_ended`), since it can run threads between callbacks.
 
 ## A deploy
 
@@ -269,7 +269,7 @@ A node runs one tokio multi-threaded runtime, one worker per core by default. No
 | blocking pool | on demand | bundle verify and compile, `disk` bucket transactions (redb), secret file reads | per job |
 | Instance task (callback loop) | 1 per instance | `Runtime::spawn` | instance exit |
 | Health check | 1 per instance of an app with `health` | the instance task | instance exit |
-| Native process tasks: writer, reader, stderr | 3 per native instance | `native::port` | process exit |
+| Native process tasks: writer (frames while the pipe is full), stderr | 2 per native instance | `native::port` | process exit |
 | Timer | 1 per pending `process.send-after` | `process` | fires or is cancelled |
 | Supervisor | 1 per supervisor, plus 1 per child watching its exit | `supervisor` | supervisor exit |
 | App watcher | 1 per app, and 1 per blue-green new side | `apps` | root supervisor exit |
