@@ -265,6 +265,20 @@ On an HA pair with `[failover] replication = true`, a bucket declared with `dura
 
 `placement.mode = "singleton"` runs one instance on the pair's primary. Its callbacks run only while the node holds its lease: out of lease a message waits, and a callback running when the lease ends is stopped with `crashed: lease_ended`, so two nodes never run it at once. After a failover it starts from `init` on the new primary, with what it kept in replicated buckets. In a planned switchover (`bulkhead failover switchover`), a singleton in `snapshot` upgrade mode on a pair with replication is moved with its state: the old primary takes its snapshot and the new one starts it with `load_snapshot` instead of `init`. Its pid changes and its links, monitors, names and mailbox do not move; callers should look it up by name again.
 
+### Reading shared data
+
+Which way to read data several instances share, cheapest first (16-core machine and Raspberry Pi 5, BASELINE.md, 2026-11-01):
+
+| Way | Cost per read: component / native | For |
+| --- | --- | --- |
+| The instance's own state | nanoseconds | Data only this instance writes; it survives upgrades through `save_snapshot`, and restarts only if kept in a bucket |
+| A published bucket (`publish_ms`, MANIFEST.md) | as a bucket read / 0.16 to 0.39 µs, from the app's own memory | Data many instances read and few write: points, prices, settings, routing tables. Native reads scale with cores (30 million a second from 16 instances on the 16-core machine). Reads may be up to an interval old, except the instance's own writes |
+| A bucket read (`get`) | 0.7 to 1.6 µs / 5 to 7 µs, a request to the node | Any data, always current |
+| A batch (`get_many`) or a scan page | about 0.9 to 1.4 µs / 1.3 to 2 µs per key, 100 at a time | Many keys at once; scan pages hold up to 1,000 entries or about 1 MiB |
+| A call to an instance that owns the data | about 5 to 7 µs / 13 µs within a node | Data one instance guards with rules of its own, where a read must see its latest decisions |
+
+A watch (`watch` feature) says when a key changes, for reacting to changes or keeping a copy of a few keys; a native app's notice carries the value. Writes always go to the node: as requests natively (about 7 µs) and as host calls in a component (1.5 to 2 µs).
+
 ## Connection handlers
 
 A connection handler serves TCP connections instead of messages: the node accepts each connection on a listener and starts an instance of the handler for it. Enable the SDK's `connection` feature, implement `Connection`, and export it with `bulkhead_sdk::connection!`:
@@ -434,4 +448,5 @@ While debugging, `bulkhead state <pid>` shows an SDK app's state through its `sa
 - Calls to a component cost about 2 µs, plus the copy. Bulkhead suits work that takes tens of microseconds or more per message, not chatty fine-grained calls.
 - A native instance is a process: a call to it costs 5 to 7 µs while it is busy and 27 to 28 µs once it has gone idle (two sleeping threads to wake), a request from it to the node 4 to 5 µs, and an instance about 0.25 to 0.5 MiB (1.4 to 2.4 MiB on the Pi) and a few milliseconds to start (BASELINE.md, 2026-10-31 and 2026-11-01; spike S30). Its code runs at native speed. Keep instances long-lived, and batch reads (`get_many`, scans) rather than reading key by key. Data many instances read and few write belongs in a published bucket (MANIFEST.md, `publish_ms`), which a native app reads from a snapshot in its own memory in 0.1 to 0.4 µs, its own writes read back at once and others' up to an interval late.
 - A component's compute runs at about 1.4 to 2.6 times native time on ordinary app code (JSON with serde, regex, Markdown, maps; `app_cost`, [BASELINE.md](BASELINE.md)), and further behind when native code would use SHA or AES instructions ([spike S8](../spikes/s8/README.md)). Byte-at-a-time loops such as string comparison in sorted maps pay most.
+- A message's body is at most `limits.message_max_bytes` (1 MiB by default); a larger one fails with `too-large`. A native app's frames to and from the node are at most 17 MiB each, so a message, a keyvalue value or a whole `set_many` or `get_many` over about 16 MiB ends the instance today (ROADMAP, "Smaller open items"): split large batches. A bucket's values are bounded by its quota alone.
 - A full mailbox drops casts and fails calls with `overloaded`. Size `limits.mailbox_max` to absorb bursts, and treat `Overloaded` as back-pressure.
