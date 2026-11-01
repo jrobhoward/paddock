@@ -30,6 +30,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `scripts/beam_cluster.escript`: BEAM's reference for `cluster_throughput`,
+  the same runs between two Erlang nodes over distributed Erlang, from a
+  plain process and from gen_servers, over plain TCP or TLS distribution
+  (`scripts/beam_cluster_tls.sh` makes the certificates);
+  `scripts/beam_cluster_pair.sh` runs both nodes on one machine, and
+  `scripts/bench.sh beam-cluster` runs it both ways (ROADMAP C3).
 - `cluster_throughput` measures calls and casts between instances as
   apps make them, beside the host's, and runs native apps too
   (`CLUSTER_NATIVE=1`); its fixture is now `bulkhead-fixture-msgbench`,

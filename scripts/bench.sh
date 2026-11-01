@@ -45,6 +45,7 @@ BENCHES=(
   "kv-rc|kv with every bucket read_concurrency (reads without a lock, spike S26), 4 workers|KV_READ_CONCURRENCY=1 R/examples/kv_cost 4"
   "kv-native|kv with the loops in a native program (each operation a request to the node), 4 workers|KV_NATIVE=1 R/examples/kv_cost 4"
   "native|native-process instances through bulkhead-runner: calls from the host and between instances, requests from a callback, casts, start (4 workers)|R/examples/native_cost 4"
+  "beam-cluster|BEAM reference for cluster: two Erlang nodes as two processes on this machine, the same runs over distributed Erlang, plain TCP then TLS (4 schedulers)|scripts/beam_cluster_pair.sh; scripts/beam_cluster_pair.sh tls"
   "beam-ets|ETS reference for kv: the same loops in an Erlang process against set and ordered_set tables (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_ets.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_ets.escript"
   "beam|Erlang/OTP reference: gen_server call, cast, spawn, process memory, send_after lateness (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_baseline.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_baseline.escript"
   "s14|spike S14: storage in the guest and host services|S/s14-bench spikes/target/wasm32-wasip2/release/s14_guest.wasm"
