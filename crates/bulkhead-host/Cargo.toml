@@ -56,7 +56,7 @@ scc = { workspace = true }
 semver = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "process"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "io-util", "process", "net"] }
 tracing = { workspace = true }
 wasmtime = { workspace = true, features = ["component-model", "async", "cranelift", "parallel-compilation", "runtime", "std", "pooling-allocator"] }
 wasmtime-wasi = { workspace = true, features = ["p2"] }

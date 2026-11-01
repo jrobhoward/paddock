@@ -5,6 +5,7 @@
 //! | --- | --- |
 //! | `echo TEXT` | `TEXT` |
 //! | `self` | this instance's pid, `node.id.incarnation` |
+//! | `selfs N` | the nanoseconds `N` requests for its own pid took |
 //! | `call PID TEXT` | the reply's body, or `err:` and the call error |
 //! | `cast PID TEXT` | `ok` |
 //! | `after MS TEXT` | the timer's reference |

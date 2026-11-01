@@ -7,8 +7,9 @@
 //! `Init` and, one at a time, the callbacks, each answered by one frame
 //! (`Init`, `Reply` or `Done`, or `Failed`). While a callback runs the
 //! app may send `Request`s, each answered by an `Answer` with its id, and
-//! `Log`s at any time. The node may send `Ping` at any time, answered by
-//! `Pong` with its id even while a callback runs.
+//! `Log`s at any time. The node sends `Ping` only while no callback runs,
+//! answered by `Pong` with its id; an app answers one that reaches it
+//! during a request as well.
 //!
 //! The types mirror `bulkhead:runtime`'s (pids, envelopes, exit reasons,
 //! info, call errors).

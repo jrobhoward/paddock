@@ -1,9 +1,13 @@
 //! A native instance's process: `bulkhead-runner`, its pipes and its
 //! limits.
 //!
-//! Frames to the app go through a writer task, so a stalled app never
-//! blocks the instance's task; frames from it come through a reader task.
-//! stderr becomes log lines, as a component's does. Between fork and exec
+//! The instance's task writes frames to the app's stdin itself while the
+//! pipe has room, and queues them for a writer task when it has not (or
+//! while earlier frames still wait there), so a stalled app never blocks
+//! the instance's task. It also reads and decodes the app's frames itself,
+//! through a buffer, so a call costs no hand-off between tasks on the
+//! node's side (Z1, spike S30). stderr becomes log lines, as a
+//! component's does. Between fork and exec
 //! the child gets the parent-death signal (`SIGKILL`), no core dumps, and
 //! its memory limit: the cgroup it starts in, or `RLIMIT_DATA` without
 //! one. It runs in a process group of its own, with an environment of
@@ -19,12 +23,15 @@ use std::ffi::CString;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bulkhead_bundle::manifest::NativeProgram;
 use bulkhead_native::protocol::{self, FromApp, ToApp};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, Command};
+use tokio::net::unix::pipe;
+use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::mpsc;
 
 use super::{NativeCode, cgroup};
@@ -37,8 +44,8 @@ use crate::spec::InstanceSpec;
 /// killed.
 const EXIT_GRACE: Duration = Duration::from_secs(1);
 
-/// Frames read ahead of the instance's task.
-const INCOMING: usize = 256;
+/// Bytes read from the app at a time.
+const READ_CHUNK: usize = 16 << 10;
 
 /// Something from the app.
 #[derive(Debug)]
@@ -48,12 +55,33 @@ pub(crate) enum Incoming {
     Broken(String),
 }
 
+/// The app's stdin: written directly while nothing waits in the queue.
+#[derive(Debug)]
+struct Stdin {
+    pipe: Arc<pipe::Sender>,
+    /// Frames for the writer task, written in order once the pipe has room.
+    queue: mpsc::UnboundedSender<Vec<u8>>,
+    /// Frames queued and not yet written.
+    queued: Arc<AtomicUsize>,
+}
+
+/// The app's stdout, read by the instance's task.
+#[derive(Debug)]
+struct Stdout {
+    pipe: ChildStdout,
+    /// Bytes read and not yet decoded, from `start`.
+    buf: Vec<u8>,
+    start: usize,
+    /// No more frames: the pipe closed, or a frame was broken.
+    done: bool,
+}
+
 /// A running native instance's process.
 #[derive(Debug)]
 pub(crate) struct Port {
     child: Child,
-    frames: Option<mpsc::UnboundedSender<Vec<u8>>>,
-    incoming: mpsc::Receiver<Incoming>,
+    stdin: Option<Stdin>,
+    stdout: Stdout,
     cgroup: Option<PathBuf>,
 }
 
@@ -163,42 +191,25 @@ impl Port {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("{}: {e}", runner.display()))?;
-        let (Some(mut stdin), Some(mut stdout), Some(mut stderr)) =
+        let (Some(stdin), Some(stdout), Some(mut stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
             return Err("pipes not created".into());
         };
-        let (frames, mut out) = mpsc::unbounded_channel::<Vec<u8>>();
+        let pipe = stdin
+            .into_owned_fd()
+            .and_then(pipe::Sender::from_owned_fd)
+            .map(Arc::new)
+            .map_err(|e| format!("stdin: {e}"))?;
+        let (queue, mut queued_frames) = mpsc::unbounded_channel::<Vec<u8>>();
+        let queued = Arc::new(AtomicUsize::new(0));
+        let (writer, left) = (pipe.clone(), queued.clone());
         tokio::spawn(async move {
-            while let Some(frame) = out.recv().await {
-                if stdin.write_all(&frame).await.is_err() {
+            while let Some(frame) = queued_frames.recv().await {
+                if write_all(&writer, &frame).await.is_err() {
                     return;
                 }
-            }
-        });
-        let (tx, incoming) = mpsc::channel(INCOMING);
-        tokio::spawn(async move {
-            loop {
-                let mut prefix = [0u8; 4];
-                if stdout.read_exact(&mut prefix).await.is_err() {
-                    return;
-                }
-                let next = match protocol::frame_len(prefix) {
-                    Ok(len) => {
-                        let mut body = vec![0; len];
-                        match stdout.read_exact(&mut body).await {
-                            Ok(_) => protocol::decode(&body)
-                                .map(Incoming::Frame)
-                                .unwrap_or_else(|e| Incoming::Broken(e.to_string())),
-                            Err(_) => return,
-                        }
-                    }
-                    Err(e) => Incoming::Broken(e.to_string()),
-                };
-                let broken = matches!(next, Incoming::Broken(_));
-                if tx.send(next).await.is_err() || broken {
-                    return;
-                }
+                left.fetch_sub(1, Ordering::AcqRel);
             }
         });
         tokio::spawn(async move {
@@ -209,8 +220,17 @@ impl Port {
         });
         Ok(Self {
             child,
-            frames: Some(frames),
-            incoming,
+            stdin: Some(Stdin {
+                pipe,
+                queue,
+                queued,
+            }),
+            stdout: Stdout {
+                pipe: stdout,
+                buf: Vec::with_capacity(READ_CHUNK),
+                start: 0,
+                done: false,
+            },
             cgroup,
         })
     }
@@ -231,21 +251,54 @@ impl Port {
         Err("native apps run on Linux only".into())
     }
 
-    /// Queue a frame for the app; dropped once stdin is closed.
+    /// Send a frame to the app: written now if the pipe has room and
+    /// nothing is queued before it, else queued for the writer task.
+    /// Dropped once stdin is closed.
     pub(crate) fn send(&self, frame: &ToApp) {
-        if let Some(frames) = &self.frames {
-            let _ = frames.send(protocol::encode(frame));
+        let Some(stdin) = &self.stdin else {
+            return;
+        };
+        let bytes = protocol::encode(frame);
+        let mut written = 0;
+        if stdin.queued.load(Ordering::Acquire) == 0 {
+            match stdin.pipe.try_write(&bytes) {
+                Ok(n) if n == bytes.len() => return,
+                Ok(n) => written = n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                // The app has gone; its exit is read from stdout.
+                Err(_) => return,
+            }
         }
+        stdin.queued.fetch_add(1, Ordering::AcqRel);
+        let _ = stdin.queue.send(bytes[written..].to_vec());
     }
 
     /// The next thing from the app; `None` once its stdout has closed.
+    /// Cancel safe: bytes read stay buffered for the next call.
     pub(crate) async fn recv(&mut self) -> Option<Incoming> {
-        self.incoming.recv().await
+        let out = &mut self.stdout;
+        loop {
+            if out.done {
+                return None;
+            }
+            if let Some(next) = out.take() {
+                return Some(next);
+            }
+            if out.start > 0 {
+                out.buf.drain(..out.start);
+                out.start = 0;
+            }
+            out.buf.reserve(READ_CHUNK);
+            match out.pipe.read_buf(&mut out.buf).await {
+                Ok(0) | Err(_) => out.done = true,
+                Ok(_) => {}
+            }
+        }
     }
 
     /// Close the app's stdin: it exits once it has read what is queued.
     pub(crate) fn close(&mut self) {
-        self.frames = None;
+        self.stdin = None;
     }
 
     /// Kill the process now.
@@ -296,4 +349,41 @@ impl Port {
             cgroup::remove(dir).await;
         }
     }
+}
+
+impl Stdout {
+    /// A whole frame from the buffer, if one is there.
+    fn take(&mut self) -> Option<Incoming> {
+        let have = &self.buf[self.start..];
+        let prefix: [u8; 4] = have.get(..4)?.try_into().ok()?;
+        let len = match protocol::frame_len(prefix) {
+            Ok(len) => len,
+            Err(e) => {
+                self.done = true;
+                return Some(Incoming::Broken(e.to_string()));
+            }
+        };
+        let body = have.get(4..4 + len)?;
+        let next = protocol::decode(body)
+            .map(Incoming::Frame)
+            .unwrap_or_else(|e| Incoming::Broken(e.to_string()));
+        self.start += 4 + len;
+        if matches!(next, Incoming::Broken(_)) {
+            self.done = true;
+        }
+        Some(next)
+    }
+}
+
+/// Write all of `bytes` to the app's stdin, waiting for room.
+async fn write_all(pipe: &pipe::Sender, mut bytes: &[u8]) -> std::io::Result<()> {
+    while !bytes.is_empty() {
+        pipe.writable().await?;
+        match pipe.try_write(bytes) {
+            Ok(n) => bytes = &bytes[n..],
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }

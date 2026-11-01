@@ -629,6 +629,10 @@ pub(crate) struct InstanceTask {
     /// guest woken from a snapshot may still hold the reference of a call
     /// whose caller gave up.
     next_ref: u64,
+    /// A native instance's callback deadline: one timer for all its
+    /// callbacks, re-armed when it fires early, so a callback arms none
+    /// (Z1).
+    native_timer: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
 }
 
 /// A pid's handle and process context with no mailbox behind them, for a
@@ -703,6 +707,7 @@ pub(crate) fn prepare(
         held: None,
         held_op: None,
         app: None,
+        native_timer: None,
         next_ref: 1,
     };
     (handle, task)

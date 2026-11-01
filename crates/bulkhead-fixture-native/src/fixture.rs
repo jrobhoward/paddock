@@ -43,6 +43,13 @@ impl Fixture {
         Some(match verb {
             "echo" => rest.to_string(),
             "self" => pid_text(ctx.self_pid()),
+            "selfs" => {
+                let started = std::time::Instant::now();
+                for _ in 0..first.parse::<u64>().unwrap_or(0) {
+                    std::hint::black_box(ctx.self_pid());
+                }
+                started.elapsed().as_nanos().to_string()
+            }
             "call" => match ctx.call(pid(), text(tail), 5_000) {
                 Ok(reply) => String::from_utf8_lossy(&reply.body).into_owned(),
                 Err(e) => format!("err:{e:?}"),

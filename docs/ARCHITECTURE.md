@@ -134,7 +134,7 @@ sequenceDiagram
     R->>I: Request (process.*), during a callback
     I->>R: Answer
     R->>I: Reply / Done / Failed
-    I->>R: Ping (idle), answered by a reader thread
+    I->>R: Ping (idle), answered between callbacks
 ```
 
 - **The port** (`native::port`) holds the child and three tasks: a writer (frames queued without blocking the instance task), a reader (decoding frames), and stderr copied into log lines as a component's stderr is.

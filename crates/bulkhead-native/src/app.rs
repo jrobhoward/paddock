@@ -30,13 +30,20 @@
 //! corrupt frame. The app must not read stdin.
 //!
 //! A panic in a callback crashes the instance with the panic's message.
+//!
+//! The thread that runs the callbacks also reads the node's frames: a
+//! frame wakes it directly, with no hand-off from a reading thread (Z1,
+//! spike S30). The node pings only while the instance is idle, so a ping
+//! is answered between callbacks (or, if one arrives during a request,
+//! there).
 
 use std::fs::File;
+use std::io::StdinLock;
 use std::io::{self, Write};
 use std::os::fd::AsFd;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
-use std::sync::{Mutex, OnceLock, PoisonError, mpsc};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::protocol::{
     self, Answer, CallError, Envelope, ExitReason, FromApp, Info, Level, Pid, RegisterError,
@@ -100,11 +107,24 @@ pub fn log(level: Level, message: impl Into<String>) {
 /// The process functions, during a callback.
 #[derive(Debug)]
 pub struct Ctx {
-    frames: mpsc::Receiver<ToApp>,
+    input: StdinLock<'static>,
     next_id: u64,
 }
 
 impl Ctx {
+    /// The node's next frame, answering pings on the way; the end of
+    /// stdin means the node has gone, and the process exits.
+    fn next_frame(&mut self) -> ToApp {
+        loop {
+            match protocol::read::<ToApp>(&mut self.input) {
+                Ok(Some(ToApp::Ping { id })) => send(&FromApp::Pong { id }),
+                Ok(Some(frame)) => return frame,
+                Ok(None) => gone(),
+                Err(e) => protocol_error(&e.to_string()),
+            }
+        }
+    }
+
     /// Ask the node and wait for its answer. Anything else from the node
     /// here breaks the protocol, and the end of stdin means the node has
     /// gone: the process exits either way.
@@ -112,10 +132,9 @@ impl Ctx {
         self.next_id += 1;
         let id = self.next_id;
         send(&FromApp::Request { id, request });
-        match self.frames.recv() {
-            Ok(ToApp::Answer { id: got, answer }) if got == id => answer,
-            Ok(other) => protocol_error(&format!("expected answer {id}, got {other:?}")),
-            Err(_) => gone(),
+        match self.next_frame() {
+            ToApp::Answer { id: got, answer } if got == id => answer,
+            other => protocol_error(&format!("expected answer {id}, got {other:?}")),
         }
     }
 
@@ -286,27 +305,13 @@ pub fn serve<A: App>() -> ExitCode {
             return ExitCode::from(2);
         }
     }
-    let (tx, frames) = mpsc::channel();
-    // Pings are answered here, even while a callback runs.
-    std::thread::spawn(move || {
-        let mut stdin = io::stdin().lock();
-        loop {
-            match protocol::read::<ToApp>(&mut stdin) {
-                Ok(Some(ToApp::Ping { id })) => send(&FromApp::Pong { id }),
-                Ok(Some(frame)) => {
-                    if tx.send(frame).is_err() {
-                        return;
-                    }
-                }
-                Ok(None) => return,
-                Err(e) => protocol_error(&e.to_string()),
-            }
-        }
-    });
     send(&FromApp::Hello { version: VERSION });
-    let mut ctx = Ctx { frames, next_id: 0 };
-    let mut app = match ctx.frames.recv() {
-        Ok(ToApp::Init { args }) => match guarded(|| A::init(&mut ctx, args)) {
+    let mut ctx = Ctx {
+        input: io::stdin().lock(),
+        next_id: 0,
+    };
+    let mut app = match ctx.next_frame() {
+        ToApp::Init { args } => match guarded(|| A::init(&mut ctx, args)) {
             Ok(app) => {
                 send(&FromApp::Init(Ok(())));
                 app
@@ -316,15 +321,10 @@ pub fn serve<A: App>() -> ExitCode {
                 return ExitCode::from(1);
             }
         },
-        Ok(other) => protocol_error(&format!("expected init, got {other:?}")),
-        Err(_) => gone(),
+        other => protocol_error(&format!("expected init, got {other:?}")),
     };
     loop {
-        let frame = match ctx.frames.recv() {
-            Ok(frame) => frame,
-            Err(_) => gone(),
-        };
-        match frame {
+        match ctx.next_frame() {
             ToApp::Call { call_ref, msg } => {
                 let reply = guarded(|| app.handle_call(&mut ctx, call_ref, msg));
                 send(&FromApp::Reply(reply));

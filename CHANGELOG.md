@@ -8,13 +8,48 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- A native-process app's call costs about half what it did: the node's
+  instance task writes the app's stdin and reads its stdout itself, the
+  app's callback thread reads its frames itself, and an instance keeps one
+  callback-deadline timer and one ping timer instead of a timer per frame
+  (on the Raspberry Pi 5, a call from 60 to 30 µs, a request from a
+  callback 18 to 11 µs, calls per second at load 63,000 to 107,000; ROADMAP
+  Z1, BASELINE.md). The app answers pings between callbacks; the node
+  sends them only while the instance is idle, as before.
 - Forked from Paddock (`../paddock`, commit 657ae61, 2026-10-31) as
   Bulkhead: an app server whose apps are native OS processes instead of
   WebAssembly components. Every crate, binary, path, environment variable
   (`BULKHEAD_*`) and protocol identifier is renamed, including the
   cluster's QUIC ALPN (`bulkhead`), so Bulkhead and Paddock nodes never
   join each other's clusters. Nothing else changes yet: removing wasmtime
-  comes next. The entries below this one are Paddock's history.
+  comes next. The section after this one is Paddock's unreleased history
+  up to the fork.
+
+### Added
+
+- `native_cost` (`bulkhead-host` example, `bench.sh native`): native
+  instances through `bulkhead-runner`: calls from the host and between
+  instances, requests from a callback, casts and start time.
+  `bulkhead-fixture-native` answers `selfs N` (N requests, timed) and
+  `dumpable`.
+
+### Fixed
+
+- A native-process app run as an executable is no longer dumpable.
+  `bulkhead-runner` made itself so, but `execve` reset it for the app, so
+  a crashing app went through the system's core handler (the node saw the
+  exit 0.1 to 0.3 s late) and other processes of the node's user could
+  trace it. `bulkhead_native::app::serve` sets it again first (ROADMAP Q17,
+  found by spike S30).
+- On a `read_concurrency` memory bucket, `bulkhead:watch`'s `get` and
+  `scan` read a key's value and its revision in two lookups, so a write
+  between them returned the old value with the new revision: a mirror
+  kept by revisions then skipped that write for good, and a
+  compare-and-swap after such a `get` could overwrite a write it never
+  saw. Each value is now read with its revision in one load (ROADMAP Q16,
+  found by spike S28).
+
+## Paddock, after 0.3.0 until the fork (657ae61, 2026-10-31)
 
 ### Added
 
@@ -217,19 +252,6 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
-- A native-process app run as an executable is no longer dumpable.
-  `bulkhead-runner` made itself so, but `execve` reset it for the app, so
-  a crashing app went through the system's core handler (the node saw the
-  exit 0.1 to 0.3 s late) and other processes of the node's user could
-  trace it. `bulkhead_native::app::serve` sets it again first (ROADMAP Q17,
-  found by spike S30).
-- On a `read_concurrency` memory bucket, `bulkhead:watch`'s `get` and
-  `scan` read a key's value and its revision in two lookups, so a write
-  between them returned the old value with the new revision: a mirror
-  kept by revisions then skipped that write for good, and a
-  compare-and-swap after such a `get` could overwrite a write it never
-  saw. Each value is now read with its revision in one load (ROADMAP Q16,
-  found by spike S28).
 - An upgraded instance that passivates now wakes on the version it was
   upgraded to. It woke on the version it was started with, given the new
   version's snapshot, while `ps` showed the new version, so a release of

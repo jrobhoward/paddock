@@ -74,6 +74,25 @@ async fn executable____calls_then_shutdown____replies_and_stops_with_reason() {
 }
 
 #[tokio::test]
+async fn executable____call_larger_than_the_pipe____echoed_whole() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+    // Over a pipe's 64 KiB both ways: the node's write goes part direct
+    // and part through its writer task, and the reply arrives in many
+    // reads.
+    let big: String = (0..300_000)
+        .map(|i| char::from(b'a' + (i % 26) as u8))
+        .collect();
+
+    let echo = ask(&instance, &format!("echo {big}")).await;
+    let after = ask(&instance, "echo small").await;
+
+    assert_eq!(echo, big);
+    assert_eq!(after, "small");
+}
+
+#[tokio::test]
 async fn executable____call_monitor_and_timer____process_functions_work() {
     let rt = runtime(|_| {});
     let app = executable(&rt);
@@ -95,6 +114,35 @@ async fn executable____call_monitor_and_timer____process_functions_work() {
         infos.contains(&format!("down {reference} {b_text} Normal")),
         "{infos}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn executable____waits_on_a_call_past_its_deadline____not_killed() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let caller = rt
+        .spawn(
+            &app,
+            InstanceSpec {
+                callback_deadline: Duration::from_millis(300),
+                ..spec("")
+            },
+        )
+        .unwrap();
+    let callee = start(&rt, &app).await;
+    let to = fixture_pid(callee.pid());
+
+    let waiting = {
+        let caller = caller.clone();
+        tokio::spawn(async move { ask(&caller, &format!("call {to} noreply")).await })
+    };
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    callee.cast(text("reply late")).unwrap();
+    let reply = waiting.await.unwrap();
+    let still = ask(&caller, "echo alive").await;
+
+    assert_eq!(reply, "late");
+    assert_eq!(still, "alive");
 }
 
 #[tokio::test]

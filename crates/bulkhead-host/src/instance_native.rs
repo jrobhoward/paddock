@@ -57,6 +57,14 @@ fn frame_name(frame: &FromApp) -> &'static str {
     }
 }
 
+/// What woke a callback's wait.
+enum Step {
+    Timer,
+    LeaseEnded,
+    LeaseChanged,
+    Incoming(Option<Incoming>),
+}
+
 /// The app broke the protocol: kill it and crash.
 fn broke(port: &mut Port, what: String) -> ExitReason {
     port.kill();
@@ -319,29 +327,48 @@ impl InstanceTask {
         let start = Instant::now();
         let mut host = Duration::ZERO;
         let mut lease = state.lease.clone();
+        // A timer left from an earlier callback is due no later than this
+        // one's deadline, so it can only fire early: then the deadline is
+        // checked and the timer moved, rather than armed for every frame.
+        let timer = self
+            .native_timer
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep_until(start + budget)));
+        if timer.deadline() > start + budget {
+            timer.as_mut().reset(start + budget);
+        }
         loop {
-            let deadline = start + budget + host;
             let lease_end = lease_end(lease.as_ref());
-            let next = tokio::select! {
-                biased;
-                killed = self.control.wait_for(|c| matches!(c, Control::Kill(_))) => {
-                    port.kill();
-                    return Err(match killed.as_deref() {
-                        Ok(Control::Kill(reason)) => reason.clone(),
-                        _ => ExitReason::Killed,
-                    });
+            let step = super::killable(&self.kill, &self.control, None, async {
+                tokio::select! {
+                    biased;
+                    () = timer.as_mut() => Step::Timer,
+                    () = sleep_until(lease_end) => Step::LeaseEnded,
+                    () = lease_changed(lease.as_mut()) => Step::LeaseChanged,
+                    incoming = port.recv() => Step::Incoming(incoming),
                 }
-                () = tokio::time::sleep_until(deadline) => {
+            })
+            .await;
+            let next = match step {
+                Err(killed) => {
+                    port.kill();
+                    return Err(killed);
+                }
+                Ok(Step::Timer) => {
+                    let deadline = start + budget + host;
+                    if Instant::now() < deadline {
+                        timer.as_mut().reset(deadline);
+                        continue;
+                    }
                     port.kill();
                     return Err(timeout.clone());
                 }
-                () = sleep_until(lease_end) => {
+                Ok(Step::LeaseEnded) => {
                     state.lease_ended = true;
                     port.kill();
                     return Err(ExitReason::Crashed("lease_ended".into()));
                 }
-                () = lease_changed(lease.as_mut()) => continue,
-                incoming = port.recv() => incoming,
+                Ok(Step::LeaseChanged) => continue,
+                Ok(Step::Incoming(incoming)) => incoming,
             };
             match next {
                 Some(Incoming::Frame(FromApp::Request { id, request })) => {
@@ -392,6 +419,9 @@ impl InstanceTask {
         let mut ping: Option<(u64, Instant)> = None;
         let mut next_ping = 0u64;
         let mut idle_since = Instant::now();
+        // One timer, moved when it fires before a ping is due, rather than
+        // armed for every message (Z1).
+        let mut ping_timer = std::pin::pin!(tokio::time::sleep_until(idle_since + ping_interval));
         loop {
             match self.control.borrow_and_update().clone() {
                 Control::Run => {}
@@ -401,7 +431,6 @@ impl InstanceTask {
                     return Err(reason);
                 }
             }
-            let ping_at = ping.map_or(idle_since + ping_interval, |(_, due)| due);
             let message = tokio::select! {
                 biased;
                 changed = self.control.changed() => {
@@ -442,7 +471,12 @@ impl InstanceTask {
                     }
                     continue;
                 }
-                () = tokio::time::sleep_until(ping_at) => {
+                () = ping_timer.as_mut() => {
+                    let ping_at = ping.map_or(idle_since + ping_interval, |(_, due)| due);
+                    if Instant::now() < ping_at {
+                        ping_timer.as_mut().reset(ping_at);
+                        continue;
+                    }
                     if ping.is_some() {
                         tracing::warn!("native instance missed a ping");
                         port.kill();
@@ -450,7 +484,9 @@ impl InstanceTask {
                     }
                     next_ping += 1;
                     port.send(&ToApp::Ping { id: next_ping });
-                    ping = Some((next_ping, Instant::now() + ping_timeout));
+                    let due = Instant::now() + ping_timeout;
+                    ping = Some((next_ping, due));
+                    ping_timer.as_mut().reset(due);
                     continue;
                 }
             };

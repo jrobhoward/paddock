@@ -2005,6 +2005,39 @@ New workloads (after the changes), against ETS `ordered_set` and `persistent_ter
 - **Dependent reads cost what single reads do:** 3 to 4 times ETS and 5 to 8 times `persistent_term`, which reads one map in place: the gap a copy in the guest (S28) or data in the component (S27) would close.
 - **Scans of the whole bucket** read 8 to 11% slower on the 16-core machine in this run and the same on the Pi; 100-entry ranges did not move on either. Not attributed.
 
+## 2026-10-31: a native instance's call with fewer hand-offs (Z1)
+
+`native_cost` (new, `bench.sh native`): 100 native instances of `bulkhead-fixture-native` through `bulkhead-runner`, 4 workers. Calls from the host one at a time, a call from one instance to another through the host, requests for the instance's own pid from inside a callback, casts to one instance, and calls with 16 and 64 in flight, with the CPU of the node and the app processes per call. Three builds, from commit 616d481:
+- **Before:** frames to the app through a writer task, from it through a reader task and a channel; the app's frames read by a thread of their own and handed to the callback's thread.
+- **Step 1:** the instance's task writes to the pipe itself while it has room, and reads and decodes the app's frames itself; the app's callback thread reads stdin itself (spike S30 counted six wake-ups per call).
+- **Step 2:** one callback-deadline timer and one ping timer per instance, re-armed when they fire early, instead of a timer per frame; a callback waits on the kill flag rather than the control channel.
+
+Raspberry Pi 5, at nice 10, load 0.4 to 0.9 at the start; one run before, four of step 1, two of step 2:
+
+| | Before | Step 1 | Step 2 |
+| --- | --- | --- | --- |
+| call from the host, p50 / p99 | 60 / 79 µs | 38 to 40 / 53 to 54 µs | 29 to 31 / 43 to 47 µs |
+| call between instances, p50 | 172 µs | 107 to 113 µs | 88 to 93 µs |
+| request from a callback | 18.3 µs | 13.2 to 13.9 µs | 10.7 to 11.9 µs |
+| casts to one instance, per second | 52,000 | 72,000 to 75,000 | 88,000 to 91,000 |
+| 64 calls in flight: calls/s, CPU per call | 62,900, 62 µs | 97,000 to 102,000, 38 to 40 µs | 105,000 to 109,000, 35 to 36 µs |
+| start, to the first reply, p50 | 4.6 ms | 3.9 to 4.1 ms | 3.9 to 4.0 ms |
+
+16-core machine (AMD Ryzen Threadripper 1950X), load 1.3 to 1.5 at the start of each comparison and up to 3.5 by its end, from a browser; two runs of each build:
+
+| | Before | Step 1 | Step 2 |
+| --- | --- | --- | --- |
+| call from the host, p50 | 56 to 58 µs | 19 to 31 µs | 25 to 31 µs |
+| call between instances, p50 | 158 to 160 µs | 73 to 99 µs | 87 to 99 µs |
+| request from a callback | 19 to 32 µs | 13 to 25 µs | 17 to 25 µs |
+| 16 calls in flight: calls/s, CPU per call | 182,000 to 188,000, 45 to 46 µs | 196,000 to 211,000, 31 to 33 µs | 265,000 to 277,000, 27 µs |
+| 64 calls in flight: calls/s, CPU per call | 230,000 to 243,000, 37 to 39 µs | 221,000 to 242,000, 29 to 31 µs | 285,000 to 288,000, 26 µs |
+
+- **A call costs half of what it did on the Pi** (60 to 30 µs), a request from a callback 40% less, and the node and app together spend 42% less CPU per call at load; casts handled per second rise 70%.
+- **On the 16-core machine the CPU per call falls by a third or more and throughput at 16 and 64 in flight rises 20 to 50%.** Single calls one at a time vary from run to run by more than the steps (two processes taking turns land on different core clusters each time), so only their range is given; casts per second varied from 30,000 to 75,000 across runs and are left out.
+- **Step 1's profile** (16-core, `perf record` of the whole run, the app processes included) put about 10% of the node's samples in tokio's timer wheel, a timer armed and removed for each frame: what step 2 removed.
+- **A call still costs about 30 µs on the Pi, about seven times a component's** (4.2 to 4.5 µs with 4 workers, 2026-10-30, B15's section): a frame each way through the pipes, two wake-ups of a sleeping thread or task, and CBOR. Not measured: the app process's share alone, and a callback longer than a few microseconds.
+
 ## Not measured yet
 
 - B15's fix on the 16-core machine.
