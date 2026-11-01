@@ -346,7 +346,7 @@ The Go column is from a local run (Linux x86-64, TinyGo 0.43.0, 2026-10-30); CI 
 
 ## Native-process apps
 
-Native code runs as a process the node spawns and supervises like an instance, an Erlang-style port: `kind = "native-process"` in the manifest. It has a pid, a mailbox, links, monitors and supervision, and handles one callback at a time; it can declare only `wasi:logging` and `wasi:keyvalue` for now (`Ctx::bucket`, MANIFEST.md). The node runs it through `bulkhead-runner`, which restricts it first: it reads only the system libraries, its own directory and the app's `priv/` files, executes nothing else, opens no sockets, and signals only itself. Linux only.
+Native code runs as a process the node spawns and supervises like an instance, an Erlang-style port: `kind = "native-process"` in the manifest. It has a pid, a mailbox, links, monitors and supervision, and handles one callback at a time; it can declare logging, keyvalue, process groups, config, secrets and metrics, each a `Ctx` method (`Ctx::bucket` for keyvalue; MANIFEST.md). The node runs it through `bulkhead-runner`, which restricts it first: it reads only the system libraries, its own directory and the app's `priv/` files, executes nothing else, opens no sockets, and signals only itself. Linux only.
 
 Two shapes, chosen by `native.program`:
 

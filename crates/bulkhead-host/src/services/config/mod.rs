@@ -115,3 +115,31 @@ impl store::Host for ServiceCtx<'_, Instance> {
             .collect()))
     }
 }
+
+impl ServiceCtx<'_, Instance> {
+    /// A configuration value for a native app (`None` for every value),
+    /// as a component's `wasi:config` import reads it.
+    pub(crate) fn native(
+        &self,
+        key: Option<&str>,
+    ) -> std::result::Result<Vec<(String, String)>, bulkhead_native::protocol::ConfigError> {
+        if !self.state.granted {
+            return Err(bulkhead_native::protocol::ConfigError::AccessDenied);
+        }
+        Ok(match key {
+            Some(key) => self
+                .state
+                .values
+                .get_key_value(key)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .into_iter()
+                .collect(),
+            None => self
+                .state
+                .values
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        })
+    }
+}

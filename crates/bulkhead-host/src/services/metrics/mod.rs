@@ -195,3 +195,68 @@ impl wit::Host for ServiceCtx<'_, Instance> {
             .and_then(|s| s.record(value).map_err(refused)))
     }
 }
+
+fn native_error(e: wit::Error) -> bulkhead_native::protocol::MetricError {
+    use bulkhead_native::protocol::MetricError;
+    match e {
+        wit::Error::AccessDenied => MetricError::AccessDenied,
+        wit::Error::Invalid(why) => MetricError::Invalid(why),
+        wit::Error::LimitReached => MetricError::LimitReached,
+        wit::Error::UnknownMetric => MetricError::UnknownMetric,
+    }
+}
+
+impl ServiceCtx<'_, Instance> {
+    /// Register a metric for a native app, as a component's
+    /// `bulkhead:metrics` import does.
+    pub(crate) async fn native_register(
+        &mut self,
+        kind: bulkhead_native::protocol::MetricKind,
+        name: String,
+        help: String,
+        labels: Vec<(String, String)>,
+        buckets: Vec<f64>,
+    ) -> std::result::Result<u32, bulkhead_native::protocol::MetricError> {
+        use bulkhead_native::protocol::{MetricError, MetricKind};
+        use wit::Host;
+        let kind = match kind {
+            MetricKind::Counter => wit::Kind::Counter,
+            MetricKind::Gauge => wit::Kind::Gauge,
+            MetricKind::Histogram => wit::Kind::Histogram,
+        };
+        match Host::register(self, kind, name, help, labels, buckets).await {
+            Ok(r) => r.map_err(native_error),
+            Err(e) => Err(MetricError::Invalid(e.to_string())),
+        }
+    }
+
+    /// Apply a native app's batch of updates; the first it refuses, if
+    /// any (the rest are applied).
+    pub(crate) fn native_updates(
+        &self,
+        updates: &[bulkhead_native::protocol::MetricUpdate],
+    ) -> Option<bulkhead_native::protocol::MetricError> {
+        use bulkhead_native::protocol::MetricUpdate;
+        let mut first = None;
+        for update in updates {
+            let outcome = match *update {
+                MetricUpdate::Add(id, delta) => self
+                    .state
+                    .series(id)
+                    .and_then(|s| s.add(delta).map_err(refused)),
+                MetricUpdate::Set(id, value) => self
+                    .state
+                    .series(id)
+                    .and_then(|s| s.set(value).map_err(refused)),
+                MetricUpdate::Observe(id, value) => self
+                    .state
+                    .series(id)
+                    .and_then(|s| s.record(value).map_err(refused)),
+            };
+            if let Err(e) = outcome {
+                first.get_or_insert(native_error(e));
+            }
+        }
+        first
+    }
+}

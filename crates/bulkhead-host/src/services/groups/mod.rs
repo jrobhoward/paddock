@@ -495,3 +495,53 @@ impl groups::Host for ServiceCtx<'_, Instance> {
         Ok(Ok(u32::try_from(delivered).unwrap_or(u32::MAX)))
     }
 }
+
+impl ServiceCtx<'_, Instance> {
+    /// Answer a native app's groups request, with the host functions a
+    /// component's `bulkhead:groups` import runs.
+    pub(crate) async fn native(
+        &mut self,
+        request: bulkhead_native::protocol::GroupsRequest,
+    ) -> std::result::Result<
+        bulkhead_native::protocol::GroupsAnswer,
+        bulkhead_native::protocol::GroupsError,
+    > {
+        use bulkhead_native::protocol::{GroupsAnswer, GroupsError, GroupsRequest};
+        use groups::Host;
+        let error = |e: groups::Error| match e {
+            groups::Error::AccessDenied => GroupsError::AccessDenied,
+            groups::Error::LimitReached => GroupsError::LimitReached,
+        };
+        // The host functions return a trap only for a resource-table
+        // failure, which these never touch.
+        let flat = |r: Result<std::result::Result<GroupsAnswer, groups::Error>>| {
+            r.unwrap_or(Err(groups::Error::AccessDenied)).map_err(error)
+        };
+        match request {
+            GroupsRequest::Join(group) => flat(
+                Host::join(self, group)
+                    .await
+                    .map(|r| r.map(|()| GroupsAnswer::Unit)),
+            ),
+            GroupsRequest::Leave(group) => flat(
+                Host::leave(self, group)
+                    .await
+                    .map(|r| r.map(|()| GroupsAnswer::Unit)),
+            ),
+            GroupsRequest::Members(group) => flat(Host::members(self, group).await.map(|r| {
+                r.map(|pids| {
+                    GroupsAnswer::Members(
+                        pids.into_iter()
+                            .map(crate::native::convert::from_wit_pid)
+                            .collect(),
+                    )
+                })
+            })),
+            GroupsRequest::Publish { group, msg } => flat(
+                Host::publish(self, group, crate::native::convert::wit_envelope(msg))
+                    .await
+                    .map(|r| r.map(GroupsAnswer::Delivered)),
+            ),
+        }
+    }
+}

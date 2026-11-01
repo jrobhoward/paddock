@@ -27,6 +27,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Process groups, config, secrets and metrics for native-process apps: a
+  native app may declare `bulkhead:groups`, `wasi:config`,
+  `bulkhead:secrets` and `bulkhead:metrics`, and `bulkhead_native::app::Ctx`
+  answers them with the code a component's imports run. A callback's
+  metric updates go to the node in one frame with its result, answered by
+  nothing (ROADMAP Z2).
 - Keyvalue for native-process apps: a native app may declare
   `wasi:keyvalue`, and `bulkhead_native::app::Ctx::bucket` gives it
   `wasi:keyvalue`'s and `bulkhead:watch`'s operations on the buckets its

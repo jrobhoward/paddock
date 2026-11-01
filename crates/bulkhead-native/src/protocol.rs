@@ -12,8 +12,9 @@
 //! during a request as well.
 //!
 //! The types mirror `bulkhead:runtime`'s (pids, envelopes, exit reasons,
-//! info, call errors). Version 2 added the keyvalue service
-//! ([`Request::Kv`], [`Info::KvChanged`]).
+//! info, call errors). Version 2 added the host services a native app may
+//! declare: keyvalue ([`Request::Kv`], [`Info::KvChanged`]), groups,
+//! config, secrets and metrics.
 
 use std::io::{self, Read, Write};
 
@@ -248,7 +249,7 @@ pub enum ToApp {
 }
 
 /// A frame from the app to the node.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FromApp {
     /// The first frame: the app is ready, and speaks `version`.
     Hello {
@@ -285,10 +286,15 @@ pub enum FromApp {
         /// The ping's id.
         id: u64,
     },
+    /// Metric updates, during a callback, answered by nothing: the app
+    /// sends a callback's updates together, before its result, and the
+    /// node logs any it refuses.
+    Metrics(Vec<MetricUpdate>),
 }
 
-/// What a native app asks of the node: `bulkhead:runtime/process`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What a native app asks of the node: `bulkhead:runtime/process` and
+/// the host services it may declare.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Request {
     /// This instance's pid: [`Answer::Pid`].
     SelfPid,
@@ -348,6 +354,122 @@ pub enum Request {
     /// A keyvalue operation (`wasi:keyvalue` and `bulkhead:watch`):
     /// [`Answer::Kv`].
     Kv(KvRequest),
+    /// A process groups operation (`bulkhead:groups`): [`Answer::Groups`].
+    Groups(GroupsRequest),
+    /// A configuration value (`wasi:config`): [`Answer::Config`].
+    ConfigGet(String),
+    /// Every configuration value: [`Answer::ConfigAll`].
+    ConfigAll,
+    /// A secret the manifest lists (`bulkhead:secrets`): [`Answer::Secret`].
+    Secret(String),
+    /// Register a metric (`bulkhead:metrics`), or find one registered with
+    /// the same name and labels: [`Answer::Metric`], its id for
+    /// [`MetricUpdate`]s.
+    MetricRegister {
+        /// Counter, gauge or histogram.
+        kind: MetricKind,
+        /// The name, after the app's prefix.
+        name: String,
+        /// The `# HELP` text.
+        help: String,
+        /// Label names and values.
+        labels: Vec<(String, String)>,
+        /// A histogram's bucket bounds; empty for the default ones.
+        buckets: Vec<f64>,
+    },
+}
+
+/// A process groups operation, on groups the manifest lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroupsRequest {
+    /// Join a group: [`GroupsAnswer::Unit`].
+    Join(String),
+    /// Leave a group: [`GroupsAnswer::Unit`].
+    Leave(String),
+    /// A group's members across the cluster: [`GroupsAnswer::Members`].
+    Members(String),
+    /// Cast `msg` to every member: [`GroupsAnswer::Delivered`].
+    Publish {
+        /// The group.
+        group: String,
+        /// The message.
+        msg: Envelope,
+    },
+}
+
+/// A successful groups operation's result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroupsAnswer {
+    /// Done.
+    Unit,
+    /// The group's members.
+    Members(Vec<Pid>),
+    /// How many members the message was queued for.
+    Delivered(u32),
+}
+
+/// Why a groups operation failed: as `bulkhead:groups`'s `error`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroupsError {
+    /// Not granted, or a group the manifest does not list for this.
+    AccessDenied,
+    /// Over the instance's `limits.groups_max`.
+    LimitReached,
+}
+
+/// Why a configuration read failed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigError {
+    /// `wasi:config` is not granted.
+    AccessDenied,
+    /// The configuration could not be read.
+    Other(String),
+}
+
+/// Why a secret could not be read: as `bulkhead:secrets`'s `error`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SecretError {
+    /// Not granted, or a name the manifest does not list.
+    AccessDenied,
+    /// The node binds no secret of that name.
+    NotFound,
+    /// The node could not read it.
+    Unavailable(String),
+}
+
+/// A metric's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetricKind {
+    /// Only goes up.
+    Counter,
+    /// Goes up and down.
+    Gauge,
+    /// Counts observations into buckets.
+    Histogram,
+}
+
+/// One metric update, by the id [`Request::MetricRegister`] returned.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum MetricUpdate {
+    /// Add to a counter or gauge.
+    Add(u32, f64),
+    /// Set a gauge.
+    Set(u32, f64),
+    /// Record a histogram observation.
+    Observe(u32, f64),
+}
+
+/// Why a metric operation failed: as `bulkhead:metrics`'s `error`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetricError {
+    /// `bulkhead:metrics` is not granted.
+    AccessDenied,
+    /// A bad name, label, bucket or value, and why.
+    Invalid(String),
+    /// Over the app's series limit.
+    LimitReached,
+    /// No metric with that id.
+    UnknownMetric,
 }
 
 /// A keyvalue operation on a bucket the manifest lists, named on each
@@ -579,6 +701,16 @@ pub enum Answer {
     Registered(Result<(), RegisterError>),
     /// A keyvalue operation's outcome.
     Kv(Result<KvAnswer, KvError>),
+    /// A groups operation's outcome.
+    Groups(Result<GroupsAnswer, GroupsError>),
+    /// A configuration value, if set.
+    Config(Result<Option<String>, ConfigError>),
+    /// Every configuration value.
+    ConfigAll(Result<Vec<(String, String)>, ConfigError>),
+    /// A secret's bytes.
+    Secret(Result<Bytes, SecretError>),
+    /// A registered metric's id.
+    Metric(Result<u32, MetricError>),
 }
 
 /// A frame that could not be read.

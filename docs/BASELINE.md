@@ -2038,6 +2038,20 @@ Raspberry Pi 5, at nice 10, load 0.4 to 0.9 at the start; one run before, four o
 - **Step 1's profile** (16-core, `perf record` of the whole run, the app processes included) put about 10% of the node's samples in tokio's timer wheel, a timer armed and removed for each frame: what step 2 removed.
 - **A call still costs about 30 µs on the Pi, about seven times a component's** (4.2 to 4.5 µs with 4 workers, 2026-10-30, B15's section): a frame each way through the pipes, two wake-ups of a sleeping thread or task, and CBOR. Not measured: the app process's share alone, and a callback longer than a few microseconds.
 
+## 2026-10-31: native apps' frames over a socketpair, and a bucket read (Z2)
+
+`native_cost`, Raspberry Pi 5 at nice 10, load 0.7 to 1.0; two rounds alternating the builds. A Unix socketpair as the app's stdin and stdout in place of the two pipes, so the node could pass the app descriptors over the same channel:
+
+| | Pipes (Z1) | Socketpair |
+| --- | --- | --- |
+| call from the host, p50 | 29 to 31 µs | 43 µs |
+| call between instances, p50 | 92 to 97 µs | 119 to 120 µs |
+| request from a callback | 11.0 to 11.3 µs | 14.7 to 14.8 µs |
+| 64 calls in flight: calls/s, CPU per call | 107,000, 36 µs | 79,000 to 80,000, 47 to 48 µs |
+
+- **A stream socket costs the kernel more per write than a pipe:** a call 40% more and a quarter of the throughput. Frames stay on the pipes; passing descriptors gets a socket of its own when it is needed (ROADMAP Z8).
+- **A bucket read from a native callback** (`kv gets`, 16 B values, a memory bucket) costs 12.8 to 13.3 µs on the Pi, about what a request for the instance's own pid does (11.3 to 11.5 µs): the request is the cost, not the storage. A component's read is about 1.2 µs (S25).
+
 ## Not measured yet
 
 - B15's fix on the 16-core machine.

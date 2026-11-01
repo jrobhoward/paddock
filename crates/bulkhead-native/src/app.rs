@@ -46,8 +46,9 @@ use std::process::ExitCode;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::protocol::{
-    self, Answer, Bytes, CallError, Envelope, ExitReason, FromApp, Info, KvAnswer, KvError,
-    KvRequest, Level, Pid, RegisterError, Request, ScanPage, ScanQuery, ToApp, VERSION,
+    self, Answer, Bytes, CallError, ConfigError, Envelope, ExitReason, FromApp, GroupsAnswer,
+    GroupsError, GroupsRequest, Info, KvAnswer, KvError, KvRequest, Level, MetricError, MetricKind,
+    MetricUpdate, Pid, RegisterError, Request, ScanPage, ScanQuery, SecretError, ToApp, VERSION,
 };
 
 /// A call's reference, for a later [`Ctx::reply`].
@@ -109,6 +110,8 @@ pub fn log(level: Level, message: impl Into<String>) {
 pub struct Ctx {
     input: StdinLock<'static>,
     next_id: u64,
+    /// Metric updates, sent together before the callback's result.
+    metrics: Vec<MetricUpdate>,
 }
 
 impl Ctx {
@@ -249,6 +252,157 @@ impl Ctx {
         Bucket {
             ctx: self,
             name: name.into(),
+        }
+    }
+
+    /// Join a process group the manifest lists for joining.
+    ///
+    /// # Errors
+    ///
+    /// [`GroupsError::AccessDenied`] if not granted or not listed;
+    /// [`GroupsError::LimitReached`] over `limits.groups_max`.
+    pub fn join_group(&mut self, group: impl Into<String>) -> Result<(), GroupsError> {
+        self.groups(GroupsRequest::Join(group.into())).map(|_| ())
+    }
+
+    /// Leave a group.
+    ///
+    /// # Errors
+    ///
+    /// [`GroupsError::AccessDenied`] if not granted or not listed.
+    pub fn leave_group(&mut self, group: impl Into<String>) -> Result<(), GroupsError> {
+        self.groups(GroupsRequest::Leave(group.into())).map(|_| ())
+    }
+
+    /// A group's members across the cluster.
+    ///
+    /// # Errors
+    ///
+    /// [`GroupsError::AccessDenied`] for a group the manifest lists for
+    /// neither joining nor publishing.
+    pub fn group_members(&mut self, group: impl Into<String>) -> Result<Vec<Pid>, GroupsError> {
+        match self.groups(GroupsRequest::Members(group.into()))? {
+            GroupsAnswer::Members(pids) => Ok(pids),
+            other => protocol_error(&format!("unexpected groups answer {other:?}")),
+        }
+    }
+
+    /// Cast `msg` to every member of a group the manifest lists for
+    /// publishing; how many members it was queued for.
+    ///
+    /// # Errors
+    ///
+    /// [`GroupsError::AccessDenied`] if not granted or not listed.
+    pub fn publish(&mut self, group: impl Into<String>, msg: Envelope) -> Result<u32, GroupsError> {
+        let group = group.into();
+        match self.groups(GroupsRequest::Publish { group, msg })? {
+            GroupsAnswer::Delivered(n) => Ok(n),
+            other => protocol_error(&format!("unexpected groups answer {other:?}")),
+        }
+    }
+
+    fn groups(&mut self, request: GroupsRequest) -> Result<GroupsAnswer, GroupsError> {
+        match self.request(Request::Groups(request)) {
+            Answer::Groups(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// A configuration value (`wasi:config`: the manifest's `config` with
+    /// the node's overrides), if set.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::AccessDenied`] if `wasi:config` is not granted.
+    pub fn config(&mut self, key: impl Into<String>) -> Result<Option<String>, ConfigError> {
+        match self.request(Request::ConfigGet(key.into())) {
+            Answer::Config(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// Every configuration value.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Ctx::config`].
+    pub fn config_all(&mut self) -> Result<Vec<(String, String)>, ConfigError> {
+        match self.request(Request::ConfigAll) {
+            Answer::ConfigAll(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// A secret the manifest lists, read by the node when asked.
+    ///
+    /// # Errors
+    ///
+    /// [`SecretError::AccessDenied`] if not granted or not listed;
+    /// [`SecretError::NotFound`] or [`SecretError::Unavailable`] if the
+    /// node has no secret of that name or cannot read it.
+    pub fn secret(&mut self, name: impl Into<String>) -> Result<Vec<u8>, SecretError> {
+        match self.request(Request::Secret(name.into())) {
+            Answer::Secret(result) => result.map(|b| b.0),
+            other => unexpected(&other),
+        }
+    }
+
+    /// Register a metric (`bulkhead:metrics`), or find the one already
+    /// registered with this name and labels; its id for
+    /// [`Ctx::metric_add`], [`Ctx::metric_set`] and [`Ctx::metric_observe`].
+    /// Register in `init` and keep the id.
+    ///
+    /// # Errors
+    ///
+    /// [`MetricError::AccessDenied`] if not granted;
+    /// [`MetricError::Invalid`] for a bad name, label or bucket;
+    /// [`MetricError::LimitReached`] over the app's series limit.
+    pub fn register_metric(
+        &mut self,
+        kind: MetricKind,
+        name: impl Into<String>,
+        help: impl Into<String>,
+        labels: &[(&str, &str)],
+        buckets: &[f64],
+    ) -> Result<u32, MetricError> {
+        match self.request(Request::MetricRegister {
+            kind,
+            name: name.into(),
+            help: help.into(),
+            labels: labels
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+            buckets: buckets.to_vec(),
+        }) {
+            Answer::Metric(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// Add to a counter or gauge. Updates are kept and sent together just
+    /// before the callback's result, in one frame with no answer, so they
+    /// cost no request each; the node logs one it refuses (an unknown id,
+    /// a counter going down).
+    pub fn metric_add(&mut self, metric: u32, delta: f64) {
+        self.metrics.push(MetricUpdate::Add(metric, delta));
+    }
+
+    /// Set a gauge (sent as [`Ctx::metric_add`]'s updates are).
+    pub fn metric_set(&mut self, metric: u32, value: f64) {
+        self.metrics.push(MetricUpdate::Set(metric, value));
+    }
+
+    /// Record a histogram observation (sent as [`Ctx::metric_add`]'s
+    /// updates are).
+    pub fn metric_observe(&mut self, metric: u32, value: f64) {
+        self.metrics.push(MetricUpdate::Observe(metric, value));
+    }
+
+    /// Send the callback's metric updates, if any.
+    fn flush_metrics(&mut self) {
+        if !self.metrics.is_empty() {
+            send(&FromApp::Metrics(std::mem::take(&mut self.metrics)));
         }
     }
 
@@ -638,10 +792,12 @@ pub fn serve<A: App>() -> ExitCode {
     let mut ctx = Ctx {
         input: io::stdin().lock(),
         next_id: 0,
+        metrics: Vec::new(),
     };
     let mut app = match ctx.next_frame() {
         ToApp::Init { args } => match guarded(|| A::init(&mut ctx, args)) {
             Ok(app) => {
+                ctx.flush_metrics();
                 send(&FromApp::Init(Ok(())));
                 app
             }
@@ -656,18 +812,22 @@ pub fn serve<A: App>() -> ExitCode {
         match ctx.next_frame() {
             ToApp::Call { call_ref, msg } => {
                 let reply = guarded(|| app.handle_call(&mut ctx, call_ref, msg));
+                ctx.flush_metrics();
                 send(&FromApp::Reply(reply));
             }
             ToApp::Cast { msg } => {
                 guarded(|| app.handle_cast(&mut ctx, msg));
+                ctx.flush_metrics();
                 send(&FromApp::Done);
             }
             ToApp::Info { info } => {
                 guarded(|| app.handle_info(&mut ctx, info));
+                ctx.flush_metrics();
                 send(&FromApp::Done);
             }
             ToApp::Terminate { reason } => {
                 guarded(|| app.terminate(&mut ctx, reason));
+                ctx.flush_metrics();
                 send(&FromApp::Done);
                 return ExitCode::SUCCESS;
             }

@@ -63,7 +63,14 @@ pub const SECTION: &str = "appserver";
 
 /// The capabilities a `native-process` app may declare: the services the
 /// node answers over the native protocol.
-pub const NATIVE_CAPABILITIES: &[Capability] = &[Capability::Logging, Capability::KeyValue];
+pub const NATIVE_CAPABILITIES: &[Capability] = &[
+    Capability::Logging,
+    Capability::KeyValue,
+    Capability::Groups,
+    Capability::Config,
+    Capability::Secrets,
+    Capability::Metrics,
+];
 
 /// The `appserver` section of a bundle manifest: everything the server needs
 /// to place, limit, wire and upgrade an app. Every section is optional and

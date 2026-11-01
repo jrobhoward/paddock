@@ -24,6 +24,8 @@ fn pid() -> Pid {
 #[case(ToApp::Answer { id: 6, answer: Answer::Kv(Ok(KvAnswer::Values(vec![Some(Bytes(vec![1])), None]))) })]
 #[case(ToApp::Answer { id: 7, answer: Answer::Kv(Ok(KvAnswer::Page(ScanPage { entries: vec![("k".into(), Bytes(vec![2]), 3)], next: Some("l".into()), revision: 3 }))) })]
 #[case(ToApp::Answer { id: 8, answer: Answer::Kv(Err(KvError::Conflict(Some(4)))) })]
+#[case(ToApp::Answer { id: 9, answer: Answer::Groups(Ok(GroupsAnswer::Members(vec![pid()]))) })]
+#[case(ToApp::Answer { id: 10, answer: Answer::Secret(Err(SecretError::Unavailable("gone".into()))) })]
 fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
     let bytes = encode(&frame);
 
@@ -39,6 +41,9 @@ fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
 #[case(FromApp::Request { id: 2, request: Request::Exit { to: pid(), reason: ExitReason::Killed } })]
 #[case(FromApp::Log { level: Level::Warn, message: "careful".into() })]
 #[case(FromApp::Request { id: 3, request: Request::Kv(KvRequest::SetMany { bucket: "b".into(), entries: vec![("k".into(), Bytes(vec![0, 255]))] }) })]
+#[case(FromApp::Request { id: 5, request: Request::Groups(GroupsRequest::Publish { group: "g".into(), msg: Envelope::new("x", vec![1]) }) })]
+#[case(FromApp::Request { id: 6, request: Request::MetricRegister { kind: MetricKind::Histogram, name: "lat".into(), help: "h".into(), labels: vec![("l".into(), "v".into())], buckets: vec![0.5, 1.0] } })]
+#[case(FromApp::Metrics(vec![MetricUpdate::Add(1, 2.5), MetricUpdate::Observe(2, 0.25)]))]
 #[case(FromApp::Request { id: 4, request: Request::Kv(KvRequest::Scan { bucket: "b".into(), query: ScanQuery { prefix: Some("p".into()), limit: 10, ..ScanQuery::default() } }) })]
 fn encode____from_app_frames____read_back_unchanged(#[case] frame: FromApp) {
     let bytes = encode(&frame);

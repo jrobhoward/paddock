@@ -132,3 +132,22 @@ impl store::Host for ServiceCtx<'_, Instance> {
         Ok(read(&name, &source).await)
     }
 }
+
+impl ServiceCtx<'_, Instance> {
+    /// A secret for a native app, as a component's `bulkhead:secrets`
+    /// import reads it.
+    pub(crate) async fn native(
+        &mut self,
+        name: String,
+    ) -> std::result::Result<Vec<u8>, bulkhead_native::protocol::SecretError> {
+        use bulkhead_native::protocol::SecretError;
+        use store::Host;
+        match Host::get(self, name).await {
+            Ok(Ok(bytes)) => Ok(bytes),
+            Ok(Err(store::Error::AccessDenied)) => Err(SecretError::AccessDenied),
+            Ok(Err(store::Error::NotFound)) => Err(SecretError::NotFound),
+            Ok(Err(store::Error::Unavailable(why))) => Err(SecretError::Unavailable(why)),
+            Err(e) => Err(SecretError::Unavailable(e.to_string())),
+        }
+    }
+}

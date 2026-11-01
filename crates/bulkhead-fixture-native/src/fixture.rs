@@ -117,6 +117,24 @@ impl Fixture {
             },
             "dumpable" => dumpable(),
             "kv" => kv(ctx, rest),
+            "group" => group(ctx, first, tail),
+            "config" => match ctx.config(first) {
+                Ok(v) => v.unwrap_or_else(|| "none".into()),
+                Err(e) => format!("err:{e:?}"),
+            },
+            "config-all" => match ctx.config_all() {
+                Ok(all) => all
+                    .into_iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                Err(e) => format!("err:{e:?}"),
+            },
+            "secret" => match ctx.secret(first) {
+                Ok(v) => String::from_utf8_lossy(&v).into_owned(),
+                Err(e) => format!("err:{e:?}"),
+            },
+            "metric" => metric(ctx, first, tail),
             "kill" => {
                 let target: i32 = rest.parse().unwrap_or(0);
                 // SAFETY: `kill` takes no pointers; any pid and signal 0
@@ -157,6 +175,8 @@ impl App for Fixture {
             && let Some(call) = self.waiting.take()
         {
             ctx.reply(call, text(rest));
+        } else {
+            self.infos.push(format!("cast {body}"));
         }
     }
 
@@ -285,4 +305,47 @@ fn kv(ctx: &mut Ctx, command: &str) -> String {
         }
     };
     out.unwrap_or_else(|e| format!("err:{e:?}"))
+}
+
+/// `group OP GROUP [TEXT]`: `join`, `leave`, `members` (how many),
+/// `publish` (to how many).
+fn group(ctx: &mut Ctx, op: &str, rest: &str) -> String {
+    let (name, text_part) = rest.split_once(' ').unwrap_or((rest, ""));
+    let out = match op {
+        "join" => ctx.join_group(name).map(|()| "ok".to_string()),
+        "leave" => ctx.leave_group(name).map(|()| "ok".to_string()),
+        "members" => ctx.group_members(name).map(|m| m.len().to_string()),
+        "publish" => ctx.publish(name, text(text_part)).map(|n| n.to_string()),
+        other => return format!("err:unknown group op {other}"),
+    };
+    out.unwrap_or_else(|e| format!("err:{e:?}"))
+}
+
+/// `metric register KIND NAME`, the id; `metric add ID N`,
+/// `metric set ID N`, `metric observe ID N`, queued until the callback
+/// ends.
+fn metric(ctx: &mut Ctx, op: &str, rest: &str) -> String {
+    use bulkhead_native::protocol::MetricKind;
+    let (a, b) = rest.split_once(' ').unwrap_or((rest, ""));
+    match op {
+        "register" => {
+            let kind = match a {
+                "gauge" => MetricKind::Gauge,
+                "histogram" => MetricKind::Histogram,
+                _ => MetricKind::Counter,
+            };
+            ctx.register_metric(kind, b, "a fixture metric", &[], &[])
+                .map_or_else(|e| format!("err:{e:?}"), |id| id.to_string())
+        }
+        "add" | "set" | "observe" => {
+            let (id, value) = (a.parse().unwrap_or(0), b.parse().unwrap_or(0.0));
+            match op {
+                "add" => ctx.metric_add(id, value),
+                "set" => ctx.metric_set(id, value),
+                _ => ctx.metric_observe(id, value),
+            }
+            "queued".into()
+        }
+        other => format!("err:unknown metric op {other}"),
+    }
 }

@@ -30,7 +30,7 @@ The failover pair and witness run over QUIC between `bulkhead node` processes (`
 
 ## Next
 
-Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1 done the same day (a native call about half what it cost, BASELINE.md); Z2, Z3 and Z4 next; the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
+Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1 and Z2 done the same day (a native call about half what it cost, BASELINE.md; native apps reach keyvalue, groups, config, secrets and metrics); Z3 and Z4 next; the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
@@ -174,7 +174,7 @@ Order: J5 first, which runs J4's Go board in CI and so meets the exit's first ha
 
 ## Keyvalue track: fast reads of shared buckets
 
-Narrowed by Phase 5 (2026-10-31): the host-side items (H6, H7, H11) stay; H8 waits for Z2 (watch notices carrying the value, S31); H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch for mapped snapshots) are replaced by S31's mapped snapshot in a memfd (Z8).
+Narrowed by Phase 5 (2026-10-31): the host-side items (H6, H7, H11) stay; H8 can build on Z2's watch notices, which carry the value; H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch for mapped snapshots) are replaced by S31's mapped snapshot in a memfd (Z8).
 
 Planned on 2026-10-30, from the comparison with ETS (BASELINE.md, 2026-10-30, "keyvalue buckets against ETS"). A memory-bucket operation from a guest costs about 1 µs before it touches data, against 50 to 270 ns for ETS and about 250 ns for a bare host call (S14); 1.7 to 7 times `ordered_set` for small values, 23 to 92 times for 64 KiB values (copied across the sandbox; ETS keeps them by reference); and 0.4 to 0.6 million operations per second from 1 to 16 instances, where ETS with `read_concurrency` scales to 2.5 to 6.4 million. Every memory bucket on a node shares one lock (`storage::Memory`).
 
@@ -201,7 +201,7 @@ Items (each built only if its spike says so; sizes after the spike):
 - [ ] **H11 Filters pushed into scans** (when an app scans for a few matches in many). `scan` with simple predicates on the key and counts, as ETS's `select` and `select_count`, so a scan copies only matching entries. Areas: Contract, keyvalue service, SDKs.
 - [ ] **H12 Docs.** WRITING_APPS.md: which read path for which data (bucket, batch, scan, mirror, a mapped snapshot, an owner pool), with the harness's numbers; DESIGN.md's keyvalue section updated with the decisions.
 
-Order: the harness, S25 and S26 are done (2026-10-30; S26 gave memory buckets `read_concurrency`), S27 and S28 on 2026-10-31; H6 and H7 as Phase 5 allows, H8 after Z2; H11 on demand; H12 last.
+Order: the harness, S25 and S26 are done (2026-10-30; S26 gave memory buckets `read_concurrency`), S27 and S28 on 2026-10-31; H6, H7 and H8 as Phase 5 allows; H11 on demand; H12 last.
 
 ## Phase 5: native apps
 
@@ -222,7 +222,6 @@ Spikes:
 
 Items (sizes after the spikes):
 
-- [ ] **Z2 Host services for native apps: what is left.** Keyvalue and watch are done (2026-10-31, CHANGELOG: a bucket read from a callback about 13 µs on the Pi, notices carrying the value). Left: groups (the board's hot standby), config, secrets and metrics over the protocol, answered by the services' existing host code, with the SDK batching metric updates; each added to `NATIVE_CAPABILITIES` with its deny, limit and release-on-exit tests (CLAUDE.md, "A new host service"). Frames stay on the pipes: a Unix socketpair in their place cost a call 40% more and a quarter of the throughput (Raspberry Pi 5, 2026-10-31: 43 against 30 µs, 79,000 against 107,000 calls/s), so descriptors (Z8's sockets, mapped snapshots) get a socket of their own beside the pipes when Z8 first needs one. SQL, HTTP egress and sockets after the exit (Z8). Areas: Host services, Manifest and bundle, `crates/bulkhead-native`.
 - [ ] **Z3 One SDK for both kinds.** `bulkhead-sdk`'s API (`App`, `Ctx`, envelopes, `kv`, `watch`, `groups`, `http`, the log macros) on native targets through `bulkhead-native`'s protocol, so one app's source builds for `wasm32-wasip2` and as a program, `app!` giving a program its `main`. `bulkhead bundle` packs the native variants for x86-64 and aarch64. Areas: Guest SDK, `crates/bulkhead-native`, `bulkhead` (bundle).
 - [ ] **Z4 HTTP routes and placement for native apps.** A route to a native pool (a request is a call, so likely only the manifest's rule), and placement on a pair: `singleton`, hot standby, `partner_url` and standby forwarding, the lease ending a native singleton's process outside a callback as well as in one. Areas: I/O and protocols, Orchestration, Manifest and bundle.
 - [ ] **Z5 The board native, in CI.** `examples/board` built natively from its source; `board.rs` running its Rust cases against both builds, as it runs the Go ones; a Linux x86-64 CI job; a run on the Pi. Phase 5's exit. Areas: Fixtures and examples, `crates/bulkhead/tests`, CI.
@@ -231,15 +230,15 @@ Items (sizes after the spikes):
 After the exit, each planned when reached:
 
 - **Z7 Snapshots for native apps:** `save-snapshot` and `load-snapshot` over the protocol (the SDK's `Snapshot` derive), for snapshot upgrades, passivation and moving a singleton with its state.
-- **Z8 The rest of the platform natively:** listeners and connection handlers, HTTP handlers, SQL over the protocol, HTTP egress and sockets as sockets the node opens and passes over a Unix socket beside the frames' pipes (S31, Z2; a network namespace with no network would complete the runner's fence), mapped bucket snapshots for read-heavy data; every example and the conformance suite as native apps; a native Go SDK (plain Go, without TinyGo).
+- **Z8 The rest of the platform natively:** listeners and connection handlers, HTTP handlers, SQL over the protocol, HTTP egress and sockets as sockets the node opens and passes over a Unix socket beside the frames' pipes (S31; frames over a socketpair cost a call 40% more, BASELINE.md 2026-10-31; a network namespace with no network would complete the runner's fence), mapped bucket snapshots for read-heavy data; every example and the conformance suite as native apps; a native Go SDK (plain Go, without TinyGo).
 - **Z9 WebAssembly out:** wasmtime, the WIT contract and its rules test, deny stubs, the pooling allocator, epochs and the compile cache, the wasm fixtures and the `guests` check; CLAUDE.md's constraints from the spikes that measured wasmtime (S1 to S4, S24, S25's sync imports) go with the code they guarded.
 
 Decided with this plan (2026-10-31):
 - Phase 4 (J5 to J9, more languages as components) is parked; languages return as native SDKs in Z8.
-- The keyvalue track keeps its host-side items (H6, H7, H11). H8 (a mirror in the SDKs) waits for Z2's watch notices. H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch) are replaced by S31's mapped snapshot.
+- The keyvalue track keeps its host-side items (H6, H7, H11). H8 (a mirror in the SDKs) can build on Z2's watch notices, which carry the value. H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch) are replaced by S31's mapped snapshot.
 - B14 (wasmtime's MMU interruption) is parked: it speeds up guests only. The wasmtime 50.0.1 upgrade stays while components run.
 
-Order: S30, S31 and Z1 done (2026-10-31); Z2, Z3 and Z4 next, in parallel; Z5, the exit, with Z6. Z7 and Z8 after, Z9 last.
+Order: S30, S31, Z1 and Z2 done (2026-10-31); Z3 and Z4 next, in parallel; Z5, the exit, with Z6. Z7 and Z8 after, Z9 last.
 
 ## Investigations
 

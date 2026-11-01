@@ -38,8 +38,12 @@ use crate::output::{CapturedOutput, Tags};
 use crate::probe;
 use crate::runtime::RuntimeInner;
 use crate::services::HostState;
+use crate::services::config::Config;
+use crate::services::groups::Groups;
 use crate::services::keyvalue::{KeyValue, WATCH_EVENT};
 use crate::services::logging::{self, LogRate, Logging};
+use crate::services::metrics::MetricsService;
+use crate::services::secrets::Secrets;
 use crate::spec::InstanceSpec;
 use crate::state::{InstanceState, ProcessContext};
 use crate::upgrade::UpgradeError;
@@ -55,6 +59,7 @@ fn frame_name(frame: &FromApp) -> &'static str {
         FromApp::Request { .. } => "request",
         FromApp::Log { .. } => "log",
         FromApp::Pong { .. } => "pong",
+        FromApp::Metrics(_) => "metrics",
     }
 }
 
@@ -197,6 +202,32 @@ async fn answer(state: &mut InstanceState, request: Request) -> Result<Answer, S
         Request::Kv(request) => {
             Answer::Kv(HostState::<KeyValue>::service(state).native(request).await)
         }
+        Request::Groups(request) => {
+            Answer::Groups(HostState::<Groups>::service(state).native(request).await)
+        }
+        Request::ConfigGet(key) => Answer::Config(
+            HostState::<Config>::service(state)
+                .native(Some(&key))
+                .map(|found| found.into_iter().next().map(|(_, v)| v)),
+        ),
+        Request::ConfigAll => Answer::ConfigAll(HostState::<Config>::service(state).native(None)),
+        Request::Secret(name) => Answer::Secret(
+            HostState::<Secrets>::service(state)
+                .native(name)
+                .await
+                .map(p::Bytes),
+        ),
+        Request::MetricRegister {
+            kind,
+            name,
+            help,
+            labels,
+            buckets,
+        } => Answer::Metric(
+            HostState::<MetricsService>::service(state)
+                .native_register(kind, name, help, labels, buckets)
+                .await,
+        ),
     })
 }
 
@@ -396,6 +427,18 @@ impl InstanceTask {
                     log(state, level, message).await;
                 }
                 Some(Incoming::Frame(FromApp::Pong { .. })) => {}
+                Some(Incoming::Frame(FromApp::Metrics(updates))) => {
+                    let refused =
+                        HostState::<MetricsService>::service(state).native_updates(&updates);
+                    if let Some(e) = refused {
+                        log(
+                            state,
+                            p::Level::Warn,
+                            format!("metric updates refused: {e:?}"),
+                        )
+                        .await;
+                    }
+                }
                 Some(Incoming::Frame(FromApp::Failed(why))) => {
                     return Err(ExitReason::Crashed(why));
                 }
