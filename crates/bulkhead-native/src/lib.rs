@@ -5,6 +5,7 @@
 //! shared memory): an Erlang-style port.
 //!
 //! - [`protocol`]: the frames both sides exchange.
+//! - [`snapshot`]: a published bucket's snapshot, which apps map and read.
 //! - `channel` (feature `channel`, Linux): the shared-memory rings they
 //!   travel over, and the socket descriptors are passed on.
 //! - `app` (feature `app`): a native app as an executable, with the
@@ -14,6 +15,7 @@
 //!   the app.
 
 pub mod protocol;
+pub mod snapshot;
 
 #[cfg(all(target_os = "linux", feature = "channel"))]
 pub mod channel;

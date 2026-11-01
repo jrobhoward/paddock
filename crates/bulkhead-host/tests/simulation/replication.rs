@@ -43,6 +43,7 @@ fn replicated(dir: &Path, config: &mut RuntimeConfig) {
             durability: Durability::Replicated,
             quota: None,
             read_concurrency: false,
+            publish: None,
         },
     )]);
 }

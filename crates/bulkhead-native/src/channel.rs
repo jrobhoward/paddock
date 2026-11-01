@@ -7,8 +7,8 @@
 //! blocking round trip between processes costs two wake-ups of a sleeping
 //! thread, 7 to 20 µs, which only spinning avoids. Each side sleeps on a
 //! pipe the other writes a byte to: the app's door for frames from the
-//! node, and the node's bell, whose end of file also tells the node the
-//! app has exited. A pipe, not a futex: a pipe's writer wakes its reader
+//! node, whose end of file tells the app the node has gone, and the
+//! node's bell, whose end of file tells the node the app has exited. A pipe, not a futex: a pipe's writer wakes its reader
 //! with the scheduler's sync hint, which favours the writer's warm core
 //! (not measured apart from T1's other fixes). Only an app's thread
 //! waiting for room in the ring to the node sleeps on a futex in the
@@ -474,6 +474,95 @@ pub fn recv_fd(socket: BorrowedFd<'_>) -> io::Result<Option<(u64, OwnedFd)>> {
     }
 }
 
+/// A sealed memfd holding `bytes`: nothing can write, shrink or grow it,
+/// so an app may map it read-only and trust it stays as it was (a
+/// published bucket's snapshot).
+///
+/// # Errors
+///
+/// The memfd could not be made, written or sealed.
+pub fn sealed(name: &str, bytes: &[u8]) -> io::Result<OwnedFd> {
+    let fd = memfd_create(name, MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING)?;
+    let mut file = std::fs::File::from(fd);
+    file.write_all(bytes)?;
+    let fd = OwnedFd::from(file);
+    rustix::fs::fcntl_add_seals(
+        &fd,
+        rustix::fs::SealFlags::WRITE
+            | rustix::fs::SealFlags::SHRINK
+            | rustix::fs::SealFlags::GROW
+            | rustix::fs::SealFlags::SEAL,
+    )?;
+    Ok(fd)
+}
+
+/// A sealed memfd, mapped read-only.
+#[derive(Debug)]
+pub struct Mapped {
+    base: NonNull<u8>,
+    len: usize,
+}
+
+// SAFETY: read-only memory no one can change (the memfd is sealed against
+// writes, shrinking and growing), unmapped only on drop.
+unsafe impl Send for Mapped {}
+// SAFETY: as for `Send`.
+unsafe impl Sync for Mapped {}
+
+impl Mapped {
+    /// Map `fd`, which must be sealed against writes, shrinking and
+    /// growing.
+    ///
+    /// # Errors
+    ///
+    /// It is not sealed, is empty, or could not be mapped.
+    pub fn open(fd: &OwnedFd) -> io::Result<Self> {
+        let need = rustix::fs::SealFlags::WRITE
+            | rustix::fs::SealFlags::SHRINK
+            | rustix::fs::SealFlags::GROW;
+        if !rustix::fs::fcntl_get_seals(fd)?.contains(need) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the memfd is not sealed",
+            ));
+        }
+        let len = usize::try_from(rustix::fs::fstat(fd)?.st_size)
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "an empty memfd"))?;
+        // SAFETY: a new read-only shared mapping of a whole sealed file, at
+        // an address the kernel picks; unmapped only on drop.
+        let p = unsafe {
+            mmap(
+                std::ptr::null_mut(),
+                len,
+                ProtFlags::READ,
+                MapFlags::SHARED,
+                fd,
+                0,
+            )
+        }?;
+        let base = NonNull::new(p.cast::<u8>()).ok_or_else(|| io::Error::other("null mapping"))?;
+        Ok(Self { base, len })
+    }
+
+    /// The mapped bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        // SAFETY: `len` readable bytes from `base` for as long as `self`
+        // lives, which nothing writes: the memfd is sealed against it.
+        unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for Mapped {
+    fn drop(&mut self) {
+        // SAFETY: the mapping `open` made; `bytes` borrows `self`, so no
+        // slice outlives it.
+        let _ = unsafe { munmap(self.base.as_ptr().cast(), self.len) };
+    }
+}
+
 /// Put `memfd`, `bell` (its write end), `door` (its read end) and `fds`
 /// (the app's end) at [`MEMFD_FD`], [`BELL_FD`], [`DOOR_FD`] and
 /// [`FDS_FD`], open across exec, in a child between fork and exec: system
@@ -527,15 +616,21 @@ impl Spin {
         )
     }
 
-    /// Block until `ready()`: spin with `sched_yield` up to the budget,
-    /// then set `word` and `sleep` until the other side clears it and
-    /// wakes this thread (`sleep` may return early: the condition is
-    /// checked again). `sched_yield` rather than a pause instruction: with
-    /// more busy processes than cores a pause starves the other side
-    /// (S32).
-    pub fn block_until(self, word: &AtomicU32, ready: impl Fn() -> bool, sleep: impl Fn()) {
+    /// Block until `ready()`, and say so: spin with `sched_yield` up to
+    /// the budget, then set `word` and `sleep` until the other side clears
+    /// it and wakes this thread (`sleep` may return early: the condition is
+    /// checked again). `false` if `sleep` says the other side has gone.
+    /// `sched_yield` rather than a pause instruction: with more busy
+    /// processes than cores a pause starves the other side (S32).
+    #[must_use]
+    pub fn block_until(
+        self,
+        word: &AtomicU32,
+        ready: impl Fn() -> bool,
+        sleep: impl Fn() -> bool,
+    ) -> bool {
         if ready() {
-            return;
+            return true;
         }
         if !self.0.is_zero() {
             let start = Instant::now();
@@ -543,7 +638,7 @@ impl Spin {
             loop {
                 std::thread::yield_now();
                 if ready() {
-                    return;
+                    return true;
                 }
                 turn = turn.wrapping_add(1);
                 if turn.is_multiple_of(16) && start.elapsed() >= self.0 {
@@ -556,12 +651,15 @@ impl Spin {
             fence(Ordering::SeqCst);
             if ready() {
                 word.store(0, Ordering::SeqCst);
-                return;
+                return true;
             }
-            sleep();
+            let there = sleep();
             if ready() {
                 word.store(0, Ordering::SeqCst);
-                return;
+                return true;
+            }
+            if !there {
+                return false;
             }
         }
     }
@@ -695,15 +793,19 @@ impl AppEnd {
             if ring.is_closed() && !ring.is_readable() {
                 return Ok(0);
             }
-            self.spin.block_until(
+            let there = self.spin.block_until(
                 ring.reader_waiting(),
                 || ring.is_readable() || ring.is_closed(),
                 || {
-                    // Blocks until the node writes a byte; a stale one
-                    // only means one more look.
-                    let _ = rustix::io::read(&self.door, &mut [0u8; 64]);
+                    // Blocks until the node writes a byte (a stale one only
+                    // means one more look); the end of file means the
+                    // node closed the door: it has gone.
+                    !matches!(rustix::io::read(&self.door, &mut [0u8; 64]), Ok(0))
                 },
             );
+            if !there {
+                return Ok(0);
+            }
         }
     }
 
@@ -723,12 +825,13 @@ impl AppEnd {
                 return Ok(n);
             }
             let word = ring.writer_waiting();
-            self.spin.block_until(
+            let _ = self.spin.block_until(
                 word,
                 || ring.has_room(),
                 || {
                     // Returns at once if the node cleared the word first.
                     let _ = futex::wait(word, futex::Flags::empty(), 1, None);
+                    true
                 },
             );
         }

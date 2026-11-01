@@ -146,6 +146,11 @@ pub struct SharedBucket {
     /// Reads take no lock (memory buckets; spike S26): see the manifest's
     /// `read_concurrency`.
     pub read_concurrency: bool,
+    /// Published (ROADMAP T4): checked for changes this often, and each
+    /// change's snapshot passed to every native instance that reads the
+    /// bucket, which reads it there without asking the node. `None`: not
+    /// published.
+    pub publish: Option<Duration>,
 }
 
 /// Where a secret's value comes from. Read on every access.

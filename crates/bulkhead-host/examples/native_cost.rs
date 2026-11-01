@@ -16,10 +16,10 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use bulkhead_bundle::manifest::{Bucket, Capability, Durability, NativeProgram};
+use bulkhead_bundle::manifest::{AccessMode, Bucket, Capability, Durability, NativeProgram};
 use bulkhead_host::{
     Envelope, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, NativeConfig, Runtime,
-    RuntimeConfig,
+    RuntimeConfig, SharedBucket,
 };
 
 const LONG: Duration = Duration::from_secs(30);
@@ -107,7 +107,47 @@ fn spec() -> InstanceSpec {
         },
     )]
     .into();
+    spec.services.keyvalue.shared = [("published".to_string(), AccessMode::Rw)].into();
     spec
+}
+
+/// A bucket get from a callback, as a request and from a published
+/// snapshot (T4).
+async fn bucket_gets(pool: &[InstanceHandle]) {
+    ask(&pool[0], "kv set data t 0123456789abcdef").await;
+    println!(
+        "bucket get from a callback (16 B, memory bucket): {:.1} µs (median of 5 runs of 20,000)",
+        gets(&pool[0], "data").await / 1e3
+    );
+    // Written by another instance: the writer's own reads go to the node
+    // until a snapshot holds its write.
+    ask(&pool[1], "kv set published t 0123456789abcdef").await;
+    // Mapped, and holding the key: the first snapshot may be from before
+    // the write.
+    while ask(&pool[0], "published published").await == "none"
+        || ask(&pool[0], "kv get published t").await != "0123456789abcdef"
+    {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    println!(
+        "bucket get from a published snapshot (16 B, T4): {:.3} µs (median of 5 runs of 20,000)",
+        gets(&pool[0], "published").await / 1e3
+    );
+}
+
+/// Nanoseconds per get of key `t` from `bucket` in a callback: the
+/// median of 5 runs of 20,000.
+async fn gets(h: &InstanceHandle, bucket: &str) -> f64 {
+    let mut per = Vec::new();
+    for _ in 0..5 {
+        let ns: f64 = ask(h, &format!("kv gets {bucket} 20000"))
+            .await
+            .parse()
+            .unwrap();
+        per.push(ns / 20_000.0);
+    }
+    per.sort_by(f64::total_cmp);
+    per[2]
 }
 
 async fn run(workers: usize) {
@@ -123,6 +163,17 @@ async fn run(workers: usize) {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 256,
         native,
+        // A published bucket (T4), its snapshot read in the app.
+        buckets: [(
+            "published".to_string(),
+            SharedBucket {
+                durability: Durability::Memory,
+                quota: None,
+                read_concurrency: false,
+                publish: Some(Duration::from_millis(10)),
+            },
+        )]
+        .into(),
         ..RuntimeConfig::default()
     })
     .unwrap();
@@ -182,17 +233,7 @@ async fn run(workers: usize) {
         per[2] / 1e3
     );
 
-    ask(&pool[0], "kv set data t 0123456789abcdef").await;
-    let mut per = Vec::new();
-    for _ in 0..5 {
-        let ns: f64 = ask(&pool[0], "kv gets data 20000").await.parse().unwrap();
-        per.push(ns / 20_000.0);
-    }
-    per.sort_by(f64::total_cmp);
-    println!(
-        "bucket get from a callback (16 B, memory bucket): {:.1} µs (median of 5 runs of 20,000)",
-        per[2] / 1e3
-    );
+    bucket_gets(&pool).await;
 
     let casts = 50_000;
     let t = Instant::now();

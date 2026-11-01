@@ -290,14 +290,25 @@ mod linux {
             }
         }
 
+        /// Pass a published bucket's snapshot to the app, for the frame
+        /// that names it.
+        ///
+        /// # Errors
+        ///
+        /// As [`Self::send_fd`].
+        pub(crate) fn send_published(
+            &mut self,
+            version: &crate::services::keyvalue::publish::Version,
+        ) -> Result<bulkhead_native::protocol::FdRef, String> {
+            self.send_fd(version.memfd.as_fd())
+        }
+
         /// Pass `fd` to the app, for a frame sent after this one to name.
         ///
         /// # Errors
         ///
         /// The socket refused it: full (an app that takes no
         /// descriptors), or the app gone.
-        // Used by T4's published buckets and Z8e's sockets.
-        #[allow(dead_code)]
         pub(crate) fn send_fd(
             &mut self,
             fd: std::os::fd::BorrowedFd<'_>,
@@ -580,6 +591,13 @@ mod elsewhere {
         }
 
         pub(crate) fn kill(&mut self) {
+            match self.0 {}
+        }
+
+        pub(crate) fn send_published(
+            &mut self,
+            _version: &crate::services::keyvalue::publish::Version,
+        ) -> Result<bulkhead_native::protocol::FdRef, String> {
             match self.0 {}
         }
 

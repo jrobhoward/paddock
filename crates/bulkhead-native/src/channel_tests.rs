@@ -292,3 +292,34 @@ fn spin____from_env_without_the_variable____default() {
 
     assert_eq!(spin, DEFAULT_SPIN);
 }
+
+#[test]
+fn mapped____sealed_memfd____reads_its_bytes() {
+    let fd = sealed("test", b"a snapshot").unwrap();
+
+    let mapped = Mapped::open(&fd).unwrap();
+    let write = rustix::io::write(&fd, b"x");
+
+    assert_eq!(mapped.bytes(), b"a snapshot");
+    assert!(write.is_err(), "a sealed memfd took a write");
+}
+
+#[test]
+fn mapped____unsealed_memfd____refused() {
+    let fd = memfd_create("open", MemfdFlags::CLOEXEC).unwrap();
+    rustix::io::write(&fd, b"writable").unwrap();
+
+    let mapped = Mapped::open(&fd);
+
+    assert!(mapped.is_err());
+}
+
+#[test]
+fn app_end____node_closed_its_door____read_ends_instead_of_spinning() {
+    let (app, _bell, door) = app_end(DEFAULT_SPIN);
+    drop(door);
+
+    let n = app.read_from_node(&mut [0; 8]).unwrap();
+
+    assert_eq!(n, 0);
+}

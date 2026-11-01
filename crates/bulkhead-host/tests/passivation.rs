@@ -338,6 +338,7 @@ async fn passivation____sdk_app_watching_and_in_a_group____woken_by_notice_and_p
                 durability: Durability::Memory,
                 quota: None,
                 read_concurrency: false,
+                publish: None,
             },
         )]),
         ..RuntimeConfig::default()

@@ -268,6 +268,18 @@ pub enum ToApp {
         /// Returned in the pong.
         id: u64,
     },
+    /// A published bucket's new snapshot (`snapshot`, ROADMAP T4): a
+    /// sealed memfd the app maps read-only and reads `bucket` from, in
+    /// place of the one before. Sent before `Init` and between callbacks;
+    /// not answered.
+    Published {
+        /// The shared bucket.
+        bucket: String,
+        /// Every write at or below it is in the snapshot.
+        revision: u64,
+        /// The memfd, on the descriptor socket.
+        fd: FdRef,
+    },
 }
 
 /// A frame from the app to the node.

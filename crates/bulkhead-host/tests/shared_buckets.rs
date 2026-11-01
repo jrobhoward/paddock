@@ -25,6 +25,7 @@ fn shared() -> &'static (Runtime, LoadedApp) {
             durability: Durability::Memory,
             quota,
             read_concurrency: false,
+            publish: None,
         };
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 16,

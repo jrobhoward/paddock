@@ -38,6 +38,8 @@
 //! there).
 
 use std::cell::RefCell;
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -146,6 +148,21 @@ pub fn log(level: Level, message: impl Into<String>) {
 struct Conn {
     next_id: u64,
     metrics: Vec<MetricUpdate>,
+    /// Published buckets' snapshots, by bucket (ROADMAP T4).
+    #[cfg(target_os = "linux")]
+    published: HashMap<String, Published>,
+    /// Published buckets this instance wrote, with the bucket's revision
+    /// after its last write: its reads go to the node until a snapshot
+    /// reaches that revision, so it reads its own writes.
+    #[cfg(target_os = "linux")]
+    written: HashMap<String, u64>,
+}
+
+/// A published bucket's snapshot, mapped.
+#[cfg(target_os = "linux")]
+struct Published {
+    mapped: crate::channel::Mapped,
+    revision: u64,
 }
 
 thread_local! {
@@ -171,6 +188,11 @@ fn next_frame() -> ToApp {
         loop {
             match protocol::read::<ToApp>(&mut FromNode(end)) {
                 Ok(Some(ToApp::Ping { id })) => send(&FromApp::Pong { id }),
+                Ok(Some(ToApp::Published {
+                    bucket,
+                    revision,
+                    fd,
+                })) => adopt(bucket, revision, fd),
                 Ok(Some(frame)) => return frame,
                 Ok(None) => gone(),
                 Err(e) => protocol_error(&e.to_string()),
@@ -178,6 +200,38 @@ fn next_frame() -> ToApp {
         }
     }
     protocol_error("no channel to the node")
+}
+
+/// Map a published bucket's new snapshot in place of the one before. One
+/// that does not map leaves the bucket read from the node: slower, never
+/// stale.
+#[cfg(target_os = "linux")]
+fn adopt(bucket: String, revision: u64, fd: FdRef) {
+    let mapped = take_fd(fd)
+        .and_then(|fd| crate::channel::Mapped::open(&fd))
+        .and_then(|m| match crate::snapshot::Snapshot::parse(m.bytes()) {
+            Ok(_) => Ok(m),
+            Err(why) => Err(io::Error::new(io::ErrorKind::InvalidData, why)),
+        });
+    let failed = with_conn(|conn| match mapped {
+        Ok(mapped) => {
+            if conn.written.get(&bucket).is_some_and(|w| revision >= *w) {
+                conn.written.remove(&bucket);
+            }
+            conn.published
+                .insert(bucket, Published { mapped, revision });
+            None
+        }
+        Err(e) => {
+            conn.published.remove(&bucket);
+            Some(format!(
+                "published bucket {bucket}: {e}; reading it from the node"
+            ))
+        }
+    });
+    if let Some(why) = failed {
+        log(Level::Warn, why);
+    }
 }
 
 /// Ask the node and wait for its answer. Anything else from the node here
@@ -504,9 +558,96 @@ impl Ctx {
 
 /// One keyvalue request.
 fn kv(ctx: &mut Ctx, request: KvRequest) -> Result<KvAnswer, KvError> {
-    match ctx.request(Request::Kv(request)) {
+    #[cfg(target_os = "linux")]
+    if let Some(answer) = published_read(&request) {
+        return Ok(answer);
+    }
+    #[cfg(target_os = "linux")]
+    let wrote = written_bucket(&request);
+    let result = match ctx.request(Request::Kv(request)) {
         Answer::Kv(result) => result,
         other => unexpected(&other),
+    };
+    #[cfg(target_os = "linux")]
+    if let (Ok(_), Some(bucket)) = (&result, wrote) {
+        note_write(ctx, bucket);
+    }
+    result
+}
+
+/// The answer to a read (`get`, `get_many`, `exists`) of a published
+/// bucket, from its snapshot, unless this instance wrote past it.
+#[cfg(target_os = "linux")]
+fn published_read(request: &KvRequest) -> Option<KvAnswer> {
+    let bucket = match request {
+        KvRequest::Get { bucket, .. }
+        | KvRequest::GetMany { bucket, .. }
+        | KvRequest::Exists { bucket, .. } => bucket,
+        _ => return None,
+    };
+    with_conn(|conn| {
+        let published = conn.published.get(bucket)?;
+        if conn
+            .written
+            .get(bucket)
+            .is_some_and(|w| published.revision < *w)
+        {
+            return None;
+        }
+        let snap = crate::snapshot::Snapshot::parse(published.mapped.bytes()).ok()?;
+        let value = |key: &str| snap.get(key.as_bytes()).map(|v| Bytes(v.to_vec()));
+        Some(match request {
+            KvRequest::Get { key, .. } => KvAnswer::Value(value(key)),
+            KvRequest::Exists { key, .. } => KvAnswer::Exists(snap.get(key.as_bytes()).is_some()),
+            KvRequest::GetMany { keys, .. } => {
+                KvAnswer::Values(keys.iter().map(|k| value(k)).collect())
+            }
+            _ => return None,
+        })
+    })
+}
+
+/// The published bucket a write goes to, if it goes to one.
+#[cfg(target_os = "linux")]
+fn written_bucket(request: &KvRequest) -> Option<String> {
+    let bucket = match request {
+        KvRequest::Set { bucket, .. }
+        | KvRequest::Delete { bucket, .. }
+        | KvRequest::Increment { bucket, .. }
+        | KvRequest::SetMany { bucket, .. }
+        | KvRequest::DeleteMany { bucket, .. }
+        | KvRequest::CompareAndSwap { bucket, .. }
+        | KvRequest::CompareAndDelete { bucket, .. } => bucket,
+        _ => return None,
+    };
+    with_conn(|conn| conn.published.contains_key(bucket)).then(|| bucket.clone())
+}
+
+/// This instance wrote `bucket`: its reads go to the node until a
+/// snapshot holds the bucket's revision now (which covers the write). A
+/// failed ask leaves them there.
+#[cfg(target_os = "linux")]
+fn note_write(ctx: &mut Ctx, bucket: String) {
+    let after = match ctx.request(Request::Kv(KvRequest::Revision {
+        bucket: bucket.clone(),
+    })) {
+        Answer::Kv(Ok(KvAnswer::Revision(revision))) => revision,
+        _ => u64::MAX,
+    };
+    with_conn(|conn| conn.written.insert(bucket, after));
+}
+
+/// The revision of the snapshot this instance reads `bucket` from, if it
+/// is published to it: for tests.
+#[doc(hidden)]
+#[must_use]
+pub fn published_revision(bucket: &str) -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    return with_conn(|conn| conn.published.get(bucket).map(|p| p.revision));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = bucket;
+        None
     }
 }
 
@@ -906,6 +1047,10 @@ pub fn serve<A: App>() -> ExitCode {
         *cell.borrow_mut() = Some(Conn {
             next_id: 0,
             metrics: Vec::new(),
+            #[cfg(target_os = "linux")]
+            published: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            written: HashMap::new(),
         });
     });
     let mut ctx = Ctx::current();

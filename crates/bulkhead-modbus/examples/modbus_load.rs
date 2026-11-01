@@ -113,6 +113,7 @@ async fn run(workers: usize) {
                     durability: Durability::Memory,
                     quota: None,
                     read_concurrency: false,
+                    publish: None,
                 },
             )]),
             ..RuntimeConfig::default()

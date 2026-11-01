@@ -782,6 +782,8 @@ pub(crate) struct KvStore {
     pub(crate) watches: Watches,
     /// Replication, once started: its task, and where it stands.
     replication: OnceLock<(Handle, watch::Receiver<ReplicationStatus>)>,
+    /// Published buckets' snapshots ([`super::publish`]).
+    pub(crate) publishers: super::publish::Publishers,
 }
 
 /// A live memory bucket: a concurrent B+-tree with lock-free reads
@@ -1065,6 +1067,7 @@ impl KvStore {
             shared,
             watches: Watches::default(),
             replication: OnceLock::new(),
+            publishers: super::publish::Publishers::default(),
         })
     }
 

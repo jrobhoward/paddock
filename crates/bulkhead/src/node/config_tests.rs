@@ -137,7 +137,7 @@ fn NodeConfig____zero_limit____refused() {
 #[test]
 fn NodeConfig____buckets____read_with_defaults() {
     let config = NodeConfig::from_toml_str(
-        "data_dir = \"/d\"\n[buckets.points]\ndurability = \"disk\"\nquota = \"1MiB\"\n[buckets.cache]\nread_concurrency = true\n",
+        "data_dir = \"/d\"\n[buckets.points]\ndurability = \"disk\"\nquota = \"1MiB\"\npublish_ms = 250\n[buckets.cache]\nread_concurrency = true\n",
     )
     .unwrap();
 
@@ -146,6 +146,7 @@ fn NodeConfig____buckets____read_with_defaults() {
     assert_eq!(config.buckets["cache"].durability, Durability::Memory);
     assert!(config.buckets["cache"].read_concurrency);
     assert!(!config.buckets["points"].read_concurrency);
+    assert_eq!(config.buckets["points"].publish_ms, Some(250));
     assert_eq!(config.buckets["cache"].scope, BucketScope::Node);
 }
 
@@ -156,6 +157,7 @@ fn NodeConfig____unsupported_bucket____refused() {
         ("scope = \"cluster\"\ndurability = \"disk\"", "witness"),
         ("durability = \"replicated\"", "replicated"),
         ("quota = 0", "quota"),
+        ("publish_ms = 0", "publish_ms"),
         (
             "durability = \"disk\"\nread_concurrency = true",
             "read_concurrency",

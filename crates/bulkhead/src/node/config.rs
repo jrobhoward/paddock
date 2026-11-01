@@ -322,6 +322,12 @@ pub struct BucketConfig {
     /// only).
     #[serde(default)]
     pub read_concurrency: bool,
+    /// Published: checked for changes this often, in milliseconds, each
+    /// change's snapshot passed to the native instances that read the
+    /// bucket, which read it there without asking the node. Unset: not
+    /// published.
+    #[serde(default)]
+    pub publish_ms: Option<u64>,
 }
 
 /// A `[secrets.<name>]` entry: exactly one of `file` and `env`.
@@ -1172,6 +1178,8 @@ impl NodeConfig {
                 Some("scope \"cluster\" needs [failover] with arbiter \"witness\"")
             } else if bucket.quota.is_some_and(|q| q.bytes() == 0) {
                 Some("quota must be more than 0")
+            } else if bucket.publish_ms == Some(0) {
+                Some("publish_ms must be more than 0")
             } else if bucket.read_concurrency
                 && (bucket.durability != Durability::Memory || bucket.scope == BucketScope::Cluster)
             {

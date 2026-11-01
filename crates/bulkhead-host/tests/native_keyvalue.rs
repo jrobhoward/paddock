@@ -28,14 +28,26 @@ fn shared() -> &'static (Runtime, LoadedApp) {
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 32,
             native,
-            buckets: BTreeMap::from([(
-                "board".to_string(),
-                SharedBucket {
-                    durability: Durability::Memory,
-                    quota: None,
-                    read_concurrency: false,
-                },
-            )]),
+            buckets: BTreeMap::from([
+                (
+                    "board".to_string(),
+                    SharedBucket {
+                        durability: Durability::Memory,
+                        quota: None,
+                        read_concurrency: false,
+                        publish: None,
+                    },
+                ),
+                (
+                    "published".to_string(),
+                    SharedBucket {
+                        durability: Durability::Memory,
+                        quota: None,
+                        read_concurrency: false,
+                        publish: Some(Duration::from_millis(10)),
+                    },
+                ),
+            ]),
             ..RuntimeConfig::default()
         })
         .unwrap();
@@ -48,9 +60,9 @@ fn shared() -> &'static (Runtime, LoadedApp) {
 }
 
 /// A native instance of `app` with keyvalue granted, its own `data`
-/// bucket, the shared `board` bucket in `mode`, and the shared `missing`
-/// bucket the node does not configure. Tests share the runtime, so each
-/// uses its own keys.
+/// bucket, the shared `board` and `published` (published every 10 ms)
+/// buckets in `mode`, and the shared `missing` bucket the node does not
+/// configure. Tests share the runtime, so each uses its own keys.
 fn spec(app: &str, mode: AccessMode) -> InstanceSpec {
     let mut spec = InstanceSpec {
         memory_max: 64 << 20,
@@ -69,6 +81,7 @@ fn spec(app: &str, mode: AccessMode) -> InstanceSpec {
     )]);
     spec.services.keyvalue.shared = BTreeMap::from([
         ("board".to_string(), mode),
+        ("published".to_string(), mode),
         ("missing".to_string(), AccessMode::Rw),
     ]);
     spec
@@ -198,4 +211,56 @@ async fn native_kv____watcher_exits____writes_continue() {
 
     assert_eq!(write, "ok");
     writer.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_kv____published_bucket____read_from_the_snapshot_after_a_write() {
+    let writer = up("np-writer", AccessMode::Rw);
+    let reader = up("np-reader", AccessMode::Ro);
+    ask(&writer, "kv set published np-a one").await;
+    ask(&writer, "kv set published np-b two").await;
+
+    let got = ask_until(&reader, "kv get published np-a", |r| r == "one").await;
+    let mapped = ask(&reader, "published published").await;
+    let many = ask(&reader, "kv many published np-a,np-none,np-b").await;
+    let missing = ask(&reader, "kv get published np-none").await;
+
+    assert_eq!(got, "one");
+    assert!(mapped.parse::<u64>().is_ok(), "{mapped}");
+    assert_eq!(
+        many,
+        ask(&writer, "kv many published np-a,np-none,np-b").await
+    );
+    assert_eq!(missing, "none");
+    writer.kill();
+    reader.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_kv____published_bucket_written____own_write_read_at_once() {
+    let writer = up("np-own", AccessMode::Rw);
+    ask_until(&writer, "published published", |r| r != "none").await;
+
+    ask(&writer, "kv set published np-own v1").await;
+    let first = ask(&writer, "kv get published np-own").await;
+    ask(&writer, "kv set published np-own v2").await;
+    let second = ask(&writer, "kv get published np-own").await;
+
+    assert_eq!((first.as_str(), second.as_str()), ("v1", "v2"));
+    writer.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_kv____published_bucket_not_listed____no_snapshot() {
+    let (rt, loaded) = shared();
+    let mut unlisted = spec("np-unlisted", AccessMode::Ro);
+    unlisted.services.keyvalue.shared.remove("published");
+    let h = rt.spawn(loaded, unlisted).unwrap();
+
+    let mapped = ask(&h, "published published").await;
+    let read = ask(&h, "kv get published np-a").await;
+
+    assert_eq!(mapped, "none");
+    assert!(read.starts_with("err:"), "{read}");
+    h.kill();
 }

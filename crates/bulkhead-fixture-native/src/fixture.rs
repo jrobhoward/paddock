@@ -121,6 +121,9 @@ impl Fixture {
                 app::break_channel_for_tests();
                 "ok".into()
             }
+            "published" => {
+                app::published_revision(first).map_or_else(|| "none".into(), |r| r.to_string())
+            }
             "fd" => match first.parse() {
                 Ok(id) => read_passed(FdRef(id)),
                 Err(_) => "err:fd ID".into(),

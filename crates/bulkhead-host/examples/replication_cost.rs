@@ -187,6 +187,7 @@ fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
                     durability: Durability::Replicated,
                     quota: None,
                     read_concurrency: false,
+                    publish: None,
                 },
             ),
             (
@@ -195,6 +196,7 @@ fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
                     durability: Durability::Disk,
                     quota: None,
                     read_concurrency: false,
+                    publish: None,
                 },
             ),
         ]);

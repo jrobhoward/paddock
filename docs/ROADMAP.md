@@ -291,7 +291,7 @@ Items, in order:
 - [ ] **T1b Spinning that adapts** (M; from T1, 2026-11-01). On the Pi's 4 cores, 100 busy native instances spinning took the cores their work needed (calls in flight at 55% of before at `spin_us = 20`). Spin less, or not at all, while the node's cores are busy; measured as T1 was, on both machines. And a fuzz target for the ring's reader (`fuzz/`). Areas: `bulkhead-native` channel, `native::port`, fuzz.
 - [ ] **T2 Requests answered without the instance task** (M; deferred by S32, 2026-11-01: answering inside the poller gained little over the instance's task on the same thread; T1 then kept the tasks on the multi-threaded runtime, where a request costs 4 to 5 µs). The poller answers a request that needs no instance state itself: the app's own pid, names, and bucket and watch operations. One hand-off fewer per request, and two per call between instances. Areas: host.
 - [x] **T3 The descriptor channel** (M; Z8e's first half; done 2026-11-01). A `SOCK_SEQPACKET` socket beside each instance's channel, the app's end at descriptor 6: one message per descriptor, its id and the descriptor as `SCM_RIGHTS`, sent before the frame that names it (`protocol::FdRef`); the node's end only sends. The app takes a descriptor by the id its frame names (`bulkhead_native::app::take_fd`), keeping up to 64 that came first. No frame names one yet: T4's published buckets and Z8e's sockets add those, with `Port::send_fd`. Tested end to end through the runner's sandbox with a fixture command that reads a passed pipe. Areas: runner, protocol, host, SDK.
-- [ ] **T4 Mapped bucket snapshots** (L). On T3:
+- [x] **T4 Mapped bucket snapshots** (L; done 2026-11-01, BASELINE.md "published buckets"). `[buckets.NAME] publish_ms`; a thread per node publishes (a task died with whichever tokio runtime started it); a snapshot is tagged with the revision before its first page; an instance's own writes are read through the node until a snapshot holds them; `get`, `get_many` and `exists` read the mapping, natively only. Found while building: an app whose node closed its door spun forever, now it exits. Planned as:
   - **Which buckets:** an operator marks a shared bucket as published.
   - **Publishing:** the node builds each version into a sealed memfd (S31's format: records and a hash index), at most once per publish interval, and passes it to every instance granted the bucket.
   - **Reading:** the SDK's `get` and `get_many` read the mapping in both builds (a component keeps the host call). Reads may be one interval stale; writes stay requests, and so do ordered reads and scans.
@@ -301,7 +301,7 @@ Items, in order:
 - [ ] **T5 The comparison again** (S). C4's within-node rows (calls, casts, payloads) and its keyvalue rows, natively, on both machines, five rounds: BASELINE.md and DESIGN.md's "Instance model". Areas: docs.
 - [ ] **T6 Docs** (S). Covers the channel and spin budget (OPERATIONS.md, node config), published buckets (MANIFEST.md, WRITING_APPS.md: which read path for which data), and SECURITY.md's native boundary (shared memory between node and app; the poller's CPU). Areas: docs.
 
-Order: S32, T1 and T3 (done 2026-11-01), T4, T5 and T6, T1b when a busy small machine needs it; T2 deferred; then Z8b.
+Order: S32, T1, T3 and T4 (done 2026-11-01), T5 and T6, T1b when a busy small machine needs it; T2 deferred; then Z8b.
 
 ### Z8: native parity
 

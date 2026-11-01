@@ -509,6 +509,7 @@ dependencies = [
  "ciborium",
  "landlock",
  "libc",
+ "proptest",
  "rstest",
  "rustbridge-consumer",
  "rustix",

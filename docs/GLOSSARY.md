@@ -27,6 +27,7 @@ Two words have more than one meaning:
 - **Singleton:** an app with `placement.mode = "singleton"`.
 - **Extension:** a host service from a crate outside `bulkhead-host` (`bulkhead-modbus`, the greeter example), linked into a node binary.
 - **Hot standby:** an app with `placement.mode = "hot-standby"`: an instance on both nodes of an HA pair, each told its role (`failover-role` host event), for an app that keeps a warm copy and takes over itself.
+- **Published bucket:** a shared bucket with `publish_ms` set: the node passes each change's snapshot to the native instances that read it, which answer reads from it without asking the node (MANIFEST.md, DESIGN.md "Shared buckets and watches").
 - **Priv files:** files bundled with an app (`bulkhead bundle --priv`), read-only at `/priv` in a component, or in the directory `BULKHEAD_PRIV` names for a native app.
 
 ## Messages

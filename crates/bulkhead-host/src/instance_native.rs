@@ -46,6 +46,7 @@ use crate::runtime::{LoadedApp, RuntimeInner};
 use crate::services::HostState;
 use crate::services::config::Config;
 use crate::services::groups::Groups;
+use crate::services::keyvalue::publish::Publications;
 use crate::services::keyvalue::{KeyValue, WATCH_EVENT};
 use crate::services::logging::{self, LogRate, Logging};
 use crate::services::metrics::MetricsService;
@@ -160,19 +161,25 @@ enum Woke {
 }
 
 /// A frame from the app between callbacks: a log, or the pong for the
-/// ping in flight (`true`). Anything else breaks the protocol.
+/// ping in flight, which `pings` then counts answered. Anything else
+/// breaks the protocol.
 async fn between_callbacks(
     state: &mut InstanceState,
     port: &mut Port,
     incoming: Option<Incoming>,
-    ping: Option<(u64, Instant)>,
-) -> Result<bool, ExitReason> {
+    pings: &mut Pings,
+) -> Result<(), ExitReason> {
     match incoming {
         Some(Incoming::Frame(FromApp::Log { level, message })) => {
             log(state, level, message).await;
-            Ok(false)
+            Ok(())
         }
-        Some(Incoming::Frame(FromApp::Pong { id })) => Ok(ping.is_some_and(|(want, _)| want == id)),
+        Some(Incoming::Frame(FromApp::Pong { id })) => {
+            if pings.in_flight.is_some_and(|(want, _)| want == id) {
+                pings.answered();
+            }
+            Ok(())
+        }
         Some(Incoming::Frame(other)) => Err(broke(
             port,
             format!("{} between callbacks", frame_name(&other)),
@@ -201,6 +208,16 @@ async fn sleep_until(at: Option<Instant>) {
     match at {
         Some(at) => tokio::time::sleep_until(at).await,
         None => std::future::pending().await,
+    }
+}
+
+/// A new snapshot of some published bucket; never without publications.
+async fn published_changed(publications: Option<&mut Publications>) {
+    let Some(p) = publications else {
+        return std::future::pending().await;
+    };
+    if p.changed.changed().await.is_err() {
+        std::future::pending::<()>().await;
     }
 }
 
@@ -361,6 +378,7 @@ impl InstanceTask {
             Ok(state) => state,
             Err(why) => return ExitReason::Crashed(why),
         };
+        self.native_published = HostState::<KeyValue>::service(&mut state).publications();
         if let Some(stop) = self.await_lease(state.lease.clone()).await {
             return stop;
         }
@@ -472,6 +490,9 @@ impl InstanceTask {
     ) -> Result<Result<(), String>, ExitReason> {
         let started = Instant::now();
         self.native_hello(port, spec.init_timeout).await?;
+        // A new process: every published bucket's latest snapshot, before
+        // `init` can read one.
+        self.native_publish(port, true);
         port.send(&match from {
             Some((from_version, snapshot)) => ToApp::LoadSnapshot {
                 from_version: from_version.to_string(),
@@ -492,6 +513,65 @@ impl InstanceTask {
                 port,
                 format!("expected init, got {}", frame_name(&other)),
             )),
+        }
+    }
+
+    /// An operation between callbacks, in `native_serve`: the time the
+    /// instance was last active after it.
+    async fn native_serve_op(
+        &mut self,
+        state: &mut InstanceState,
+        port: &mut Port,
+        spec: &mut InstanceSpec,
+        op: Op,
+        pings: &mut Pings,
+        idle_timer: std::pin::Pin<&mut tokio::time::Sleep>,
+    ) -> Result<Instant, ExitReason> {
+        // `Some` is the reason the instance cannot continue.
+        self.native_op(state, port, spec, op)
+            .await
+            .map_or(Ok(()), Err)?;
+        // The app answered, or was not asked: either way a ping in flight
+        // is moot.
+        pings.answered();
+        let active_at = pings.idle_since;
+        // An upgrade may have set `passivate_after`.
+        idle_timer.reset(
+            spec.passivate_after
+                .map_or_else(far_off, |after| active_at + after),
+        );
+        Ok(active_at)
+    }
+
+    /// Pass the running process each published bucket's latest snapshot
+    /// it has not had (`fresh`: a new process, which has had none). A
+    /// snapshot that cannot be passed leaves the app reading the bucket
+    /// from the node.
+    fn native_publish(&mut self, port: &mut Port, fresh: bool) {
+        let Some(publications) = self.native_published.as_mut() else {
+            return;
+        };
+        for (bucket, versions, sent) in &mut publications.buckets {
+            if fresh {
+                *sent = None;
+            }
+            let Some(version) = versions.borrow().clone() else {
+                continue;
+            };
+            if *sent == Some(version.revision) {
+                continue;
+            }
+            match port.send_published(&version) {
+                Ok(fd) => {
+                    port.send(&ToApp::Published {
+                        bucket: bucket.clone(),
+                        revision: version.revision,
+                        fd,
+                    });
+                    *sent = Some(version.revision);
+                }
+                Err(e) => tracing::warn!(%bucket, error = %e, "published snapshot not passed"),
+            }
         }
     }
 
@@ -877,6 +957,10 @@ impl InstanceTask {
                         lease_timer.as_mut().reset(lease_end(lease.as_ref()).unwrap_or_else(far_off));
                         continue;
                     }
+                    () = published_changed(self.native_published.as_mut()) => {
+                        self.native_publish(port, false);
+                        continue;
+                    }
                     Some(op) = self.ops.recv() => Woke::Op(op),
                     Some(info) = self.signals.recv() => match info.resolve() {
                         Some(info) => Woke::Next(Message::Info(info)),
@@ -887,9 +971,7 @@ impl InstanceTask {
                         None => return Ok(Served::Stop(ExitReason::Shutdown)),
                     },
                     incoming = port.recv() => {
-                        if between_callbacks(state, port, incoming, pings.in_flight).await? {
-                            pings.answered();
-                        }
+                        between_callbacks(state, port, incoming, &mut pings).await?;
                         continue;
                     }
                     () = ping_timer.as_mut() => {
@@ -907,19 +989,9 @@ impl InstanceTask {
             let message = match woke {
                 Woke::Next(message) => message,
                 Woke::Op(op) => {
-                    // `Some` is the reason the instance cannot continue.
-                    self.native_op(state, port, spec, *op)
-                        .await
-                        .map_or(Ok(()), Err)?;
-                    // The app answered, or was not asked: either way a ping
-                    // in flight is moot.
-                    pings.answered();
-                    active_at = pings.idle_since;
-                    // An upgrade may have set `passivate_after`.
-                    idle_timer.as_mut().reset(
-                        spec.passivate_after
-                            .map_or_else(far_off, |after| active_at + after),
-                    );
+                    active_at = self
+                        .native_serve_op(state, port, spec, *op, &mut pings, idle_timer.as_mut())
+                        .await?;
                     continue;
                 }
             };

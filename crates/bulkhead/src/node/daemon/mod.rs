@@ -246,6 +246,7 @@ impl Node {
                             durability,
                             quota: b.quota.map(|q| q.bytes()),
                             read_concurrency: b.read_concurrency,
+                            publish: b.publish_ms.map(std::time::Duration::from_millis),
                         };
                         (name.clone(), bucket)
                     })

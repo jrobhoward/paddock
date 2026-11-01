@@ -441,9 +441,12 @@ durability = "disk"                    # under wasi:keyvalue's shared and are gr
 quota = "256MiB"                       # across every app writing it
 scope = "node"                         # or "cluster": replicated on the HA pair (below)
 read_concurrency = false               # memory buckets: reads without a lock (as the manifest's)
+publish_ms = 100                       # published: checked for changes this often, each change's snapshot passed to native apps that read it (below); unset: not published
 ```
 
 A deploy is refused if the manifest lists a shared bucket the node does not configure.
+
+A published bucket (`publish_ms`) is for data many native instances read and few write. Every `publish_ms` the node looks for changes, and after each it reads the whole bucket into a snapshot in a sealed memfd and passes it to every native instance that lists the bucket, before `init` and between callbacks. The instance answers `get`, `get_many` and `exists` from it without asking the node: about 0.1 to 0.4 µs a read, against 5 to 7 µs as a request (BASELINE.md, 2026-11-01). Its reads may be up to `publish_ms` plus a snapshot's build behind the bucket, except the instance's own writes: after one, its reads go to the node until a snapshot holds it. Scans, revisions, watches and writes stay requests, and components read the bucket as any shared one. Each change rebuilds the whole snapshot, so a bucket written often costs a rebuild every interval; the snapshot's memory is the node's.
 
 Bucket names here follow the manifest's rule: lowercase letters, digits, `-` and `_`, starting with a letter or digit.
 

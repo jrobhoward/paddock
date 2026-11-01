@@ -2198,6 +2198,30 @@ Found while measuring:
 - **A call to an idle instance first cost twice what it did** (41 against 21 µs on the 16-core machine). The node grew its input buffer by the ring's 64 KiB, zeroed, on every look at the ring: 24% of its samples and about 15 µs of CPU per call. It now grows by what the ring holds. The app also moved from sleeping on a futex to sleeping on a pipe, whose writer wakes it with the scheduler's sync hint; that change's own share was not measured apart from the buffer's.
 - **S32's current-thread runtime for native instances lost:** a third of the throughput with 16 callers from the host (93,000 calls/s against 260,000), and a call from the host 21 µs against 10 with the instances on the multi-threaded runtime. Every call from the node's other tasks crossed two threads, and one core did all the native instances' node-side work. With the task spinning only during callbacks, a call between instances cost 39 µs against 19 spinning between callbacks too: a spinning task keeps its worker awake for the instance's next message.
 
+## 2026-11-01: published buckets (T4)
+
+A shared bucket with `publish_ms` (10 here) is read from a snapshot in the native app's own memory. Three rounds on each machine, medians and their spread:
+- **`kv_cost`:** a published bucket of 100,000 keys (16 B values), filled by one instance and read by another from its snapshot (`KV_NATIVE=1`), or through the host as any shared bucket (a component). The loops make their keys and pick them at random inside the timed loop, so they cost more than a lookup alone.
+- **`native_cost`:** one key, read 20,000 times in a callback (`kv gets`), as a request (a memory bucket) and from a published snapshot.
+- **Machines:** the 16-core machine, at load 2.5 to 10.6 (the runs themselves); the Raspberry Pi 5 at nice 10, 0.7 to 8.0.
+
+ns per read, and reads per second across instances:
+
+| | 16-core: native, published | component | Pi: native, published | component |
+| --- | --- | --- | --- | --- |
+| get, 100,000 keys | 219 to 224 | 1,026 to 1,046 | 386 to 389 | 1,557 to 1,579 |
+| a missing key | 160 to 161 | 611 to 638 | 249 to 256 | 809 to 833 |
+| `get_many` of 100, per key | 229 to 234 | 849 to 890 | 423 to 428 | 1,352 to 1,374 |
+| reads/s, 1 instance | 2.9 million | 0.72 to 0.82 million | 1.4 to 1.8 million | 0.54 million |
+| reads/s, 4 instances | 9.0 million | 0.71 to 0.73 million | 4.9 to 5.3 million | 0.56 to 0.60 million |
+| reads/s, 16 instances | 30 to 35 million | 0.71 to 0.74 million | 5.1 to 5.3 million | 0.58 to 0.62 million |
+| one key in a callback (`native_cost`) | 111 to 114 | | 145 to 162 | |
+| the same as a request | 5,500 to 6,800 | | 5,000 | |
+
+- **A published read is a hash lookup in the app's memory:** 0.11 to 0.39 µs, against 5 to 7 µs as a request and 1.0 to 1.6 µs as a component's host call. That is ETS's range: `set`'s get at 100,000 keys took 265 and 443 ns (C4).
+- **Readers scale with cores:** 30 to 35 million reads a second from 16 instances on the 16-core machine, and 5.3 million on the Pi's 4 cores, against 0.6 to 0.7 million for components, which share the bucket's lock. ETS with `read_concurrency` read 6.0 and 4.7 million (95 reads in 100, C4), `persistent_term` 16.5 and 8.5 million.
+- **Not measured:** how long a write takes to reach a reader (up to `publish_ms` plus the build, by design), the build's cost for large buckets (S31: 0.1 to 0.25 µs per entry), and memory per version.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

@@ -168,5 +168,5 @@ a5666465766963656670756d702d31646b696e64676f66666c696e656466756c
 ## Not covered here
 
 - The WIT packages themselves, and the WASI interfaces Bulkhead binds.
-- Native-process apps' frames between a node and its process (`crates/bulkhead-native/src/protocol.rs`): a protocol for programs on `bulkhead-native`'s app API, not for components.
+- Native-process apps' frames between a node and its process (`crates/bulkhead-native/src/protocol.rs`), the channel they travel over (`channel.rs`) and published buckets' snapshots (`snapshot.rs`, its layout in the module docs): a protocol for programs on `bulkhead-native`'s app API, not for components.
 - Bodies an app defines for its own messages.

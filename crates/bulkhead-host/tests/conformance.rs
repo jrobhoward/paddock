@@ -28,7 +28,9 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use bulkhead_bundle::manifest::{Bucket, Capability, Durability, GroupsScope, LogLevel};
+use bulkhead_bundle::manifest::{
+    AccessMode, Bucket, Capability, Durability, GroupsScope, LogLevel,
+};
 use bulkhead_host::health::HealthCheck;
 use bulkhead_host::{
     AppDeployment, CallError, Envelope, ExitReason, InstanceHandle, InstanceSpec, LoadedApp,
@@ -95,6 +97,17 @@ fn shared() -> &'static (Runtime, LoadedApp) {
                 ),
             ]),
             native: native_config(),
+            // Published (T4): a native app reads it from a snapshot, a
+            // component through the host; the answers are the same.
+            buckets: BTreeMap::from([(
+                "published".to_string(),
+                bulkhead_host::SharedBucket {
+                    durability: Durability::Memory,
+                    quota: None,
+                    read_concurrency: false,
+                    publish: Some(Duration::from_millis(10)),
+                },
+            )]),
             ..RuntimeConfig::default()
         })
         .unwrap();
@@ -169,6 +182,7 @@ fn spec(app: &str, init_args: &str) -> InstanceSpec {
             read_concurrency: false,
         },
     )]);
+    s.services.keyvalue.shared = BTreeMap::from([("published".to_string(), AccessMode::Rw)]);
     s.services.groups.scope = GroupsScope {
         join: vec![format!("{app}-group")],
         publish: vec![format!("{app}-group")],
@@ -791,6 +805,24 @@ async fn log_level____host_event_then_operator_change____app_follows() {
 }
 
 // --- keyvalue and watches --------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keyvalue____published_bucket____own_writes_at_once_others_soon() {
+    let writer = up("c-pub-w", "").await;
+    let reader = up("c-pub-r", "").await;
+
+    ask(&writer, "kv-set:published:k:v1").await;
+    let own_first = ask(&writer, "kv-get:published:k").await;
+    let other_first = ask_until(&reader, "kv-get:published:k", |r| r == "v1").await;
+    ask(&writer, "kv-set:published:k:v2").await;
+    let own_second = ask(&writer, "kv-get:published:k").await;
+    let other_second = ask_until(&reader, "kv-get:published:k", |r| r == "v2").await;
+
+    assert_eq!((own_first.as_str(), other_first.as_str()), ("v1", "v1"));
+    assert_eq!((own_second.as_str(), other_second.as_str()), ("v2", "v2"));
+    writer.kill();
+    reader.kill();
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keyvalue____set_get_keys_delete____round_trip() {

@@ -428,6 +428,7 @@ fn KvStore____shared_disk_bucket_without_data_dir____refused() {
             durability: Durability::Disk,
             quota: None,
             read_concurrency: false,
+            publish: None,
         },
     )]);
 

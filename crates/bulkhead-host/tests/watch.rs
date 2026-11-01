@@ -30,6 +30,7 @@ fn shared() -> &'static (Runtime, LoadedApp) {
                     durability: Durability::Memory,
                     quota: None,
                     read_concurrency: false,
+                    publish: None,
                 },
             )]),
             ..RuntimeConfig::default()

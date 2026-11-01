@@ -637,6 +637,8 @@ pub(crate) struct InstanceTask {
     /// Processes a native instance has started, for each one's cgroup
     /// name: an upgrade starts the new one beside the old.
     native_spawns: u32,
+    /// The published buckets a native instance reads (ROADMAP T4).
+    native_published: Option<crate::services::keyvalue::publish::Publications>,
 }
 
 /// A pid's handle and process context with no mailbox behind them, for a
@@ -713,6 +715,7 @@ pub(crate) fn prepare(
         app: None,
         native_timer: None,
         native_spawns: 0,
+        native_published: None,
         next_ref: 1,
     };
     (handle, task)

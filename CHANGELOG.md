@@ -45,6 +45,16 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Published buckets (ROADMAP T4): a shared bucket with `publish_ms` in its
+  `[buckets.<name>]` node config is checked for changes that often, and
+  each change's snapshot (a sealed memfd) is passed to every native
+  instance that lists the bucket, which answers `get`, `get_many` and
+  `exists` from it without asking the node: a read in 0.1 to 0.4 µs
+  against 5 to 7 µs as a request, and 30 million reads a second from 16
+  instances on the 16-core machine (BASELINE.md). Reads may be up to an
+  interval behind, except an instance's own writes, which it reads through
+  the node until a snapshot holds them. Components read the bucket as any
+  shared one.
 - A native app gets a descriptor socket beside its channel (descriptor 6,
   ROADMAP T3): the node passes descriptors there (`SCM_RIGHTS`), each
   before the frame that names it by id (`bulkhead_native::protocol::FdRef`),

@@ -46,6 +46,10 @@
 //!   while one more overwrites it as fast as it can.
 //! - Memory, measured first: the host's resident memory before and after
 //!   filling a bucket with 100,000 keys.
+//! - A published bucket of 100,000 keys (ROADMAP T4): `get`, a missing key
+//!   and `get_many` from one instance, and reads per second from 1 to 16
+//!   at once; a native program reads its mapped snapshot, a component
+//!   calls the host as for any shared bucket.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -127,7 +131,10 @@ fn spec() -> InstanceSpec {
         .iter()
         .map(|n| ((*n).to_string(), memory()))
         .collect();
-    s.services.keyvalue.shared = BTreeMap::from([("shared".to_string(), AccessMode::Rw)]);
+    s.services.keyvalue.shared = BTreeMap::from([
+        ("shared".to_string(), AccessMode::Rw),
+        ("published".to_string(), AccessMode::Rw),
+    ]);
     s
 }
 
@@ -174,15 +181,27 @@ async fn run(workers: usize) {
     }
     let rt = Runtime::new(RuntimeConfig {
         native: runner,
-        max_instances: 32,
-        buckets: BTreeMap::from([(
-            "shared".to_string(),
-            SharedBucket {
-                durability: Durability::Memory,
-                quota: None,
-                read_concurrency: read_concurrency(),
-            },
-        )]),
+        max_instances: 64,
+        buckets: BTreeMap::from([
+            (
+                "shared".to_string(),
+                SharedBucket {
+                    durability: Durability::Memory,
+                    quota: None,
+                    read_concurrency: read_concurrency(),
+                    publish: None,
+                },
+            ),
+            (
+                "published".to_string(),
+                SharedBucket {
+                    durability: Durability::Memory,
+                    quota: None,
+                    read_concurrency: read_concurrency(),
+                    publish: Some(Duration::from_millis(10)),
+                },
+            ),
+        ]),
         ..RuntimeConfig::default()
     })
     .unwrap();
@@ -205,6 +224,7 @@ async fn run(workers: usize) {
     ordered(&h).await;
     dependent(&h).await;
     concurrency(&rt, &app, &h).await;
+    published(&rt, &app, &h).await;
 }
 
 /// One loop, over and over, for a profiler; prints ns per operation.
@@ -320,6 +340,39 @@ async fn dependent(h: &InstanceHandle) {
         "{:<14} {:>8} {:>10.0}",
         "1000 per call", 100_000, per_read[100]
     );
+}
+
+/// Reads of a published bucket of 100,000 keys (16 B; ROADMAP T4): in a
+/// native program from its mapped snapshot, in a component through the
+/// host as any shared bucket's. Filled by `h`, read by another instance:
+/// a writer's own reads go to the node until a snapshot holds its writes.
+async fn published(rt: &Runtime, app: &LoadedApp, h: &InstanceHandle) {
+    let keys = 100_000u64;
+    ask(h, &format!("fill:published:k:{keys}:16")).await;
+    let reader = rt.spawn(app, spec()).unwrap();
+    // A snapshot of 100,000 entries is made within a publish interval.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    println!(
+        "\n{:<10} {:>8} {:>8} {:>10}",
+        "published", "keys", "value", "ns/op"
+    );
+    for op in ["get", "miss", "many10", "many100"] {
+        let ns = per_op(&reader, "published", op, 100_000, 16, keys).await;
+        println!("{op:<10} {keys:>8} {:>8} {ns:>10.0}", 16);
+    }
+    let pool: Vec<InstanceHandle> = (0..16).map(|_| rt.spawn(app, spec()).unwrap()).collect();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    println!("\n{:<10} {:>9} {:>14}", "published", "instances", "reads/s");
+    for n_inst in [1usize, 4, 16] {
+        let n = 200_000u64;
+        let started = Instant::now();
+        futures_join(&pool[..n_inst], |i| {
+            format!("loop:published:get:{n}:16:{keys}:{i}")
+        })
+        .await;
+        let per_s = (n * n_inst as u64) as f64 / started.elapsed().as_secs_f64();
+        println!("{:<10} {n_inst:>9} {per_s:>14.0}", "get");
+    }
 }
 
 /// 1, 4 and 16 instances on one shared bucket at once.

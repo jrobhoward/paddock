@@ -15,6 +15,7 @@
 //! `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (spike S7).
 
 mod native;
+pub(crate) mod publish;
 pub(crate) mod storage;
 mod watches;
 
@@ -154,6 +155,26 @@ impl Instance {
             quota: bucket.quota,
             writable: *mode == AccessMode::Rw,
             read_concurrency: bucket.read_concurrency,
+        })
+    }
+}
+
+impl ServiceCtx<'_, Instance> {
+    /// The published shared buckets this instance may read, with their
+    /// snapshots; `None` if it reads none.
+    pub(crate) fn publications(&self) -> Option<publish::Publications> {
+        if !self.state.granted {
+            return None;
+        }
+        let buckets: Vec<_> = self
+            .state
+            .shared
+            .keys()
+            .filter_map(|name| Some((name.clone(), self.state.store.published(name)?, None)))
+            .collect();
+        (!buckets.is_empty()).then(|| publish::Publications {
+            buckets,
+            changed: self.state.store.publishers.generation(),
         })
     }
 }
