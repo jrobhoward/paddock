@@ -23,19 +23,20 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | 2a: platform on one node | An app serves HTTP, reads a secret, logs and exports metrics; an operator traces its messages on a live node; Modbus feeds a hash-routed pool that keeps a point table in a shared bucket other apps watch; baselines on the 16-core machine and a Raspberry Pi 5 (and a multi-socket machine when one is available) | Met on 2026-10-18 (G2, the Pi's baselines) |
 | 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | Met: the rest on 2026-10-15, the serial line criterion on 2026-10-16 (F5) |
 | 3: application server | One real workload runs a full release cycle with zero downtime | Met on 2026-10-22 (X2); its docs pass on 2026-10-25 |
-| 4: apps in more languages | The tutorial's board app written in Go passes the Rust board's node tests in CI, and a second language's SDK passes the conformance suite | Planned on 2026-10-29 |
+| 4: apps in more languages | The tutorial's board app written in Go passes the Rust board's node tests in CI, and a second language's SDK passes the conformance suite | Planned on 2026-10-29; proposed to be parked behind Phase 5 (2026-10-31) |
+| 5: native apps | The board app, built as a native program from the same source, passes the Rust cases of the board's node tests in CI on Linux | Planned on 2026-10-31 |
 
 The failover pair and witness run over QUIC between `bulkhead node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
 ## Next
 
-Phase 4 (planned 2026-10-29, below): Go and one more language as SDKs, checked by a conformance suite that any language's app can run. J1 to J4 are done (2026-10-29 and 2026-10-30): the Go board passes the Rust board's node tests locally; J5 next, which puts them in CI and meets the exit's first half.
+Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. S30 next (what an instance is), with S31 beside it (host services for native apps); the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is proposed to be parked behind it.
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
 1. Phase 3 (planned 2026-10-16, below): X1's first step, K1, K2 and K3 are done (2026-10-16 to 2026-10-18); X1's second step (the point table on a cluster bucket polled by the primary only, `control`'s buckets replicated) and M1 (singletons moved with their state in a planned switchover) on 2026-10-20. L1 (a planned switchover released at the witness, rule R14: about 200 ms instead of a lease) on 2026-10-20 too. U1 (releases across the pair: wire and kept-format versions, `bulkhead release`) and U2 (blue-green upgrades of pool apps: the new version beside the old, traffic by weight) on 2026-10-21, and X1's drill through `bulkhead release` the same day, which finishes X1. X2, the exit, on 2026-10-22: an hour of `bulkhead-soak scada` under faults passed. N1, guest sockets, on 2026-10-23. S19, N2's spike, the same day: a port; N2 itself the same day. Its docs pass (W2) with Phase 2's (W1) on 2026-10-25.
 2. The docs passes for Phases 2 and 3 (W1, W2), done on 2026-10-25.
-3. The keyvalue track (planned 2026-10-30, below): faster reads of shared buckets, with spikes S25 to S29 comparing the options before anything lands. The harness, S25 and S26 are done (2026-10-30), S27 and S28 on 2026-10-31; the items H6 to H9 next, and S29 only for the workload the others leave (large data that changes at run time, read by many instances).
+3. The keyvalue track (planned 2026-10-30, below): faster reads of shared buckets, with spikes S25 to S29 comparing the options before anything lands. The harness, S25 and S26 are done (2026-10-30), S27 and S28 on 2026-10-31. Its remaining items are proposed to be narrowed by Phase 5 (its section says how).
 4. Open: B14 (cheaper preemption, when wasmtime ships MMU-based interruption), G5 and G1 (dedicated workers; a large machine), syn 3, and stage 5's smaller items; E4b only for a user who needs it.
 
 ## Order
@@ -159,6 +160,8 @@ The rustbridge work left from Phase 3 is the guest adapter (`Plugin` → `bulkhe
 
 ## Phase 4
 
+Proposed to be parked behind Phase 5 (2026-10-31): its languages would return as native SDKs (Z8).
+
 Planned on 2026-10-29. Exit: the tutorial's board app (`examples/board`: an HTTP counter on a shared disk bucket, a watcher, and a hot upgrade that keeps the count) written in Go with a Go SDK passes the same node tests as the Rust one (`crates/bulkhead/tests/board.rs`), in CI; and a second language's SDK passes the conformance suite (J2). The repository stays private: the SDKs live in it and are not published (decided 2026-10-29).
 
 - [ ] **J5 Other languages in CI.** A Linux x86-64 job installing the pinned toolchains (TinyGo, `wit-bindgen-go`, and J6's), cached, that builds `examples/ping-pong/languages`, each SDK's conformance app and the Go board, and runs J2's and J4's tests, and `go vet` and `go test` in `sdks/go`. A `languages` check in `scripts/check.sh` that says which toolchain is missing instead of failing.
@@ -170,6 +173,8 @@ Planned on 2026-10-29. Exit: the tutorial's board app (`examples/board`: an HTTP
 Order: J5 first, which runs J4's Go board in CI and so meets the exit's first half (J1 gave the formats, J2 the conformance suite, J3 the Go SDK and J4 the Go board); J7 as J3 and J6 find the settings; J6 after J4; J8 and J9 last.
 
 ## Keyvalue track: fast reads of shared buckets
+
+Proposed with Phase 5 (2026-10-31): the host-side items (H6, H7, H11) stay; H8 waits for Z1 and S31; H9 is dropped and S29 and H10 are replaced by S31's mapped snapshot.
 
 Planned on 2026-10-30, from the comparison with ETS (BASELINE.md, 2026-10-30, "keyvalue buckets against ETS"). A memory-bucket operation from a guest costs about 1 µs before it touches data, against 50 to 270 ns for ETS and about 250 ns for a bare host call (S14); 1.7 to 7 times `ordered_set` for small values, 23 to 92 times for 64 KiB values (copied across the sandbox; ETS keeps them by reference); and 0.4 to 0.6 million operations per second from 1 to 16 instances, where ETS with `read_concurrency` scales to 2.5 to 6.4 million. Every memory bucket on a node shares one lock (`storage::Memory`).
 
@@ -200,6 +205,45 @@ Items (each built only if its spike says so; sizes after the spike):
 - [ ] **H12 Docs.** WRITING_APPS.md: which read path for which data (bucket, batch, scan, mirror, data in the component, an owner pool), with the harness's numbers; DESIGN.md's keyvalue section updated with the decisions.
 
 Order: the harness, S25 and S26 are done (2026-10-30; S26 gave memory buckets `read_concurrency`), S27 and S28 on 2026-10-31; H6 to H9 next; S29 only if a workload the first four leave uncovered matters to an app, then H10; H11 on demand; H12 last.
+
+## Phase 5: native apps
+
+Planned on 2026-10-31, after the fork from Paddock: Bulkhead runs apps as native OS processes instead of WebAssembly components. Today's `native-process` kind (N2, spike S19) runs one process per instance through `bulkhead-runner`, with the process functions only. A native app may declare no capability but `wasi:logging` and has no snapshots, so no passivation, snapshot upgrades or moves. It costs about 1.9 ms to start, 3.8 MiB idle and 37 µs per call over its pipe (16-core machine, 2026-10-23), against a component's 77 µs, 56 KiB and 3.5 µs.
+
+Exit: the tutorial's board app (`examples/board`: an HTTP route to a pool, a shared disk bucket, a watcher, process groups, a singleton on a pair), built from the same Rust source as a native program, passes the Rust cases of the board's node tests (`crates/bulkhead/tests/board.rs`) in CI on Linux x86-64 and by hand on the Raspberry Pi 5, while the component build still passes them.
+
+Decided 2026-10-31:
+- **What an instance is** is chosen by spike S30's numbers (a process per instance, a process per app hosting many instances, or both chosen per app), not assumed.
+- **WebAssembly stays until native apps reach parity.** Component apps and their tests keep working through this phase; wasmtime, the WIT contract and the wasm fixtures go last (Z9), once every example runs natively.
+- **Linux only**, x86-64 and aarch64; a node elsewhere refuses native apps, as now.
+- **The board app is the first exit**, as it was Phase 4's.
+
+Spikes:
+
+- [ ] **S30 What an instance is (M).** Two prototypes against the same workloads on both machines: today's process per instance, and one process per app running many instances on an SDK scheduler, the host keeping pids, mailboxes, supervision and routing and each frame naming its instance. Start time; idle memory per instance at 1, 100, 1,000 and 5,000 instances; a call and a cast between instances in one process and across two; `pool_load` throughput; how far a crash reaches (one instance, or the process and every instance in it) and how long the restart takes. Also the frame transport: S19's pipe against a shared-memory ring, since a ping through the pipes and the frame code alone took 31 of a call's 37 µs. Answers: what an instance is. Feeds Z1.
+- [ ] **S31 Host services for native apps (S).** For each service, whether it goes over the protocol (a request answered by the host code a component's import runs, as the process functions are now) or the process uses the OS directly, fenced by the runner: files through Landlock, sockets through Landlock's TCP port rules or a network namespace, clocks and random as they are. A keyvalue `get` and a watch notice over S30's transport against a component's (about 1.2 µs, S25; about 9 µs per notice, S28), and a read from a bucket snapshot mapped read-only into the process (S29's idea, which needs no wasmtime patch for a native process). What the manifest's socket rules need that Landlock on Linux 6.8 and 7.0 cannot express. Answers: the transport for each service in Z2.
+
+Items (sizes after the spikes):
+
+- [ ] **Z1 The instance model** as S30 decides: the runner, the protocol, the host's native instance (`instance_native.rs`) and `bulkhead-native`'s app API. Areas: `crates/bulkhead-native`, Process core, Orchestration.
+- [ ] **Z2 Host services for native apps.** Keyvalue and watch, groups, config, secrets and metrics first (the board needs the first two and groups), over S31's transport and answered by the services' existing host code. The manifest's rule that a native app declares only `wasi:logging` widens to them, each with its deny, limit and release-on-exit tests (CLAUDE.md, "A new host service"). SQL, HTTP egress and sockets after the exit (Z8). Areas: Host services, Manifest and bundle, `crates/bulkhead-native`.
+- [ ] **Z3 One SDK for both kinds.** `bulkhead-sdk`'s API (`App`, `Ctx`, envelopes, `kv`, `watch`, `groups`, `http`, the log macros) on native targets through `bulkhead-native`'s protocol, so one app's source builds for `wasm32-wasip2` and as a program, `app!` giving a program its `main`. `bulkhead bundle` packs the native variants for x86-64 and aarch64. Areas: Guest SDK, `crates/bulkhead-native`, `bulkhead` (bundle).
+- [ ] **Z4 HTTP routes and placement for native apps.** A route to a native pool (a request is a call, so likely only the manifest's rule), and placement on a pair: `singleton`, hot standby, `partner_url` and standby forwarding, the lease ending a native singleton's process outside a callback as well as in one. Areas: I/O and protocols, Orchestration, Manifest and bundle.
+- [ ] **Z5 The board native, in CI.** `examples/board` built natively from its source; `board.rs` running its Rust cases against both builds, as it runs the Go ones; a Linux x86-64 CI job; a run on the Pi. Phase 5's exit. Areas: Fixtures and examples, `crates/bulkhead/tests`, CI.
+- [ ] **Z6 Docs for the exit.** README and DESIGN.md say what Bulkhead is (native processes, the instance model and why); MANIFEST.md's native section; WRITING_APPS.md and the tutorial with the native board; SECURITY.md's boundary for native apps (the runner's restrictions in place of the sandbox). Areas: docs.
+
+After the exit, each planned when reached:
+
+- **Z7 Snapshots for native apps:** `save-snapshot` and `load-snapshot` over the protocol (the SDK's `Snapshot` derive), for snapshot upgrades, passivation and moving a singleton with its state.
+- **Z8 The rest of the platform natively:** listeners and connection handlers, HTTP handlers, SQL, HTTP egress, sockets; every example and the conformance suite as native apps; a native Go SDK (plain Go, without TinyGo).
+- **Z9 WebAssembly out:** wasmtime, the WIT contract and its rules test, deny stubs, the pooling allocator, epochs and the compile cache, the wasm fixtures and the `guests` check; CLAUDE.md's constraints from the spikes that measured wasmtime (S1 to S4, S24, S25's sync imports) go with the code they guarded.
+
+Proposed with this plan (2026-10-31), to confirm:
+- Phase 4 (J5 to J9, more languages as components) is parked; languages return as native SDKs in Z8.
+- The keyvalue track keeps its host-side items (H6, H7, H11). H8 (a mirror in the SDKs) waits for Z1 and S31's numbers. H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch) are replaced by S31's mapped snapshot.
+- B14 (wasmtime's MMU interruption) is parked: it speeds up guests only. The wasmtime 50.0.1 upgrade stays while components run.
+
+Order: S30 first, since the instance model shapes everything after it, with S31 beside it; Z1; then Z2, Z3 and Z4 in parallel; Z5, the exit, with Z6. Z7 to Z9 after.
 
 ## Investigations
 
@@ -305,4 +349,6 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | S26 | Reads of shared buckets without a lock | `scc::TreeIndex` with values swapped in place: about three times the reads under 4 to 16 readers, 0 to 22% more per read, 13 to 54% per write; every lock-based map starved its writer, and `SkipMap` hid keys during overwrites. Shipped as `read_concurrency`, off by default ([spikes/s26](../spikes/s26/README.md)) |
 | S27 | Read-only reference data inside the component | Done 2026-10-31: data segments stay shared between instances; reads below `persistent_term`'s with a hash index; found Q15, fixed |
 | S28 | A guest-side mirror kept by watches | Done 2026-10-31: reads 5 to 7 times faster than the bucket, about 9 µs per change per mirror; owner shards slower than the bucket; found Q16, fixed |
-| S29 | Read-only snapshots mapped into instances (wasmtime patch) | Planned, conditional (keyvalue track) |
+| S29 | Read-only snapshots mapped into instances (wasmtime patch) | Planned, conditional (keyvalue track); proposed to be replaced by S31's mapped snapshot (2026-10-31) |
+| S30 | What an instance is: a process per instance or per app | Planned (Phase 5) |
+| S31 | Host services for native apps: over the protocol or the OS directly | Planned (Phase 5) |
