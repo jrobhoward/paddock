@@ -3,10 +3,11 @@
 //! bucket; a crash restarts the instance and the count survives it, the
 //! watcher logs each change, and the count survives a node restart.
 //!
-//! Every test runs against the Rust build and the Go build
-//! (`examples/board-go`, on the Go SDK). The Go cases need TinyGo (on
-//! `PATH`, or `TINYGO`) and pass with a note when it is missing, unless
-//! `BULKHEAD_REQUIRE_GO=1`.
+//! Every test runs against the Rust build, the same Rust source built as a
+//! native program (Linux; its manifests with `kind = "native-process"`
+//! added), and the Go build (`examples/board-go`, on the Go SDK). The Go
+//! cases need TinyGo (on `PATH`, or `TINYGO`) and pass with a note when it
+//! is missing, unless `BULKHEAD_REQUIRE_GO=1`.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -33,6 +34,7 @@ fn root() -> PathBuf {
 #[derive(Debug, Clone, Copy)]
 enum Build {
     Rust,
+    Native,
     Go,
 }
 
@@ -40,19 +42,82 @@ impl Build {
     /// The directory with this build's manifests.
     fn dir(self) -> PathBuf {
         root().join(match self {
-            Self::Rust => "examples/board",
+            Self::Rust | Self::Native => "examples/board",
             Self::Go => "examples/board-go",
         })
     }
 
-    /// The component, or `None` for Go without TinyGo (allowed unless
-    /// `BULKHEAD_REQUIRE_GO` is set).
+    /// The component or program, or `None` for Go without TinyGo
+    /// (allowed unless `BULKHEAD_REQUIRE_GO` is set) and for the native
+    /// build off Linux.
     fn component(self) -> Option<PathBuf> {
         match self {
             Self::Rust => Some(build()),
+            Self::Native => build_native(),
             Self::Go => build_go(),
         }
     }
+
+    /// The manifest `name` from this build's directory; for the native
+    /// build, a copy in `into` that runs the program as a native process.
+    fn manifest(self, name: &str, into: &Path) -> PathBuf {
+        let path = self.dir().join(name);
+        if !matches!(self, Self::Native) {
+            return path;
+        }
+        let base = std::fs::read_to_string(&path).unwrap();
+        let native = into.join(format!("native-{name}"));
+        std::fs::write(
+            &native,
+            format!(
+                "{base}\n[appserver]\nkind = \"native-process\"\nnative = {{ program = \"executable\" }}\n"
+            ),
+        )
+        .unwrap();
+        native
+    }
+
+    /// Node config this build needs: the native build's runner.
+    fn node_extra(self) -> String {
+        match self {
+            Self::Native => format!("[native]\nrunner = {:?}\n", common::native_fixtures().0),
+            Self::Rust | Self::Go => String::new(),
+        }
+    }
+}
+
+/// The board built as a native program (its `native` feature), once per
+/// test binary; `None` off Linux, where native apps do not run.
+fn build_native() -> Option<PathBuf> {
+    if !cfg!(target_os = "linux") {
+        eprintln!("not Linux: the native board's case is skipped");
+        return None;
+    }
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    Some(
+        BUILT
+            .get_or_init(|| {
+                let target = root().join("target/fixtures/examples-board-native");
+                let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+                let ok = StdCommand::new(cargo)
+                    .current_dir(root())
+                    .args(["build", "--release", "-p", "example-board"])
+                    .args([
+                        "--features",
+                        "native",
+                        "--bin",
+                        "example-board",
+                        "--target-dir",
+                    ])
+                    .arg(&target)
+                    .status()
+                    .unwrap()
+                    .success();
+                assert!(ok, "building example-board natively failed");
+                target.join("release/example-board")
+            })
+            .clone(),
+    )
 }
 
 /// The Go board, built once per test binary with the Go SDK's `build.sh`.
@@ -269,6 +334,7 @@ impl OneNode {
 
 #[rstest]
 #[case::rust(Build::Rust)]
+#[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn board____crash_and_node_restart____count_survives_and_watcher_logs_changes(
@@ -278,12 +344,21 @@ async fn board____crash_and_node_restart____count_survives_and_watcher_logs_chan
         return;
     };
     let dir = TempDir::new().unwrap();
-    let one = OneNode::new(dir.path()).await;
+    let mut one = OneNode::new(dir.path()).await;
+    one.toml += &build.node_extra();
     let bundles = [
-        one.bundle(&build.dir().join("bulkhead.toml"), &wasm, "board.rbp")
-            .await,
-        one.bundle(&build.dir().join("watch.toml"), &wasm, "watch.rbp")
-            .await,
+        one.bundle(
+            &build.manifest("bulkhead.toml", dir.path()),
+            &wasm,
+            "board.rbp",
+        )
+        .await,
+        one.bundle(
+            &build.manifest("watch.toml", dir.path()),
+            &wasm,
+            "watch.rbp",
+        )
+        .await,
     ];
     let (socket, toml, port) = (&one.socket, &one.toml, one.port);
     let node = Running::open(toml, socket).await;
@@ -580,6 +655,7 @@ fn short_dir() -> tempfile::TempDir {
 /// `kill -9` of the primary.
 #[rstest]
 #[case::rust(Build::Rust)]
+#[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn board____hot_standby_primary_killed____count_survives_on_the_standby(
@@ -589,7 +665,7 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby(
         return;
     };
     let dir = short_dir();
-    let manifest = build.dir().join("hot-standby.toml");
+    let manifest = build.manifest("hot-standby.toml", dir.path());
     let grant =
         "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\", \"bulkhead:groups\"";
     let Pair {
@@ -603,7 +679,7 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby(
         &manifest,
         grant,
         |_, _| String::new(),
-        "",
+        &build.node_extra(),
     )
     .await;
     // The primary must see the standby's instance in the group first.
@@ -667,6 +743,7 @@ async fn location(port: u16, method: &str, path: &str) -> (u16, String) {
 /// the primary is killed, node 2 serves the board itself.
 #[rstest]
 #[case::rust(Build::Rust)]
+#[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_the_primary(
@@ -678,7 +755,7 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
     let dir = short_dir();
     let d = dir.path();
     let manifest = d.join("singleton.toml");
-    let base = std::fs::read_to_string(build.dir().join("bulkhead.toml")).unwrap();
+    let base = std::fs::read_to_string(build.manifest("bulkhead.toml", d)).unwrap();
     std::fs::write(
         &manifest,
         format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
@@ -699,7 +776,7 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
             let partner = ports[usize::try_from(2 - n).unwrap()];
             format!("partner_url = \"http://127.0.0.1:{partner}/\"\n")
         },
-        "",
+        &build.node_extra(),
     )
     .await;
     board(ports[0]).await;
@@ -723,6 +800,7 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
 /// address serves it; after the primary is killed, node 2 serves its own.
 #[rstest]
 #[case::rust(Build::Rust)]
+#[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn board____singleton_on_a_pair_with_standby_forward____either_address_serves_the_primary(
@@ -734,7 +812,7 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
     let dir = short_dir();
     let d = dir.path();
     let manifest = d.join("singleton.toml");
-    let base = std::fs::read_to_string(build.dir().join("bulkhead.toml")).unwrap();
+    let base = std::fs::read_to_string(build.manifest("bulkhead.toml", d)).unwrap();
     std::fs::write(
         &manifest,
         format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
@@ -752,7 +830,7 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
         &manifest,
         grant,
         |_, _| "standby = \"forward\"\n".into(),
-        "",
+        &build.node_extra(),
     )
     .await;
     let (_, primary_pid) = board(ports[0]).await;
@@ -786,6 +864,7 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
 /// primary without the app replicating anything.
 #[rstest]
 #[case::rust(Build::Rust)]
+#[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby(
@@ -795,7 +874,7 @@ async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby
         return;
     };
     let dir = short_dir();
-    let manifest = build.dir().join("bulkhead.toml");
+    let manifest = build.manifest("bulkhead.toml", dir.path());
     let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
     let Pair {
         _witness,
@@ -808,7 +887,7 @@ async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby
         &manifest,
         grant,
         |_, _| String::new(),
-        "scope = \"cluster\"\n",
+        &format!("scope = \"cluster\"\n{}", build.node_extra()),
     )
     .await;
 

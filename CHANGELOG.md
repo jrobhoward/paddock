@@ -30,6 +30,11 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `examples/board` builds as a native program from the same source
+  (feature `native`), and `crates/bulkhead/tests/board.rs` runs each of its
+  node tests against that build too, on Linux: crash and restart with the
+  watcher, hot standby, a singleton with `partner_url` and with standby
+  forwarding, and a cluster bucket. Phase 5's exit (ROADMAP Z5).
 - HTTP routes for native-process apps: a native app may declare
   `wasi:http/incoming-handler`, and its requests arrive as calls, as a
   component's do. `examples/http-counter` builds as a native program too

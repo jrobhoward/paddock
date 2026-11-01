@@ -14,6 +14,15 @@
 #   buckets = ["board"]
 #
 # examples/tutorial walks through it.
+#
+# As a native program (Linux) from the same source: add
+#
+#   [appserver]
+#   kind = "native-process"
+#   native = { program = "executable" }
+#
+# and bundle `target/release/example-board` from
+# `cargo build -p example-board --features native --release`.
 [app]
 name = "board"
 version = "1.0.0"

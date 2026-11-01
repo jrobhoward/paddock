@@ -150,8 +150,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   component), run by `crates/bulkhead/tests/board.rs`; `examples/board-go`
   is the same app in Go on the Go SDK (a Go module, not a crate; its
   manifests add `wasi:filesystem`), and `board.rs` runs every test against
-  both builds (the Go cases pass with a note without TinyGo, unless
-  `BULKHEAD_REQUIRE_GO=1`). Keep the two builds' behaviour the same.
+  the Rust component, the same Rust source built as a native program
+  (feature `native`; Linux, its manifests given `kind = "native-process"`
+  by the test) and the Go build (the Go cases pass with a note without
+  TinyGo, unless `BULKHEAD_REQUIRE_GO=1`). Keep the builds' behaviour the
+  same.
   `examples/tutorial/` is its chapter scripts (`common.sh` shared, `BOARD=go`
   for the Go build), not a crate. `examples/tally` keeps a
   counter in Postgres (`bulkhead:sql`, tutorial chapter 4), run by

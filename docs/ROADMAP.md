@@ -24,13 +24,13 @@ Phase 1 (single node) was finished on 2026-10-06; its nine exit criteria run in 
 | 2b: cluster | A primary and standby fail over on node loss; with the network cut nobody promotes; with network and serial cut at most one side runs a singleton; a three-node cluster passes partition tests | Met: the rest on 2026-10-15, the serial line criterion on 2026-10-16 (F5) |
 | 3: application server | One real workload runs a full release cycle with zero downtime | Met on 2026-10-22 (X2); its docs pass on 2026-10-25 |
 | 4: apps in more languages | The tutorial's board app written in Go passes the Rust board's node tests in CI, and a second language's SDK passes the conformance suite | Planned on 2026-10-29; parked behind Phase 5 (2026-10-31) |
-| 5: native apps | The board app, built as a native program from the same source, passes the Rust cases of the board's node tests in CI on Linux | Planned on 2026-10-31 |
+| 5: native apps | The board app, built as a native program from the same source, passes the Rust cases of the board's node tests in CI on Linux | Met on 2026-11-01 (Z5) on the 16-core machine and the Raspberry Pi 5; CI's Linux test jobs (x86-64 and arm64) run the same cases; Z6, the docs, next |
 
 The failover pair and witness run over QUIC between `bulkhead node` processes (`examples/failover/demo.sh`). The failover protocol is model-checked exhaustively in TLA+ up to two faults, as the code now runs, and for a deployment without a serial line ([docs/tla/VERIFICATION.md](tla/VERIFICATION.md), V2 on 2026-10-13).
 
 ## Next
 
-Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1, Z2 and Z3 done the same day (a native call about half what it cost, BASELINE.md; native apps reach keyvalue, groups, config, secrets and metrics; one SDK source builds both ways, checked by the conformance suite; Z4, HTTP routes and a singleton's lease for native apps); Z5 next, the exit; the exit is the board app running natively. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
+Phase 5 (planned 2026-10-31, below): native apps, Bulkhead's reason for forking. Its aim (decided 2026-10-31): long-lived processes with efficient message passing and DB access, not lightweight processes spawned by the thousand. S30 done (2026-10-31: a process per instance); S31 done the same day (node-owned services over the protocol, files and clocks the OS's, sockets opened by the node and passed); Z1, Z2 and Z3 done the same day (a native call about half what it cost, BASELINE.md; native apps reach keyvalue, groups, config, secrets and metrics; one SDK source builds both ways, checked by the conformance suite; Z4, HTTP routes and a singleton's lease for native apps); Z5, the exit, on 2026-11-01: the board built natively passes all five of its node tests' cases beside the component and Go builds. Z6, the docs for it, next. Phase 4 (more languages as WebAssembly components; J1 to J4 done, 2026-10-29 and 2026-10-30) is parked behind it (2026-10-31).
 
 Stages 1 to 4 are done (stage 4 on 2026-10-15), and Phase 2b's exit with them (its serial line criterion on 2026-10-16). Stage 5's and stage 6's planned items are done (G2, the last of Phase 2a's exit, on 2026-10-18). Of what is left:
 
@@ -223,7 +223,6 @@ Spikes:
 
 Items (sizes after the spikes):
 
-- [ ] **Z5 The board native, in CI.** `examples/board` built natively from its source; `board.rs` running its Rust cases against both builds, as it runs the Go ones; a Linux x86-64 CI job; a run on the Pi. Phase 5's exit. Areas: Fixtures and examples, `crates/bulkhead/tests`, CI.
 - [ ] **Z6 Docs for the exit.** README and DESIGN.md say what Bulkhead is (native processes, the instance model and why); MANIFEST.md's native section; WRITING_APPS.md and the tutorial with the native board; SECURITY.md's boundary for native apps (the runner's restrictions in place of the sandbox). Areas: docs.
 
 After the exit, each planned when reached:
@@ -237,7 +236,7 @@ Decided with this plan (2026-10-31):
 - The keyvalue track keeps its host-side items (H6, H7, H11). H8 (a mirror in the SDKs) can build on Z2's watch notices, which carry the value. H9 (data in a component's data segment) is dropped, and S29 and H10 (a wasmtime patch) are replaced by S31's mapped snapshot.
 - B14 (wasmtime's MMU interruption) is parked: it speeds up guests only. The wasmtime 50.0.1 upgrade stays while components run.
 
-Order: S30, S31 and Z1 to Z4 done (2026-10-31); Z5, the exit, next, with Z6. Z7 and Z8 after, Z9 last.
+Order: S30, S31 and Z1 to Z4 done (2026-10-31), Z5 (the exit) on 2026-11-01; Z6 next; Z7 and Z8 after, Z9 last.
 
 ## Investigations
 
