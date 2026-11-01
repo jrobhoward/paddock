@@ -77,6 +77,34 @@ pub trait App: Sized {
 
     /// Stop gracefully.
     fn terminate(&mut self, _ctx: &mut Ctx, _reason: ExitReason) {}
+
+    /// Write the state, for a snapshot upgrade, passivation or a move to
+    /// another node, without changing it: if what follows fails, this
+    /// instance keeps running. Empty by default.
+    ///
+    /// # Errors
+    ///
+    /// Why the state cannot be written: the instance crashes with it.
+    fn save_snapshot(&self) -> Result<Vec<u8>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Start from a snapshot written by version `from_version` of this
+    /// app, in place of `init`. Refused by default.
+    ///
+    /// # Errors
+    ///
+    /// Why it is refused: an upgrade keeps the old version running; a
+    /// wake from passivation or a move ends the instance.
+    fn load_snapshot(
+        _ctx: &mut Ctx,
+        from_version: &str,
+        _snapshot: Vec<u8>,
+    ) -> Result<Self, String> {
+        Err(format!(
+            "this version does not load snapshots (from {from_version}); upgrade in restart mode"
+        ))
+    }
 }
 
 /// The descriptor frames go out on.
@@ -847,19 +875,24 @@ pub fn serve<A: App>() -> ExitCode {
         });
     });
     let mut ctx = Ctx::current();
-    let mut app = match next_frame() {
-        ToApp::Init { args } => match guarded(|| A::init(&mut ctx, args)) {
-            Ok(app) => {
-                flush_metrics();
-                send(&FromApp::Init(Ok(())));
-                app
-            }
-            Err(why) => {
-                send(&FromApp::Init(Err(why)));
-                return ExitCode::from(1);
-            }
-        },
+    let started = match next_frame() {
+        ToApp::Init { args } => guarded(|| A::init(&mut ctx, args)),
+        ToApp::LoadSnapshot {
+            from_version,
+            snapshot,
+        } => guarded(|| A::load_snapshot(&mut ctx, &from_version, snapshot)),
         other => protocol_error(&format!("expected init, got {other:?}")),
+    };
+    let mut app = match started {
+        Ok(app) => {
+            flush_metrics();
+            send(&FromApp::Init(Ok(())));
+            app
+        }
+        Err(why) => {
+            send(&FromApp::Init(Err(why)));
+            return ExitCode::from(1);
+        }
     };
     loop {
         match next_frame() {
@@ -878,6 +911,13 @@ pub fn serve<A: App>() -> ExitCode {
                 flush_metrics();
                 send(&FromApp::Done);
             }
+            ToApp::SaveSnapshot => match guarded(|| app.save_snapshot()) {
+                Ok(bytes) => send(&FromApp::Snapshot(bytes.into())),
+                Err(why) => {
+                    send(&FromApp::Failed(format!("save_snapshot failed: {why}")));
+                    return ExitCode::from(101);
+                }
+            },
             ToApp::Terminate { reason } => {
                 guarded(|| app.terminate(&mut ctx, reason));
                 flush_metrics();

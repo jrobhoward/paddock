@@ -27,7 +27,13 @@
 //! | `metric register KIND NAME` | the id (`counter`, `gauge` or `histogram`) |
 //! | `metric add ID N`, `metric set ID N`, `metric observe ID N` | `queued`: sent with the callback's result |
 //!
-//! Init arguments `fail` make `init` fail.
+//! | `note TEXT`, `notes` | `ok`; the notes so far, joined by commas: the state a snapshot carries, one per line |
+//! | `loaded-from` | the version whose snapshot it started from, or `none` |
+//! | `os-pid` | the process's id |
+//! | `fail-save` | `ok`; the next `save_snapshot` fails |
+//!
+//! Init arguments `fail` make `init` fail; a snapshot with the note
+//! `refuse` is refused.
 //!
 //! `bulkhead_native::app` is Unix only; elsewhere the binary says so and
 //! exits.

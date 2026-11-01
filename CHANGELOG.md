@@ -30,6 +30,17 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Snapshots for native-process executables (ROADMAP Z7): protocol
+  version 3 adds `SaveSnapshot` and `LoadSnapshot` frames, and
+  `bulkhead_native::app::App` gains `save_snapshot` and `load_snapshot`
+  (an SDK app's own, when built natively). A native executable may now
+  upgrade in `snapshot` mode (the new version's process starts beside the
+  old, which keeps running if the snapshot is refused), be passivated
+  (`instances.passivate_after_ms`: its process ends until a message wakes
+  a new one) and move with its state in a switchover; `bulkhead state`
+  reads its state. The conformance suite's snapshot, upgrade and rollback
+  cases now run in its native mode. A rustbridge plugin still takes no
+  snapshot.
 - The tutorial runs with the board as a native program: `BOARD=native`
   builds `bulkhead-runner` beside `bulkhead` and the board with its
   `native` feature, and bundles each manifest with

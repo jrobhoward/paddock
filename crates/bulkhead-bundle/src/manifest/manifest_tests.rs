@@ -431,6 +431,18 @@ fn validate____native_process_with_logging____accepted_with_program() {
 }
 
 #[test]
+fn validate____native_executable_with_snapshots____accepted() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "instances": { "passivate_after_ms": 10 },
+        "upgrade": { "mode": "snapshot", "snapshot_version": 1 }
+    }));
+
+    assert!(found.is_ok(), "{found:?}");
+}
+
+#[test]
 fn validate____native_process_with_keyvalue____accepted() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",

@@ -96,8 +96,9 @@ pub enum SnapshotError {
     /// instance exited with this reason and its supervisor restarts it.
     #[error("save-snapshot failed: {0}")]
     Failed(ExitReason),
-    /// A native-process app takes no snapshot.
-    #[error("a native-process app takes no snapshot")]
+    /// A rustbridge plugin takes no snapshot (a native executable does,
+    /// over the protocol).
+    #[error("a rustbridge plugin takes no snapshot")]
     NotSupported,
 }
 
@@ -633,6 +634,9 @@ pub(crate) struct InstanceTask {
     /// callbacks, re-armed when it fires early, so a callback arms none
     /// (Z1).
     native_timer: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    /// Processes a native instance has started, for each one's cgroup
+    /// name: an upgrade starts the new one beside the old.
+    native_spawns: u32,
 }
 
 /// A pid's handle and process context with no mailbox behind them, for a
@@ -708,6 +712,7 @@ pub(crate) fn prepare(
         held_op: None,
         app: None,
         native_timer: None,
+        native_spawns: 0,
         next_ref: 1,
     };
     (handle, task)
@@ -778,6 +783,8 @@ impl InstanceTask {
     ) -> ExitReason {
         if let Some(code) = app.native() {
             let code = code.clone();
+            // What a wake from passivation starts; an upgrade replaces it.
+            self.app = Some(app);
             return Box::pin(self.native(rt, &code, spec)).await;
         }
         let engine = rt.engine.clone();
@@ -1277,24 +1284,8 @@ impl InstanceTask {
             Ok(new_instance) => {
                 *store = fresh;
                 *instance = new_instance;
-                self.me
-                    .shared
-                    .message_max_bytes
-                    .store(next.message_max_bytes, Ordering::Relaxed);
-                *self
-                    .me
-                    .shared
-                    .acl
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                    Arc::new(next.acl.clone());
+                self.take_spec(&next);
                 *spec = next;
-                *self
-                    .me
-                    .shared
-                    .version
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = spec.version.clone();
                 self.set_state(LifecycleState::Active);
                 // The new guest starts with fresh statics.
                 self.announce(store);
@@ -1312,6 +1303,27 @@ impl InstanceTask {
                 Err(err)
             }
         }
+    }
+
+    /// Take on an upgraded version's message limit, messaging ACL and
+    /// version, as the handle reports them.
+    fn take_spec(&self, next: &InstanceSpec) {
+        self.me
+            .shared
+            .message_max_bytes
+            .store(next.message_max_bytes, Ordering::Relaxed);
+        *self
+            .me
+            .shared
+            .acl
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(next.acl.clone());
+        *self
+            .me
+            .shared
+            .version
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next.version.clone();
     }
 
     /// A Store slot, waiting up to `within` for one if every slot is taken

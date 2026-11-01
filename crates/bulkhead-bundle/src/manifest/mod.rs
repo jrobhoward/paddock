@@ -206,8 +206,9 @@ impl AppSpec {
 
     /// What a `native-process` app may not have: any capability outside
     /// [`NATIVE_CAPABILITIES`] (no network, filesystem or other service
-    /// yet), listeners, passivation and snapshot upgrades; and the
-    /// `native` section on any other kind.
+    /// yet) and listeners; for a rustbridge plugin, which takes no
+    /// snapshot, passivation and snapshot upgrades too; and the `native`
+    /// section on any other kind.
     fn check_native(&self, v: &mut Validator) {
         if self.kind != Kind::NativeProcess {
             if self.native.is_some() {
@@ -237,16 +238,19 @@ impl AppSpec {
         if !self.listeners.is_empty() {
             v.error_at("listeners", "a native-process app has no listeners");
         }
+        if self.native.unwrap_or_default().program == NativeProgram::Executable {
+            return;
+        }
         if self.instances.passivate_after_ms.is_some() {
             v.error_at(
                 "instances.passivate_after_ms",
-                "a native-process app is never passivated",
+                "a rustbridge plugin is never passivated",
             );
         }
         if self.upgrade.mode == UpgradeMode::Snapshot {
             v.error_at(
                 "upgrade.mode",
-                "a native-process app upgrades with \"restart\" or \"blue-green\"",
+                "a rustbridge plugin upgrades with \"restart\" or \"blue-green\"",
             );
         }
     }

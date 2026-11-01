@@ -370,6 +370,18 @@ pub mod native {
             self.0
                 .terminate(&mut Ctx::new(), wit_exit_reason(reason).into());
         }
+
+        fn save_snapshot(&self) -> Result<Vec<u8>, String> {
+            self.0.save_snapshot()
+        }
+
+        fn load_snapshot(
+            _ctx: &mut n::Ctx,
+            from_version: &str,
+            snapshot: Vec<u8>,
+        ) -> Result<Self, String> {
+            A::load_snapshot(&mut Ctx::new(), from_version, &snapshot).map(Adapter)
+        }
     }
 
     /// Serve `A` as a native program until the node stops it.

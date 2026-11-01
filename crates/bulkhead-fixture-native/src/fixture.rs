@@ -9,6 +9,12 @@ use bulkhead_native::protocol::{Envelope, ExitReason, Info, Level, Pid};
 struct Fixture {
     infos: Vec<String>,
     waiting: Option<CallRef>,
+    /// The state its snapshot carries, one note per line.
+    notes: Vec<String>,
+    /// The version whose snapshot it started from.
+    loaded_from: Option<String>,
+    /// Fail the next `save_snapshot`.
+    fail_save: bool,
 }
 
 fn text(s: impl Into<String>) -> Envelope {
@@ -71,6 +77,17 @@ impl Fixture {
                 "ok".into()
             }
             "infos" => self.infos.join("\n"),
+            "note" => {
+                self.notes.push(rest.to_string());
+                "ok".into()
+            }
+            "notes" => self.notes.join(","),
+            "loaded-from" => self.loaded_from.clone().unwrap_or_else(|| "none".into()),
+            "os-pid" => std::process::id().to_string(),
+            "fail-save" => {
+                self.fail_save = true;
+                "ok".into()
+            }
             "register" => match ctx.register(first) {
                 Ok(()) => "ok".into(),
                 Err(e) => format!("err:{e:?}"),
@@ -162,6 +179,29 @@ impl App for Fixture {
             return Err("asked to fail".into());
         }
         Ok(Self::default())
+    }
+
+    fn save_snapshot(&self) -> Result<Vec<u8>, String> {
+        if self.fail_save {
+            return Err("asked to fail".into());
+        }
+        Ok(self.notes.join("\n").into_bytes())
+    }
+
+    fn load_snapshot(
+        _ctx: &mut Ctx,
+        from_version: &str,
+        snapshot: Vec<u8>,
+    ) -> Result<Self, String> {
+        let snapshot = String::from_utf8_lossy(&snapshot).into_owned();
+        if snapshot.lines().any(|note| note == "refuse") {
+            return Err("asked to refuse".into());
+        }
+        Ok(Self {
+            notes: snapshot.lines().map(str::to_string).collect(),
+            loaded_from: Some(from_version.to_string()),
+            ..Self::default()
+        })
     }
 
     fn handle_call(&mut self, ctx: &mut Ctx, call: CallRef, msg: Envelope) -> Option<Envelope> {

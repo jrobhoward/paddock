@@ -4,8 +4,9 @@
 //! Each frame is a 4-byte big-endian length, then that many bytes of CBOR:
 //! a [`ToApp`] from the node, a [`FromApp`] from the app. The app speaks
 //! first, with [`FromApp::Hello`] once it is ready; the node then sends
-//! `Init` and, one at a time, the callbacks, each answered by one frame
-//! (`Init`, `Reply` or `Done`, or `Failed`). While a callback runs the
+//! `Init` (or `LoadSnapshot`, to start from a snapshot) and, one at a
+//! time, the callbacks and `SaveSnapshot`, each answered by one frame
+//! (`Init`, `Reply`, `Done` or `Snapshot`, or `Failed`). While a callback runs the
 //! app may send `Request`s, each answered by an `Answer` with its id, and
 //! `Log`s at any time. The node sends `Ping` only while no callback runs,
 //! answered by `Pong` with its id; an app answers one that reaches it
@@ -14,14 +15,16 @@
 //! The types mirror `bulkhead:runtime`'s (pids, envelopes, exit reasons,
 //! info, call errors). Version 2 added the host services a native app may
 //! declare: keyvalue ([`Request::Kv`], [`Info::KvChanged`]), groups,
-//! config, secrets and metrics.
+//! config, secrets and metrics. Version 3 added snapshots
+//! ([`ToApp::SaveSnapshot`], [`ToApp::LoadSnapshot`]), for snapshot
+//! upgrades, passivation and moving a singleton with its state.
 
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -212,6 +215,18 @@ pub enum ToApp {
         #[serde(with = "bytes")]
         args: Vec<u8>,
     },
+    /// Start from a snapshot instead of `Init`, the app's `load_snapshot`:
+    /// answered by [`FromApp::Init`], whose error refuses the snapshot.
+    LoadSnapshot {
+        /// The app version that wrote it.
+        from_version: String,
+        /// What its `save_snapshot` returned.
+        #[serde(with = "bytes")]
+        snapshot: Vec<u8>,
+    },
+    /// Write the state, between callbacks, without changing it: answered
+    /// by [`FromApp::Snapshot`].
+    SaveSnapshot,
     /// A call: answered by [`FromApp::Reply`].
     Call {
         /// The call's reference, for a later `reply`.
@@ -256,8 +271,11 @@ pub enum FromApp {
         /// The protocol version.
         version: u16,
     },
-    /// `Init`'s outcome: an error ends the instance.
+    /// `Init`'s or `LoadSnapshot`'s outcome: an error ends the instance,
+    /// or refuses the snapshot.
     Init(Result<(), String>),
+    /// `SaveSnapshot`'s state.
+    Snapshot(Bytes),
     /// A call's outcome: the reply, or `None` to reply later with
     /// [`Request::Reply`].
     Reply(Option<Envelope>),

@@ -16,16 +16,22 @@
 //! - The process ending is a crash with its status or signal, or
 //!   `memory_limit` after its cgroup's OOM kill; a panic in the app is a
 //!   crash with the panic's message.
-//! - No snapshots, so no passivation, snapshot upgrades or moves.
+//! - Snapshots are frames: `SaveSnapshot` between callbacks, and
+//!   `LoadSnapshot` in place of `Init` in a new process, for a snapshot
+//!   upgrade (the new version's process beside the old until it has
+//!   loaded), a wake from passivation (the process ends while passive)
+//!   and a singleton moved here. A rustbridge plugin takes none.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use bulkhead_bundle::manifest::NativeProgram;
 use bulkhead_native::protocol::{self as p, Answer, FromApp, Request, ToApp};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::{AbortOnDrop, Control, InstanceTask, Message, Op, SnapshotError};
+use super::{AbortOnDrop, Control, InstanceTask, Message, Op, Served, SnapshotError};
 use crate::bindings::bulkhead::runtime::process;
 use crate::failover::RunUntil;
 use crate::health;
@@ -36,7 +42,7 @@ use crate::native::convert;
 use crate::native::port::{Incoming, Port};
 use crate::output::{CapturedOutput, Tags};
 use crate::probe;
-use crate::runtime::RuntimeInner;
+use crate::runtime::{LoadedApp, RuntimeInner};
 use crate::services::HostState;
 use crate::services::config::Config;
 use crate::services::groups::Groups;
@@ -54,6 +60,7 @@ fn frame_name(frame: &FromApp) -> &'static str {
         FromApp::Hello { .. } => "hello",
         FromApp::Init(_) => "init",
         FromApp::Reply(_) => "reply",
+        FromApp::Snapshot(_) => "snapshot",
         FromApp::Done => "done",
         FromApp::Failed(_) => "failed",
         FromApp::Request { .. } => "request",
@@ -69,6 +76,110 @@ enum Step {
     LeaseEnded,
     LeaseChanged,
     Incoming(Option<Incoming>),
+}
+
+/// An idle native instance's pings: one in flight at a time, sent
+/// `interval` after the instance last did something and answered within
+/// `timeout`.
+struct Pings {
+    /// The ping in flight: its id and when its pong is due.
+    in_flight: Option<(u64, Instant)>,
+    sent: u64,
+    idle_since: Instant,
+    interval: Duration,
+    timeout: Duration,
+}
+
+impl Pings {
+    /// The app answered, or handled something: no ping is due before
+    /// another interval.
+    fn answered(&mut self) {
+        self.in_flight = None;
+        self.idle_since = Instant::now();
+    }
+
+    /// `timer` fired: send a ping if one is due, or kill the app if the
+    /// one in flight went unanswered (`timeout`); otherwise move `timer`.
+    fn due(
+        &mut self,
+        port: &mut Port,
+        timer: std::pin::Pin<&mut tokio::time::Sleep>,
+    ) -> Result<(), ExitReason> {
+        let at = self
+            .in_flight
+            .map_or(self.idle_since + self.interval, |(_, due)| due);
+        if Instant::now() < at {
+            timer.reset(at);
+            return Ok(());
+        }
+        if self.in_flight.is_some() {
+            tracing::warn!("native instance missed a ping");
+            port.kill();
+            return Err(ExitReason::Timeout);
+        }
+        self.sent += 1;
+        port.send(&ToApp::Ping { id: self.sent });
+        let due = Instant::now() + self.timeout;
+        self.in_flight = Some((self.sent, due));
+        timer.reset(due);
+        Ok(())
+    }
+}
+
+/// The lease timer fired: a lease that has ended kills the app
+/// (`crashed: lease_ended`); otherwise the timer moves to its end.
+fn lease_due(
+    state: &mut InstanceState,
+    port: &mut Port,
+    lease: Option<&watch::Receiver<RunUntil>>,
+    timer: std::pin::Pin<&mut tokio::time::Sleep>,
+) -> Result<(), ExitReason> {
+    match lease_end(lease) {
+        Some(end) if end <= Instant::now() => {
+            state.lease_ended = true;
+            port.kill();
+            Err(ExitReason::Crashed("lease_ended".into()))
+        }
+        end => {
+            timer.reset(end.unwrap_or_else(far_off));
+            Ok(())
+        }
+    }
+}
+
+/// A time no timer reaches.
+fn far_off() -> Instant {
+    Instant::now() + Duration::from_secs(365 * 86_400)
+}
+
+/// What woke a native instance between callbacks: a message to handle,
+/// or an operation.
+enum Woke {
+    Next(Message),
+    Op(Box<Op>),
+}
+
+/// A frame from the app between callbacks: a log, or the pong for the
+/// ping in flight (`true`). Anything else breaks the protocol.
+async fn between_callbacks(
+    state: &mut InstanceState,
+    port: &mut Port,
+    incoming: Option<Incoming>,
+    ping: Option<(u64, Instant)>,
+) -> Result<bool, ExitReason> {
+    match incoming {
+        Some(Incoming::Frame(FromApp::Log { level, message })) => {
+            log(state, level, message).await;
+            Ok(false)
+        }
+        Some(Incoming::Frame(FromApp::Pong { id })) => Ok(ping.is_some_and(|(want, _)| want == id)),
+        Some(Incoming::Frame(other)) => Err(broke(
+            port,
+            format!("{} between callbacks", frame_name(&other)),
+        )),
+        Some(Incoming::Broken(e)) => Err(broke(port, e)),
+        None => Err(port.exit_reason().await),
+    }
 }
 
 /// The app broke the protocol: kill it and crash.
@@ -253,18 +364,7 @@ impl InstanceTask {
         if let Some(stop) = self.await_lease(state.lease.clone()).await {
             return stop;
         }
-        let tags = Arc::new(Tags {
-            app: spec.app.clone(),
-            version: spec.version.clone(),
-            pid: self.pid,
-        });
-        let rate = LogRate::new(
-            rt.services.logging.clone(),
-            spec.services.logging.rate_limit,
-        );
-        let output = CapturedOutput::new(tags, "stderr", rate);
-        let name = format!("{}-{}-{}", self.pid.node, self.pid.id, self.pid.incarnation);
-        let mut port = match Port::spawn(rt.native_config(), code, spec, &name, output) {
+        let mut port = match self.native_port(&rt, code, spec) {
             Ok(port) => port,
             Err(why) => return ExitReason::Crashed(why),
         };
@@ -275,6 +375,33 @@ impl InstanceTask {
         reason
     }
 
+    /// Start `code`'s process for `spec`, its stderr logged as the
+    /// instance's. Each process the instance starts gets a cgroup name of
+    /// its own: an upgrade starts the new one beside the old.
+    fn native_port(
+        &mut self,
+        rt: &RuntimeInner,
+        code: &NativeCode,
+        spec: &InstanceSpec,
+    ) -> Result<Port, String> {
+        let tags = Arc::new(Tags {
+            app: spec.app.clone(),
+            version: spec.version.clone(),
+            pid: self.pid,
+        });
+        let rate = LogRate::new(
+            rt.services.logging.clone(),
+            spec.services.logging.rate_limit,
+        );
+        let output = CapturedOutput::new(tags, "stderr", rate);
+        self.native_spawns += 1;
+        let mut name = format!("{}-{}-{}", self.pid.node, self.pid.id, self.pid.incarnation);
+        if self.native_spawns > 1 {
+            name = format!("{name}-{}", self.native_spawns);
+        }
+        Port::spawn(rt.native_config(), code, spec, &name, output)
+    }
+
     async fn native_run(
         &mut self,
         state: &mut InstanceState,
@@ -283,21 +410,25 @@ impl InstanceTask {
         weak: std::sync::Weak<RuntimeInner>,
         rt: &RuntimeInner,
     ) -> ExitReason {
-        let started = Instant::now();
-        if let Err(reason) = self.native_hello(port, spec.init_timeout).await {
-            return reason;
+        // The first instance of a singleton moved here with its state
+        // starts from the moved snapshot (`crate::handover`).
+        let handover = rt.handovers.take(&spec.app);
+        if let Some(h) = &handover {
+            tracing::info!(
+                from_version = %h.version,
+                bytes = h.snapshot.len(),
+                "starting from a moved snapshot"
+            );
         }
-        port.send(&ToApp::Init {
-            args: spec.init_args.clone(),
-        });
-        let left = spec.init_timeout.saturating_sub(started.elapsed());
-        let init_timeout = ExitReason::Crashed("init_timeout".into());
-        match self.native_callback(state, port, left, &init_timeout).await {
-            Ok(FromApp::Init(Ok(()))) => {}
-            Ok(FromApp::Init(Err(msg))) => {
-                return ExitReason::Crashed(format!("init failed: {msg}"));
+        let from = handover
+            .as_ref()
+            .map(|h| (h.version.as_str(), h.snapshot.as_slice()));
+        match self.native_start(state, port, spec, from).await {
+            Ok(Ok(())) => {}
+            Ok(Err(msg)) if handover.is_some() => {
+                return ExitReason::Crashed(format!("handover: load-snapshot refused: {msg}"));
             }
-            Ok(other) => return broke(port, format!("expected init, got {}", frame_name(&other))),
+            Ok(Err(msg)) => return ExitReason::Crashed(format!("init failed: {msg}")),
             Err(reason) => return reason,
         }
         self.set_state(LifecycleState::Active);
@@ -307,17 +438,245 @@ impl InstanceTask {
             .map(|check| AbortOnDrop(tokio::spawn(health::watch(weak, self.me.clone(), check))));
         let native = rt.native_config();
         let (interval, timeout) = (native.ping_interval, native.ping_timeout);
-        let stop = match self
-            .native_serve(state, port, spec, interval, timeout)
-            .await
-        {
-            Ok(stop) => stop,
-            Err(reason) => return reason,
+        let mut spec = spec.clone();
+        let stop = loop {
+            match self
+                .native_serve(state, port, &mut spec, interval, timeout)
+                .await
+            {
+                Ok(Served::Stop(stop)) => break stop,
+                Ok(Served::Idle) => {}
+                Err(reason) => return reason,
+            }
+            if let Some(reason) = self.native_passivate(state, port, &spec).await {
+                return reason;
+            }
         };
         self.set_state(LifecycleState::Stopping);
         self.mailbox.close();
         while self.mailbox.try_recv().is_ok() {}
-        self.native_stop(state, port, spec, stop).await
+        self.native_stop(state, port, &spec, stop).await
+    }
+
+    /// Start the app in `port`: its hello, then `Init`, or `LoadSnapshot`
+    /// with `from` (the version that wrote the snapshot, and the
+    /// snapshot), within the init timeout. `Ok(Err)` is the app's init
+    /// error or refusal; `Err` ends the process (`crashed: init_timeout`
+    /// past the timeout).
+    async fn native_start(
+        &mut self,
+        state: &mut InstanceState,
+        port: &mut Port,
+        spec: &InstanceSpec,
+        from: Option<(&str, &[u8])>,
+    ) -> Result<Result<(), String>, ExitReason> {
+        let started = Instant::now();
+        self.native_hello(port, spec.init_timeout).await?;
+        port.send(&match from {
+            Some((from_version, snapshot)) => ToApp::LoadSnapshot {
+                from_version: from_version.to_string(),
+                snapshot: snapshot.to_vec(),
+            },
+            None => ToApp::Init {
+                args: spec.init_args.clone(),
+            },
+        });
+        let left = spec.init_timeout.saturating_sub(started.elapsed());
+        let init_timeout = ExitReason::Crashed("init_timeout".into());
+        match self
+            .native_callback(state, port, left, &init_timeout)
+            .await?
+        {
+            FromApp::Init(result) => Ok(result),
+            other => Err(broke(
+                port,
+                format!("expected init, got {}", frame_name(&other)),
+            )),
+        }
+    }
+
+    /// `SaveSnapshot` between callbacks, within the callback deadline. A
+    /// failure ends the process: the app crashed, or ran out of time.
+    async fn native_save(
+        &mut self,
+        state: &mut InstanceState,
+        port: &mut Port,
+        spec: &InstanceSpec,
+    ) -> Result<Vec<u8>, ExitReason> {
+        port.send(&ToApp::SaveSnapshot);
+        match self
+            .native_callback(state, port, spec.callback_deadline, &ExitReason::Timeout)
+            .await?
+        {
+            FromApp::Snapshot(bytes) => Ok(bytes.0),
+            other => Err(broke(
+                port,
+                format!("expected snapshot, got {}", frame_name(&other)),
+            )),
+        }
+    }
+
+    /// Passivate an idle instance: save its state, end its process, wait
+    /// for something to wake it, then start a new process from the
+    /// snapshot (`load_snapshot` with its own version). Returns the reason
+    /// the instance ends instead: a failed save or wake, or a kill while
+    /// passive.
+    async fn native_passivate(
+        &mut self,
+        state: &mut InstanceState,
+        port: &mut Port,
+        spec: &InstanceSpec,
+    ) -> Option<ExitReason> {
+        let snapshot = match self.native_save(state, port, spec).await {
+            Ok(snapshot) => snapshot,
+            Err(reason) => return Some(reason),
+        };
+        if self.has_work() {
+            // Something arrived during the save: stay live.
+            return None;
+        }
+        port.kill();
+        port.finish().await;
+        self.me.memory_counter().store(0, Ordering::Relaxed);
+        self.set_state(LifecycleState::Passive);
+        self.stats.passivated();
+        tracing::debug!(bytes = snapshot.len(), "passivated");
+        if let Some(reason) = self.passive(&snapshot).await {
+            return Some(reason);
+        }
+        let started = std::time::Instant::now();
+        if let Some(stop) = self.await_lease(state.lease.clone()).await {
+            return Some(stop);
+        }
+        // Set once started; the version running when it passivated.
+        let Some(code) = self.app.as_ref().and_then(LoadedApp::native).cloned() else {
+            return Some(ExitReason::Crashed("no_code".into()));
+        };
+        let rt = state.ctx.rt.clone();
+        let fresh = match self.native_port(&rt, &code, spec) {
+            Ok(fresh) => fresh,
+            Err(why) => return Some(ExitReason::Crashed(why)),
+        };
+        *port = fresh;
+        let version = spec.version.clone();
+        match self
+            .native_start(state, port, spec, Some((&version, &snapshot)))
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(msg)) => {
+                return Some(ExitReason::Crashed(format!(
+                    "wake: load-snapshot refused: {msg}"
+                )));
+            }
+            Err(ExitReason::Crashed(why)) if why == "init_timeout" => {
+                return Some(ExitReason::Crashed("wake_timeout".into()));
+            }
+            Err(reason) => return Some(reason),
+        }
+        self.stats.woke(started.elapsed());
+        tracing::debug!(wake_us = started.elapsed().as_micros(), "woken");
+        self.set_state(LifecycleState::Active);
+        // The new process starts with fresh statics, as after an upgrade.
+        self.native_announce(state);
+        None
+    }
+
+    /// Snapshot upgrade: `SaveSnapshot` in the running process, then the
+    /// new version's process started with `LoadSnapshot`. The running
+    /// process is untouched until the new one has loaded, so a failure
+    /// after the snapshot keeps the old version running. A kill during
+    /// the upgrade returns `SaveFailed` with the kill's reason, which ends
+    /// the instance.
+    async fn native_upgrade(
+        &mut self,
+        state: &mut InstanceState,
+        port: &mut Port,
+        spec: &mut InstanceSpec,
+        app: &LoadedApp,
+        next: InstanceSpec,
+        from_version: &str,
+    ) -> Result<Duration, UpgradeError> {
+        let started = std::time::Instant::now();
+        let Some(code) = app
+            .native()
+            .filter(|code| code.kind == NativeProgram::Executable)
+        else {
+            return Err(UpgradeError::Invalid(
+                "a native executable upgrades in snapshot mode to a native executable only".into(),
+            ));
+        };
+        self.set_state(LifecycleState::Upgrading);
+        let snapshot = self
+            .native_save(state, port, spec)
+            .await
+            .map_err(UpgradeError::SaveFailed)?;
+        let mut fresh_state = match InstanceState::new(self.pid, &next, state.context()) {
+            Ok(fresh_state) => fresh_state,
+            Err(why) => {
+                self.set_state(LifecycleState::Active);
+                return Err(UpgradeError::Instantiate(why));
+            }
+        };
+        state.hand_over(&mut fresh_state);
+        let rt = state.ctx.rt.clone();
+        let outcome = match self.native_port(&rt, code, &next) {
+            Err(why) => Err(UpgradeError::Instantiate(why)),
+            Ok(mut fresh) => {
+                let loaded = self
+                    .native_start(
+                        &mut fresh_state,
+                        &mut fresh,
+                        &next,
+                        Some((from_version, &snapshot)),
+                    )
+                    .await;
+                let result = match loaded {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(refused)) => Err(UpgradeError::LoadFailed(refused)),
+                    Err(reason) if self.kill.killed.load(Ordering::Acquire) => {
+                        Err(UpgradeError::SaveFailed(reason))
+                    }
+                    Err(ExitReason::Crashed(why)) if why == "init_timeout" => {
+                        Err(UpgradeError::LoadFailed("timed out".into()))
+                    }
+                    Err(reason) => Err(UpgradeError::LoadFailed(reason.to_string())),
+                };
+                match result {
+                    Ok(()) => Ok(fresh),
+                    Err(err) => {
+                        fresh.kill();
+                        fresh.finish().await;
+                        Err(err)
+                    }
+                }
+            }
+        };
+        match outcome {
+            Ok(fresh) => {
+                let mut old = std::mem::replace(port, fresh);
+                old.kill();
+                old.finish().await;
+                *state = fresh_state;
+                self.take_spec(&next);
+                *spec = next;
+                self.set_state(LifecycleState::Active);
+                // The new process starts with fresh statics.
+                self.native_announce(state);
+                let pause = started.elapsed();
+                tracing::info!(version = %spec.version, pause_us = pause.as_micros(), "upgraded");
+                Ok(pause)
+            }
+            Err(err) => {
+                // Give the instance's timers and waiting callers back.
+                fresh_state.hand_over(state);
+                if !matches!(err, UpgradeError::SaveFailed(_)) {
+                    self.set_state(LifecycleState::Active);
+                }
+                tracing::warn!(error = %err, "upgrade reverted");
+                Err(err)
+            }
+        }
     }
 
     /// Wait for the app's hello within the init timeout.
@@ -452,118 +811,122 @@ impl InstanceTask {
         }
     }
 
-    /// Handle messages until a stop is requested (`Ok` with its reason) or
-    /// the instance fails (`Err`).
+    /// Handle messages until a stop is requested, the instance has been
+    /// idle for `passivate_after` and may be passivated (`Ok`), or it fails
+    /// (`Err`). What woke a passivated instance is handled first.
     async fn native_serve(
         &mut self,
         state: &mut InstanceState,
         port: &mut Port,
-        spec: &InstanceSpec,
+        spec: &mut InstanceSpec,
         ping_interval: Duration,
         ping_timeout: Duration,
-    ) -> Result<ExitReason, ExitReason> {
-        // The ping in flight: its id and when its pong is due.
-        let mut ping: Option<(u64, Instant)> = None;
-        let mut next_ping = 0u64;
-        let mut idle_since = Instant::now();
+    ) -> Result<Served, ExitReason> {
+        let mut pings = Pings {
+            in_flight: None,
+            sent: 0,
+            idle_since: Instant::now(),
+            interval: ping_interval,
+            timeout: ping_timeout,
+        };
         // One timer, moved when it fires before a ping is due, rather than
         // armed for every message (Z1).
-        let mut ping_timer = std::pin::pin!(tokio::time::sleep_until(idle_since + ping_interval));
+        let mut ping_timer =
+            std::pin::pin!(tokio::time::sleep_until(pings.idle_since + ping_interval));
         // A singleton's lease. A native process can run threads between
         // callbacks, where a component runs nothing, so a lease ending
         // while it is idle kills it as one ending in a callback does.
         let mut lease = state.lease.clone();
-        let never = || Instant::now() + Duration::from_secs(365 * 86_400);
         let mut lease_timer = std::pin::pin!(tokio::time::sleep_until(
-            lease_end(lease.as_ref()).unwrap_or_else(never)
+            lease_end(lease.as_ref()).unwrap_or_else(far_off)
+        ));
+        // When the instance last handled something, for `passivate_after`;
+        // one timer, moved when it fires early.
+        let mut active_at = Instant::now();
+        let mut idle_timer = std::pin::pin!(tokio::time::sleep_until(
+            spec.passivate_after
+                .map_or_else(far_off, |after| active_at + after)
         ));
         loop {
             match self.control.borrow_and_update().clone() {
                 Control::Run => {}
-                Control::Shutdown(reason) => return Ok(reason),
+                Control::Shutdown(reason) => return Ok(Served::Stop(reason)),
                 Control::Kill(reason) => {
                     port.kill();
                     return Err(reason);
                 }
             }
-            let message = tokio::select! {
-                biased;
-                changed = self.control.changed() => {
-                    if changed.is_err() {
-                        port.kill();
-                        return Err(ExitReason::Killed);
-                    }
-                    continue;
-                }
-                () = lease_timer.as_mut(), if lease.is_some() => {
-                    match lease_end(lease.as_ref()) {
-                        Some(end) if end <= Instant::now() => {
-                            state.lease_ended = true;
+            // What woke a passivated instance comes first.
+            let woke = if let Some(held) = self.native_held() {
+                held
+            } else {
+                tokio::select! {
+                    biased;
+                    changed = self.control.changed() => {
+                        if changed.is_err() {
                             port.kill();
-                            return Err(ExitReason::Crashed("lease_ended".into()));
+                            return Err(ExitReason::Killed);
                         }
-                        end => lease_timer.as_mut().reset(end.unwrap_or_else(never)),
-                    }
-                    continue;
-                }
-                () = lease_changed(lease.as_mut()) => {
-                    lease_timer.as_mut().reset(lease_end(lease.as_ref()).unwrap_or_else(never));
-                    continue;
-                }
-                Some(op) = self.ops.recv() => {
-                    self.native_op(state, *op);
-                    continue;
-                }
-                Some(info) = self.signals.recv() => match info.resolve() {
-                    Some(info) => Message::Info(info),
-                    None => continue,
-                },
-                message = self.mailbox.recv() => match message {
-                    Some(message) => message,
-                    None => return Ok(ExitReason::Shutdown),
-                },
-                incoming = port.recv() => {
-                    match incoming {
-                        Some(Incoming::Frame(FromApp::Log { level, message })) => {
-                            log(state, level, message).await;
-                        }
-                        Some(Incoming::Frame(FromApp::Pong { id })) => {
-                            if ping.is_some_and(|(want, _)| want == id) {
-                                ping = None;
-                                idle_since = Instant::now();
-                            }
-                        }
-                        Some(Incoming::Frame(other)) => {
-                            return Err(broke(port, format!("{} between callbacks", frame_name(&other))));
-                        }
-                        Some(Incoming::Broken(e)) => return Err(broke(port, e)),
-                        None => return Err(port.exit_reason().await),
-                    }
-                    continue;
-                }
-                () = ping_timer.as_mut() => {
-                    let ping_at = ping.map_or(idle_since + ping_interval, |(_, due)| due);
-                    if Instant::now() < ping_at {
-                        ping_timer.as_mut().reset(ping_at);
                         continue;
                     }
-                    if ping.is_some() {
-                        tracing::warn!("native instance missed a ping");
-                        port.kill();
-                        return Err(ExitReason::Timeout);
+                    () = lease_timer.as_mut(), if lease.is_some() => {
+                        lease_due(state, port, lease.as_ref(), lease_timer.as_mut())?;
+                        continue;
                     }
-                    next_ping += 1;
-                    port.send(&ToApp::Ping { id: next_ping });
-                    let due = Instant::now() + ping_timeout;
-                    ping = Some((next_ping, due));
-                    ping_timer.as_mut().reset(due);
+                    () = lease_changed(lease.as_mut()) => {
+                        lease_timer.as_mut().reset(lease_end(lease.as_ref()).unwrap_or_else(far_off));
+                        continue;
+                    }
+                    Some(op) = self.ops.recv() => Woke::Op(op),
+                    Some(info) = self.signals.recv() => match info.resolve() {
+                        Some(info) => Woke::Next(Message::Info(info)),
+                        None => continue,
+                    },
+                    message = self.mailbox.recv() => match message {
+                        Some(message) => Woke::Next(message),
+                        None => return Ok(Served::Stop(ExitReason::Shutdown)),
+                    },
+                    incoming = port.recv() => {
+                        if between_callbacks(state, port, incoming, pings.in_flight).await? {
+                            pings.answered();
+                        }
+                        continue;
+                    }
+                    () = ping_timer.as_mut() => {
+                        pings.due(port, ping_timer.as_mut())?;
+                        continue;
+                    }
+                    () = idle_timer.as_mut(), if spec.passivate_after.is_some() => {
+                        if self.idle_due(state, spec, active_at, idle_timer.as_mut()) {
+                            return Ok(Served::Idle);
+                        }
+                        continue;
+                    }
+                }
+            };
+            let message = match woke {
+                Woke::Next(message) => message,
+                Woke::Op(op) => {
+                    // `Some` is the reason the instance cannot continue.
+                    self.native_op(state, port, spec, *op)
+                        .await
+                        .map_or(Ok(()), Err)?;
+                    // The app answered, or was not asked: either way a ping
+                    // in flight is moot.
+                    pings.answered();
+                    active_at = pings.idle_since;
+                    // An upgrade may have set `passivate_after`.
+                    idle_timer.as_mut().reset(
+                        spec.passivate_after
+                            .map_or_else(far_off, |after| active_at + after),
+                    );
                     continue;
                 }
             };
             // Out of lease, the message waits here; a stop drops it.
             if let Some(stop) = self.await_lease(state.lease.clone()).await {
                 return match *self.control.borrow() {
-                    Control::Shutdown(_) => Ok(stop),
+                    Control::Shutdown(_) => Ok(Served::Stop(stop)),
                     Control::Run | Control::Kill(_) => {
                         port.kill();
                         Err(stop)
@@ -571,8 +934,38 @@ impl InstanceTask {
                 };
             }
             self.native_handle(state, port, spec, message).await?;
-            ping = None;
-            idle_since = Instant::now();
+            pings.answered();
+            active_at = pings.idle_since;
+        }
+    }
+
+    /// What woke the instance while passive, if it is still to handle.
+    fn native_held(&mut self) -> Option<Woke> {
+        self.held_op
+            .take()
+            .map(Woke::Op)
+            .or_else(|| self.held.take().map(Woke::Next))
+    }
+
+    /// Whether an instance idle since `active_at` may now be passivated;
+    /// if not, `timer` is moved to when to look again.
+    fn idle_due(
+        &self,
+        state: &mut InstanceState,
+        spec: &InstanceSpec,
+        active_at: Instant,
+        timer: std::pin::Pin<&mut tokio::time::Sleep>,
+    ) -> bool {
+        let after = spec.passivate_after.unwrap_or_default();
+        if Instant::now() < active_at + after {
+            timer.reset(active_at + after);
+            false
+        } else if state.passivable() && !self.has_work() {
+            true
+        } else {
+            // Calls still wait on its replies: look again later.
+            timer.reset(Instant::now() + after);
+            false
         }
     }
 
@@ -708,19 +1101,77 @@ impl InstanceTask {
         }
     }
 
-    /// An operation between callbacks: a native instance takes no
-    /// snapshot, so only announcements are done.
-    fn native_op(&self, state: &InstanceState, op: Op) {
+    /// An operation between callbacks. Returns the exit reason if the
+    /// instance cannot continue. A rustbridge plugin takes no snapshot, so
+    /// only announcements are done for one.
+    async fn native_op(
+        &mut self,
+        state: &mut InstanceState,
+        port: &mut Port,
+        spec: &mut InstanceSpec,
+        op: Op,
+    ) -> Option<ExitReason> {
+        let snapshots = self
+            .app
+            .as_ref()
+            .and_then(LoadedApp::native)
+            .is_some_and(|code| code.kind == NativeProgram::Executable);
         match op {
-            Op::Upgrade { reply, .. } => {
+            Op::Upgrade { reply, .. } if !snapshots => {
                 let _ = reply.send(Err(UpgradeError::Invalid(
-                    "a native-process app upgrades by restart or blue-green".into(),
+                    "a rustbridge plugin upgrades by restart or blue-green".into(),
                 )));
+                None
             }
-            Op::Snapshot { reply } | Op::MoveOut { reply } => {
+            Op::Snapshot { reply } | Op::MoveOut { reply } if !snapshots => {
                 let _ = reply.send(Err(SnapshotError::NotSupported));
+                None
             }
-            Op::Announce => self.native_announce(state),
+            Op::Upgrade {
+                app,
+                spec: next,
+                from_version,
+                reply,
+            } => {
+                let result = self
+                    .native_upgrade(state, port, spec, &app, *next, &from_version)
+                    .await;
+                let exit = match &result {
+                    Err(UpgradeError::SaveFailed(reason)) => Some(reason.clone()),
+                    _ => None,
+                };
+                if result.is_ok() {
+                    self.app = Some(app);
+                }
+                let _ = reply.send(result);
+                exit
+            }
+            Op::Snapshot { reply } => match self.native_save(state, port, spec).await {
+                Ok(snapshot) => {
+                    let _ = reply.send(Ok(snapshot));
+                    None
+                }
+                Err(reason) => {
+                    let _ = reply.send(Err(SnapshotError::Failed(reason.clone())));
+                    Some(reason)
+                }
+            },
+            // Moved out: the process handles nothing more, and ends with
+            // the instance, without `terminate`.
+            Op::MoveOut { reply } => match self.native_save(state, port, spec).await {
+                Ok(snapshot) => {
+                    let _ = reply.send(Ok(snapshot));
+                    Some(self.frozen().await)
+                }
+                Err(reason) => {
+                    let _ = reply.send(Err(SnapshotError::Failed(reason.clone())));
+                    Some(reason)
+                }
+            },
+            Op::Announce => {
+                self.native_announce(state);
+                None
+            }
         }
     }
 

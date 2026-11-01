@@ -10,8 +10,8 @@
 //! ```
 //!
 //! `BULKHEAD_CONFORMANCE_NATIVE=1` runs it against the Rust reference app
-//! built as a native program (Linux), through `bulkhead-runner`; the cases
-//! about snapshots pass with a note there, since native apps have none.
+//! built as a native program (Linux), through `bulkhead-runner`: every
+//! case, snapshots and upgrades included.
 //!
 //! Each test is one case; the case names are the rows of WRITING_APPS.md's
 //! table of SDKs.
@@ -47,14 +47,6 @@ fn crashed_in_app(why: &str) -> bool {
     why.starts_with("trap:") || (native() && why.starts_with("panic:"))
 }
 
-/// In the native mode, a case about what native apps do not have: it
-/// passes with a note.
-fn not_native(what: &str) -> bool {
-    if native() {
-        eprintln!("not run in the native mode: {what}");
-    }
-    native()
-}
 use serde_json::json;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
@@ -496,9 +488,6 @@ async fn terminate____graceful_shutdown____runs_with_the_reason() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn snapshot____state____in_the_guest_formats_layout() {
-    if not_native("snapshots (ROADMAP Z7)") {
-        return;
-    }
     let h = up("c-snapshot", "").await;
     ask(&h, "count").await;
     ask(&h, "count").await;
@@ -525,9 +514,6 @@ async fn snapshot____state____in_the_guest_formats_layout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade____snapshot_mode____state_deferred_callers_and_pid_kept() {
-    if not_native("snapshots (ROADMAP Z7)") {
-        return;
-    }
     let (_, app) = shared();
     let h = up("c-upgrade", "").await;
     ask(&h, "count").await;
@@ -558,9 +544,6 @@ async fn upgrade____snapshot_mode____state_deferred_callers_and_pid_kept() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade____snapshot_refused____old_version_keeps_running() {
-    if not_native("snapshots (ROADMAP Z7)") {
-        return;
-    }
     let (_, app) = shared();
     let h = up("c-refuse", "").await;
     ask(&h, "count").await;
@@ -582,9 +565,6 @@ async fn upgrade____snapshot_refused____old_version_keeps_running() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rollback____after_snapshot_upgrade____previous_version_with_state() {
-    if not_native("snapshots (ROADMAP Z7)") {
-        return;
-    }
     let (rt, _) = shared();
     let name = "c-rollback";
     let base = json!({

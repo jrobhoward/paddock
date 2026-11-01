@@ -335,8 +335,9 @@ impl Port {
     }
 
     /// Wait for the process to exit after a stop (closing stdin, then
-    /// killing it after the grace period), and remove its cgroup.
-    pub(crate) async fn finish(mut self) {
+    /// killing it after the grace period), and remove its cgroup. Again
+    /// does nothing more.
+    pub(crate) async fn finish(&mut self) {
         self.close();
         if tokio::time::timeout(EXIT_GRACE, self.child.wait())
             .await
@@ -345,8 +346,8 @@ impl Port {
             self.kill();
             let _ = self.child.wait().await;
         }
-        if let Some(dir) = &self.cgroup {
-            cgroup::remove(dir).await;
+        if let Some(dir) = self.cgroup.take() {
+            cgroup::remove(&dir).await;
         }
     }
 }

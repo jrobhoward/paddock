@@ -13,7 +13,7 @@
 > WebAssembly components. Native apps passed their first exit on
 > 2026-11-01 (the tutorial's board app, built natively, passes its node
 > tests); components still run beside them until native apps reach
-> parity, and then go (`docs/ROADMAP.md`, Z7 to Z9).
+> parity, and then go (`docs/ROADMAP.md`, Z8 and Z9).
 
 Bulkhead is a clustered application server that runs each app instance as
 a restricted native process, with Erlang/OTP-style semantics:
@@ -32,7 +32,8 @@ a restricted native process, with Erlang/OTP-style semantics:
   runaway app is killed and restarted, and linked apps are told.
 - **Hot upgrade** swaps an app's component between messages, carrying state
   through snapshot functions, and reverts if the new version fails to load it
-  (native apps upgrade by restart or blue-green until snapshots reach them).
+  (a native app's new version in a new process; rustbridge plugins upgrade by
+  restart or blue-green).
 - **Blue-green upgrades** run both versions side by side and move traffic in
   steps, for apps whose state lives outside the instance.
 - **Isolation**: each instance gets its own memory (a process, or a
