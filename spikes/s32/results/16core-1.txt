@@ -1,0 +1,68 @@
+# 2026-11-01T19:44:51Z Linux 6.8.0-146-generic x86_64 load: 0.80 0.53 0.86
+# 16 cores; budgets [0, 2, 5, 20, 50] µs; 20000 sequential rounds after 2000; p50 / p99 µs; CPU µs per round (node + apps)
+| budget | case | path | p50 | p99 | CPU per round |
+| --- | --- | --- | --- | --- | --- |
+| 0 | request (pid) | Direct | 21.27 | 26.17 | 21.02 |
+| 0 | bucket get | Direct | 21.77 | 26.19 | 20.94 |
+| 0 | call between instances | Direct | 38.32 | 44.73 | 37.02 |
+| 0 | request (pid) | Task | 32.97 | 38.64 | 38.69 |
+| 0 | bucket get | Task | 34.30 | 40.41 | 40.02 |
+| 0 | call between instances | Task | 66.56 | 81.39 | 78.00 |
+| 0 | call from the node (tokio task) | Direct | 31.13 | 36.33 | 30.29 |
+| 2 | request (pid) | Direct | 21.04 | 25.53 | 23.60 |
+| 2 | bucket get | Direct | 1.07 | 13.32 | 8.96 |
+| 2 | call between instances | Direct | 26.10 | 34.28 | 34.87 |
+| 2 | request (pid) | Task | 29.86 | 35.69 | 40.58 |
+| 2 | bucket get | Task | 33.40 | 39.67 | 44.11 |
+| 2 | call between instances | Task | 62.66 | 76.02 | 82.78 |
+| 2 | call from the node (tokio task) | Direct | 10.66 | 26.55 | 18.50 |
+| 5 | request (pid) | Direct | 1.84 | 2.14 | 3.87 |
+| 5 | bucket get | Direct | 2.65 | 23.20 | 10.45 |
+| 5 | call between instances | Direct | 33.37 | 38.70 | 52.47 |
+| 5 | request (pid) | Task | 27.17 | 33.11 | 41.99 |
+| 5 | bucket get | Task | 33.11 | 39.10 | 49.03 |
+| 5 | call between instances | Task | 63.72 | 74.62 | 93.61 |
+| 5 | call from the node (tokio task) | Direct | 20.96 | 29.48 | 25.20 |
+| 20 | request (pid) | Direct | 2.67 | 2.87 | 5.32 |
+| 20 | bucket get | Direct | 2.56 | 3.34 | 5.25 |
+| 20 | call between instances | Direct | 4.10 | 5.01 | 12.72 |
+| 20 | request (pid) | Task | 5.30 | 6.88 | 17.43 |
+| 20 | bucket get | Task | 5.85 | 15.95 | 25.03 |
+| 20 | call between instances | Task | 39.16 | 48.92 | 119.70 |
+| 20 | call from the node (tokio task) | Direct | 9.79 | 11.89 | 26.34 |
+| 50 | request (pid) | Direct | 2.67 | 2.87 | 5.30 |
+| 50 | bucket get | Direct | 3.02 | 3.47 | 6.10 |
+| 50 | call between instances | Direct | 4.76 | 5.80 | 15.06 |
+| 50 | request (pid) | Task | 5.61 | 13.97 | 19.22 |
+| 50 | bucket get | Task | 11.65 | 14.59 | 28.54 |
+| 50 | call between instances | Task | 11.17 | 20.58 | 54.25 |
+| 50 | call from the node (tokio task) | Direct | 9.77 | 12.30 | 26.39 |
+
+Concurrent apps, each 20000 requests (pid), direct path: requests/s, p50 of the apps' p50s and the worst p99 (µs), CPU µs per request
+| budget | spin | apps | requests/s | p50 | worst p99 | CPU per request |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | pause | 16 | 417383 | 37.40 | 44.7 | 8.69 |
+| 0 | pause | 64 | 439303 | 145.09 | 157.0 | 8.68 |
+| 2 | pause | 16 | 384738 | 42.06 | 47.9 | 11.09 |
+| 2 | pause | 64 | 356585 | 179.40 | 192.2 | 11.78 |
+| 2 | yield | 16 | 553252 | 29.93 | 40.9 | 15.64 |
+| 2 | yield | 64 | 1476165 | 40.99 | 54.9 | 10.45 |
+| 5 | pause | 16 | 431908 | 36.95 | 42.4 | 12.79 |
+| 5 | pause | 64 | 447152 | 141.86 | 158.1 | 13.10 |
+| 5 | yield | 16 | 536908 | 29.67 | 40.8 | 15.95 |
+| 5 | yield | 64 | 1571924 | 40.40 | 55.2 | 9.98 |
+| 20 | pause | 16 | 1074397 | 12.07 | 63.9 | 13.80 |
+| 20 | pause | 64 | 420566 | 150.93 | 194.1 | 26.96 |
+| 20 | yield | 16 | 1287041 | 12.24 | 15.4 | 12.03 |
+| 20 | yield | 64 | 1612104 | 37.40 | 51.7 | 9.54 |
+| 50 | pause | 16 | 1176657 | 12.17 | 15.5 | 12.61 |
+| 50 | pause | 64 | 993435 | 12.85 | 263.1 | 14.05 |
+| 50 | yield | 16 | 1202333 | 12.96 | 16.9 | 13.10 |
+| 50 | yield | 64 | 1813297 | 30.59 | 50.6 | 8.19 |
+
+Idle: 100 apps waiting, CPU over 2 s after the last frame (ms, node + apps)
+budget 0 µs: 2.9 ms
+budget 2 µs: 3.5 ms
+budget 5 µs: 3.4 ms
+budget 20 µs: 4.1 ms
+budget 50 µs: 5.4 ms

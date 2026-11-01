@@ -1,0 +1,76 @@
+# 2026-11-01T19:50:08Z Linux 6.8.0-146-generic x86_64 load: 0.62 1.01 1.03
+# 16 cores; budgets [0, 5, 10, 20, 50] µs; 20000 sequential rounds after 2000, spinning with Hybrid; p50 / p99 µs; CPU µs per round (node + apps)
+| budget | case | path | p50 | p99 | CPU per round |
+| --- | --- | --- | --- | --- | --- |
+| 0 | request (pid) | Direct | 21.03 | 25.77 | 20.64 |
+| 0 | bucket get | Direct | 12.49 | 16.21 | 12.63 |
+| 0 | call between instances | Direct | 37.97 | 44.53 | 36.76 |
+| 0 | request (pid) | Task | 32.18 | 37.97 | 38.91 |
+| 0 | bucket get | Task | 34.20 | 40.63 | 39.01 |
+| 0 | call between instances | Task | 62.28 | 74.96 | 69.83 |
+| 0 | call from the node (tokio task) | Direct | 24.38 | 35.07 | 25.92 |
+| 5 | request (pid) | Direct | 2.60 | 21.78 | 7.92 |
+| 5 | bucket get | Direct | 2.83 | 23.34 | 10.43 |
+| 5 | call between instances | Direct | 34.85 | 40.93 | 52.65 |
+| 5 | request (pid) | Task | 28.01 | 35.36 | 44.42 |
+| 5 | bucket get | Task | 32.10 | 39.26 | 49.18 |
+| 5 | call between instances | Task | 59.57 | 73.21 | 95.65 |
+| 5 | call from the node (tokio task) | Direct | 26.06 | 31.60 | 35.49 |
+| 10 | request (pid) | Direct | 3.05 | 3.23 | 5.81 |
+| 10 | bucket get | Direct | 2.71 | 3.73 | 5.40 |
+| 10 | call between instances | Direct | 3.98 | 6.06 | 13.00 |
+| 10 | request (pid) | Task | 25.82 | 31.17 | 49.06 |
+| 10 | bucket get | Task | 33.32 | 39.24 | 57.85 |
+| 10 | call between instances | Task | 56.41 | 66.71 | 105.63 |
+| 10 | call from the node (tokio task) | Direct | 25.05 | 32.77 | 36.06 |
+| 20 | request (pid) | Direct | 3.02 | 3.23 | 5.75 |
+| 20 | bucket get | Direct | 2.83 | 3.86 | 6.25 |
+| 20 | call between instances | Direct | 4.59 | 6.25 | 13.59 |
+| 20 | request (pid) | Task | 5.61 | 14.75 | 20.56 |
+| 20 | bucket get | Task | 12.26 | 15.72 | 32.85 |
+| 20 | call between instances | Task | 37.52 | 50.49 | 117.81 |
+| 20 | call from the node (tokio task) | Direct | 10.04 | 13.95 | 26.79 |
+| 50 | request (pid) | Direct | 3.05 | 3.23 | 5.88 |
+| 50 | bucket get | Direct | 2.71 | 3.70 | 5.38 |
+| 50 | call between instances | Direct | 4.41 | 5.74 | 13.76 |
+| 50 | request (pid) | Task | 5.65 | 14.69 | 20.98 |
+| 50 | bucket get | Task | 8.20 | 13.63 | 27.62 |
+| 50 | call between instances | Task | 15.66 | 20.03 | 65.62 |
+| 50 | call from the node (tokio task) | Direct | 9.90 | 13.94 | 26.74 |
+
+Concurrent apps, each 20000 requests (pid), direct path: requests/s, p50 of the apps' p50s and the worst p99 (µs), CPU µs per request
+| budget | spin | apps | requests/s | p50 | worst p99 | CPU per request |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | Pause | 16 | 420415 | 37.71 | 44.2 | 8.54 |
+| 0 | Pause | 64 | 344613 | 187.00 | 201.5 | 9.97 |
+| 5 | Pause | 16 | 464672 | 34.27 | 40.0 | 12.45 |
+| 5 | Pause | 64 | 414072 | 154.35 | 172.1 | 13.65 |
+| 5 | Yield | 16 | 520414 | 30.30 | 42.4 | 16.44 |
+| 5 | Yield | 64 | 1449312 | 41.10 | 55.9 | 10.53 |
+| 5 | Hybrid | 16 | 417475 | 37.90 | 44.2 | 12.98 |
+| 5 | Hybrid | 64 | 415350 | 147.63 | 181.0 | 13.16 |
+| 10 | Pause | 16 | 428346 | 36.85 | 44.0 | 17.56 |
+| 10 | Pause | 64 | 381507 | 170.49 | 184.1 | 18.31 |
+| 10 | Yield | 16 | 536116 | 30.85 | 37.4 | 21.06 |
+| 10 | Yield | 64 | 1417392 | 41.77 | 2998.8 | 10.68 |
+| 10 | Hybrid | 16 | 391980 | 40.40 | 46.2 | 17.37 |
+| 10 | Hybrid | 64 | 398744 | 163.05 | 175.0 | 17.89 |
+| 20 | Pause | 16 | 855576 | 12.54 | 65.5 | 15.01 |
+| 20 | Pause | 64 | 414655 | 153.66 | 192.0 | 27.15 |
+| 20 | Yield | 16 | 1263599 | 12.35 | 15.8 | 12.31 |
+| 20 | Yield | 64 | 1495206 | 40.88 | 2998.5 | 10.37 |
+| 20 | Hybrid | 16 | 763556 | 12.76 | 40.7 | 16.36 |
+| 20 | Hybrid | 64 | 423875 | 150.31 | 163.1 | 24.69 |
+| 50 | Pause | 16 | 1215093 | 12.62 | 16.0 | 12.98 |
+| 50 | Pause | 64 | 967304 | 12.92 | 431.8 | 14.16 |
+| 50 | Yield | 16 | 1244230 | 12.43 | 16.4 | 12.36 |
+| 50 | Yield | 64 | 1579031 | 37.05 | 69.2 | 9.61 |
+| 50 | Hybrid | 16 | 1228425 | 12.72 | 16.0 | 12.24 |
+| 50 | Hybrid | 64 | 397113 | 160.54 | 182.7 | 38.97 |
+
+Idle: 100 apps waiting, CPU over 2 s after the last frame (ms, node + apps)
+budget 0 µs: 2.9 ms
+budget 5 µs: 3.3 ms
+budget 10 µs: 3.7 ms
+budget 20 µs: 4.0 ms
+budget 50 µs: 5.2 ms

@@ -1,0 +1,26 @@
+== app nice +0
+Concurrent apps, each 20000 requests (pid), direct path: requests/s, p50 of the apps' p50s and the worst p99 (µs), CPU µs per request
+| budget | spin | apps | requests/s | p50 | worst p99 | CPU per request |
+| --- | --- | --- | --- | --- | --- | --- |
+| 5 | Pause | 16 | 442919 | 35.77 | 42.5 | 12.58 |
+| 5 | Pause | 64 | 378783 | 170.23 | 186.6 | 13.98 |
+| 5 | Yield | 16 | 525915 | 30.40 | 42.8 | 16.56 |
+| 5 | Yield | 64 | 1524209 | 40.66 | 61.7 | 10.15 |
+| 20 | Pause | 16 | 769011 | 12.27 | 58.7 | 17.36 |
+| 20 | Pause | 64 | 414865 | 153.63 | 198.9 | 27.22 |
+| 20 | Yield | 16 | 1317739 | 11.75 | 14.9 | 11.35 |
+| 20 | Yield | 64 | 1417843 | 40.74 | 2998.2 | 10.59 |
+
+== app nice +5
+Concurrent apps, each 20000 requests (pid), direct path: requests/s, p50 of the apps' p50s and the worst p99 (µs), CPU µs per request
+| budget | spin | apps | requests/s | p50 | worst p99 | CPU per request |
+| --- | --- | --- | --- | --- | --- | --- |
+| 5 | Pause | 16 | 402080 | 41.25 | 46.6 | 13.21 |
+| 5 | Pause | 64 | 373355 | 172.72 | 188.2 | 14.23 |
+| 5 | Yield | 16 | 523117 | 30.79 | 41.6 | 15.62 |
+| 5 | Yield | 64 | 1496232 | 41.13 | 53.4 | 10.23 |
+| 20 | Pause | 16 | 627234 | 32.63 | 64.5 | 20.31 |
+| 20 | Pause | 64 | 415626 | 152.63 | 190.6 | 27.12 |
+| 20 | Yield | 16 | 1250278 | 12.55 | 15.9 | 11.63 |
+| 20 | Yield | 64 | 1469822 | 41.55 | 52.3 | 10.52 |
+

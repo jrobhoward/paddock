@@ -248,6 +248,7 @@ dependencies = [
 name = "bulkhead-sdk"
 version = "0.3.0"
 dependencies = [
+ "bulkhead-native",
  "bulkhead-sdk-macros",
  "ciborium",
  "serde",
@@ -2711,6 +2712,14 @@ name = "s31-probe"
 version = "0.0.0"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "s32"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,56 @@
+# 2026-11-01T19:48:35Z Linux 7.0.0-1020-raspi aarch64 load: 3.77 1.16 0.75 (nice 10)
+# 4 cores; budgets [0, 10, 20, 50] µs; 20000 sequential rounds after 2000, spinning with sched_yield; p50 / p99 µs; CPU µs per round (node + apps)
+| budget | case | path | p50 | p99 | CPU per round |
+| --- | --- | --- | --- | --- | --- |
+| 0 | request (pid) | Direct | 7.17 | 8.67 | 8.18 |
+| 0 | bucket get | Direct | 7.98 | 9.56 | 8.99 |
+| 0 | call between instances | Direct | 14.59 | 19.32 | 17.03 |
+| 0 | request (pid) | Task | 13.83 | 22.44 | 19.54 |
+| 0 | bucket get | Task | 14.76 | 18.61 | 20.08 |
+| 0 | call between instances | Task | 31.43 | 45.61 | 44.24 |
+| 0 | call from the node (tokio task) | Direct | 11.72 | 22.18 | 13.88 |
+| 10 | request (pid) | Direct | 0.61 | 1.63 | 1.60 |
+| 10 | bucket get | Direct | 1.22 | 1.95 | 2.64 |
+| 10 | call between instances | Direct | 1.46 | 2.30 | 4.85 |
+| 10 | request (pid) | Task | 3.06 | 3.50 | 10.78 |
+| 10 | bucket get | Task | 4.13 | 7.37 | 16.24 |
+| 10 | call between instances | Task | 10.31 | 27.04 | 47.70 |
+| 10 | call from the node (tokio task) | Direct | 3.59 | 4.32 | 10.52 |
+| 20 | request (pid) | Direct | 0.61 | 1.13 | 1.55 |
+| 20 | bucket get | Direct | 1.22 | 1.95 | 2.64 |
+| 20 | call between instances | Direct | 1.45 | 2.26 | 4.71 |
+| 20 | request (pid) | Task | 3.09 | 3.52 | 10.68 |
+| 20 | bucket get | Task | 3.69 | 7.33 | 14.91 |
+| 20 | call between instances | Task | 9.91 | 15.09 | 38.60 |
+| 20 | call from the node (tokio task) | Direct | 3.54 | 4.18 | 10.44 |
+| 50 | request (pid) | Direct | 0.98 | 1.65 | 1.90 |
+| 50 | bucket get | Direct | 1.22 | 1.93 | 2.63 |
+| 50 | call between instances | Direct | 1.87 | 2.30 | 5.08 |
+| 50 | request (pid) | Task | 3.09 | 3.54 | 10.71 |
+| 50 | bucket get | Task | 3.67 | 7.28 | 14.59 |
+| 50 | call between instances | Task | 9.87 | 15.13 | 39.12 |
+| 50 | call from the node (tokio task) | Direct | 3.57 | 4.22 | 10.53 |
+
+Concurrent apps, each 20000 requests (pid), direct path: requests/s, p50 of the apps' p50s and the worst p99 (µs), CPU µs per request
+| budget | spin | apps | requests/s | p50 | worst p99 | CPU per request |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | pause | 16 | 418408 | 36.72 | 67.0 | 7.27 |
+| 0 | pause | 64 | 408254 | 155.31 | 176.9 | 8.25 |
+| 10 | pause | 16 | 4254554 | 0.59 | 0.7 | 0.89 |
+| 10 | pause | 64 | 2229218 | 1.00 | 15.8 | 1.52 |
+| 10 | yield | 16 | 981242 | 16.61 | 29.7 | 4.14 |
+| 10 | yield | 64 | 931263 | 57.15 | 131.2 | 4.37 |
+| 20 | pause | 16 | 4059313 | 0.59 | 1.0 | 0.90 |
+| 20 | pause | 64 | 2310937 | 0.98 | 25.0 | 1.50 |
+| 20 | yield | 16 | 1016546 | 13.56 | 28.3 | 3.88 |
+| 20 | yield | 64 | 949686 | 56.91 | 127.7 | 4.24 |
+| 50 | pause | 16 | 3944491 | 0.59 | 0.9 | 0.93 |
+| 50 | pause | 64 | 2005904 | 0.96 | 55.7 | 1.63 |
+| 50 | yield | 16 | 993241 | 16.70 | 30.8 | 3.99 |
+| 50 | yield | 64 | 905182 | 56.96 | 130.0 | 4.43 |
+
+Idle: 100 apps waiting, CPU over 2 s after the last frame (ms, node + apps)
+budget 0 µs: 3.4 ms
+budget 10 µs: 4.0 ms
+budget 20 µs: 4.8 ms
+budget 50 µs: 5.6 ms
