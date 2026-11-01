@@ -30,6 +30,10 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `kv_cost` runs its keyvalue loops in a native app too (`KV_NATIVE=1`,
+  `scripts/bench.sh kv-native`): `bulkhead-fixture-kvbench` builds as a
+  native program from its source (feature `native`), and its `fill`
+  writes batches of at most about 4 MiB (ROADMAP C1).
 - Snapshots for native-process executables (ROADMAP Z7): protocol
   version 3 adds `SaveSnapshot` and `LoadSnapshot` frames, and
   `bulkhead_native::app::App` gains `save_snapshot` and `load_snapshot`

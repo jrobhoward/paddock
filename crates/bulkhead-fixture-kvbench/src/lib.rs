@@ -6,7 +6,7 @@
 //! guest's monotonic clock before and after:
 //! - `fill:<bucket>:<prefix>:<n>:<size>`: keys `<prefix>000000` to
 //!   `<prefix><n-1>` (six digits), each a value of `<size>` bytes, in
-//!   batches of 1,000; replies `ok`.
+//!   batches of up to 1,000 keys and about 4 MiB; replies `ok`.
 //! - `loop:<bucket>:<op>:<n>:<size>:<keys>:<seed>`: `<n>` operations on
 //!   keys `k000000` to `k<keys-1>`, picked by a linear congruential
 //!   generator from `<seed>` (the escript's sequence). The keys and the
@@ -67,9 +67,13 @@ fn fill(f: &[&str]) -> Result<String, KvError> {
     let prefix = f.get(1).copied().unwrap_or("k");
     let (n, size) = (number(f.get(2)), number(f.get(3)));
     let value = vec![7u8; usize::try_from(size).unwrap_or(0)];
+    // Up to 1,000 keys and about 4 MiB a batch: a native app's request is
+    // one frame, at most 16 MiB.
+    let per_batch = (4 << 20) / size.max(1);
+    let per_batch = per_batch.clamp(1, 1000);
     let mut i = 0;
     while i < n {
-        let batch: Vec<(String, Vec<u8>)> = (i..n.min(i + 1000))
+        let batch: Vec<(String, Vec<u8>)> = (i..n.min(i + per_batch))
             .map(|j| (key(prefix, j), value.clone()))
             .collect();
         i += batch.len() as u64;

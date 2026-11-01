@@ -13,6 +13,17 @@
 //! `KV_READ_CONCURRENCY=1` makes every bucket a `read_concurrency` one
 //! (reads without a lock, spike S26).
 //!
+//! `KV_NATIVE=1` runs the same loops in the fixture built as a native
+//! program (Linux), through `bulkhead-runner`, where each operation is a
+//! request to the node over the app's pipes:
+//!
+//! ```sh
+//! cargo build --release -p bulkhead-native --bin bulkhead-runner
+//! cargo build --release -p bulkhead-fixture-kvbench --features native \
+//!     --bin bulkhead-fixture-kvbench
+//! KV_NATIVE=1 cargo run --release -p bulkhead-host --example kv_cost -- [workers]
+//! ```
+//!
 //! `KV_ONLY=<op>:<bucket>:<keys>:<size>:<seconds>` instead runs one loop
 //! (after filling the bucket) over and over for that long, for a profiler:
 //! `KV_ONLY=miss:b1k:1000:16:20 perf record -g target/release/examples/kv_cost 1`.
@@ -41,9 +52,10 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use bulkhead_bundle::manifest::{AccessMode, Bucket, Capability, Durability};
+use bulkhead_bundle::manifest::{AccessMode, Bucket, Capability, Durability, NativeProgram};
 use bulkhead_host::{
-    Envelope, InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig, SharedBucket,
+    Envelope, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, NativeConfig, Runtime,
+    RuntimeConfig, SharedBucket,
 };
 
 const RUNS: usize = 7;
@@ -53,18 +65,35 @@ fn main() {
     let workers: usize = std::env::args()
         .nth(1)
         .map_or(4, |a| a.parse().expect("workers"));
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../target/fixtures/wasm32-wasip2/release/bulkhead_fixture_kvbench.wasm"
-    );
-    let component = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async move { tokio::spawn(run(workers, component)).await })
+        .block_on(async move { tokio::spawn(run(workers)).await })
         .unwrap();
+}
+
+/// `KV_NATIVE=1`: the fixture as a native program.
+fn native() -> bool {
+    std::env::var_os("KV_NATIVE").is_some_and(|v| v == "1")
+}
+
+/// The fixture's code: the component, or with `KV_NATIVE=1` the native
+/// program and the runner beside it in `target/release`.
+fn load(rt: &Runtime) -> LoadedApp {
+    let target = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target");
+    if native() {
+        let path = std::path::Path::new(target).join("release/bulkhead-fixture-kvbench");
+        assert!(path.exists(), "{}: build it first", path.display());
+        return rt.load_native(NativeCode {
+            path,
+            kind: NativeProgram::Executable,
+        });
+    }
+    let path = format!("{target}/fixtures/wasm32-wasip2/release/bulkhead_fixture_kvbench.wasm");
+    let component = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    rt.load(&component).unwrap()
 }
 
 async fn ask(h: &InstanceHandle, body: &str) -> String {
@@ -127,8 +156,17 @@ fn resident_bytes() -> u64 {
     pages * 4096
 }
 
-async fn run(workers: usize, component: Vec<u8>) {
+async fn run(workers: usize) {
+    let mut runner = NativeConfig::default();
+    runner.runner = Some(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../target/release/bulkhead-runner"
+        )
+        .into(),
+    );
     let rt = Runtime::new(RuntimeConfig {
+        native: runner,
         max_instances: 32,
         buckets: BTreeMap::from([(
             "shared".to_string(),
@@ -141,13 +179,18 @@ async fn run(workers: usize, component: Vec<u8>) {
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app: LoadedApp = rt.load(&component).unwrap();
+    let app = load(&rt);
     let h = rt.spawn(&app, spec()).unwrap();
     if let Ok(only) = std::env::var("KV_ONLY") {
         return only_loop(&h, &only).await;
     }
+    let kind = if native() {
+        "a native program"
+    } else {
+        "a component"
+    };
     println!(
-        "tokio workers: {workers}; median of {RUNS} runs; ns per operation, timed in the guest\n"
+        "tokio workers: {workers}; the app is {kind}; median of {RUNS} runs; ns per operation, timed in the app\n"
     );
     // First, before other buckets free memory the allocator could reuse.
     memory(&h).await;
