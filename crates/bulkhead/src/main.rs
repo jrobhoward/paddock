@@ -196,7 +196,11 @@ enum Command {
         manifest: PathBuf,
         /// The component (`.wasm`, built for wasm32-wasip2), or for a
         /// native-process app its program for this machine's platform.
-        component: PathBuf,
+        component: Option<PathBuf>,
+        /// A native-process app's program for a platform (linux-x86_64,
+        /// linux-aarch64), in place of the argument; repeat for each.
+        #[arg(long = "program", value_name = "PLATFORM=PATH", value_parser = bundle::parse_program)]
+        programs: Vec<(rustbridge_bundle::Platform, PathBuf)>,
         /// Minisign secret key (password from BULKHEAD_KEY_PASSWORD, or a prompt).
         #[arg(long)]
         key: PathBuf,
@@ -587,14 +591,16 @@ fn make_bundle(json: bool, request: &bundle::BundleRequest<'_>) -> anyhow::Resul
             serde_json::to_string_pretty(&serde_json::json!({
                 "path": b.path, "app": b.name, "version": b.version,
                 "signer": b.public_key, "imports": b.imports, "priv_files": b.priv_files,
+                "platforms": b.platforms,
             }))?
         );
     } else {
         println!(
-            "wrote {} ({} {}, {} priv file(s), signed by {})",
+            "wrote {} ({} {} for {}, {} priv file(s), signed by {})",
             b.path.display(),
             b.name,
             b.version,
+            b.platforms.join(", "),
             b.priv_files,
             b.public_key
         );
@@ -701,6 +707,7 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
         Command::Bundle {
             manifest,
             component,
+            programs,
             key,
             priv_dir,
             out,
@@ -709,7 +716,8 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
             json,
             &bundle::BundleRequest {
                 manifest: &manifest,
-                component: &component,
+                component: component.as_deref(),
+                programs: &programs,
                 key: &key,
                 priv_dir: priv_dir.as_deref(),
                 out: out.as_deref(),

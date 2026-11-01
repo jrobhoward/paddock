@@ -12,6 +12,7 @@ use crate::error::BundleError;
 use crate::grant::{EffectiveGrant, effective_grant};
 use crate::imports::component_imports;
 use crate::policy::OperatorPolicy;
+use crate::program::check_program;
 
 /// The world of an app: callbacks driven one message at a time.
 pub const APP_WORLD: &str = "bulkhead:runtime/app@0.1.0";
@@ -107,7 +108,9 @@ impl VerifiedBundle {
     /// Checks, in order: the manifest signature against `trusted_keys` (the
     /// key inside the bundle is ignored), the `appserver` section, the
     /// release variant's checksum and signature (`wasm32-wasip2`, or for a
-    /// `native-process` app this node's platform), and a component's world.
+    /// `native-process` app this node's platform), and a component's world
+    /// or that a native program is an ELF file for this node's
+    /// architecture.
     ///
     /// # Errors
     ///
@@ -115,6 +118,30 @@ impl VerifiedBundle {
     /// [`BundleError::Corrupt`] on a checksum mismatch, and the other
     /// [`BundleError`] variants for a bundle that is not a valid Bulkhead app.
     pub fn open(path: impl AsRef<Path>, trusted_keys: &[String]) -> Result<Self, BundleError> {
+        Self::open_as(path, trusted_keys, Platform::current())
+    }
+
+    /// Open and verify a bundle as a node on `platform` would: a
+    /// `native-process` app's program for that platform, for checking a
+    /// bundle built for another machine. A component's bundle opens as
+    /// with [`open`](Self::open).
+    ///
+    /// # Errors
+    ///
+    /// As [`open`](Self::open).
+    pub fn open_for_platform(
+        path: impl AsRef<Path>,
+        trusted_keys: &[String],
+        platform: Platform,
+    ) -> Result<Self, BundleError> {
+        Self::open_as(path, trusted_keys, Some(platform))
+    }
+
+    fn open_as(
+        path: impl AsRef<Path>,
+        trusted_keys: &[String],
+        native: Option<Platform>,
+    ) -> Result<Self, BundleError> {
         let keys: Vec<&str> = trusted_keys.iter().map(String::as_str).collect();
         let mut loader = BundleLoader::open(path)?;
 
@@ -124,9 +151,25 @@ impl VerifiedBundle {
         let spec = AppSpec::from_json_value(section).map_err(prefix_section)?;
         // A component for every node, or a native program for this one's
         // platform.
+        let no_native = |platform: String| {
+            let present: Vec<&str> = rb
+                .supported_platforms()
+                .into_iter()
+                .filter(|p| *p != Platform::Wasm32Wasip2)
+                .map(|p| p.as_str())
+                .collect();
+            BundleError::NoNativeVariant {
+                platform,
+                present: if present.is_empty() {
+                    "none".to_string()
+                } else {
+                    present.join(", ")
+                },
+            }
+        };
         let platform = if spec.kind == Kind::NativeProcess {
-            Platform::current().ok_or_else(|| {
-                BundleError::NoNativeVariant(format!(
+            native.ok_or_else(|| {
+                no_native(format!(
                     "{}-{}",
                     std::env::consts::OS,
                     std::env::consts::ARCH
@@ -139,9 +182,14 @@ impl VerifiedBundle {
             .get_variant(platform, Some(VARIANT))
             .ok_or_else(|| match platform {
                 Platform::Wasm32Wasip2 => BundleError::NoComponent,
-                other => BundleError::NoNativeVariant(other.as_str().to_string()),
+                other => no_native(other.as_str().to_string()),
             })?;
         let component = loader.read_variant_verified(platform, VARIANT, &keys)?;
+        // A program filed under the wrong platform would fail only when
+        // the runner executes it.
+        if spec.kind == Kind::NativeProcess {
+            check_program(platform, &component)?;
+        }
         let mut priv_files = Vec::new();
         for path in loader.list_files() {
             let Some(relative) = path.strip_prefix(PRIV_DIR) else {

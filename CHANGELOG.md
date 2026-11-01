@@ -30,6 +30,16 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `bulkhead bundle --program PLATFORM=PATH`, repeated, packs a
+  native-process app's program for each platform (`linux-x86_64`,
+  `linux-aarch64`), so one bundle serves a cluster of both architectures
+  and can be built for another machine's (ROADMAP Z8a). `bulkhead bundle`
+  and the node check that each program is an ELF file for its platform's
+  architecture. A node refuses a bundle without its own platform's
+  program with a message naming the platforms the bundle has. The
+  bundle's output lists its platforms. `VerifiedBundle::open_for_platform`
+  opens a bundle as a node on another platform would. WRITING_APPS.md
+  covers cross-building.
 - A comparison of components, native apps and BEAM: calls, casts and
   payloads within a node, between two node processes on one host and
   between a 16-core machine and a Raspberry Pi 5, and keyvalue buckets

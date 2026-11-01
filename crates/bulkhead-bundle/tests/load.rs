@@ -163,15 +163,46 @@ fn open____native_only_bundle____refused_no_component() {
     );
 }
 
-/// A signed bundle of kind `native-process` with `library` for this
-/// node's platform.
-fn native_bundle(dir: &TempDir, keypair: KeyPair, library: &[u8]) -> std::path::PathBuf {
-    let lib = dir.path().join("liborders.so");
-    std::fs::write(&lib, library).unwrap();
+/// The other native platform than this machine's.
+fn other_platform() -> Platform {
+    if Platform::current() == Some(Platform::LinuxAarch64) {
+        Platform::LinuxX86_64
+    } else {
+        Platform::LinuxAarch64
+    }
+}
+
+/// The start of an ELF file for `platform`'s architecture.
+fn elf(platform: Platform) -> Vec<u8> {
+    let machine: u16 = if platform == Platform::LinuxAarch64 {
+        183
+    } else {
+        62
+    };
+    let mut header = vec![0u8; 64];
+    header[..4].copy_from_slice(b"\x7fELF");
+    header[4] = 2;
+    header[5] = 1;
+    header[18..20].copy_from_slice(&machine.to_le_bytes());
+    header
+}
+
+/// A signed bundle of kind `native-process` with a program for each of
+/// `programs`' platforms.
+fn native_bundle(
+    dir: &TempDir,
+    keypair: KeyPair,
+    programs: &[(Platform, Vec<u8>)],
+) -> std::path::PathBuf {
     let path = dir.path().join("native.rbp");
-    BundleBuilder::new(Manifest::new("orders", "1.0.0"))
-        .add_library(Platform::current().unwrap(), &lib)
-        .unwrap()
+    let mut builder = BundleBuilder::new(Manifest::new("orders", "1.0.0"));
+    for (platform, program) in programs {
+        let lib = dir.path().join(platform.as_str()).join("liborders.so");
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::write(&lib, program).unwrap();
+        builder = builder.add_library(*platform, &lib).unwrap();
+    }
+    builder
         .with_extension(
             "appserver",
             json!({ "kind": "native-process", "capabilities": { "wasi:logging": {} } }),
@@ -373,7 +404,8 @@ fn open____native_process_for_this_platform____program_and_declared_grant() {
     let dir = TempDir::new().unwrap();
     let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
     let key = keypair.pk.to_base64();
-    let path = native_bundle(&dir, keypair, b"\x7fELF native");
+    let this = Platform::current().unwrap();
+    let path = native_bundle(&dir, keypair, &[(this, elf(this))]);
 
     let bundle = VerifiedBundle::open(&path, &[key]).unwrap();
     let grant = bundle
@@ -382,7 +414,7 @@ fn open____native_process_for_this_platform____program_and_declared_grant() {
         )
         .unwrap();
 
-    assert_eq!(bundle.component, b"\x7fELF native");
+    assert_eq!(bundle.component, elf(this));
     assert!(bundle.manifest.component.world.is_empty());
     assert!(bundle.imports().unwrap().is_empty());
     assert!(grant.granted.contains(&Capability::Logging));
@@ -399,7 +431,70 @@ fn open____native_process_with_component_only____refused_no_native_variant() {
 
     let err = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap_err();
 
-    assert!(matches!(err, BundleError::NoNativeVariant(_)), "{err:?}");
+    assert!(
+        matches!(err, BundleError::NoNativeVariant { ref present, .. } if present == "none"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn open____native_programs_for_both_platforms____this_platforms_program() {
+    let dir = TempDir::new().unwrap();
+    let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
+    let key = keypair.pk.to_base64();
+    let (this, other) = (Platform::current().unwrap(), other_platform());
+    let path = native_bundle(&dir, keypair, &[(this, elf(this)), (other, elf(other))]);
+
+    let bundle = VerifiedBundle::open(&path, &[key]).unwrap();
+
+    assert_eq!(bundle.component, elf(this));
+}
+
+#[test]
+fn open_for_platform____native_programs_for_both____that_platforms_program() {
+    let dir = TempDir::new().unwrap();
+    let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
+    let key = keypair.pk.to_base64();
+    let (this, other) = (Platform::current().unwrap(), other_platform());
+    let path = native_bundle(&dir, keypair, &[(this, elf(this)), (other, elf(other))]);
+
+    let bundle = VerifiedBundle::open_for_platform(&path, &[key], other).unwrap();
+
+    assert_eq!(bundle.component, elf(other));
+}
+
+#[test]
+fn open____native_program_for_the_other_platform_only____refused_naming_both() {
+    let dir = TempDir::new().unwrap();
+    let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
+    let key = keypair.pk.to_base64();
+    let other = other_platform();
+    let path = native_bundle(&dir, keypair, &[(other, elf(other))]);
+
+    let err = VerifiedBundle::open(&path, &[key]).unwrap_err();
+
+    let BundleError::NoNativeVariant { platform, present } = &err else {
+        panic!("expected NoNativeVariant, got {err:?}");
+    };
+    assert_eq!(platform, Platform::current().unwrap().as_str());
+    assert_eq!(present, other.as_str());
+    assert!(err.to_string().contains("--program"), "{err}");
+}
+
+#[test]
+fn open____native_program_for_the_wrong_architecture____refused_wrong_program() {
+    let dir = TempDir::new().unwrap();
+    let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
+    let key = keypair.pk.to_base64();
+    let this = Platform::current().unwrap();
+    let path = native_bundle(&dir, keypair, &[(this, elf(other_platform()))]);
+
+    let err = VerifiedBundle::open(&path, &[key]).unwrap_err();
+
+    assert!(
+        matches!(err, BundleError::WrongProgram { ref platform, .. } if platform == this.as_str()),
+        "{err:?}"
+    );
 }
 
 #[test]

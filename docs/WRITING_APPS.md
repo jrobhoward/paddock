@@ -407,7 +407,14 @@ Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent
 
 `bulkhead bundle bulkhead.toml <program> --key signer.key` writes a signed `.rbp`:
 
-- The program is the component (`.wasm`, built for `wasm32-wasip2`), or for a native-process app the `.so` or executable built for this machine's platform (bundle on the platform the nodes run).
+- The program is the component (`.wasm`, built for `wasm32-wasip2`), or for a native-process app the `.so` or executable built for this machine's platform.
+- A native-process app may instead carry a program per platform. Pass `--program linux-x86_64=PATH --program linux-aarch64=PATH` in place of the argument, for a cluster of both architectures or for nodes of another one. Each program must be an ELF file for its platform's architecture. A node runs the program for its own platform, and refuses a bundle without one with a message naming the platforms the bundle has.
+- Cross-building for a Raspberry Pi from an x86-64 machine needs the target and a cross linker:
+  - `rustup target add aarch64-unknown-linux-gnu`;
+  - a cross linker, such as Ubuntu's `gcc-aarch64-linux-gnu`;
+  - `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu --features native`.
+
+  The program lands under `target/aarch64-unknown-linux-gnu/release/`. It needs a glibc no newer than the nodes'. Built on Ubuntu 24.04, `examples/board` asks for glibc 2.34 and ran on a Raspberry Pi 5 (2026-11-01). Building on a machine of each architecture works as well.
 - `--priv <dir>` adds a directory's files, which a component reads at `/priv` and a native app in the directory its environment variable `BULKHEAD_PRIV` names.
 - The bundle is refused if the component imports an interface the manifest does not declare (`--skip-import-check` writes it anyway, for a node to refuse), and it is read back as a node would before the command succeeds.
 - `bulkhead keygen <prefix>` makes the signing key pair; nodes trust the public key in `trusted_keys`.

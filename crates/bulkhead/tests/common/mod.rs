@@ -225,13 +225,49 @@ pub fn native_bundle(
     program: &[u8],
     appserver: serde_json::Value,
 ) -> Vec<u8> {
+    native_bundle_for(
+        key,
+        name,
+        version,
+        &[(Platform::current().unwrap(), program)],
+        appserver,
+    )
+}
+
+/// The other Linux platform than this machine's, and the start of an
+/// ELF file for it: enough to bundle, not to run.
+pub fn other_platform_elf() -> (Platform, Vec<u8>) {
+    let (platform, machine) = if Platform::current() == Some(Platform::LinuxAarch64) {
+        (Platform::LinuxX86_64, 62u16)
+    } else {
+        (Platform::LinuxAarch64, 183u16)
+    };
+    let mut header = vec![0u8; 64];
+    header[..4].copy_from_slice(b"\x7fELF");
+    header[4] = 2;
+    header[5] = 1;
+    header[18..20].copy_from_slice(&machine.to_le_bytes());
+    (platform, header)
+}
+
+/// A signed `.rbp` of a native-process app with a program per platform.
+pub fn native_bundle_for(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    programs: &[(Platform, &[u8])],
+    appserver: serde_json::Value,
+) -> Vec<u8> {
     let dir = TempDir::new().unwrap();
-    let lib = dir.path().join(name);
-    std::fs::write(&lib, program).unwrap();
+    let mut builder = BundleBuilder::new(Manifest::new(name, version));
+    for (platform, program) in programs {
+        let lib = dir.path().join(platform.as_str()).join(name);
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::write(&lib, program).unwrap();
+        builder = builder.add_library(*platform, &lib).unwrap();
+    }
     let out = dir.path().join("out.rbp");
-    BundleBuilder::new(Manifest::new(name, version))
-        .add_library(Platform::current().unwrap(), &lib)
-        .unwrap()
+    builder
         .with_extension("appserver", appserver)
         .with_signing_key(key.pk.to_base64(), key.sk.clone())
         .write(&out)

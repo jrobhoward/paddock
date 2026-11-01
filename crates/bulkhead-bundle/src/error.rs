@@ -35,8 +35,32 @@ pub enum BundleError {
 
     /// A `native-process` bundle has no release variant for this node's
     /// platform.
-    #[error("bundle has no release variant for {0} (a native-process app runs its platform's)")]
-    NoNativeVariant(String),
+    #[error(
+        "bundle has no program for {platform}, this node's platform (it has {present}); \
+         `bulkhead bundle --program {platform}=PATH` adds one"
+    )]
+    NoNativeVariant {
+        /// This node's platform (`linux-aarch64`).
+        platform: String,
+        /// The native platforms the bundle has programs for,
+        /// comma-separated, or `none`.
+        present: String,
+    },
+
+    /// A native program is not an ELF file for its platform's
+    /// architecture.
+    #[error("the program for {platform} is {found}")]
+    WrongProgram {
+        /// The platform the program is filed under.
+        platform: String,
+        /// What the program is instead (`an ELF file for x86_64`).
+        found: String,
+    },
+
+    /// A native program for a platform `native-process` apps do not run
+    /// on.
+    #[error("native-process apps run on linux-x86_64 and linux-aarch64, not {0}")]
+    NotNativePlatform(String),
 
     /// The bundle has no `appserver` section.
     #[error("bundle manifest has no '{}' section", crate::manifest::SECTION)]

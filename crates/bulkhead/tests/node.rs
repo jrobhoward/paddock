@@ -1403,6 +1403,54 @@ async fn blue_green____new_version_gives_up_mid_step____dropped_and_refused() {
 // Native apps run on Linux only (`bulkhead-runner`).
 #[cfg(target_os = "linux")]
 #[tokio::test]
+async fn native____bundle_for_both_platforms____runs_this_platforms_program() {
+    use common::{native_bundle_for, native_fixtures, other_platform_elf};
+    use rustbridge_bundle::Platform;
+
+    let (runner, program) = native_fixtures();
+    let program = std::fs::read(program).unwrap();
+    let (other, other_program) = other_platform_elf();
+    let this = Platform::current().unwrap();
+    let n = TestNode::start(&format!("[native]\nrunner = {runner:?}\n")).await;
+    let manifest = fast(json!({ "kind": "native-process", "native": { "program": "executable" } }));
+
+    n.client
+        .deploy(native_bundle_for(
+            &n.key,
+            "vendor",
+            "1.0.0",
+            &[(this, &program), (other, &other_program)],
+            manifest.clone(),
+        ))
+        .await
+        .unwrap();
+    let echo = call(&n, "vendor", "echo both").await;
+    let missing = n
+        .client
+        .deploy(native_bundle_for(
+            &n.key,
+            "vendor2",
+            "1.0.0",
+            &[(other, &other_program)],
+            manifest,
+        ))
+        .await
+        .unwrap_err();
+
+    assert_eq!(echo, "both");
+    assert!(
+        missing.to_string().contains(&format!(
+            "no program for {}, this node's platform (it has {})",
+            this.as_str(),
+            other.as_str()
+        )),
+        "{missing}"
+    );
+}
+
+// Native apps run on Linux only (`bulkhead-runner`).
+#[cfg(target_os = "linux")]
+#[tokio::test]
 async fn native____executable_deployed____answers_and_network_refused() {
     use common::{native_bundle, native_fixtures};
 
