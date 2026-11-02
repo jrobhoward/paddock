@@ -95,6 +95,69 @@ A guest calls `process.call`. The host function (`process`) hands it to `deliver
 
 Casts follow the same routes without a reply; a full mailbox drops the cast and counts it. A congested link drops casts and fails calls with `overloaded` past `send_buffer_bytes`, as a full mailbox does.
 
+### Between two native apps
+
+A native app's `process.call` is a request over its channel. Its instance task runs the same `process` host code a component's import does, so routing, ACLs, limits and errors are the same; only the two ends differ. Three processes take part: the caller's, the node and the target's.
+
+```mermaid
+sequenceDiagram
+    participant A as caller app (process)
+    participant AT as caller's instance task
+    participant D as delivery
+    participant BT as target's instance task
+    participant B as target app (process)
+    Note over A: in a callback, process.call(to, msg, timeout)
+    A->>AT: Request Call{to, msg, timeout_ms}, through A's ring
+    Note over A: the callback thread waits for the Answer:<br/>spins for spin_us, then sleeps on its door
+    AT->>D: process Host::call, delivery::call
+    Note over D: route: a local pid in the process table,<br/>the messaging ACL, the size check
+    D->>BT: mailbox try_send(Call{msg, oneshot}), a full mailbox fails at once
+    Note over BT: takes it once B is between callbacks,<br/>keeps the oneshot under a new call_ref
+    BT->>B: Call{call_ref, msg}, through B's ring
+    Note over B: handle_call
+    B-->>BT: Reply(Some(envelope))
+    BT-->>AT: the oneshot
+    AT-->>A: Answer Called(Ok(envelope)), through A's ring
+    Note over A: the callback goes on
+```
+
+- **The caller waits inside its callback,** as a `gen_server:call` does. Its instance task is busy answering the request, so the caller takes no other message until the reply, a timeout or an error (`noproc`, `overloaded`, `too-large`, `access-denied`, `exited`). The wait is host time: the caller's callback deadline does not count it.
+- **A later reply:** the target answers `Reply(None)` and keeps `call_ref`. In any later callback it sends `Request Reply{call_ref, msg}`, and its instance task completes the oneshot it kept. A reply after the caller's timeout is dropped.
+- **A cast** is `Request Cast{to, msg}`: `delivery::cast` queues it in the target's mailbox, and the caller gets `Answer Unit` at once, whether it was queued or dropped (a full mailbox, a dead pid). The target's task hands it on as `Cast{msg}`, and the app answers `Done`.
+- **What each message costs:** two requests and two copies through rings, besides the mailbox. About 13 µs at p50 for a call between two native instances on one node, on the 16-core machine and the Raspberry Pi 5, against 5 to 7 µs for components (BASELINE.md, T5, 2026-11-01).
+
+### Between nodes
+
+A pid names its node, so the same `process.call` reaches an instance on another node: `delivery::route` finds `Route::Remote`, and the call crosses the QUIC connection between the two nodes. Four processes take part: the caller, both nodes and the target.
+
+```mermaid
+sequenceDiagram
+    participant A as caller app (node 1)
+    participant AT as caller's instance task (node 1)
+    participant T1 as node 1 transport
+    participant T2 as node 2 transport
+    participant BT as target's instance task (node 2)
+    participant B as target app (node 2)
+    A->>AT: Request Call{to: a pid on node 2, msg, timeout_ms}
+    AT->>T1: delivery::call finds Route::Remote, transport::call
+    Note over T1: pending_calls.add(id, oneshot),<br/>the link's lane: past send_buffer_bytes, overloaded
+    T1->>T2: Frame::Call{id, from, sender, to, msg, timeout_ms},<br/>on the data stream (QUIC, mutual TLS, pinned keys)
+    Note over T2: admits: the messaging ACL, on the target's node.<br/>incoming_calls_max per peer: past it, Reply overloaded
+    Note over T2: a task of its own runs delivery::call, now local
+    T2->>BT: mailbox try_send(Call{msg, oneshot})
+    BT->>B: Call{call_ref, msg}, through B's ring
+    B-->>BT: Reply(Some(envelope))
+    BT-->>T2: the oneshot
+    T2->>T1: Frame::Reply{id, result}
+    Note over T1: pending_calls.take(id)
+    T1-->>AT: the oneshot
+    AT-->>A: Answer Called(Ok(envelope))
+```
+
+- **The connection** is one per pair of nodes, with a control stream (heartbeats, membership, failover) and a data stream (messages, links, monitors), so frames between two nodes keep their order and heartbeats never wait behind a large message (`transport::quic`).
+- **Failures:** a session that ends while the call waits fails it with `noconnection` (`PendingCalls::fail_node`), as it ends links and monitors with that node. A caller that times out drops its entry, and a late `Frame::Reply` finds nothing. A remote cast is `Frame::Cast`, `Ok` once the transport takes it, and dropped if the target's mailbox is full.
+- **What each message costs:** the transport dominates. About 160 to 170 µs at p50 for a call between native instances on two node processes on one host (167 µs on the 16-core machine, 158 µs on the Pi), against 13 µs within a node (BASELINE.md, C4, 2026-11-01). Native apps between the two machines have not been measured since T1.
+
 ### From HTTP
 
 The ingress (`http`; in the node, `daemon/ingress.rs`, behind the `http` and `tls` features) accepts on several tasks per address, matches a route by host and longest path prefix, and reads the body up to the route's limit.
@@ -142,6 +205,45 @@ sequenceDiagram
 - **Limits** (`native::cgroup`): with node config `[native] cgroup`, the node moves itself into `<cgroup>/node` at start and gives each instance `<cgroup>/native/<pid>` with `memory.max`, no swap and `pids.max`; the child is placed there between fork and exec. Without it, `memory_max` is the process's `RLIMIT_DATA`.
 
 Snapshots are frames (`SaveSnapshot` between callbacks, `LoadSnapshot` in place of `Init`), and every load is in a new process: a snapshot upgrade starts the new version's process (with a cgroup of its own) beside the old and swaps the port once it has loaded, handing the `InstanceState`'s timers and pending callers over as for a component; passivation saves, kills and reaps the process, and `passive` waits as for a component, answering snapshots from the kept bytes; a wake or a moved singleton starts a new process from the snapshot. A rustbridge plugin's instance refuses snapshot operations. A singleton's process is killed when the node's lease ends, idle or not (`crashed: lease_ended`), since it can run threads between callbacks.
+
+### Processes and shared memory
+
+A node with native apps is one `bulkhead node` process and one process per native instance. `bulkhead-runner` does not add one: it sandboxes itself and then `execve`s the app's executable (or loads its rustbridge `.so`) in the same process. Two apps with one instance each, a writer and a watcher of a shared bucket:
+
+```mermaid
+flowchart LR
+    subgraph node["bulkhead node (one process)"]
+        WT["writer's instance task"]
+        RT["watcher's instance task"]
+        core["process table, mailboxes and signal queues,<br/>delivery, registry, links"]
+        KV["KvStore and Watches<br/>(bucket data: heap maps, redb file)"]
+        PUB["publishing thread"]
+        TR["transport (QUIC)"]
+    end
+    subgraph W["writer app (process)"]
+        WA["callback thread"]
+    end
+    subgraph R["watcher app (process)"]
+        RA["callback thread"]
+    end
+    WT <-->|"memfd: two 64 KiB rings,<br/>bell and door pipes"| WA
+    RT <-->|"memfd: two 64 KiB rings,<br/>bell and door pipes"| RA
+    WT --- core
+    RT --- core
+    WT --- KV
+    RT --- KV
+    core --- TR
+    KV --> PUB
+    PUB -.->|"sealed memfd snapshot,<br/>mapped read-only"| WA
+    PUB -.-> RA
+    TR <-->|"one connection per peer"| peer(["other nodes"])
+```
+
+- **Shared memory is between the node and one app only.** Each instance has a channel of its own: a memfd holding a 64 KiB ring each way (`CHANNEL_BYTES`), mapped by the node and that app, with the bell and door pipes that wake a side that sleeps. Two apps never map each other's channel. A message or a value from one app to another is copied out of the sender's ring into the node's memory and then into the receiver's ring. A frame larger than a ring (up to 17 MiB) goes through in pieces as the reader makes room.
+- **The one mapping several apps share** is a published bucket's snapshot (`publish_ms`): the node's publishing thread writes it into a memfd, seals it and passes it to each native reader on its descriptor socket, and each maps it read-only. Writes to that bucket still go to the node as requests.
+- **What an app inherits:** the channel's memfd (descriptor 3), the write end of the node's bell (4), the read end of its own door (5) and its end of the descriptor socket (6). It opens no sockets and no bucket files of its own: seccomp refuses sockets, and the node owns every bucket.
+- **The node's side of an instance is a tokio task, not a thread or a process.** The instance task reads the app's frames, answers its requests with the same host code a component's imports run, and feeds it calls, casts and infos from the mailbox and signal queues, which are node memory (`mpsc` channels). An app sees only frames.
+- **A crash stays in its process.** An app that exits or is killed closes its ends of the pipes; the bell's end of file tells the instance task, which turns it into an exit reason for links, monitors and the supervisor. The node, the other apps and the bucket data keep running. If the node dies, the parent-death signal ends every app, and the door's end of file tells an app that is still reading.
 
 ## A deploy
 
@@ -217,6 +319,45 @@ The rules are R1 to R14 in `docs/tla/VERIFICATION.md`; the assumptions the model
 
 `bulkhead failover switchover` on the primary hands its singletons to the standby. A singleton in `snapshot` upgrade mode, on a pair with `[failover] replication = true`, is moved with its state (`handover`): the instance takes its snapshot (the `MoveOut` operation; afterwards it handles nothing more), and the old primary writes it to the reserved replicated bucket `@handover`, one key per app, through the pair's log. Every start of a singleton that moves takes the record first (`Runtime::take_handover`): it deletes the record, waits for the delete to commit, and loads the snapshot in place of `init`. The gate's `hand_over` and `start` do the two halves; `RuntimeInner::handovers` holds what was taken until the instance starts.
 
+## A watch between two apps
+
+Two native apps share a bucket from node config (`[buckets.<name>]`), each listing it in its manifest under `wasi:keyvalue` `shared`; the watcher may hold it read-only. The watcher starts a watch, usually in `init`; the writer writes as usual and knows nothing of it. Three processes take part, as in "Processes and shared memory" above: the writer and the watcher, each talking only to the node through its own channel, and the node, which holds the bucket and does the write:
+
+```mermaid
+sequenceDiagram
+    participant W as writer app (process)
+    participant WT as writer's instance task
+    participant KV as KvStore (services::keyvalue)
+    participant WS as Watches
+    participant RT as watcher's instance task
+    participant R as watcher app (process)
+    R->>RT: Request Kv Watch(bucket, key or prefix, after), in init
+    RT->>WS: add (checks the grant and limits.watches_max)
+    WS-->>RT: id, the bucket's revision
+    RT-->>R: Answer: Started
+    W->>WT: Request Kv Set(key, value), during a callback
+    WT->>KV: run(bucket, Set)
+    Note over KV: applies the write: the bucket's revision rises,<br/>the key is stamped with it
+    KV->>WS: notify(bucket, changed keys, revision), after the commit
+    Note over WS: each matching watch (exact key, or a prefix the key starts with):<br/>a notice already queued for the key takes the new revision<br/>(conflated), or else a notice is queued
+    WS->>RT: signal(Info::Late(notice)), on the unbounded signal queue
+    KV-->>WT: Ok
+    WT-->>W: Answer: Unit, the writer's callback goes on
+    Note over RT: takes signals ahead of the mailbox, between callbacks.<br/>The notice takes the key's latest revision<br/>(none if the watch ended)
+    Note over RT: native_notice: reads the key's value and revision now
+    RT->>R: Info KvChanged{watch, bucket, key, entry, revision}
+    Note over R: the SDK makes it the host event kv-changed<br/>(carried: true, value) and calls handle_info
+    Note over R: the app calls Change::from_info(info),<br/>then its own code for that key
+    R-->>RT: Done
+```
+
+- **The watch** (`services::keyvalue::watches`) names the bucket by its storage key, so an app's own bucket and a shared bucket of the same name are told apart; an app's own buckets are its alone, so only a shared bucket (or a `cluster` one) links two apps. It ends with `unwatch` or when the instance exits; an upgrade keeps it, and a restarted instance watches again in `init`, with `after` set to the last revision it saw to replay what it missed (`too-old` if the bucket can no longer replay that far).
+- **Notices are conflated per key, never dropped:** a slow watcher misses intermediate values but always gets the latest. A notice that waits on a passivated instance wakes it.
+- **The data stays in the node.** The writer's value is copied out of its ring into the bucket (the node's heap, or its redb file for a disk bucket); the watcher's copy is read from the bucket and copied into the watcher's ring. Neither app maps the other's memory or the bucket's (a published bucket's snapshot is the exception, read-only).
+- **The value comes with the notice** for native apps (`Change::carried`, `Change::value`; `None` for a delete), read by the watcher's task when it delivers the notice, so the revision is the value's own and may be past the write that queued it. A component's notice carries only the revision; it reads the value with `watch::get`.
+- **A replicated bucket** (`scope = "cluster"`, or an app's `replicated` one) notifies watches when the write commits on each node, from that node's copy (below), so a watcher on either node of the pair hears of it.
+- **Running code on a change** is `handle_info`'s job: the SDK has no callback per key, so an app matches `change.key` (or `change.watch`) to its own handlers.
+
 ## A replicated write
 
 ```mermaid
@@ -269,6 +410,7 @@ A node runs one tokio multi-threaded runtime, one worker per core by default. No
 | blocking pool | on demand | bundle verify and compile, `disk` bucket transactions (redb), secret file reads | per job |
 | Instance task (callback loop) | 1 per instance | `Runtime::spawn` | instance exit |
 | Health check | 1 per instance of an app with `health` | the instance task | instance exit |
+| Native app process (an OS process, not a node thread) | 1 per native instance | the instance task, through `native::port` | instance exit, or the node's (parent-death signal) |
 | Native process task: stdout and stderr to log lines | 1 per native instance | `native::port` | process exit |
 | Publishing thread (an OS thread): published buckets' snapshots | 1 per node, from the first native instance that reads a published bucket | `services::keyvalue::publish` | the keyvalue store's drop |
 | Timer | 1 per pending `process.send-after` | `process` | fires or is cancelled |
@@ -322,6 +464,7 @@ No std lock is held across an `.await` (`await_holding_lock` is denied).
 | --- | --- |
 | Guest memory and globals | the Store (pooling allocator slot); for a native app, its process |
 | WASI context, resource table, timers, pending `noreply` callers, readiness waits, the callback clock, service instance states | `state::InstanceState`, the Store's data (kept while passive; held by the task for a native app) |
+| A native app's channel: a memfd with a 64 KiB ring each way, the bell and door pipes, the descriptor socket | shared by the node and that app's process only; ends with the process |
 | Mailbox | bounded `mpsc` (`limits.mailbox_max`) |
 | Signals (exits, timers, watch notices) | unbounded `mpsc` |
 | Host ops (upgrade, snapshot, move, announce) | unbounded `mpsc` |

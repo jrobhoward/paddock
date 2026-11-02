@@ -277,7 +277,7 @@ Which way to read data several instances share, cheapest first (16-core machine 
 | A batch (`get_many`) or a scan page | about 0.9 to 1.4 µs / 1.3 to 2 µs per key, 100 at a time | Many keys at once; scan pages hold up to 1,000 entries or about 1 MiB |
 | A call to an instance that owns the data | about 5 to 7 µs / 13 µs within a node | Data one instance guards with rules of its own, where a read must see its latest decisions |
 
-A watch (`watch` feature) says when a key changes, for reacting to changes or keeping a copy of a few keys; a native app's notice carries the value. Writes always go to the node: as requests natively (about 7 µs) and as host calls in a component (1.5 to 2 µs).
+A watch (`watch` feature) says when a key changes, for reacting to changes or keeping a copy of a few keys; a native app's notice carries the value. ARCHITECTURE.md's "A watch between two apps" shows a notice's path from the writer to the watcher's `handle_info`. Writes always go to the node: as requests natively (about 7 µs) and as host calls in a component (1.5 to 2 µs).
 
 ## Connection handlers
 
