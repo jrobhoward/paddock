@@ -2327,6 +2327,34 @@ Node 1's callers and node 2's servers, over each system's transport on localhost
   - Native apps between the 16-core machine and the Pi since T1 (C4's cross-machine runs predate it).
   - Erlang's TLS beating its TCP on the 16-core machine, which is unexplained (C4).
 
+## 2026-11-01: native buckets with `read_concurrency`, and a profile of a native request
+
+Two questions after T5: how much of the gap to ETS in the mixed rows is the bucket's lock, and where a native request's 5 µs goes. Commit 076fe2b, the 16-core machine only (the Pi was not run), idle apart from an IDE using about a quarter of a core; a run that spins raises the load average, to 3 to 7 during these.
+
+**`read_concurrency`.** `KV_NATIVE=1 kv_cost` with `KV_READ_CONCURRENCY` 0 and 1, at 4 and 16 tokio workers: three rounds, the four configurations alternating, medians. Operations per second on one shared bucket of 100,000 keys (16 B values):
+
+| | rc off, 4 workers | rc off, 16 | rc on, 4 | rc on, 16 |
+| --- | --- | --- | --- | --- |
+| 95 reads in 100, 4 instances | 0.47M | 0.44M | 0.67M | 0.60M |
+| 95 reads in 100, 16 instances | 0.45M | 0.50M | 0.64M | 1.03M |
+| the same, µs per operation in each instance | 35 | 31 | 24 | 12.5 |
+| 50 reads in 100, 16 instances | 0.38M | 0.39M | 0.43M | 0.44M |
+| every write to one key, 16 instances | 0.47M | 0.64M | 0.41M | 0.34M |
+| 16 readers beside one writer: reads/s, writes/s | 0.39M, 24,000 | 0.48M, 28,000 | 0.66M, 34,000 | 0.95M, 57,000 |
+
+- **Reads stop sharing the lock, and then the node's workers are the limit:** with `read_concurrency`, 16 instances read 1.4 times as much at 4 workers and 2.3 times at 16 (1.03 million a second). At 4 workers, 4 instances already reach the ceiling. T5's 0.46 million (rc off, 4 workers) is reproduced.
+- **Still well below ETS:** ETS with `read_concurrency` read 6.0 million (C4), six times as many. At 16 instances each operation takes 12.5 µs against 5.5 alone: 16 apps and 16 instance tasks spin on 16 cores.
+- **Writes:** `read_concurrency` costs a single hot key a third to a half of its writes at 16 workers, as it does in ETS; mixes with half writes barely move.
+- **Not measured:** the Pi; components with `read_concurrency` again (S26 found about three times the reads).
+
+**Profile.** One instance reading one shared bucket of 1,000 keys in a loop (`KV_NATIVE=1 KV_ONLY=get:shared:1000:16:<s> kv_cost <workers>`), the binaries built with line tables (`CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`), `perf record` at 5 kHz flat and at 1 kHz with DWARF call graphs, and `perf stat`. With `perf_event_paranoid` at 2, samples are user space only.
+- **What a `get` costs:** 5.1 to 5.5 µs at 4 workers, with 2.4 CPUs busy: about 12.8 µs of CPU per operation, 35% of it in the kernel (`sched_yield`, `epoll_wait`, parking), which the samples do not show. Of the user-space samples, 71% are the node's workers and 29% the app.
+- **Tokio's idle workers:** at 1 worker a `get` costs 4.2 to 4.4 µs on 1.97 CPUs; at 2, 4 or 16, 5.1 to 6.0 µs on 2.4. Each yield of the spinning instance task wakes an idle worker that finds nothing to do and parks again (`Idle::worker_to_notify`, `Unparker::unpark`, `transition_worker_to_parked`): about 1 µs and 0.4 of a CPU per operation.
+- **The spin budget:** at 4 workers, `spin_us` 0 and 5 cost 15.7 and 16.7 µs (the bistable range S32 found), 20 costs 5.5 µs and 50 costs 6.5 µs.
+- **The node's user-space samples:** decoding the request (`Port::take`, CBOR into `Request`) 14%; encoding the answer (`Port::send`) 11%; the keyvalue operation 7.5%, of which the map lookup is 2.2%. Spinning through tokio is most of the rest: the worker's park (20.6%), the time driver (13.2%), the I/O driver and `epoll_wait` (5 to 6%), and `clock_gettime` (9.9%), each `yield_now` passing through the scheduler and its drivers.
+- **The app's user-space samples:** waiting for the answer (`sched_yield` and the ring) about 40%; decoding the answer 28%, for a frame of a few dozen bytes (serde's enum variants by name, an allocation per field); encoding the request about 10%; malloc and free about a fifth, overlapping both.
+- **In time:** user-space CPU is about 5.4 µs per operation, 3.8 on the node and 1.6 in the app. The work the request needs comes to about 1.8 µs: encoding and decoding with their allocations about 1.5 µs across both sides, the bucket operation and its dispatch about 0.3 µs, the map lookup under 0.1. The rest of the 5 µs is each side noticing the other's frame: a turn of the node's spin passes through tokio's scheduler and drivers, a turn of the app's is a `sched_yield` system call, and the idle workers are woken. These are estimates from shares of samples, not timings of each step.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
