@@ -1,6 +1,6 @@
 # Bulkhead: Architecture
 
-2026-10-25 · Companion to [DESIGN.md](DESIGN.md)
+2026-11-01 · Companion to [DESIGN.md](DESIGN.md) · How Bulkhead differs from Paddock: [PADDOCK.md](PADDOCK.md)
 
 A map of the code as built: the crates, the paths a call, a deploy, a failover, a replicated write and a release take through them, the threads and tasks that run, and where state lives. DESIGN.md says why; this file says where.
 
@@ -12,7 +12,7 @@ flowchart TD
     bulkhead["bulkhead (bin + lib)<br/>api: admin types, client<br/>node: daemon, store, gate, events, audit, serial path<br/>cli: commands, shell"]
     host["bulkhead-host<br/>runtime, process core, services, supervisors,<br/>transport, failover, replication, http, listeners, native"]
     bundle["bulkhead-bundle<br/>manifest, .rbp, verify, policy, grant<br/>(no wasmtime)"]
-    native["bulkhead-native<br/>protocol, app, bulkhead-runner"]
+    native["bulkhead-native<br/>protocol, channel, snapshot, app, bulkhead-runner"]
     ext["extensions<br/>bulkhead-modbus, greeter service"]
     guests["guests (Wasm)<br/>bulkhead-sdk, fixtures, examples"]
     napps["native apps<br/>rustbridge plugins, executables<br/>on bulkhead-native's app API"]
@@ -20,7 +20,7 @@ flowchart TD
     bulkhead --> bundle
     bulkhead -->|"modbus feature"| ext
     host --> bundle
-    host -->|"protocol only"| native
+    host -->|"protocol, channel, snapshot"| native
     ext -->|"Extension trait"| host
     guests -.->|"WIT imports"| host
     napps -.->|"run by bulkhead-runner"| native
@@ -33,7 +33,7 @@ Solid arrows point from a crate to the crates it depends on; dotted arrows are w
 | `bulkhead` | binary and library | `api` (admin API types, and the client over the Unix socket or TLS), `node` (the daemon, feature `node`), `serial` (the tty layer and frames for the failover serial line), `cli` (commands, bundle building, the shell). Without `node` it does not build wasmtime. |
 | `bulkhead-bundle` | library | The app manifest model and validation, `.rbp` opening and signature checks against operator keys (a component, or a native app's platform variant), component import inspection, operator policy and the effective grant. |
 | `bulkhead-host` | library | The runtime: engine, epoch ticker, process table, instances (components and native processes), passivation, links and monitors, supervisors, app sets and pools, host services, the HTTP ingress and handlers, listeners, the cluster transport, liveness, membership, failover, replication, moving singletons and release versions. |
-| `bulkhead-native` | library and `bulkhead-runner` | The frame protocol between a node and a native app, the app API for native executables (feature `app`), and `bulkhead-runner` (feature `runner`, default), the launcher that sandboxes itself and loads or executes a native app. `bulkhead-host` takes the protocol only. |
+| `bulkhead-native` | library and `bulkhead-runner` | The frame protocol between a node and a native app, the channel it travels over (shared-memory rings, the pipes that wake each side, the descriptor socket; feature `channel`), published buckets' snapshot format, the app API for native executables (feature `app`), and `bulkhead-runner` (feature `runner`, default), the launcher that sandboxes itself and loads or executes a native app. `bulkhead-host` takes the protocol, the channel and the snapshot format. |
 | `bulkhead-modbus` | library | The Modbus TCP extension; depends on `bulkhead-host` alone. |
 | `bulkhead-sdk`, `bulkhead-sdk-macros` | app libraries | The Rust SDK: the `App` trait, envelopes, snapshots, service wrappers by feature. On `wasm32` it owns the generated bindings; on Unix the same functions go over `bulkhead-native`'s protocol, and `app!` also generates `bulkhead_main()`, so one source builds as a component and as a native program. |
 | `bulkhead-fixture-*` | guests and native test apps | Components (echo, chaos, counter in three versions, services, sdk, conn, http, net), a native executable (`native`) and a rustbridge plugin (`plugin`). |

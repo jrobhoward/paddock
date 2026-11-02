@@ -8,12 +8,13 @@
 > but there is no support, and the project may stop at any time. Use it at
 > your own risk.
 
-> **A fork in progress.** Bulkhead is a fork of Paddock (`../paddock`,
-> commit 657ae61) that runs apps as native OS processes instead of
+> **A fork in progress.** Bulkhead is a fork of Paddock (commit 657ae61,
+> 2026-10-31) that runs apps as native OS processes instead of
 > WebAssembly components. Native apps passed their first exit on
 > 2026-11-01 (the tutorial's board app, built natively, passes its node
 > tests); components still run beside them until native apps reach
 > parity, and then go (`docs/ROADMAP.md`, Z8 and Z9).
+> [`docs/PADDOCK.md`](docs/PADDOCK.md) compares the two.
 
 Bulkhead is a clustered application server that runs each app instance as
 a restricted native process, with Erlang/OTP-style semantics:
@@ -22,7 +23,9 @@ a restricted native process, with Erlang/OTP-style semantics:
   messages one at a time. Each instance is one long-lived OS process
   (Linux), started through `bulkhead-runner`, which fences it with
   Landlock and seccomp before the app's code runs; it talks to its node
-  over a pipe. Instances are meant to live long and pass messages and
+  through rings in shared memory, each side spinning briefly before it
+  sleeps, so a request to the node costs 4 to 5 µs and a call between
+  instances 13 µs. Instances are meant to live long and pass messages and
   reach databases efficiently, not to be spawned by the thousand as
   Erlang's processes are. With `bulkhead-sdk` the same Rust source also
   builds as a WebAssembly component (WASI 0.2), which nodes still run.
@@ -45,7 +48,9 @@ a restricted native process, with Erlang/OTP-style semantics:
   egress, Postgres datasources, guest sockets, and a Modbus TCP extension.
   Native apps reach logging, keyvalue with watches, groups, config,
   secrets, metrics and HTTP routes so far; the rest is components only
-  until it comes to them.
+  until it comes to them. A shared bucket can be published: native apps
+  then read it from a snapshot mapped into their own memory, in 0.16 to
+  0.39 µs a read, without asking the node.
 - **Connections**: a connection-handler component serves TCP connections
   on listeners the node owns, one sandboxed instance per connection, at
   native throughput (spike S13).
@@ -63,7 +68,12 @@ it), clusters with an HA pair and a witness for failover, replicated shared
 buckets, and releases across the pair without downtime. The docs were
 checked against the code for all three on 2026-10-25. Phase 5's exit,
 native apps, was met on 2026-11-01; `docs/DESIGN.md` ("Instance model")
-says why a process per instance, and `docs/ROADMAP.md` has what is left. rustbridge's
+says why a process per instance, and `docs/ROADMAP.md` has what is left.
+The same day, a comparison with BEAM and components showed native apps
+furthest behind within a node, and a shared-memory channel and published
+buckets brought a call between native instances from 41 to 13 µs and a
+read of read-mostly data into ETS's range (`docs/BASELINE.md`, its summary of
+BEAM, components and native apps). rustbridge's
 bundle format 1.2 comes from its `experiment/wasm` branch on GitHub until it
 is released.
 
@@ -77,7 +87,10 @@ is released.
   node configuration and operator policy.
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md): running nodes and pairs:
   failover, upgrades of the builds, backups, the remote admin API.
-- [`docs/BASELINE.md`](docs/BASELINE.md): baseline performance numbers.
+- [`docs/BASELINE.md`](docs/BASELINE.md): baseline performance numbers,
+  and against Erlang/OTP.
+- [`docs/PADDOCK.md`](docs/PADDOCK.md): how Bulkhead differs from Paddock,
+  what it costs, and when to choose which.
 - [`docs/GLOSSARY.md`](docs/GLOSSARY.md): the terms the docs and code use.
 - [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md): instance stats, calling
   one instance, and tracing a live node with its probes.

@@ -4,12 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Bulkhead is a clustered application server for sandboxed WebAssembly
-components, with Erlang/OTP-style semantics: mailboxes, call/cast, links,
-monitors, supervisors and hot upgrade with explicit state migration. Nodes
-connect over QUIC with mutual TLS. Apps are WebAssembly components (WASI 0.2)
-that see only the capabilities their manifest declares and an operator grants.
-Bundles use the rustbridge `.rbp` format.
+Bulkhead is a clustered application server with Erlang/OTP-style
+semantics: mailboxes, call/cast, links, monitors, supervisors and hot
+upgrade with explicit state migration. Nodes connect over QUIC with mutual
+TLS. It is a fork of Paddock (2026-10-31) that runs each app instance as a
+native OS process, sandboxed by `bulkhead-runner` (Landlock, seccomp) and
+talking to its node over shared-memory rings; WebAssembly components (WASI
+0.2), Paddock's kind, still run beside them until native apps reach parity
+(ROADMAP Z8, Z9). Apps see only the capabilities their manifest declares
+and an operator grants. Bundles use the rustbridge `.rbp` format.
+`docs/PADDOCK.md` compares the two.
 
 Phase 1 (single node) is complete. `docs/ROADMAP.md` is the single plan for
 remaining work: tracks, their order, and the code areas each owns. Read these
@@ -606,6 +610,7 @@ instead of rewriting it then:
 | `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
 | `docs/OPERATIONS.md` | Paths under `data_dir`, environment variables, signals, backups, running as a service | Update with every path, variable or signal change |
 | `docs/GUEST_FORMATS.md` | The bodies a guest exchanges with the host beyond the WIT (snapshots, HTTP, health, batches, hash routing, host events, Modbus updates), with examples | Update with every change to one of them; tests in `bulkhead-sdk`, `bulkhead-host` and `bulkhead-modbus` read its examples |
+| `docs/PADDOCK.md` | How Bulkhead differs from Paddock, what each difference costs, and when to choose which | Update when a difference closes (Z8, Z9) or a comparison is measured again |
 | `docs/GLOSSARY.md` | What each Bulkhead term means, with a pointer to the file that has the detail | Add a term when the docs start using it; a word with two meanings says so |
 | `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |
 | `spikes/*/README.md` | What one spike measured, how to rerun it, what it changed | Written once; corrected, not extended |

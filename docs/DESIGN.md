@@ -7,7 +7,7 @@
 
 Bulkhead is a clustered application server that runs apps as native OS processes with OTP-style semantics: mailboxes, call/cast, links, monitors, supervisors, and hot upgrade. Each instance of an app is one long-lived process, restricted by `bulkhead-runner` before the app's code runs, and talks to its node over a pipe; the node keeps the mailboxes, supervision, registry, storage and policy. Nodes connect over QUIC with mutual TLS. Apps see only the capabilities their manifest declares and an operator grants. rustbridge supplies the bundle format and signing.
 
-Bulkhead is a fork of Paddock (2026-10-31), which runs apps as sandboxed WebAssembly components. Components still run beside native apps until native apps reach parity, so most of this document describes both; where it describes wasmtime, the WIT contract or guest code, it describes components, which go last (ROADMAP Z9). "Instance model" below says why a process per instance.
+Bulkhead is a fork of Paddock (2026-10-31), which runs apps as sandboxed WebAssembly components. Components still run beside native apps until native apps reach parity, so most of this document describes both; where it describes wasmtime, the WIT contract or guest code, it describes components, which go last (ROADMAP Z9). "Instance model" below says why a process per instance, and [PADDOCK.md](PADDOCK.md) how the two differ and what it costs.
 
 The model is coarse-grained: tens to a few thousand long-lived instances per node, not millions of processes spawned and discarded. That keeps BEAM's main strength (fault isolation and supervision) with the OS as the isolation boundary, and suits apps that pass messages and reach a database efficiently over a long life.
 
