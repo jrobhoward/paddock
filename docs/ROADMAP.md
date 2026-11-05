@@ -312,6 +312,46 @@ A cheaper request, planned on 2026-11-01 from the profile in BASELINE.md ("nativ
 
 Order: S32, T1, T3, T4, T5 and T6 (done 2026-11-01); T9, T7 and PB8 (done 2026-11-04); T8 next, then T12, T10 and T11, and T7b if T11's profile shows it; T2 after T8 if a request is still above the goal (T7 met it on the 16-core machine: a `get` 2.1 µs against 4.1; the Pi not measured); T1b when a busy machine needs it, measured beside T8; then Z8b.
 
+### Casts the sender can trust
+
+Planned on 2026-11-05, with the user. A cast is at most once and the sender never learns of a drop:
+- **Within a node:** a full mailbox (`mailbox_max`), a dead pid, a body over `message_max_bytes` or the messaging ACL drops it. `delivery::cast` returns the reason, and `process::Host::cast` (`process.rs`) logs it at debug and answers `Ok`, so a native app always gets `Answer::Unit`.
+- **Between nodes:** a cast is `Ok` once the link to the other node takes it. Past `send_buffer_bytes` the link drops it, and on the other node a full mailbox drops it, both unseen by the sender. In C4 (2026-11-01) 17 to 80% of a cast flood between nodes arrived, against BEAM's 100%.
+- **Memory:** nothing grows without bound (the mailbox is bounded and lives on the node), which is why the drops exist. Erlang keeps every message instead, and a slow consumer's queue grows until the VM runs out of memory.
+
+Goal: an app can send a cast and know that the target's mailbox took it, on its own node or another, without giving up bounded mailboxes.
+
+Decided with the user (2026-11-05):
+- **`cast` stays as it is:** at most once, never waits, for traffic that may be lost (telemetry, updates soon replaced). The SDK keeps paddock-sdk's `cast`.
+- **Two new sends.** `try_cast(to, msg) -> Result<(), CastError>` reports what happened to the message without waiting. `cast_timeout(to, msg, timeout) -> Result<(), CastError>` waits until the target's mailbox takes it, on any node, or the timeout passes.
+- **Cross-node waits are in the first cut.**
+- **What accepted means:** the message is in the target's mailbox, not handled. A consumer that crashes loses its mailbox, as in Erlang. Data that must survive that goes by `call` (batched where frequent) or into a bucket.
+- **Deferred until measured:** credit windows (several waited casts in flight per target, for throughput between nodes) and drop notices (a plain cast whose drop comes back as an `info` message).
+
+Items, in order:
+
+- [ ] **I1 Casts that report** (S). `try_cast` returns `delivery::cast`'s result instead of discarding it. `CastError` is `Overloaded` (a full mailbox, or the link past its budget), `Noproc`, `TooLarge`, `AccessDenied` or `Noconnection`. Between nodes, `Ok` still means only that the link took it. A native app gets the answer from the round trip a cast already makes, so the cost is unchanged. A new request kind takes native protocol version 6. Components get it only if the WIT rules allow adding `try-cast` to `bulkhead:runtime/process` without a break; otherwise it is native-only, since components leave in Z9. Areas: process host, native protocol, SDK, conformance.
+- [ ] **I2 Waited casts within a node** (S). `cast_timeout`: the sender's instance task waits for room in the target's mailbox (`mpsc::Sender::send_timeout`), and senders queue in arrival order. On a timeout the message was not queued, and the answer is `Timeout`.
+  - **The timeout is required** and capped at the sender's `callback_deadline_ms`. The wait is host time, so without the cap nothing would bound it.
+  - **A cast to the sender's own pid** fails at once with `Overloaded` when its mailbox is full, since the sender cannot empty its mailbox while it waits.
+  - **Cycles:** two instances blocked casting to each other's full mailboxes both time out. A test covers it.
+  - **Other senders do not wait:** the host (admin API, HTTP ingress), groups' `publish` fan-out and timers keep failing at once, so one slow member cannot hold up a publisher.
+  - **Waking:** the wake through `woke_others` applies when the waited cast lands, as for a plain cast.
+  - **Seen:** a probe and a histogram of the time waited (`OBSERVABILITY.md`).
+  - Areas: instance, delivery, process host, native protocol, SDK, metrics, probes.
+- [ ] **I3 Waited casts between nodes** (M). A new frame, `Frame::CastWait { id, from, sender, to, msg, timeout_ms }`, answered by `Frame::Reply`. The sender keeps its entry in `pending_calls`, as for a call. The receiving node runs I2's wait in a task of its own, counted under `incoming_calls_per_peer`, and answers once the mailbox takes the message or the wait times out.
+  - **The link's budget:** past `send_buffer_bytes` the send fails at once with `Overloaded`, as a call does.
+  - **Ending:** a session that ends while the cast waits fails it with `Noconnection`.
+  - **A peer one release older** cannot read the frame (`wire::since`, `SendError::Unsupported`). The sender fails the cast with `Noconnection` rather than falling back to a plain cast.
+  - **A timeout is ambiguous here,** as for a call: the frame may still land after the sender gives up. The docs say so, and an app that retries may deliver twice.
+  - **Wire version:** one more, under the skew-of-one rule.
+  - **Tests:** the simulation mesh (a full mailbox, a congested link, a cut session, an older peer) and `tests/quic.rs`.
+  - Areas: transport (wire, frames, pending calls), delivery, simulation tests.
+- [ ] **I4 Costs** (S). `batch_cost` and `cluster_throughput` gain `try_cast` and `cast_timeout` next to `cast`, natively, within a node, between two node processes and between the two machines. Measure what a waited cast costs against a plain one, and check that every waited cast reported `Ok` arrived. BASELINE.md. Areas: benchmarks.
+- [ ] **I5 Docs** (S). WRITING_APPS.md: which send for which data (`cast`, `try_cast`, `cast_timeout`, `call`, a batched `call`), what accepted means, and the ambiguous timeout between nodes. DESIGN.md: "Backpressure between nodes" and the delivery rules ("A `cast` that cannot be delivered ... is dropped without telling the sender") gain the waited sends, and "Senders are never blocked" becomes "never blocked unless they ask, with a timeout". ARCHITECTURE.md's cast bullets, GLOSSARY.md, PADDOCK.md's differences. Areas: docs.
+
+Order: I1 to I5, independent of the T items; I1 and I2 share their plumbing and can land as one change.
+
 ### Z8: native parity
 
 Planned on 2026-11-01. What native apps still lack, against components: bundles for the other architecture; volumes (`wasi:filesystem`); dynamic children (`bulkhead:runtime/supervisor`); SQL (`bulkhead:sql`); HTTP egress (`wasi:http/outgoing-handler`); guest sockets (`wasi:sockets`, `bulkhead:io`); listeners and connection handlers; extensions (the Modbus extension, `examples/greeter`); and examples built natively (`ping-pong`, `counter`, `chaos`, `ledger`, `tally`, `line-server`, `greeter`, the three `scada` apps; `board` and `http-counter` already are), and `board-go`, which needs a native Go SDK.
