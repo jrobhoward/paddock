@@ -403,7 +403,12 @@ sleeping thread whatever carries the bytes (S30, S32). The app spins with
 `sched_yield`, not a pause instruction, which starves the other side when
 busy processes outnumber cores (S32). Each side sleeps on a pipe the
 other writes a byte to. The node's instance task spins between callbacks too, which keeps its worker awake for the instance's
-next message. Native instances stay on the multi-threaded runtime: a
+next message. Inside a callback, on a worker whose last yield ran no other
+native instance and when the last frame woke no task, a turn of the
+node's spin watches the rings within the poll for up to 5 µs before it
+yields: each yield of a task alone on its worker woke a parked worker for
+nothing (T9). Longer watches hold up tasks queued on the worker (16 busy
+instances calling each other lost about 17% at 20 µs). Native instances stay on the multi-threaded runtime: a
 current-thread runtime of their own made every call from other tasks cross
 two threads and put all their node-side work on one core (T1). Rerun
 `native_cost` and `cluster_throughput` natively, with `NATIVE_SPIN_US` 0

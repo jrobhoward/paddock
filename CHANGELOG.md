@@ -8,6 +8,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- A native-process app's requests cost 12 to 26% less (a bucket `get` about
+  5.0 µs from 5.7, 16-core machine, 4 workers) and the node's CPU for one
+  busy instance about a third less (ROADMAP T9): inside a
+  callback, while no other native instance uses its tokio worker, the
+  instance's task watches the app's rings for up to 5 µs before yielding,
+  instead of yielding each turn and so waking an idle worker for nothing.
+  `get_many` with large values costs up to 10% more.
 - Native-process apps exchange frames with the node over a channel of
   shared memory instead of stdin and stdout (ROADMAP T1, spike S32): two
   byte rings in a memfd the app inherits as descriptor 3, with a pipe

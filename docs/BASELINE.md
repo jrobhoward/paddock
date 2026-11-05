@@ -2355,6 +2355,31 @@ Two questions after T5: how much of the gap to ETS in the mixed rows is the buck
 - **The app's user-space samples:** waiting for the answer (`sched_yield` and the ring) about 40%; decoding the answer 28%, for a frame of a few dozen bytes (serde's enum variants by name, an allocation per field); encoding the request about 10%; malloc and free about a fifth, overlapping both.
 - **In time:** user-space CPU is about 5.4 µs per operation, 3.8 on the node and 1.6 in the app. The work the request needs comes to about 1.8 µs: encoding and decoding with their allocations about 1.5 µs across both sides, the bucket operation and its dispatch about 0.3 µs, the map lookup under 0.1. The rest of the 5 µs is each side noticing the other's frame: a turn of the node's spin passes through tokio's scheduler and drivers, a turn of the app's is a `sched_yield` system call, and the idle workers are woken. These are estimates from shares of samples, not timings of each step.
 
+## 2026-11-04: no idle workers woken by a spinning instance (T9)
+
+The cost found in the 2026-11-01 profile: a native `get` cost 4.2 to 4.4 µs at 1 tokio worker and 5.1 to 6.0 at 2 to 16. In tokio 1.54.1, each `yield_now` of a spinning instance task alone on its worker sends the worker searching (`steal_work`), it parks for zero time, the task comes back from the deferred list, and `run_task`'s `transition_from_searching` finds the worker was the last searcher and unparks a parked worker, which finds nothing and parks again. A task that wakes itself instead (`wake_by_ref`, then `Pending`) notifies directly. The fix stays outside tokio: inside a callback, on a worker whose last yield ran no other native instance and when the last frame woke no task, a turn of the node's spin watches the rings within the poll for up to 5 µs before it yields.
+
+16-core machine, 4 tokio workers, `[native] spin_us` 20, idle apart from the runs (load average 2 to 10 from the runs' own spinning); before and after alternating, three rounds, medians. With `spin_us` 0 the changed code is not reached.
+
+| | Before | After |
+| --- | --- | --- |
+| One instance's `get` in a loop (`kv_cost`, `KV_ONLY`), 4 workers | 5.6 to 6.2 µs | 4.9 to 5.0 µs |
+| `kv_cost` native single operations, 1,000 and 100,000 keys, 16 B and 1 KiB | 5.6 to 7.5 µs | 12 to 26% less |
+| `get_many` of 10 and 100, 100,000 keys, 1 KiB | 2.26 and 2.58 µs a key | 9 to 10% more |
+| Dependent reads along a chain | 6.1 to 6.6 µs | 5.2 to 5.4 µs |
+| 16 instances, 95 reads in 100 / 50 in 100 / one hot key, ops/s | 0.46M / 0.40M / 0.46M | 0.50M / 0.42M / 0.56M |
+| Request from a callback / bucket get (`native_cost`) | 4.8 / 5.7 µs | 4.2 / 4.8 µs |
+| Casts to one instance (`native_cost`) | 175,000/s | 208,000/s |
+| Call from an instance, p50 / p99 (`cluster_throughput`, one node) | 12.6 / 20.6 µs | 12.6 / 18.7 µs |
+| Call from the host, p50 / p99 | 5.9 / 10.1 µs | 5.6 / 8.0 µs |
+| 16 instances calling, calls/s | 235,000 | 218,000 |
+
+- **The idle workers' wake-ups are gone for a request:** in a first trial with a 3 µs watch, one instance's `get` cost 5.0 µs at 4 and 16 workers and 4.5 at 1 (before: 5.9, 6.4 and 4.8), and the node used 0.98 CPUs instead of 1.55, its system time over a 5 s run falling from 2.7 s to about 0 (`/usr/bin/time`, the node's process only).
+- **Watching longer:** until the end of the spin (20 µs), a `get` cost 4.4 to 4.7 µs (25% less) and `get_many` 6% less, but 16 instances calling each other lost about 17% in two separate runs (195,000 calls/s): a watch keeps the tasks queued on its worker waiting, and the check sees only native instances, so a host task (a caller, HTTP ingress) waits behind it. With 5 µs that loss is about 7%, within the row's spread (199,000 to 268,000). A request whose app takes longer than the slice to send its next frame (`get_many` of larger values) pays a little for the watch.
+- **Two fixes found by measuring:** a watch that ran out ended in a `yield_now` all the same, which made `get_many` 7% slower than before until removed; and a watch right after a frame that woke another task (a cast, a reply) kept that task in the worker's LIFO slot, where no worker steals it (B15): casts from instances fell 29% until the instance yields after such a frame.
+- **Rows that vary between runs as much as they differ:** casts from the host to 16 instances (0.68 to 1.12 million a second before, in two modes), 16 and 64 callers, 1 KiB and 64 KiB bodies, calls between instances in `native_cost`, and a 64 KiB `get` (24 or 42 to 55 µs, in both builds).
+- **Not measured:** the Pi (T11), and more busy instances than cores.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

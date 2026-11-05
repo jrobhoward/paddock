@@ -10,9 +10,14 @@
 //! task. Waiting for the app, the task spins (yielding to the runtime's
 //! other tasks) until `spin_us` after the last frame, then sleeps on the
 //! bell, a pipe the app writes a byte to when the node said it sleeps, and
-//! whose end of file means the app has exited. It spins between callbacks
-//! too: a task kept runnable keeps its worker awake for the instance's
-//! next message, which a call between instances needs (ROADMAP T1).
+//! whose end of file means the app has exited. Inside a callback, while no
+//! other native instance runs on its worker, a turn of the spin watches the
+//! rings within the poll for a few microseconds before it yields: each
+//! yield of a task alone on its worker woke a parked worker for nothing
+//! (ROADMAP T9). It spins between
+//! callbacks too, yielding: a task kept runnable keeps its worker awake for
+//! the instance's next message, which a call between instances needs
+//! (ROADMAP T1), and a watch within the poll would not see the mailbox.
 //! What the app prints, on stdout or stderr, becomes log lines, as a
 //! component's stderr does. Between fork and exec the child gets the
 //! parent-death signal (`SIGKILL`), no core dumps, its memory limit (the
@@ -109,7 +114,34 @@ mod linux {
         /// When a frame last went either way: the task spins until
         /// `spin` after it.
         active: Instant,
+        /// No other native instance ran on this task's worker during its
+        /// last yield: the worker has nothing else to do (T9).
+        worker_idle: bool,
         cgroup: Option<PathBuf>,
+    }
+
+    /// The longest a wait watches the rings within one poll (T9): a task
+    /// the idle check cannot see (not a native instance) waits up to this
+    /// behind it. Watching until the end of the spin made requests a
+    /// little cheaper and calls between 16 busy instances about 17% slower
+    /// (16-core machine, 2026-11-04).
+    const WATCH_SLICE: Duration = Duration::from_micros(5);
+
+    thread_local! {
+        /// Yields of native instances' waits on this thread (T9).
+        static TURNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Count a turn of a native wait on this thread: the thread (as the
+    /// counter's address) and the count after it. Two turns of one task
+    /// a count apart on the same thread mean no other native instance ran
+    /// between them.
+    pub(super) fn turn() -> (usize, u64) {
+        TURNS.with(|turns| {
+            let n = turns.get().wrapping_add(1);
+            turns.set(n);
+            (std::ptr::from_ref(turns) as usize, n)
+        })
     }
 
     /// The runner the node starts native apps through.
@@ -259,6 +291,7 @@ mod linux {
                 broken: None,
                 spin: config.spin,
                 active: Instant::now(),
+                worker_idle: false,
                 cgroup,
             })
         }
@@ -353,6 +386,19 @@ mod linux {
         /// everything it sent is read. Cancel safe: bytes read stay
         /// buffered for the next call.
         pub(crate) async fn recv(&mut self) -> Option<Incoming> {
+            self.next(false).await
+        }
+
+        /// [`Port::recv`] inside a callback, where nothing but the app's
+        /// answer is expected soon: with `watch`, while the worker has
+        /// nothing else to do, the wait watches the rings within the poll
+        /// (T9). The caller passes `false` when it just woke another task,
+        /// which would wait behind the watch.
+        pub(crate) async fn recv_in_callback(&mut self, watch: bool) -> Option<Incoming> {
+            self.next(watch).await
+        }
+
+        async fn next(&mut self, watch: bool) -> Option<Incoming> {
             loop {
                 if let Some(next) = self.take() {
                     return Some(next);
@@ -376,7 +422,7 @@ mod linux {
                     self.input.done = true;
                     continue;
                 }
-                self.wait().await;
+                self.wait(watch).await;
             }
         }
 
@@ -409,11 +455,21 @@ mod linux {
 
         /// Wait for the app: spinning (yielding to the runtime's other
         /// tasks) until `spin_us` after the last frame, then asleep on the
-        /// bell.
-        async fn wait(&mut self) {
+        /// bell. Inside a callback (`watch`), on a worker whose last yield
+        /// ran no other native instance, a turn of the spin first watches
+        /// the rings within the poll.
+        async fn wait(&mut self, watch: bool) {
             if self.active.elapsed() < self.spin {
-                tokio::task::yield_now().await;
-                return;
+                if watch && self.worker_idle && self.watch() {
+                    return;
+                }
+                // Not watching, or the slice ended with the spin still on.
+                if self.active.elapsed() < self.spin {
+                    let before = turn();
+                    tokio::task::yield_now().await;
+                    self.worker_idle = turn() == (before.0, before.1 + 1);
+                    return;
+                }
             }
             let waiting_room = self.pending_at < self.pending.len();
             let (to_node, to_app) = (self.channel.to_node(), self.channel.to_app());
@@ -442,6 +498,28 @@ mod linux {
             to_node.reader_waiting().store(0, Ordering::SeqCst);
             to_app.writer_waiting().store(0, Ordering::SeqCst);
             self.active = Instant::now();
+        }
+
+        /// Watch the rings within the poll for up to [`WATCH_SLICE`], no
+        /// later than the end of the spin: whether the app sent a frame, or
+        /// made room the port waits for. Returning to tokio instead sends an idle worker's thread
+        /// searching, and the search ends by waking a parked worker that
+        /// finds nothing (ROADMAP T9).
+        fn watch(&self) -> bool {
+            let waiting_room = self.pending_at < self.pending.len();
+            let (to_node, to_app) = (self.channel.to_node(), self.channel.to_app());
+            let until = (Instant::now() + WATCH_SLICE).min(self.active + self.spin);
+            loop {
+                for _ in 0..16 {
+                    if to_node.is_readable() || waiting_room && to_app.has_room() {
+                        return true;
+                    }
+                    std::hint::spin_loop();
+                }
+                if Instant::now() >= until {
+                    return false;
+                }
+            }
         }
 
         /// A whole frame from the input, if one is there.
@@ -586,6 +664,10 @@ mod elsewhere {
             match self.0 {}
         }
 
+        pub(crate) async fn recv_in_callback(&mut self, _watch: bool) -> Option<Incoming> {
+            match self.0 {}
+        }
+
         pub(crate) fn close(&mut self) {
             match self.0 {}
         }
@@ -610,3 +692,7 @@ mod elsewhere {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "port_tests.rs"]
+mod port_tests;

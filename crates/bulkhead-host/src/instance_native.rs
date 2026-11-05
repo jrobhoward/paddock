@@ -812,13 +812,17 @@ impl InstanceTask {
         }
         loop {
             let lease_end = lease_end(lease.as_ref());
+            // A task this one woke since the last frame waits on this
+            // worker, in its LIFO slot where nobody steals it: yield to it
+            // rather than watch the rings (ROADMAP T9, B15).
+            let watch = !self.me.take_woke();
             let step = super::killable(&self.kill, &self.control, None, async {
                 tokio::select! {
                     biased;
                     () = timer.as_mut() => Step::Timer,
                     () = sleep_until(lease_end) => Step::LeaseEnded,
                     () = lease_changed(lease.as_mut()) => Step::LeaseChanged,
-                    incoming = port.recv() => Step::Incoming(incoming),
+                    incoming = port.recv_in_callback(watch) => Step::Incoming(incoming),
                 }
             })
             .await;
