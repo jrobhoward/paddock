@@ -1,0 +1,15 @@
+ 23:00:42 up  4:44,  3 users,  load average: 8.76, 4.13, 3.84
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs
+one node: sequential calls 171116/s, p50 5.9 us, p99 10.0 us
+two nodes: sequential calls 8532/s, p50 113.4 us, p99 182.3 us
+16 callers: one node 746508 calls/s, two nodes 44885 calls/s
+64 callers: one node 419039 calls/s, two nodes 45460 calls/s
+one node: casts 930262 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 177578 handled/s (385739 of 400000 handled, 14261 refused when sent)
+1 KiB bodies, 16 callers: one node 502874 calls/s (491 MiB/s each way), two nodes 36280 calls/s (35 MiB/s each way)
+64 KiB bodies, 16 callers: one node 51125 calls/s (3195 MiB/s each way), two nodes 4708 calls/s (294 MiB/s each way)
+one node, from an instance: sequential calls 100352/s, p50 8.5 us, p99 14.3 us
+two nodes, from an instance: sequential calls 6716/s, p50 152.3 us, p99 200.5 us
+from instances, 16 callers: one node 314728 calls/s, two nodes 37383 calls/s
+one node, from instances: casts 749575 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 118965 handled/s (400000 of 400000 handled)

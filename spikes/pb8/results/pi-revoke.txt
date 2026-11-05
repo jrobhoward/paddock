@@ -1,0 +1,7 @@
+ 22:59:39 up  4:43,  1 user,  load average: 3.12, 0.73, 0.24
+ring: both stopped 313.5 µs after revoking; exit codes Some(4) and Some(4)
+socket: both stopped 156.7 µs after revoking; exit codes Some(4) and Some(4)
+ring: both stopped 310.9 µs after revoking; exit codes Some(4) and Some(4)
+socket: both stopped 170.1 µs after revoking; exit codes Some(4) and Some(4)
+ring: both stopped 316.3 µs after revoking; exit codes Some(4) and Some(4)
+socket: both stopped 160.5 µs after revoking; exit codes Some(4) and Some(4)

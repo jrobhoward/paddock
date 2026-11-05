@@ -1,0 +1,22 @@
+ 22:59:20 up  4:43,  1 user,  load average: 0.22, 0.05, 0.02
+pb8: budget 20 µs, 4 hub threads, 3 rounds, 16 B bodies
+
+call, one pair:
+  hub     p50   1.61 µs  p99   2.09 µs      603957 ops/s    5.02 µs CPU/op  (ops/s each: 603957 603591 604623)
+  ring    p50   0.67 µs  p99   1.37 µs     1241020 ops/s    1.69 µs CPU/op  (ops/s each: 1248943 1234014 1241020)
+  socket  p50   3.28 µs  p99   4.24 µs      278445 ops/s    7.24 µs CPU/op  (ops/s each: 274522 278445 284423)
+
+call, 16 pairs:
+  hub     p50  68.87 µs  p99 137.13 µs      206021 ops/s   19.08 µs CPU/op  (ops/s each: 206179 194919 206021)
+  ring    p50  22.76 µs  p99  30.63 µs      615799 ops/s    5.78 µs CPU/op  (ops/s each: 615799 623249 613588)
+  socket  p50  52.17 µs  p99  72.91 µs      277012 ops/s   13.47 µs CPU/op  (ops/s each: 273152 280099 277012)
+
+cast, one pair:
+  hub     p50   0.00 µs  p99   0.00 µs     8167322 ops/s    0.40 µs CPU/op  (ops/s each: 8092010 8235700 8167322)
+  ring    p50   0.00 µs  p99   0.00 µs    11683649 ops/s    0.19 µs CPU/op  (ops/s each: 11683649 11855588 11534368)
+  socket  p50   0.00 µs  p99   0.00 µs     1150312 ops/s    1.67 µs CPU/op  (ops/s each: 1121241 1150312 1153861)
+
+cast, 16 pairs:
+  hub     p50   0.00 µs  p99   0.00 µs     2956017 ops/s    1.60 µs CPU/op  (ops/s each: 3265172 2956017 2879703)
+  ring    p50   0.00 µs  p99   0.00 µs     3888571 ops/s    0.99 µs CPU/op  (ops/s each: 3888571 3778507 3943539)
+  socket  p50   0.00 µs  p99   0.00 µs     2266792 ops/s    1.72 µs CPU/op  (ops/s each: 2311438 2220004 2266792)
