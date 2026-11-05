@@ -35,7 +35,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 
 ### Guest and host
 
-- **Controls.** wasmtime's sandbox with a pooling allocator; `memory_max`, table and instance limits; the callback deadline enforced at epoch ticks; bounded mailboxes and `message_max_bytes`; host-object limits (timers, monitors, links, pending calls, groups, watches); deny stubs for ungranted imports; imports checked against the manifest at deploy. Exit signals into an instance are bounded by the node's instance count, timers and watch notices by their own limits.
+- **Controls.** wasmtime's sandbox with a pooling allocator; `memory_max`, table and instance limits; the callback deadline enforced at epoch ticks; mailboxes bounded in messages and bytes (`mailbox_max`, `mailbox_max_bytes`) and `message_max_bytes`; host-object limits (timers, monitors, links, pending calls, groups, watches); deny stubs for ungranted imports; imports checked against the manifest at deploy. Exit signals into an instance are bounded by the node's instance count, timers and watch notices by their own limits.
 - **Gaps.** None found; S2, S3 and S6 are fixed. A writable volume is bounded only by the filesystem quota the operator gives it.
 
 ### App and app

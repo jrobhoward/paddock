@@ -146,7 +146,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | `lifecycle` | restart (permanent, transient, temporary), shutdown timeout, init timeout, start args | yes |
 | `supervision` | children (for supervisor apps): strategy, intensity, period | yes |
 | `instances` | count or min/max, pool routing (round-robin, hash key), passivation | count, routing and passivation; not min/max |
-| `limits` | memory_max, table_max, callback_deadline_ms, fuel_per_message, mailbox_max, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, groups_max, watches_max, storage quota, open files, outbound connections | all but fuel, storage quota, open files and outbound connections |
+| `limits` | memory_max, table_max, callback_deadline_ms, fuel_per_message, mailbox_max, mailbox_max_bytes, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, groups_max, watches_max, storage quota, open files, outbound connections | all but fuel, storage quota, open files and outbound connections |
 | `capabilities` | requested host interfaces with scopes (table below) | all but `bulkhead:runtime/supervisor` and `bulkhead:admin` |
 | `messaging_acl` | which apps may call, cast, link or send exit signals to this app, and which it may | yes |
 | `config` | schema for config keys, defaults, secret references (never secret values) | defaults; the schema is documentation; secrets are declared under `bulkhead:secrets` instead |
@@ -189,7 +189,7 @@ Every component instance gets its own wasmtime `Store`, linear memory and limits
 | CPU, wall clock | Epoch interruption: a deadline per callback (callback_deadline_ms), 2 ms tick | The checks cost 1.19 to 1.71 times the unchecked time on ordinary app code, mostly from register allocation around the check's cold call, about 2% on S8's Rust kernels (BASELINE.md, 2026-10-25; ROADMAP B14 tracks wasmtime's cheaper MMU-based interruption). The tick also bounds how long a busy instance holds a worker. A blown deadline kills the instance with reason `timeout`. |
 | CPU, deterministic | Fuel per message (optional) | Costs more. Use for untrusted tenants or metering. |
 | Threads | Host-owned tokio pool; instances are single-threaded | Wasm threads support in WASI is unsettled, so don't depend on it. Scale with instance pools. |
-| Mailbox | mailbox_max per instance; message_max_bytes | When full: cast is dropped and counted, call fails fast with `overloaded`. |
+| Mailbox | mailbox_max messages and mailbox_max_bytes of bodies per instance (64 MiB by default, ROADMAP I6); message_max_bytes | When full: cast is dropped and counted, call fails fast with `overloaded`. |
 | Link to another node | `[cluster] send_buffer_bytes` of messages queued per peer (64 MiB by default) | When full: the same rule as a full mailbox. Link and monitor notices are queued past it. |
 | Filesystem | WASI preopens per manifest grant; read-only or read-write | cap-std stops path escapes. No byte quota: that needs a custom `wasi:filesystem` backend, so a manifest `quota` on a preopen is refused and the operator sets a filesystem quota per volume (SECURITY.md, S6). |
 | Network | `wasi:sockets` address check hook (the manifest's rules inside node config's `[sockets]`, the address guard, `max_sockets` per app); `wasi:http` through the host's filter and connection pool (allow list, address guard, a cap per app) | Default deny. Prefer HTTP egress over raw sockets. |
@@ -214,7 +214,7 @@ The host detects every failure, converts it to an exit reason, and propagates it
 | Callback runs too long (loop, deadlock in guest) | Epoch deadline | `timeout` |
 | `init` fails or times out | Return value or init timeout | `crashed(...)`; supervisor counts it as a restart |
 | Health check fails N times in a row (manifest `health`: a `bulkhead/health` call, answered by `App::health` in the SDK) | Host timer | `crashed("unhealthy")` |
-| Mailbox full | `DROPPED` in `bulkhead ps`, `bulkhead_mailbox_depth` and `bulkhead_mailbox_dropped_total` | None: casts are dropped and calls refused, and the instance runs on (an alarm or a kill policy is not built) |
+| Mailbox full | `DROPPED` in `bulkhead ps`, `bulkhead_mailbox_depth`, `bulkhead_mailbox_bytes` and `bulkhead_mailbox_dropped_total` | None: casts are dropped and calls refused, and the instance runs on (an alarm or a kill policy is not built) |
 | Native process panics, aborts, exits or is killed by a signal | A `Failed` frame with the panic's message, or the process's exit status | `crashed("panic: ...")`, `crashed("killed by signal N")` or `crashed("exited with status N")` |
 | Native process over `memory_max` | The cgroup's OOM kill (or a failed allocation under `RLIMIT_DATA`, which aborts) | `crashed("memory_limit")` (or a signal) |
 | Native callback runs too long, or an idle process misses a ping | The instance's deadline timer, the ping timer | `timeout`, by a kill |

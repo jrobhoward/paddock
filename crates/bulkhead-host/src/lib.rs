@@ -36,6 +36,7 @@ mod instance;
 mod lifecycle;
 mod links;
 pub mod listener;
+mod mailbox;
 mod message;
 pub mod metrics;
 mod native;

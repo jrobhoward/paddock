@@ -317,7 +317,7 @@ Order: S32, T1, T3, T4, T5 and T6 (done 2026-11-01); T9, T7 and PB8 (done 2026-1
 Planned on 2026-11-05, with the user. A cast is at most once, and until I1 the sender never learned of a drop:
 - **Within a node:** a full mailbox (`mailbox_max`), a dead pid, a body over `message_max_bytes` or the messaging ACL drops it. Since I1 (2026-11-05) a native app's `try_cast` returns the reason.
 - **Between nodes:** a cast is `Ok` once the link to the other node takes it. Past `send_buffer_bytes` the link drops it (`try_cast` reports that), and on the other node a full mailbox drops it, unseen by the sender. In C4 (2026-11-01) 17 to 80% of a cast flood between nodes arrived, against BEAM's 100%.
-- **Memory:** nothing grows without bound (the mailbox is bounded and lives on the node), which is why the drops exist. Erlang keeps every message instead, and a slow consumer's queue grows until the VM runs out of memory.
+- **Memory:** nothing grows without bound (the mailbox is bounded in messages and, since I6, in bytes, and lives on the node), which is why the drops exist. Erlang keeps every message instead, and a slow consumer's queue grows until the VM runs out of memory.
 
 Goal: an app can send a cast and know that the target's mailbox took it, on its own node or another, without giving up bounded mailboxes.
 
@@ -331,7 +331,7 @@ Decided with the user (2026-11-05):
 
 Items, in order:
 
-- [ ] **I2 Waited casts within a node** (S). `cast_timeout`: the sender's instance task waits for room in the target's mailbox (`mpsc::Sender::send_timeout`), and senders queue in arrival order. On a timeout the message was not queued, and the answer is `Timeout`.
+- [ ] **I2 Waited casts within a node** (S). `cast_timeout`: the sender's instance task waits for room in the target's mailbox, first for the body's bytes (`mailbox::Sender`'s semaphore, `acquire_many_owned`) and then for a slot (`reserve`), both under the one timeout; senders queue in arrival order on each. On a timeout the message was not queued, and the answer is `Timeout`.
   - **The timeout is required** and capped at the sender's `callback_deadline_ms`. The wait is host time, so without the cap nothing would bound it.
   - **A cast to the sender's own pid** fails at once with `Overloaded` when its mailbox is full, since the sender cannot empty its mailbox while it waits.
   - **Cycles:** two instances blocked casting to each other's full mailboxes both time out. A test covers it.
@@ -349,15 +349,8 @@ Items, in order:
   - Areas: transport (wire, frames, pending calls), delivery, simulation tests.
 - [ ] **I4 Costs** (S). `batch_cost` and `cluster_throughput` gain `try_cast` and `cast_timeout` next to `cast`, natively, within a node, between two node processes and between the two machines. Measure what a waited cast costs against a plain one, and check that every waited cast reported `Ok` arrived. BASELINE.md. Areas: benchmarks.
 - [ ] **I5 Docs** (S). WRITING_APPS.md: which send for which data (`cast`, `try_cast`, `cast_timeout`, `call`, a batched `call`), what accepted means, and the ambiguous timeout between nodes. DESIGN.md: "Backpressure between nodes" and the delivery rules (which name `try_cast` since I1) gain the waited sends, and "Senders are never blocked" becomes "never blocked unless they ask, with a timeout". ARCHITECTURE.md's cast bullets (`try_cast` is there since I1), GLOSSARY.md, PADDOCK.md's differences. Areas: docs.
-- [ ] **I6 A byte limit on mailboxes** (S). `mailbox_max` counts messages, so the node's memory for one slow consumer is bounded only by `mailbox_max × message_max_bytes`, about 10 GiB with the defaults (10,000 × 1 MiB).
-  - **The limit:** a new manifest limit, `mailbox_max_bytes`, on the bodies of the messages queued: casts, calls and timer messages. Replies do not count, since they go straight to the caller. A message that would take the mailbox past it gets the rule for a full mailbox: a cast is dropped and counted, a call fails at once with `overloaded`.
-  - **Default:** 64 MiB, the same as a link's `send_buffer_bytes`. With 10,000 instances that is still a lot of memory in the worst case; a node-wide limit is not planned until a workload needs one.
-  - **Checked:** a manifest whose `mailbox_max_bytes` is below its `message_max_bytes` is refused, so every message that may be sent fits an empty mailbox.
-  - **How:** a byte semaphore beside the mailbox channel. A send takes the body's bytes from it before `try_send`, and the instance task gives them back when it takes the message. tokio's semaphore serves waiters in arrival order, so I2's waited cast waits on it with `acquire_many` under the timeout.
-  - **Seen:** the bytes queued per instance (`bulkhead_mailbox_bytes`), and drops for bytes counted under `bulkhead_mailbox_dropped_total` with the rest.
-  - Areas: manifest limits, instance, metrics, MANIFEST.md, OBSERVABILITY.md.
 
-Order: I1 done (2026-11-05: `try_cast`, native protocol version 6); I6 next, then I2 to I5. They are independent of the T items. I6 goes before I2 so a waited cast waits for both the count and the bytes in one place.
+Order: I1 and I6 done (2026-11-05: `try_cast`, native protocol version 6; `mailbox_max_bytes`, 64 MiB by default); I2 next, then I3 to I5. They are independent of the T items.
 
 ### Z8: native parity
 

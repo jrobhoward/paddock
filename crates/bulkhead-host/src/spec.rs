@@ -26,6 +26,11 @@ pub struct InstanceSpec {
     pub callback_deadline: Duration,
     /// Mailbox capacity.
     pub mailbox_max: usize,
+    /// Most bytes of message bodies waiting in the mailbox. A message
+    /// that would go past it is treated as at a full mailbox; one larger
+    /// than it never fits, so keep it at least `message_max_bytes` (the
+    /// manifest checks that).
+    pub mailbox_max_bytes: u64,
     /// Largest message body the instance accepts, in bytes.
     pub message_max_bytes: u64,
     /// Names the instance may register.
@@ -95,7 +100,7 @@ pub const PRIV_PATH: &str = "/priv";
 
 impl InstanceSpec {
     /// A spec with the manifest defaults (64 MiB, 5 s deadlines, a
-    /// 10,000-message mailbox) and no capabilities granted.
+    /// 10,000-message, 64 MiB mailbox) and no capabilities granted.
     #[must_use]
     pub fn new(app: impl Into<String>, version: impl Into<String>) -> Self {
         let mut spec = Self::from_parts(app.into(), version.into(), &AppSpec::default());
@@ -128,6 +133,7 @@ impl InstanceSpec {
             table_max: spec.limits.table_max,
             callback_deadline: Duration::from_millis(spec.limits.callback_deadline_ms),
             mailbox_max: usize::try_from(spec.limits.mailbox_max).unwrap_or(usize::MAX),
+            mailbox_max_bytes: spec.limits.mailbox_max_bytes.bytes(),
             message_max_bytes: spec.limits.message_max_bytes.bytes(),
             registered_names: spec
                 .registered_names

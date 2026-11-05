@@ -14,6 +14,7 @@ use wasmtime::{Error, Result};
 use crate::bindings::bulkhead::runtime::{process, types};
 use crate::delivery::{self, Origin};
 use crate::instance::Message;
+use crate::mailbox;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
 use crate::probe;
@@ -53,7 +54,7 @@ impl Timers {
         pid: Pid,
         delay: Duration,
         msg: Envelope,
-        mailbox: mpsc::WeakSender<Message>,
+        mailbox: mailbox::WeakSender,
         dropped: Arc<AtomicU64>,
     ) -> u64 {
         self.next += 1;

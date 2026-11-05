@@ -29,6 +29,11 @@ pub struct Limits {
     /// Most messages waiting in one instance's mailbox. When full, casts are
     /// dropped and calls fail with `overloaded`.
     pub mailbox_max: u32,
+    /// Most bytes of message bodies waiting in one instance's mailbox
+    /// (casts, calls and timer messages). A message that would go past it
+    /// is treated as at a full mailbox. At least `message_max_bytes`, so
+    /// every message fits an empty mailbox.
+    pub mailbox_max_bytes: ByteSize,
     /// Largest message body accepted.
     pub message_max_bytes: ByteSize,
     /// Total storage quota across the app's buckets and volumes. Not
@@ -76,6 +81,7 @@ impl Default for Limits {
             callback_deadline_ms: 5_000,
             fuel_per_message: None,
             mailbox_max: 10_000,
+            mailbox_max_bytes: ByteSize::mib(64),
             message_max_bytes: ByteSize::mib(1),
             storage_quota: None,
             open_files: None,
@@ -108,6 +114,15 @@ impl Limits {
         }
         if self.message_max_bytes.bytes() == 0 {
             v.error_at("message_max_bytes", "must be greater than zero");
+        }
+        if self.mailbox_max_bytes < self.message_max_bytes {
+            v.error_at(
+                "mailbox_max_bytes",
+                format!(
+                    "must be at least message_max_bytes ({}), so every message fits an empty mailbox",
+                    self.message_max_bytes
+                ),
+            );
         }
         for (field, value) in [
             ("fuel_per_message", self.fuel_per_message),

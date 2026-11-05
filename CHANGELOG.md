@@ -63,6 +63,16 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `limits.mailbox_max_bytes` (ROADMAP I6, default `"64MiB"`): the bytes
+  of message bodies an instance's mailbox may hold, beside the count
+  `mailbox_max`. A cast, call or timer message that would go past it is
+  treated as at a full mailbox (a cast dropped and counted, a call
+  failing with `overloaded`). With only the count, one slow consumer
+  could hold about 10 GiB of node memory with the defaults. A manifest
+  whose `mailbox_max_bytes` is below its `message_max_bytes` is refused,
+  so a manifest that set `message_max_bytes` above 64 MiB must now set
+  `mailbox_max_bytes` too. New gauge `bulkhead_mailbox_bytes`, and
+  `InstanceHandle::queued_bytes`.
 - `Ctx::try_cast` in the SDK and `bulkhead_native::app::Ctx::try_cast`
   (ROADMAP I1): a cast that says whether it was queued, `Ok`, or why it
   was dropped, `CastError` (`Noproc`, `Noconnection`, `Overloaded` for a

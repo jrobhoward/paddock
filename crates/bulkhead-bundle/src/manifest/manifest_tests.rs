@@ -94,6 +94,7 @@ fn AppSpec____empty_object____uses_defaults() {
     assert_eq!(spec.limits.callback_deadline_ms, 5_000);
     assert_eq!(spec.limits.mailbox_max, 10_000);
     assert_eq!(spec.limits.message_max_bytes, ByteSize::mib(1));
+    assert_eq!(spec.limits.mailbox_max_bytes, ByteSize::mib(64));
     assert_eq!(spec.lifecycle.restart, RestartType::Permanent);
     assert_eq!(spec.supervision.intensity, 5);
     assert_eq!(spec.supervision.period_ms, 10_000);
@@ -195,6 +196,8 @@ fn AppSpec____malformed____parse_error_names_path(
 #[case(json!({ "limits": { "memory_max": "5GiB" } }), "limits.memory_max")]
 #[case(json!({ "limits": { "callback_deadline_ms": 0 } }), "limits.callback_deadline_ms")]
 #[case(json!({ "limits": { "mailbox_max": 0 } }), "limits.mailbox_max")]
+#[case(json!({ "limits": { "mailbox_max_bytes": "512KiB" } }), "limits.mailbox_max_bytes")]
+#[case(json!({ "limits": { "message_max_bytes": "2MiB", "mailbox_max_bytes": "1MiB" } }), "limits.mailbox_max_bytes")]
 #[case(json!({ "limits": { "timers_max": 0 } }), "limits.timers_max")]
 #[case(json!({ "limits": { "monitors_max": 0 } }), "limits.monitors_max")]
 #[case(json!({ "limits": { "links_max": 0 } }), "limits.links_max")]

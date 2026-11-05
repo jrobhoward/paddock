@@ -8,14 +8,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bulkhead_bundle::manifest::Capability;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{oneshot, watch};
 use wasmtime::component::ResourceTable;
 use wasmtime::{Error, ResourceLimiter, Result};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 
 use crate::config::HostObjects;
 use crate::failover::RunUntil;
-use crate::instance::{InstanceHandle, Message};
+use crate::instance::InstanceHandle;
+use crate::mailbox;
 use crate::message::Envelope;
 use crate::output::{CapturedOutput, Tags};
 use crate::pid::Pid;
@@ -41,7 +42,7 @@ pub(crate) struct ProcessContext {
     pub(crate) me: InstanceHandle,
     /// The instance's own mailbox, for timers. Weak, so it never keeps the
     /// mailbox open.
-    pub(crate) mailbox: mpsc::WeakSender<Message>,
+    pub(crate) mailbox: mailbox::WeakSender,
     /// Messages dropped because the mailbox was full.
     pub(crate) dropped: Arc<AtomicU64>,
 }

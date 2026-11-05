@@ -46,6 +46,7 @@ routing = "hash:customer_id"
 memory_max = "64MiB"
 callback_deadline_ms = 5000
 mailbox_max = 10000
+mailbox_max_bytes = "64MiB"
 message_max_bytes = "1MiB"
 
 [appserver.capabilities."wasi:logging"]
@@ -128,7 +129,8 @@ The app's root supervisor, with OTP semantics.
 | --- | --- | --- |
 | `memory_max` | `"64MiB"` | Most linear memory per instance. Growing past it crashes the instance with `memory_limit`. At most 4 GiB, and at most 128 MiB on a node with the `dense` memory profile. |
 | `callback_deadline_ms` | `5000` | Most guest CPU time per callback. Past it, the instance is killed with reason `timeout`. Time spent waiting does not count: in host calls, or for a worker after a preemption. Host work that does not wait (a memory-bucket write, for one) counts. |
-| `mailbox_max` | `10000` | Most queued messages per instance. When full, casts are dropped (and counted under `DROPPED` in `bulkhead ps`), and calls fail at once with `overloaded`. |
+| `mailbox_max` | `10000` | Most queued messages per instance. When full (or past `mailbox_max_bytes`), casts are dropped (and counted under `DROPPED` in `bulkhead ps`), and calls fail at once with `overloaded`. |
+| `mailbox_max_bytes` | `"64MiB"` | Most bytes of message bodies queued per instance: casts, calls and timer messages (replies go straight to the caller). A message that would go past it is treated as at a full mailbox. Must be at least `message_max_bytes`. An upgrade that raises it applies at once; a lower value takes effect at the next start, as `mailbox_max` does. |
 | `message_max_bytes` | `"1MiB"` | Largest body accepted; larger ones fail with `too-large`. |
 | `table_max` | engine default | Most table elements per instance. |
 | `timers_max` | node's `[limits]` (10000) | Most pending `send-after` timers per instance. One more crashes the instance with `timer_limit`. |

@@ -36,6 +36,7 @@ use crate::error::describe;
 use crate::failover::RunUntil;
 use crate::health;
 use crate::lifecycle::LifecycleState;
+use crate::mailbox;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::metrics::AppStats;
 use crate::pid::Pid;
@@ -161,7 +162,7 @@ struct Shared {
     pid: Pid,
     app: String,
     version: std::sync::Mutex<String>,
-    mailbox: mpsc::Sender<Message>,
+    mailbox: mailbox::Sender,
     control: watch::Sender<Control>,
     kill: Arc<KillSignal>,
     state: watch::Receiver<LifecycleState>,
@@ -249,8 +250,14 @@ impl InstanceHandle {
     /// Messages waiting in the mailbox.
     #[must_use]
     pub fn queued(&self) -> usize {
-        let m = &self.shared.mailbox;
-        m.max_capacity().saturating_sub(m.capacity())
+        self.shared.mailbox.queued()
+    }
+
+    /// Bytes of message bodies waiting in the mailbox
+    /// (`mailbox_max_bytes` bounds them).
+    #[must_use]
+    pub fn queued_bytes(&self) -> u64 {
+        self.shared.mailbox.queued_bytes()
     }
 
     /// The current lifecycle state.
@@ -608,10 +615,10 @@ impl Drop for AbortOnDrop {
 pub(crate) struct InstanceTask {
     pid: Pid,
     me: InstanceHandle,
-    mailbox: mpsc::Receiver<Message>,
+    mailbox: mailbox::Receiver,
     signals: mpsc::UnboundedReceiver<Info>,
     ops: mpsc::UnboundedReceiver<Box<Op>>,
-    self_mailbox: mpsc::WeakSender<Message>,
+    self_mailbox: mailbox::WeakSender,
     dropped: Arc<AtomicU64>,
     control: watch::Receiver<Control>,
     kill: Arc<KillSignal>,
@@ -667,7 +674,7 @@ pub(crate) fn prepare(
     spec: &InstanceSpec,
     stats: Arc<AppStats>,
 ) -> (InstanceHandle, InstanceTask) {
-    let (mailbox_tx, mailbox_rx) = mpsc::channel(spec.mailbox_max.max(1));
+    let (mailbox_tx, mailbox_rx) = mailbox::channel(spec.mailbox_max, spec.mailbox_max_bytes);
     let (control_tx, control_rx) = watch::channel(Control::Run);
     let (state_tx, state_rx) = watch::channel(LifecycleState::Starting);
     let (exit_tx, exit_rx) = watch::channel(None);
@@ -1309,12 +1316,18 @@ impl InstanceTask {
     }
 
     /// Take on an upgraded version's message limit, messaging ACL and
-    /// version, as the handle reports them.
+    /// version, as the handle reports them. A higher mailbox byte limit
+    /// applies at once, a lower one at the next start, as `mailbox_max`
+    /// does.
     fn take_spec(&self, next: &InstanceSpec) {
         self.me
             .shared
             .message_max_bytes
             .store(next.message_max_bytes, Ordering::Relaxed);
+        self.me
+            .shared
+            .mailbox
+            .raise_max_bytes(next.mailbox_max_bytes);
         *self
             .me
             .shared

@@ -71,9 +71,10 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `bulkhead_instances` | gauge | | Live instances. |
 | `bulkhead_memory_bytes` | gauge | | Linear memory of live instances. |
 | `bulkhead_mailbox_depth` | gauge | | Messages waiting in live instances' mailboxes. |
+| `bulkhead_mailbox_bytes` | gauge | | Bytes of message bodies waiting in live instances' mailboxes (`mailbox_max_bytes` bounds each). |
 | `bulkhead_callbacks_total` | counter | `kind` (`call`, `cast`, `info`) | Callbacks run. |
 | `bulkhead_callback_guest_seconds` | histogram | | Guest execution time per callback: guest code and host work that did not wait (10 µs to 1 s buckets). |
-| `bulkhead_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox. |
+| `bulkhead_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox (by count or by bytes). |
 | `bulkhead_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
 | `bulkhead_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no Store, state in a snapshot. |
 | `bulkhead_passivations_total` | counter | | Instances passivated. |

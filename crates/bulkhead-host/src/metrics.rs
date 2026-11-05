@@ -11,7 +11,7 @@
 //!
 //! Host metrics count the events the probes report, per app: callbacks by
 //! kind and their guest time, instance exits by reason, dropped messages,
-//! and, read when rendered, instances, memory and mailbox depth. Each
+//! and, read when rendered, instances, memory, mailbox depth and bytes. Each
 //! instance holds its app's counters from the start, so recording is an
 //! atomic add with no lookup. Names and labels are an interface, listed in
 //! `docs/OBSERVABILITY.md`.
@@ -499,14 +499,15 @@ impl Metrics {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        let mut live: BTreeMap<&str, (u64, u64, u64)> = BTreeMap::new();
+        let mut live: BTreeMap<&str, Live> = BTreeMap::new();
         let mut live_dropped: BTreeMap<&str, u64> = BTreeMap::new();
         let mut passive: BTreeMap<&str, u64> = BTreeMap::new();
         for h in instances {
             let e = live.entry(h.app()).or_default();
-            e.0 += 1;
-            e.1 += h.memory_bytes();
-            e.2 += u64::try_from(h.queued()).unwrap_or(u64::MAX);
+            e.instances += 1;
+            e.memory += h.memory_bytes();
+            e.queued += u64::try_from(h.queued()).unwrap_or(u64::MAX);
+            e.queued_bytes += h.queued_bytes();
             *live_dropped.entry(h.app()).or_default() += h.dropped_messages();
             let p = passive.entry(h.app()).or_default();
             if h.state() == LifecycleState::Passive {
@@ -514,28 +515,7 @@ impl Metrics {
             }
         }
         let mut out = String::new();
-        header(&mut out, "bulkhead_instances", "gauge", "Live instances.");
-        for (app, (n, _, _)) in &live {
-            let _ = writeln!(out, "bulkhead_instances{{app=\"{}\"}} {n}", escape(app));
-        }
-        header(
-            &mut out,
-            "bulkhead_memory_bytes",
-            "gauge",
-            "Linear memory of live instances.",
-        );
-        for (app, (_, m, _)) in &live {
-            let _ = writeln!(out, "bulkhead_memory_bytes{{app=\"{}\"}} {m}", escape(app));
-        }
-        header(
-            &mut out,
-            "bulkhead_mailbox_depth",
-            "gauge",
-            "Messages waiting in live instances' mailboxes.",
-        );
-        for (app, (_, _, q)) in &live {
-            let _ = writeln!(out, "bulkhead_mailbox_depth{{app=\"{}\"}} {q}", escape(app));
-        }
+        render_live(&mut out, &live);
         header(
             &mut out,
             "bulkhead_callbacks_total",
@@ -678,6 +658,46 @@ impl Metrics {
             m.write(&mut out, app);
         }
         out
+    }
+}
+
+/// What one app's live instances add up to, read when rendering.
+#[derive(Default)]
+struct Live {
+    instances: u64,
+    memory: u64,
+    queued: u64,
+    queued_bytes: u64,
+}
+
+/// A gauge read from live instances: name, help, and its value.
+type LiveGauge = (&'static str, &'static str, fn(&Live) -> u64);
+
+/// The gauges read from live instances, one series per app each.
+fn render_live(out: &mut String, live: &BTreeMap<&str, Live>) {
+    let gauges: [LiveGauge; 4] = [
+        ("bulkhead_instances", "Live instances.", |l| l.instances),
+        (
+            "bulkhead_memory_bytes",
+            "Linear memory of live instances.",
+            |l| l.memory,
+        ),
+        (
+            "bulkhead_mailbox_depth",
+            "Messages waiting in live instances' mailboxes.",
+            |l| l.queued,
+        ),
+        (
+            "bulkhead_mailbox_bytes",
+            "Bytes of message bodies waiting in live instances' mailboxes.",
+            |l| l.queued_bytes,
+        ),
+    ];
+    for (name, help, value) in gauges {
+        header(out, name, "gauge", help);
+        for (app, l) in live {
+            let _ = writeln!(out, "{name}{{app=\"{}\"}} {}", escape(app), value(l));
+        }
     }
 }
 

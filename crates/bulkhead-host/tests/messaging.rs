@@ -210,6 +210,32 @@ async fn mailbox____full____dropped_casts_are_counted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mailbox_max_bytes____bodies_over_it____casts_dropped_and_calls_overloaded() {
+    let (rt, app) = shared();
+    let mut small = spec("");
+    small.mailbox_max_bytes = 64;
+    small.message_max_bytes = 64;
+    small.callback_deadline = Duration::from_secs(30);
+    let b = rt.spawn(app, small).unwrap();
+    b.call(text("echo:up"), LONG).await.unwrap();
+    b.cast(text("spin")).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    b.cast(text(&"x".repeat(40))).unwrap();
+
+    let over = b.cast(text(&"x".repeat(30)));
+    let call = b.call(text(&"x".repeat(30)), LONG).await;
+    let fits = b.cast(text(&"x".repeat(24)));
+
+    assert_eq!(over, Err(CallError::Overloaded));
+    assert_eq!(call, Err(CallError::Overloaded));
+    assert_eq!(fits, Ok(()));
+    assert_eq!(b.queued(), 2);
+    assert_eq!(b.queued_bytes(), 64);
+    assert_eq!(b.dropped_messages(), 1);
+    b.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn send_after____timers_fire____delivered_to_handle_info_in_order() {
     let (rt, app) = shared();
     let a = rt.spawn(app, spec("")).unwrap();
