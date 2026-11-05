@@ -13,6 +13,7 @@
 | `http_reply` | arbitrary reply bodies from a guest | the HTTP reply envelope decoder never panics; an accepted reply has a valid status code |
 | `state_view` | arbitrary snapshot bytes from a guest | `bulkhead state`'s reader never panics, names a format, and its answer serializes as JSON |
 | `modbus_request` | arbitrary Modbus requests and table sizes | a read returns exactly the count asked for and a write changes only addresses the table has |
+| `native_frame` | arbitrary frame bodies from a native app | the node's decoders (hot frames and CBOR) never panic; a hot request that decodes writes back to the same bytes |
 | `process_ops` | sequences of up to 64 operations on 4 live chaos instances | calls and casts with arbitrary envelopes and pids, links, monitors, exit signals, registration, timers, kills and respawns; afterwards every instance dies when killed and a fresh one answers |
 
 ```sh

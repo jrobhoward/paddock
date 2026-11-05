@@ -23,7 +23,8 @@ jobs:
       matrix:
         target:
           [bundle_open, manifest, parse, routing_key, process_ops,
-           wire_packet, failover_status, http_reply, state_view, modbus_request]
+           wire_packet, failover_status, http_reply, state_view, modbus_request,
+           native_frame]
     steps:
       - uses: actions/checkout@v4
 

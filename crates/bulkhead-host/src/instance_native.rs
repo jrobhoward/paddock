@@ -27,6 +27,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use bulkhead_bundle::manifest::NativeProgram;
+use bulkhead_native::hot::KvReply;
 use bulkhead_native::protocol::{self as p, Answer, FromApp, Request, ToApp};
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -39,7 +40,7 @@ use crate::lifecycle::LifecycleState;
 use crate::message::{Envelope, ExitReason, Info};
 use crate::native::NativeCode;
 use crate::native::convert;
-use crate::native::port::{Incoming, Port};
+use crate::native::port::{Incoming, KvCall, Port};
 use crate::output::{CapturedOutput, Tags};
 use crate::probe;
 use crate::runtime::{LoadedApp, RuntimeInner};
@@ -47,6 +48,7 @@ use crate::services::HostState;
 use crate::services::config::Config;
 use crate::services::groups::Groups;
 use crate::services::keyvalue::publish::Publications;
+use crate::services::keyvalue::storage::Outcome;
 use crate::services::keyvalue::{KeyValue, WATCH_EVENT};
 use crate::services::logging::{self, LogRate, Logging};
 use crate::services::metrics::MetricsService;
@@ -184,9 +186,35 @@ async fn between_callbacks(
             port,
             format!("{} between callbacks", frame_name(&other)),
         )),
+        Some(Incoming::Kv(_)) => Err(broke(port, "a request between callbacks".into())),
         Some(Incoming::Broken(e)) => Err(broke(port, e)),
         None => Err(port.exit_reason().await),
     }
+}
+
+/// A hot frame's keyvalue request (ROADMAP T7).
+async fn kv_hot(state: &mut InstanceState, call: KvCall) -> Result<Outcome, p::KvError> {
+    HostState::<KeyValue>::service(state)
+        .native_hot(call.bucket, call.op, call.key, call.value)
+        .await
+}
+
+/// Answer a hot keyvalue request with what the store returned.
+fn send_kv(port: &mut Port, id: u64, outcome: Outcome) {
+    let reply = match &outcome {
+        Outcome::Value(v) => KvReply::Value(v.as_deref()),
+        Outcome::Exists(e) => KvReply::Exists(*e),
+        Outcome::Done => KvReply::Unit,
+        other => {
+            return port.send(&ToApp::Answer {
+                id,
+                answer: Answer::Kv(Err(p::KvError::Other(format!(
+                    "unexpected storage outcome {other:?}"
+                )))),
+            });
+        }
+    };
+    port.send_kv(id, &reply);
 }
 
 /// The app broke the protocol: kill it and crash.
@@ -329,6 +357,9 @@ async fn answer(state: &mut InstanceState, request: Request) -> Result<Answer, S
         }
         Request::Kv(request) => {
             Answer::Kv(HostState::<KeyValue>::service(state).native(request).await)
+        }
+        Request::KvOpen(bucket) => {
+            Answer::KvOpened(HostState::<KeyValue>::service(state).native_open(&bucket))
         }
         Request::Groups(request) => {
             Answer::Groups(HostState::<Groups>::service(state).native(request).await)
@@ -782,6 +813,7 @@ impl InstanceTask {
                 port,
                 format!("expected hello, got {}", frame_name(&other)),
             )),
+            Ok(Some(Incoming::Kv(_))) => Err(broke(port, "a request before hello".into())),
             Ok(Some(Incoming::Broken(e))) => Err(broke(port, e)),
             Ok(None) => Err(port.exit_reason().await),
         }
@@ -859,6 +891,24 @@ impl InstanceTask {
                             port.kill();
                             return Err(ExitReason::Crashed(why));
                         }
+                        Err(killed) => {
+                            port.kill();
+                            return Err(killed);
+                        }
+                    }
+                    host += asked.elapsed();
+                }
+                Some(Incoming::Kv(call)) => {
+                    let asked = Instant::now();
+                    let id = call.id;
+                    match super::killable(&self.kill, &self.control, None, kv_hot(state, call))
+                        .await
+                    {
+                        Ok(Ok(outcome)) => send_kv(port, id, outcome),
+                        Ok(Err(e)) => port.send(&ToApp::Answer {
+                            id,
+                            answer: Answer::Kv(Err(e)),
+                        }),
                         Err(killed) => {
                             port.kill();
                             return Err(killed);

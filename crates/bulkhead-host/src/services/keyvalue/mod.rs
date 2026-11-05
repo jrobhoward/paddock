@@ -101,7 +101,21 @@ pub(crate) struct Instance {
     me: InstanceHandle,
     /// `limits.watches_max`.
     watches_max: usize,
+    /// Buckets a native app opened (ROADMAP T7), by handle: its index.
+    opened: Vec<Opened>,
 }
+
+/// A bucket a native app opened, resolved once.
+struct Opened {
+    /// The name the app opened, for a shared bucket the node may stop
+    /// configuring; `None` for one of the app's own buckets.
+    shared: Option<String>,
+    handle: BucketHandle,
+}
+
+/// The most buckets one instance opens; past it, an open fails with
+/// `limit-reached`. The manifest lists far fewer.
+const OPENED_MAX: usize = 4096;
 
 /// Why a bucket name does not open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +226,7 @@ impl Service for KeyValue {
             granted: info.granted,
             me: info.handle.clone(),
             watches_max: usize::try_from(info.host_objects.watches).unwrap_or(usize::MAX),
+            opened: Vec::new(),
         }
     }
 

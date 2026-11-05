@@ -58,6 +58,25 @@ fn fixtures() -> &'static (PathBuf, PathBuf) {
 
 /// The runner's frames to the node, read as they come; the end once the
 /// runner has exited (its bell's end of file) and the ring is empty.
+/// One frame from the app, CBOR or hot (ROADMAP T7); `None` at the end.
+/// The harness takes no keyvalue requests.
+fn read_from_app(from: &mut impl Read) -> Option<FromApp> {
+    let mut prefix = [0u8; 4];
+    if from.read_exact(&mut prefix).is_err() {
+        return None;
+    }
+    let mut body = vec![0; protocol::frame_len(prefix).unwrap()];
+    from.read_exact(&mut body).unwrap();
+    if bulkhead_native::hot::is_hot(&body) {
+        match bulkhead_native::hot::parse_from_app(&body).unwrap() {
+            bulkhead_native::hot::FromAppHot::Frame(frame) => Some(frame),
+            bulkhead_native::hot::FromAppHot::Kv(kv) => panic!("unexpected {kv:?}"),
+        }
+    } else {
+        Some(protocol::decode(&body).unwrap())
+    }
+}
+
 struct FromRunner {
     channel: Arc<Channel>,
     bell: OwnedFd,
@@ -166,11 +185,9 @@ impl Port {
     /// answered as a node would for pid `ME`.
     fn next(&mut self) -> FromApp {
         loop {
-            let frame = protocol::read::<FromApp>(&mut self.from)
-                .unwrap()
-                .unwrap_or_else(|| {
-                    panic!("runner exited; stderr: {:?}", self.stderr.lock().unwrap())
-                });
+            let frame = read_from_app(&mut self.from).unwrap_or_else(|| {
+                panic!("runner exited; stderr: {:?}", self.stderr.lock().unwrap())
+            });
             match frame {
                 FromApp::Log { level, message } => self.logs.lock().unwrap().push((level, message)),
                 FromApp::Request { id, request } => {
@@ -286,7 +303,7 @@ fn executable____noreply_then_cast____reply_requested_later() {
     });
     let mut requested = None;
     let done = loop {
-        match protocol::read::<FromApp>(&mut port.from).unwrap().unwrap() {
+        match read_from_app(&mut port.from).unwrap() {
             FromApp::Request { id, request } => {
                 requested = Some(request);
                 port.send(&ToApp::Answer {

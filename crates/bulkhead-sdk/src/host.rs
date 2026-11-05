@@ -219,6 +219,9 @@ pub(crate) mod native {
         pub(crate) mod store {
             pub(crate) use crate::bindings::wasi::keyvalue::store::{Error, KeyResponse};
 
+            use bulkhead_native::app::Ctx;
+            use bulkhead_native::hot::KvOp;
+
             use super::super::{kv, p};
 
             pub(crate) fn error(e: p::KvError) -> Error {
@@ -250,30 +253,31 @@ pub(crate) mod native {
                     kv(r).map_err(error)
                 }
 
+                /// A hot frame's operation (ROADMAP T7): the bucket and key
+                /// borrowed, nothing built for the request.
+                fn op(&self, op: KvOp, key: &str, value: &[u8]) -> Result<p::KvAnswer, Error> {
+                    Ctx::current()
+                        .kv_op(&self.name, op, key, value)
+                        .map_err(error)
+                }
+
                 pub(crate) fn get(&self, key: &str) -> Result<Option<Vec<u8>>, Error> {
-                    let (bucket, key) = (self.name.clone(), key.to_string());
-                    match self.request(p::KvRequest::Get { bucket, key })? {
+                    match self.op(KvOp::Get, key, &[])? {
                         p::KvAnswer::Value(v) => Ok(v.map(|b| b.0)),
                         other => Err(unexpected(&other)),
                     }
                 }
 
                 pub(crate) fn set(&self, key: &str, value: &[u8]) -> Result<(), Error> {
-                    let (bucket, key) = (self.name.clone(), key.to_string());
-                    let value = p::Bytes::from(value);
-                    self.request(p::KvRequest::Set { bucket, key, value })
-                        .map(|_| ())
+                    self.op(KvOp::Set, key, value).map(|_| ())
                 }
 
                 pub(crate) fn delete(&self, key: &str) -> Result<(), Error> {
-                    let (bucket, key) = (self.name.clone(), key.to_string());
-                    self.request(p::KvRequest::Delete { bucket, key })
-                        .map(|_| ())
+                    self.op(KvOp::Delete, key, &[]).map(|_| ())
                 }
 
                 pub(crate) fn exists(&self, key: &str) -> Result<bool, Error> {
-                    let (bucket, key) = (self.name.clone(), key.to_string());
-                    match self.request(p::KvRequest::Exists { bucket, key })? {
+                    match self.op(KvOp::Exists, key, &[])? {
                         p::KvAnswer::Exists(e) => Ok(e),
                         other => Err(unexpected(&other)),
                     }

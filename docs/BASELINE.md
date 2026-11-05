@@ -2380,6 +2380,36 @@ The cost found in the 2026-11-01 profile: a native `get` cost 4.2 to 4.4 µs at 
 - **Rows that vary between runs as much as they differ:** casts from the host to 16 instances (0.68 to 1.12 million a second before, in two modes), 16 and 64 callers, 1 KiB and 64 KiB bodies, calls between instances in `native_cost`, and a 64 KiB `get` (24 or 42 to 55 µs, in both builds).
 - **Not measured:** the Pi (T11), and more busy instances than cores.
 
+## 2026-11-04: hot frames without serialization (T7)
+
+The native protocol's most frequent frames in fixed layouts instead of CBOR (`bulkhead_native::hot`, protocol version 5): keyvalue `get`, `set`, `delete` and `exists` on a bucket handle opened once (step 1), and calls, casts, replies, `done` and their answers (step 2). The app writes a frame into a buffer it keeps and reads the answer into another, copying a value out once; the node decodes a hot frame by checking each length against the frame and writes its answer into a buffer the port keeps.
+
+16-core machine, 4 tokio workers, `[native] spin_us` 20; T9's commit, step 1 alone (the message writers turned off) and both steps, alternating, three rounds, medians; load average 2 to 10 from the runs' own spinning. An A/B of T9 against both steps, three rounds just before, agrees within run-to-run variation.
+
+| | T9 | Step 1 | Steps 1 and 2 |
+| --- | --- | --- | --- |
+| `get`, 1,000 keys, 16 B (`kv_cost`, native) | 4.76 µs | 1.97 µs | 2.14 µs |
+| `set` / `delete`, 1,000 keys, 16 B | 5.21 / 5.09 µs | 2.52 / 2.02 µs | 2.57 / 2.07 µs |
+| `get`, 100,000 keys, 1 KiB | 6.18 µs | 3.04 µs | 3.26 µs |
+| Dependent reads along a chain | 5.5 to 5.8 µs | 2.9 to 3.0 µs | 3.1 to 3.4 µs |
+| 1,000 reads per call, timed by the host | 4.27 µs a read | 1.97 | 1.99 |
+| One instance, 95 reads in 100, ops/s | 0.20M | 0.38M | 0.39M |
+| 16 instances, 95 reads in 100 / one hot key, ops/s | 0.50M / 0.54M | 0.59M / 0.69M | 0.62M / 0.66M |
+| A request sent as CBOR (its own pid, `native_cost`) | 4.3 µs | 3.5 µs | 3.9 µs |
+| Call between instances, p50 / p99 (`cluster_throughput`, one node) | 12.5 / 19.1 µs | 14.1 / 21.9 µs | 8.2 / 13.5 µs |
+| 16 instances calling, calls/s | 212,000 | 222,000 | 329,000 |
+| Casts from instances / from the host, handled/s | 511,000 / 752,000 | 514,000 / 718,000 | 738,000 / 999,000 |
+| 16 / 64 callers from the host, calls/s | 298,000 / 375,000 | 372,000 / 333,000 | 426,000 / 446,000 |
+| Call between instances, p50 (`native_cost`, 100 instances) | 92.8 µs | 90.7 µs | 64.1 µs |
+| 64 calls in flight (`native_cost`): calls/s, CPU per call | 303,000, 40.2 µs | 290,000, 41.5 µs | 348,000, 36.3 µs |
+
+- **A keyvalue request costs about half what it did:** 2.0 to 2.6 µs for a `get`, `set` or `delete` of a small value, within T7's goal of 1.5 times S32's prototype (4.1 µs) and under S32's own 2.7. Step 1 alone gives all of it; step 2 leaves it within run-to-run variation.
+- **Messages gain from step 2 only:** a call between instances costs a third less (12.5 to 8.2 µs at p50), and calls and casts between instances rise by 44 to 56%.
+- **Where the time went:** a request still sent as CBOR costs 3.5 to 4.3 µs, against 2.0 to 2.1 for a hot `get` of the same round trip: CBOR, its allocations and the bucket's lookup by name came to about 2 µs of a request, more than the profile's estimate of 1.5 (2026-11-01).
+- **Unchanged, as expected:** `increment`, `get_many`, ordered reads and published buckets' reads (all still CBOR, or no request).
+- **Rows that vary between runs as much as they differ:** a 64 KiB `get` (17.8 to 26 µs in four runs of both steps, 47 to 49 in two; T9 has shown the slow mode too, 42 µs), sequential calls from the host (p50 5.0 to 6.4 µs in every build), and 64 callers.
+- **Not measured:** the Pi (T11), and a profile after T7: the node still copies the key into a `String` and the value out of the bucket before it reaches the ring.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

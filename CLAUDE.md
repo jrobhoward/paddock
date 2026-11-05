@@ -206,7 +206,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   UDP through `bulkhead-sdk`'s `net` module and waits on its sockets with
   `bulkhead:io` (`bulkhead-host`'s `tests/sockets.rs`).
 - `crates/bulkhead-native`: native-process apps: `protocol`
-  (CBOR frames between a node and a native app), `channel` (feature
+  (CBOR frames between a node and a native app), `hot` (the most frequent
+  of them in fixed layouts, ROADMAP T7), `channel` (feature
   `channel`, Linux: the shared-memory rings the frames travel over, and
   their spin-then-sleep waits), `app` (feature `app`: an executable's
   App trait and process functions) and `runner` (feature `runner`,

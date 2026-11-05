@@ -292,6 +292,10 @@ fn kv(ctx: &mut Ctx, command: &str) -> String {
     let out = if op == "unwatch" {
         ctx.unwatch(bucket.parse().unwrap_or(0))
             .map(|()| "ok".to_string())
+    } else if op == "handle-get" {
+        // `kv handle-get HANDLE KEY`: a get on a bucket handle as given.
+        app::get_on_handle_for_tests(bucket.parse().unwrap_or(u32::MAX), arg(2))
+            .map(|v| v.map_or_else(|| "none".into(), text))
     } else {
         let mut b = ctx.bucket(bucket);
         match op {

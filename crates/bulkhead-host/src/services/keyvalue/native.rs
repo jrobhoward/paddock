@@ -6,6 +6,7 @@
 //! when the notice is taken, so a native app keeping a copy needs no
 //! request per change (spikes S28 and S31).
 
+use bulkhead_native::hot::KvOp;
 use bulkhead_native::protocol::{self as p, Bytes, KvAnswer, KvError, KvRequest};
 use serde::Deserialize;
 
@@ -55,6 +56,61 @@ impl ServiceCtx<'_, Instance> {
             self.state.store.read(&handle, op)
         } else {
             self.state.store.run(&handle, op).await
+        }
+        .map_err(|e: StoreError| from_watch(watch_error(e)))
+    }
+
+    /// Open `bucket` for hot frames: its handle, the index of its entry.
+    /// Checked as an operation naming it is, for reading (a write through
+    /// the handle checks `writable` then).
+    pub(crate) fn native_open(&mut self, bucket: &str) -> Result<u32, KvError> {
+        let handle = self.watch_bucket(bucket, false).map_err(from_watch)?;
+        let opened = &mut self.state.opened;
+        if let Some(i) = opened.iter().position(|o| o.handle == handle) {
+            return u32::try_from(i).map_err(|_| KvError::LimitReached);
+        }
+        if opened.len() >= super::OPENED_MAX {
+            return Err(KvError::LimitReached);
+        }
+        let shared = (!self.state.buckets.contains_key(bucket)).then(|| bucket.to_string());
+        opened.push(super::Opened { shared, handle });
+        u32::try_from(opened.len() - 1).map_err(|_| KvError::LimitReached)
+    }
+
+    /// Answer a hot frame's keyvalue request, on a bucket opened with
+    /// [`Self::native_open`]. A handle this instance was not given is
+    /// `access-denied`; a shared bucket the node no longer configures is
+    /// `no-such-bucket`, as a request naming it would be.
+    pub(crate) async fn native_hot(
+        &mut self,
+        bucket: u32,
+        op: KvOp,
+        key: String,
+        value: Vec<u8>,
+    ) -> Result<Outcome, KvError> {
+        let opened = usize::try_from(bucket)
+            .ok()
+            .and_then(|i| self.state.opened.get(i))
+            .ok_or(KvError::AccessDenied)?;
+        if let Some(name) = &opened.shared
+            && self.state.store.shared(name).is_none()
+        {
+            return Err(KvError::NoSuchBucket);
+        }
+        let op = match op {
+            KvOp::Get => Op::Get(key),
+            KvOp::Set => Op::Set(key, value),
+            KvOp::Delete => Op::Delete(key),
+            KvOp::Exists => Op::Exists(key),
+        };
+        if !op.read_only() && !opened.handle.writable {
+            return Err(KvError::AccessDenied);
+        }
+        let handle = &opened.handle;
+        if op.read_only() {
+            self.state.store.read(handle, op)
+        } else {
+            self.state.store.run(handle, op).await
         }
         .map_err(|e: StoreError| from_watch(watch_error(e)))
     }

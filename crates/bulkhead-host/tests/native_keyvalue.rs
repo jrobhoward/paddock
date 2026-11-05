@@ -180,6 +180,35 @@ async fn native_kv____not_granted_unlisted_read_only_or_unconfigured____refused(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_kv____handle_not_given____access_denied() {
+    let a = up("nk-handles", AccessMode::Ro);
+    ask(&a, "kv set data h-1 one").await;
+
+    let own = ask(&a, "kv handle-get 0 h-1").await;
+    let never_given = ask(&a, "kv handle-get 7 h-1").await;
+    let after = ask(&a, "kv get data h-1").await;
+
+    assert_eq!(own, "one");
+    assert_eq!(never_given, "err:AccessDenied");
+    assert_eq!(after, "one");
+    a.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_kv____read_only_bucket_opened____writes_through_its_handle_refused() {
+    let a = up("nk-ro-handle", AccessMode::Ro);
+    let read = ask(&a, "kv get board nk-roh").await;
+
+    let write = ask(&a, "kv set board nk-roh x").await;
+    let delete = ask(&a, "kv del board nk-roh").await;
+
+    assert_eq!(read, "none");
+    assert_eq!(write, "err:AccessDenied");
+    assert_eq!(delete, "err:AccessDenied");
+    a.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_kv____over_watches_max____limit_reached_until_unwatch() {
     let (rt, loaded) = shared();
     let mut limited = spec("nk-limit", AccessMode::Rw);
@@ -217,8 +246,8 @@ async fn native_kv____watcher_exits____writes_continue() {
 async fn native_kv____published_bucket____read_from_the_snapshot_after_a_write() {
     let writer = up("np-writer", AccessMode::Rw);
     let reader = up("np-reader", AccessMode::Ro);
-    ask(&writer, "kv set published np-a one").await;
-    ask(&writer, "kv set published np-b two").await;
+    // One change, so no snapshot holds one key without the other.
+    ask(&writer, "kv setmany published np-a=one,np-b=two").await;
 
     let got = ask_until(&reader, "kv get published np-a", |r| r == "one").await;
     let mapped = ask(&reader, "published published").await;

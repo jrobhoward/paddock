@@ -151,6 +151,7 @@ In `fuzz/`, run nightly for five minutes each: `bundle_open`, `manifest`, `parse
 | `http_reply` | guests | the HTTP reply envelope decoder in `http.rs` |
 | `state_view` | guests | `node/state_view.rs`, which decodes a guest's snapshot for `bulkhead state` |
 | `modbus_request` | Modbus masters | the server's request handling against its tables (address and count bounds) |
+| `native_frame` | native apps | `bulkhead_native::hot::parse_from_app` (hot frames) and the CBOR frame decoder the port uses |
 
 Private functions are exported for fuzzing the way `routing_key` is: `#[cfg(fuzzing)] #[doc(hidden)]`.
 

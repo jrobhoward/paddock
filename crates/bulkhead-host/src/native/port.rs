@@ -37,8 +37,20 @@ use bulkhead_native::protocol::FromApp;
 #[derive(Debug)]
 pub(crate) enum Incoming {
     Frame(FromApp),
+    /// A hot frame's keyvalue request (ROADMAP T7).
+    Kv(KvCall),
     /// A frame that could not be read; the app is broken.
     Broken(String),
+}
+
+/// A keyvalue request from a hot frame, copied out of the app's ring.
+#[derive(Debug)]
+pub(crate) struct KvCall {
+    pub(crate) id: u64,
+    pub(crate) bucket: u32,
+    pub(crate) op: bulkhead_native::hot::KvOp,
+    pub(crate) key: String,
+    pub(crate) value: Vec<u8>,
 }
 
 /// How long a process that ended its channel has to exit before it is
@@ -63,6 +75,7 @@ mod linux {
 
     use bulkhead_bundle::manifest::NativeProgram;
     use bulkhead_native::channel::{self, Channel, RING_CAP};
+    use bulkhead_native::hot::FromAppHot;
     use bulkhead_native::protocol::{self, ToApp};
     use tokio::io::AsyncWriteExt;
     use tokio::net::unix::pipe;
@@ -105,6 +118,8 @@ mod linux {
         /// Bytes for the app that did not fit in its ring yet, from
         /// `pending_at`.
         pending: Vec<u8>,
+        /// A hot frame being written, kept between frames (T7).
+        out: Vec<u8>,
         pending_at: usize,
         /// The ring to the app is closed: frames are dropped.
         closed: bool,
@@ -126,6 +141,9 @@ mod linux {
     /// little cheaper and calls between 16 busy instances about 17% slower
     /// (16-core machine, 2026-11-04).
     const WATCH_SLICE: Duration = Duration::from_micros(5);
+
+    /// The largest hot-frame buffer a port keeps between frames.
+    const KEPT_BUFFER: usize = 1 << 20;
 
     thread_local! {
         /// Yields of native instances' waits on this thread (T9).
@@ -287,6 +305,7 @@ mod linux {
                 },
                 pending: Vec::new(),
                 pending_at: 0,
+                out: Vec::new(),
                 closed: false,
                 broken: None,
                 spin: config.spin,
@@ -303,15 +322,44 @@ mod linux {
             if self.closed {
                 return;
             }
-            let bytes = protocol::encode(frame);
+            // A hot frame where the layouts cover it (T7), CBOR otherwise.
+            let mut out = std::mem::take(&mut self.out);
+            out.clear();
+            if bulkhead_native::hot::write_to_app(&mut out, frame).is_some() {
+                self.send_bytes(&out);
+            } else {
+                self.send_bytes(&protocol::encode(frame));
+            }
+            if out.capacity() <= KEPT_BUFFER {
+                self.out = out;
+            }
+        }
+
+        /// Answer a hot frame's keyvalue request, in a hot frame, as
+        /// [`Port::send`] sends.
+        pub(crate) fn send_kv(&mut self, id: u64, reply: &bulkhead_native::hot::KvReply<'_>) {
+            if self.closed {
+                return;
+            }
+            let mut out = std::mem::take(&mut self.out);
+            out.clear();
+            bulkhead_native::hot::write_kv_answer(&mut out, id, reply);
+            self.send_bytes(&out);
+            // A large value's buffer is not kept for the instance's life.
+            if out.capacity() <= KEPT_BUFFER {
+                self.out = out;
+            }
+        }
+
+        fn send_bytes(&mut self, bytes: &[u8]) {
             self.active = Instant::now();
             if self.pending_at < self.pending.len() {
-                self.pending.extend_from_slice(&bytes);
+                self.pending.extend_from_slice(bytes);
                 self.flush();
                 return;
             }
             let ring = self.channel.to_app();
-            let written = match ring.write(&bytes) {
+            let written = match ring.write(bytes) {
                 Ok(n) => n,
                 Err(e) => return self.corrupt(e),
             };
@@ -543,9 +591,21 @@ mod linux {
                 }
             };
             let body = have.get(4..4 + len)?;
-            let next = protocol::decode(body)
-                .map(Incoming::Frame)
-                .unwrap_or_else(|e| Incoming::Broken(e.to_string()));
+            let next = if bulkhead_native::hot::is_hot(body) {
+                bulkhead_native::hot::parse_from_app(body).map(|hot| match hot {
+                    FromAppHot::Kv(f) => Incoming::Kv(super::KvCall {
+                        id: f.id,
+                        bucket: f.bucket,
+                        op: f.op,
+                        key: f.key.to_string(),
+                        value: f.value.to_vec(),
+                    }),
+                    FromAppHot::Frame(frame) => Incoming::Frame(frame),
+                })
+            } else {
+                protocol::decode(body).map(Incoming::Frame)
+            }
+            .unwrap_or_else(|e| Incoming::Broken(e.to_string()));
             input.start += 4 + len;
             if matches!(next, Incoming::Broken(_)) {
                 input.done = true;
@@ -660,6 +720,10 @@ mod elsewhere {
             match self.0 {}
         }
 
+        pub(crate) fn send_kv(&mut self, _id: u64, _reply: &bulkhead_native::hot::KvReply<'_>) {
+            match self.0 {}
+        }
+
         pub(crate) async fn recv(&mut self) -> Option<Incoming> {
             match self.0 {}
         }
@@ -693,6 +757,6 @@ mod elsewhere {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 #[path = "port_tests.rs"]
 mod port_tests;

@@ -8,6 +8,17 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- A native-process app's keyvalue `get`, `set`, `delete` and `exists`
+  cost about half what they did (a `get` 2.1 µs from 4.8 on the 16-core
+  machine), and a call between native instances a third less (8.2 µs
+  from 12.5), with 44 to 56% more calls and casts between instances
+  (ROADMAP T7): these requests, calls, casts, replies and their answers
+  travel in fixed layouts instead of CBOR, and keyvalue requests name a
+  bucket by a handle the app asks for once (`Request::KvOpen`). The
+  protocol is version 5: native apps built against an earlier
+  `bulkhead-native` or `bulkhead-sdk` must be rebuilt.
+  `bulkhead_native::app::Ctx::kv_op` runs one of the four operations on
+  a borrowed bucket name and key.
 - A native-process app's requests cost 12 to 26% less (a bucket `get` about
   5.0 µs from 5.7, 16-core machine, 4 workers) and the node's CPU for one
   busy instance about a third less (ROADMAP T9): inside a

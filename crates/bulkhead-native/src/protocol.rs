@@ -17,14 +17,17 @@
 //! declare: keyvalue ([`Request::Kv`], [`Info::KvChanged`]), groups,
 //! config, secrets and metrics. Version 3 added snapshots
 //! ([`ToApp::SaveSnapshot`], [`ToApp::LoadSnapshot`]), for snapshot
-//! upgrades, passivation and moving a singleton with its state.
+//! upgrades, passivation and moving a singleton with its state. Version 5
+//! added bucket handles ([`Request::KvOpen`]) and the hot frames of
+//! [`hot`](crate::hot): the most frequent keyvalue requests and their
+//! answers in fixed layouts, beside the CBOR frames.
 
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -391,6 +394,12 @@ pub enum Request {
     /// A keyvalue operation (`wasi:keyvalue` and `bulkhead:watch`):
     /// [`Answer::Kv`].
     Kv(KvRequest),
+    /// A handle for a bucket the manifest lists, for the hot frames'
+    /// keyvalue requests: [`Answer::KvOpened`]. Checked as a request
+    /// naming the bucket is; the handle stays valid for the instance's
+    /// life, and a request on a bucket the node no longer configures
+    /// fails as one naming it would.
+    KvOpen(String),
     /// A process groups operation (`bulkhead:groups`): [`Answer::Groups`].
     Groups(GroupsRequest),
     /// A configuration value (`wasi:config`): [`Answer::Config`].
@@ -738,6 +747,8 @@ pub enum Answer {
     Registered(Result<(), RegisterError>),
     /// A keyvalue operation's outcome.
     Kv(Result<KvAnswer, KvError>),
+    /// A bucket's handle, or why it does not open.
+    KvOpened(Result<u32, KvError>),
     /// A groups operation's outcome.
     Groups(Result<GroupsAnswer, GroupsError>),
     /// A configuration value, if set.

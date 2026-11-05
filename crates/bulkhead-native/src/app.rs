@@ -49,6 +49,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 #[cfg(target_os = "linux")]
 use crate::channel::{AppEnd, FromNode, ToNode};
 
+use crate::hot::KvOp;
 use crate::protocol::{
     self, Answer, Bytes, CallError, ConfigError, Envelope, ExitReason, FdRef, FromApp,
     GroupsAnswer, GroupsError, GroupsRequest, Info, KvAnswer, KvError, KvRequest, Level,
@@ -119,14 +120,44 @@ static END: OnceLock<AppEnd> = OnceLock::new();
 #[cfg(target_os = "linux")]
 static SENDING: Mutex<()> = Mutex::new(());
 
+#[cfg(target_os = "linux")]
+thread_local! {
+    /// A hot frame being sent from this thread, kept between frames.
+    static HOT_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Send an encoded frame to the node, as [`send`] does.
+#[cfg(target_os = "linux")]
+fn send_bytes(frame: &[u8]) {
+    use std::io::Write;
+
+    if let Some(end) = END.get() {
+        let _one = SENDING.lock().unwrap_or_else(PoisonError::into_inner);
+        // A broken ring means the node broke it; it ends this process.
+        let _ = ToNode(end).write_all(frame);
+    }
+}
+
 /// Send one frame to the node. Without a node (before [`serve`]) a log
 /// record goes to stderr and anything else is dropped.
 fn send(frame: &FromApp) {
     #[cfg(target_os = "linux")]
-    if let Some(end) = END.get() {
-        let _one = SENDING.lock().unwrap_or_else(PoisonError::into_inner);
-        // A broken ring means the node broke it; it ends this process.
-        let _ = protocol::write(&mut ToNode(end), frame);
+    if END.get().is_some() {
+        // A hot frame where the layouts cover it (ROADMAP T7), written into
+        // this thread's buffer; CBOR otherwise.
+        let hot = HOT_OUT.with(|out| {
+            let mut out = out.borrow_mut();
+            out.clear();
+            crate::hot::write_from_app(&mut out, frame)?;
+            send_bytes(&out);
+            if out.capacity() > KEPT_BUFFER {
+                *out = Vec::new();
+            }
+            Some(())
+        });
+        if hot.is_none() {
+            send_bytes(&protocol::encode(frame));
+        }
         return;
     }
     if let FromApp::Log { level, message } = frame {
@@ -156,6 +187,18 @@ struct Conn {
     /// reaches that revision, so it reads its own writes.
     #[cfg(target_os = "linux")]
     written: HashMap<String, u64>,
+    /// Bucket handles the node gave (ROADMAP T7), by bucket name.
+    #[cfg(target_os = "linux")]
+    handles: HashMap<String, u32>,
+    /// The last frame read from the node, in `inbuf[..in_len]`; kept
+    /// between frames so reading one allocates nothing.
+    #[cfg(target_os = "linux")]
+    inbuf: Vec<u8>,
+    #[cfg(target_os = "linux")]
+    in_len: usize,
+    /// A hot frame being written, kept between frames.
+    #[cfg(target_os = "linux")]
+    out: Vec<u8>,
 }
 
 /// A published bucket's snapshot, mapped.
@@ -182,24 +225,93 @@ fn with_conn<R>(f: impl FnOnce(&mut Conn) -> R) -> R {
 /// The node's next frame, answering pings on the way; the end of the
 /// channel means the node stopped this instance, and the process exits.
 fn next_frame() -> ToApp {
+    match next() {
+        Next::Frame(frame) => frame,
+        #[cfg(target_os = "linux")]
+        Next::Hot => protocol_error("a hot frame where none was asked for"),
+    }
+}
+
+/// What [`next`] read.
+// Read only from a node's channel, on Linux: elsewhere `next` has none.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+enum Next {
+    /// A CBOR frame.
+    Frame(ToApp),
+    /// A hot frame, left in the connection's `inbuf[..in_len]`.
+    #[cfg(target_os = "linux")]
+    Hot,
+}
+
+/// The node's next frame, answering pings and adopting snapshots on the
+/// way.
+fn next() -> Next {
     with_conn(|_| ());
     #[cfg(target_os = "linux")]
     if let Some(end) = END.get() {
         loop {
-            match protocol::read::<ToApp>(&mut FromNode(end)) {
-                Ok(Some(ToApp::Ping { id })) => send(&FromApp::Pong { id }),
-                Ok(Some(ToApp::Published {
+            match with_conn(|conn| read_frame(end, conn)) {
+                Ok(true) => {}
+                Ok(false) => gone(),
+                Err(e) => protocol_error(&e.to_string()),
+            }
+            let hot = with_conn(|conn| {
+                let body = &conn.inbuf[..conn.in_len];
+                crate::hot::is_hot(body).then(|| match crate::hot::parse_to_app(body) {
+                    Ok(crate::hot::ToAppHot::Kv(..)) => Ok(None),
+                    Ok(crate::hot::ToAppHot::Frame(frame)) => Ok(Some(frame)),
+                    Err(e) => Err(e),
+                })
+            });
+            match hot {
+                Some(Ok(None)) => return Next::Hot,
+                Some(Ok(Some(frame))) => return Next::Frame(frame),
+                Some(Err(e)) => protocol_error(&e.to_string()),
+                None => {}
+            }
+            match with_conn(|conn| protocol::decode::<ToApp>(&conn.inbuf[..conn.in_len])) {
+                Ok(ToApp::Ping { id }) => send(&FromApp::Pong { id }),
+                Ok(ToApp::Published {
                     bucket,
                     revision,
                     fd,
-                })) => adopt(bucket, revision, fd),
-                Ok(Some(frame)) => return frame,
-                Ok(None) => gone(),
+                }) => adopt(bucket, revision, fd),
+                Ok(frame) => return Next::Frame(frame),
                 Err(e) => protocol_error(&e.to_string()),
             }
         }
     }
     protocol_error("no channel to the node")
+}
+
+/// Read one frame's body into `conn.inbuf[..conn.in_len]`, growing the
+/// buffer only past the longest frame so far; `false` at the end of the
+/// channel.
+#[cfg(target_os = "linux")]
+fn read_frame(end: &AppEnd, conn: &mut Conn) -> Result<bool, protocol::FrameError> {
+    use std::io::Read;
+
+    use protocol::FrameError;
+
+    let mut prefix = [0u8; 4];
+    let mut from = FromNode(end);
+    match from.read_exact(&mut prefix) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(false),
+        Err(e) => return Err(FrameError::Io(e)),
+    }
+    let len = protocol::frame_len(prefix)?;
+    if conn.inbuf.len() > KEPT_BUFFER && len <= KEPT_BUFFER {
+        // A large frame's buffer is not kept for the instance's life.
+        conn.inbuf = Vec::new();
+    }
+    if conn.inbuf.len() < len {
+        conn.inbuf.resize(len, 0);
+    }
+    from.read_exact(&mut conn.inbuf[..len])
+        .map_err(FrameError::Io)?;
+    conn.in_len = len;
+    Ok(true)
 }
 
 /// Map a published bucket's new snapshot in place of the one before. One
@@ -383,8 +495,9 @@ impl Ctx {
 
     /// A keyvalue bucket the manifest lists (the app's own, or a shared
     /// one its grant includes). Each operation is one request to the
-    /// node, about 13 µs on a Raspberry Pi 5: read many keys with
-    /// [`Bucket::get_many`] or [`Bucket::scan`] rather than one at a time.
+    /// node, about 2 to 3.5 µs for a `get`, `set` or `delete` on a 16-core
+    /// machine (2026-11-04): read many keys with [`Bucket::get_many`] or
+    /// [`Bucket::scan`] rather than one at a time.
     pub fn bucket(&mut self, name: impl Into<String>) -> Bucket<'_> {
         Bucket {
             ctx: self,
@@ -546,6 +659,25 @@ impl Ctx {
         kv(self, request)
     }
 
+    /// A `get`, `set`, `delete` or `exists` on a borrowed bucket name and
+    /// key, for an SDK that wraps the operations itself: as [`Ctx::kv`]
+    /// with the matching [`KvRequest`], without building it. `value` is
+    /// the value to set, ignored by the other operations. The answer is
+    /// [`KvAnswer::Value`], [`KvAnswer::Unit`] or [`KvAnswer::Exists`].
+    ///
+    /// # Errors
+    ///
+    /// The [`KvError`] the node answers.
+    pub fn kv_op(
+        &mut self,
+        bucket: &str,
+        op: KvOp,
+        key: &str,
+        value: &[u8],
+    ) -> Result<KvAnswer, KvError> {
+        kv_op(self, bucket, op, key, value)
+    }
+
     /// End a watch; notices for it still queued are dropped.
     ///
     /// # Errors
@@ -556,8 +688,150 @@ impl Ctx {
     }
 }
 
+/// The largest frame buffer kept between frames; a larger one is
+/// released once a smaller frame follows.
+#[cfg(target_os = "linux")]
+const KEPT_BUFFER: usize = 1 << 20;
+
 /// One keyvalue request.
 fn kv(ctx: &mut Ctx, request: KvRequest) -> Result<KvAnswer, KvError> {
+    let hot = match &request {
+        KvRequest::Get { bucket, key } => Some((bucket, KvOp::Get, key, &[][..])),
+        KvRequest::Set { bucket, key, value } => Some((bucket, KvOp::Set, key, &value.0[..])),
+        KvRequest::Delete { bucket, key } => Some((bucket, KvOp::Delete, key, &[][..])),
+        KvRequest::Exists { bucket, key } => Some((bucket, KvOp::Exists, key, &[][..])),
+        _ => None,
+    };
+    if let Some((bucket, op, key, value)) = hot {
+        return kv_op(ctx, bucket, op, key, value);
+    }
+    kv_cold(ctx, request)
+}
+
+/// One of the hot frames' keyvalue operations, by bucket name: read from a
+/// published snapshot when it can be, otherwise one hot frame to the node
+/// on the bucket's handle (opened on first use), or CBOR for a key or value
+/// too long for the hot layout.
+fn kv_op(
+    ctx: &mut Ctx,
+    bucket: &str,
+    op: KvOp,
+    key: &str,
+    value: &[u8],
+) -> Result<KvAnswer, KvError> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(answer) = published_key_read(bucket, op, key) {
+            return Ok(answer);
+        }
+        let result = hot_request(ctx, bucket, op, key, value);
+        if op != KvOp::Get
+            && op != KvOp::Exists
+            && result.is_ok()
+            && with_conn(|conn| conn.published.contains_key(bucket))
+        {
+            note_write(ctx, bucket.to_string());
+        }
+        result
+    }
+    #[cfg(not(target_os = "linux"))]
+    kv_cold(ctx, cold_request(bucket, op, key, value))
+}
+
+/// A hot keyvalue operation as the CBOR request it stands for.
+fn cold_request(bucket: &str, op: KvOp, key: &str, value: &[u8]) -> KvRequest {
+    let (bucket, key) = (bucket.to_string(), key.to_string());
+    match op {
+        KvOp::Get => KvRequest::Get { bucket, key },
+        KvOp::Set => KvRequest::Set {
+            bucket,
+            key,
+            value: Bytes::from(value),
+        },
+        KvOp::Delete => KvRequest::Delete { bucket, key },
+        KvOp::Exists => KvRequest::Exists { bucket, key },
+    }
+}
+
+/// The bucket's handle, asked of the node the first time; a bucket that
+/// does not open is asked again next time (its error is the operation's).
+#[cfg(target_os = "linux")]
+fn handle(ctx: &mut Ctx, bucket: &str) -> Result<u32, KvError> {
+    if let Some(h) = with_conn(|conn| conn.handles.get(bucket).copied()) {
+        return Ok(h);
+    }
+    match ctx.request(Request::KvOpen(bucket.to_string())) {
+        Answer::KvOpened(Ok(h)) => {
+            with_conn(|conn| conn.handles.insert(bucket.to_string(), h));
+            Ok(h)
+        }
+        Answer::KvOpened(Err(e)) => Err(e),
+        other => unexpected(&other),
+    }
+}
+
+/// One hot keyvalue request and its answer: the frame written into the
+/// connection's buffer, the answer read from it, a value copied out once.
+#[cfg(target_os = "linux")]
+fn hot_request(
+    ctx: &mut Ctx,
+    bucket: &str,
+    op: KvOp,
+    key: &str,
+    value: &[u8],
+) -> Result<KvAnswer, KvError> {
+    use crate::hot::{KvFrame, KvReply};
+
+    let handle = handle(ctx, bucket)?;
+    let id = with_conn(|conn| {
+        conn.next_id += 1;
+        conn.next_id
+    });
+    let frame = KvFrame {
+        id,
+        bucket: handle,
+        op,
+        key,
+        value,
+    };
+    let written = with_conn(|conn| {
+        conn.out.clear();
+        crate::hot::write_kv_request(&mut conn.out, &frame)?;
+        if conn.out.capacity() > KEPT_BUFFER {
+            // As for the frames read: not kept for the instance's life.
+            send_bytes(&std::mem::take(&mut conn.out));
+        } else {
+            send_bytes(&conn.out);
+        }
+        Some(())
+    });
+    if written.is_none() {
+        return kv_cold(ctx, cold_request(bucket, op, key, value));
+    }
+    match next() {
+        Next::Hot => {
+            with_conn(
+                |conn| match crate::hot::parse_kv_answer(&conn.inbuf[..conn.in_len]) {
+                    Ok((got, reply)) if got == id => Ok(match reply {
+                        KvReply::Value(v) => KvAnswer::Value(v.map(Bytes::from)),
+                        KvReply::Unit => KvAnswer::Unit,
+                        KvReply::Exists(e) => KvAnswer::Exists(e),
+                    }),
+                    Ok((got, _)) => protocol_error(&format!("expected answer {id}, got {got}")),
+                    Err(e) => protocol_error(&e.to_string()),
+                },
+            )
+        }
+        Next::Frame(ToApp::Answer {
+            id: got,
+            answer: Answer::Kv(result),
+        }) if got == id => result,
+        Next::Frame(other) => protocol_error(&format!("expected answer {id}, got {other:?}")),
+    }
+}
+
+/// A keyvalue request sent as CBOR.
+fn kv_cold(ctx: &mut Ctx, request: KvRequest) -> Result<KvAnswer, KvError> {
     #[cfg(target_os = "linux")]
     if let Some(answer) = published_read(&request) {
         return Ok(answer);
@@ -579,12 +853,42 @@ fn kv(ctx: &mut Ctx, request: KvRequest) -> Result<KvAnswer, KvError> {
 /// bucket, from its snapshot, unless this instance wrote past it.
 #[cfg(target_os = "linux")]
 fn published_read(request: &KvRequest) -> Option<KvAnswer> {
-    let bucket = match request {
-        KvRequest::Get { bucket, .. }
-        | KvRequest::GetMany { bucket, .. }
-        | KvRequest::Exists { bucket, .. } => bucket,
-        _ => return None,
-    };
+    match request {
+        KvRequest::Get { bucket, key } => published_key_read(bucket, KvOp::Get, key),
+        KvRequest::Exists { bucket, key } => published_key_read(bucket, KvOp::Exists, key),
+        KvRequest::GetMany { bucket, keys } => with_snapshot(bucket, |snap| {
+            KvAnswer::Values(
+                keys.iter()
+                    .map(|k| snap.get(k.as_bytes()).map(Bytes::from))
+                    .collect(),
+            )
+        }),
+        _ => None,
+    }
+}
+
+/// A `get` or `exists` of a published bucket, from its snapshot, unless
+/// this instance wrote past it.
+#[cfg(target_os = "linux")]
+fn published_key_read(bucket: &str, op: KvOp, key: &str) -> Option<KvAnswer> {
+    match op {
+        KvOp::Get => with_snapshot(bucket, |snap| {
+            KvAnswer::Value(snap.get(key.as_bytes()).map(Bytes::from))
+        }),
+        KvOp::Exists => with_snapshot(bucket, |snap| {
+            KvAnswer::Exists(snap.get(key.as_bytes()).is_some())
+        }),
+        KvOp::Set | KvOp::Delete => None,
+    }
+}
+
+/// `f` on the snapshot `bucket` is read from, if it is published and this
+/// instance did not write past it.
+#[cfg(target_os = "linux")]
+fn with_snapshot(
+    bucket: &str,
+    f: impl FnOnce(&crate::snapshot::Snapshot<'_>) -> KvAnswer,
+) -> Option<KvAnswer> {
     with_conn(|conn| {
         let published = conn.published.get(bucket)?;
         if conn
@@ -595,15 +899,7 @@ fn published_read(request: &KvRequest) -> Option<KvAnswer> {
             return None;
         }
         let snap = crate::snapshot::Snapshot::parse(published.mapped.bytes()).ok()?;
-        let value = |key: &str| snap.get(key.as_bytes()).map(|v| Bytes(v.to_vec()));
-        Some(match request {
-            KvRequest::Get { key, .. } => KvAnswer::Value(value(key)),
-            KvRequest::Exists { key, .. } => KvAnswer::Exists(snap.get(key.as_bytes()).is_some()),
-            KvRequest::GetMany { keys, .. } => {
-                KvAnswer::Values(keys.iter().map(|k| value(k)).collect())
-            }
-            _ => return None,
-        })
+        Some(f(&snap))
     })
 }
 
@@ -635,6 +931,32 @@ fn note_write(ctx: &mut Ctx, bucket: String) {
         _ => u64::MAX,
     };
     with_conn(|conn| conn.written.insert(bucket, after));
+}
+
+/// A `get` on bucket handle `handle` as given, opened or not: for tests
+/// of the node's checks on handles.
+///
+/// # Errors
+///
+/// The [`KvError`] the node answers.
+#[doc(hidden)]
+pub fn get_on_handle_for_tests(handle: u32, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+    #[cfg(target_os = "linux")]
+    {
+        const NAME: &str = "\0handle under test";
+        with_conn(|conn| conn.handles.insert(NAME.to_string(), handle));
+        let got = hot_request(&mut Ctx::current(), NAME, KvOp::Get, key, &[]);
+        with_conn(|conn| conn.handles.remove(NAME));
+        match got? {
+            KvAnswer::Value(v) => Ok(v.map(|b| b.0)),
+            other => unexpected_kv(&other),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (handle, key);
+        Err(KvError::Other("linux only".into()))
+    }
 }
 
 /// The revision of the snapshot this instance reads `bucket` from, if it
@@ -692,8 +1014,7 @@ impl Bucket<'_> {
     ///
     /// As for [`Bucket`].
     pub fn get(&mut self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
-        let (bucket, key) = (self.bucket(), key.to_string());
-        match self.kv(KvRequest::Get { bucket, key })? {
+        match kv_op(self.ctx, &self.name, KvOp::Get, key, &[])? {
             KvAnswer::Value(v) => Ok(v.map(|b| b.0)),
             other => unexpected_kv(&other),
         }
@@ -705,9 +1026,7 @@ impl Bucket<'_> {
     ///
     /// As for [`Bucket`]; [`KvError::Other`] over the bucket's quota.
     pub fn set(&mut self, key: &str, value: &[u8]) -> Result<(), KvError> {
-        let (bucket, key) = (self.bucket(), key.to_string());
-        let value = Bytes::from(value);
-        self.kv(KvRequest::Set { bucket, key, value }).map(|_| ())
+        kv_op(self.ctx, &self.name, KvOp::Set, key, value).map(|_| ())
     }
 
     /// Delete a key; deleting a missing key succeeds.
@@ -716,8 +1035,7 @@ impl Bucket<'_> {
     ///
     /// As for [`Bucket`].
     pub fn delete(&mut self, key: &str) -> Result<(), KvError> {
-        let (bucket, key) = (self.bucket(), key.to_string());
-        self.kv(KvRequest::Delete { bucket, key }).map(|_| ())
+        kv_op(self.ctx, &self.name, KvOp::Delete, key, &[]).map(|_| ())
     }
 
     /// Whether a key exists.
@@ -726,8 +1044,7 @@ impl Bucket<'_> {
     ///
     /// As for [`Bucket`].
     pub fn exists(&mut self, key: &str) -> Result<bool, KvError> {
-        let (bucket, key) = (self.bucket(), key.to_string());
-        match self.kv(KvRequest::Exists { bucket, key })? {
+        match kv_op(self.ctx, &self.name, KvOp::Exists, key, &[])? {
             KvAnswer::Exists(e) => Ok(e),
             other => unexpected_kv(&other),
         }
@@ -1051,6 +1368,14 @@ pub fn serve<A: App>() -> ExitCode {
             published: HashMap::new(),
             #[cfg(target_os = "linux")]
             written: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            handles: HashMap::new(),
+            #[cfg(target_os = "linux")]
+            inbuf: Vec::new(),
+            #[cfg(target_os = "linux")]
+            in_len: 0,
+            #[cfg(target_os = "linux")]
+            out: Vec::new(),
         });
     });
     let mut ctx = Ctx::current();

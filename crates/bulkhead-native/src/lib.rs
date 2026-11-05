@@ -5,6 +5,7 @@
 //! shared memory): an Erlang-style port.
 //!
 //! - [`protocol`]: the frames both sides exchange.
+//! - [`hot`]: the most frequent of them in fixed layouts, beside CBOR.
 //! - [`snapshot`]: a published bucket's snapshot, which apps map and read.
 //! - `channel` (feature `channel`, Linux): the shared-memory rings they
 //!   travel over, and the socket descriptors are passed on.
@@ -14,6 +15,7 @@
 //!   that restricts itself and then loads a rustbridge plugin or executes
 //!   the app.
 
+pub mod hot;
 pub mod protocol;
 pub mod snapshot;
 
