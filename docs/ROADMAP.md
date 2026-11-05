@@ -349,8 +349,15 @@ Items, in order:
   - Areas: transport (wire, frames, pending calls), delivery, simulation tests.
 - [ ] **I4 Costs** (S). `batch_cost` and `cluster_throughput` gain `try_cast` and `cast_timeout` next to `cast`, natively, within a node, between two node processes and between the two machines. Measure what a waited cast costs against a plain one, and check that every waited cast reported `Ok` arrived. BASELINE.md. Areas: benchmarks.
 - [ ] **I5 Docs** (S). WRITING_APPS.md: which send for which data (`cast`, `try_cast`, `cast_timeout`, `call`, a batched `call`), what accepted means, and the ambiguous timeout between nodes. DESIGN.md: "Backpressure between nodes" and the delivery rules ("A `cast` that cannot be delivered ... is dropped without telling the sender") gain the waited sends, and "Senders are never blocked" becomes "never blocked unless they ask, with a timeout". ARCHITECTURE.md's cast bullets, GLOSSARY.md, PADDOCK.md's differences. Areas: docs.
+- [ ] **I6 A byte limit on mailboxes** (S). `mailbox_max` counts messages, so the node's memory for one slow consumer is bounded only by `mailbox_max × message_max_bytes`, about 10 GiB with the defaults (10,000 × 1 MiB).
+  - **The limit:** a new manifest limit, `mailbox_max_bytes`, on the bodies of the messages queued: casts, calls and timer messages. Replies do not count, since they go straight to the caller. A message that would take the mailbox past it gets the rule for a full mailbox: a cast is dropped and counted, a call fails at once with `overloaded`.
+  - **Default:** 64 MiB, the same as a link's `send_buffer_bytes`. With 10,000 instances that is still a lot of memory in the worst case; a node-wide limit is not planned until a workload needs one.
+  - **Checked:** a manifest whose `mailbox_max_bytes` is below its `message_max_bytes` is refused, so every message that may be sent fits an empty mailbox.
+  - **How:** a byte semaphore beside the mailbox channel. A send takes the body's bytes from it before `try_send`, and the instance task gives them back when it takes the message. tokio's semaphore serves waiters in arrival order, so I2's waited cast waits on it with `acquire_many` under the timeout.
+  - **Seen:** the bytes queued per instance (`bulkhead_mailbox_bytes`), and drops for bytes counted under `bulkhead_mailbox_dropped_total` with the rest.
+  - Areas: manifest limits, instance, metrics, MANIFEST.md, OBSERVABILITY.md.
 
-Order: I1 to I5, independent of the T items; I1 and I2 share their plumbing and can land as one change.
+Order: I1, then I6, then I2 to I5. They are independent of the T items. I6 goes before I2 so a waited cast waits for both the count and the bytes in one place; I1 can land with either.
 
 ### Z8: native parity
 
