@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use crate::envelope::Envelope;
 use crate::host::process;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+use crate::types::CastError;
 use crate::types::{CallError, CallRef, ExitReason, MonitorRef, Pid, RegisterError, TimerRef};
 
 /// Messaging, links, monitors, timers and the registry, passed to every
@@ -29,6 +31,20 @@ impl Ctx {
     /// dropped silently.
     pub fn cast(&mut self, to: Pid, msg: Envelope) {
         process::cast(to.into(), &msg.into());
+    }
+
+    /// [`Ctx::cast`], saying whether the message was queued: in the
+    /// target's mailbox, or, for an instance on another node, on the link
+    /// to that node (not yet in its mailbox). It costs what a cast does.
+    /// Native programs only: a component's cast is not told.
+    ///
+    /// # Errors
+    ///
+    /// [`CastError`] for a dead pid, an unreachable node, a full mailbox
+    /// or link, an oversized body, or a messaging ACL that refuses it.
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    pub fn try_cast(&mut self, to: Pid, msg: Envelope) -> Result<(), CastError> {
+        process::try_cast(to.into(), &msg.into()).map_err(Into::into)
     }
 
     /// Send and wait for the reply. This instance handles no other message

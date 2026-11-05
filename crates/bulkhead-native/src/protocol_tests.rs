@@ -19,6 +19,7 @@ fn pid() -> Pid {
 #[case(ToApp::Call { call_ref: 9, msg: Envelope::new("text/plain", b"hi".to_vec()) })]
 #[case(ToApp::Info { info: Info::Down { reference: 3, pid: pid(), reason: ExitReason::Crashed("boom".into()) } })]
 #[case(ToApp::Answer { id: 4, answer: Answer::Called(Err(CallError::Exited(ExitReason::Timeout))) })]
+#[case(ToApp::Answer { id: 5, answer: Answer::CastFailed(CastError::Overloaded) })]
 #[case(ToApp::Ping { id: 5 })]
 #[case(ToApp::LoadSnapshot { from_version: "1.0.0".into(), snapshot: vec![0, 255] })]
 #[case(ToApp::SaveSnapshot)]

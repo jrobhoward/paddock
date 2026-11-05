@@ -272,10 +272,10 @@ async fn answer(state: &mut InstanceState, request: Request) -> Result<Answer, S
     Ok(match request {
         Request::SelfPid => Answer::Pid(convert::from_wit_pid(state.self_().await.map_err(e)?)),
         Request::Cast { to, msg } => {
-            Host::cast(state, convert::wit_pid(to), convert::wit_envelope(msg))
-                .await
-                .map_err(e)?;
-            Answer::Unit
+            match state.try_cast(convert::host_pid(to), convert::host_envelope(msg)) {
+                Ok(()) => Answer::Unit,
+                Err(err) => Answer::CastFailed(convert::cast_error(&err)),
+            }
         }
         Request::Call {
             to,

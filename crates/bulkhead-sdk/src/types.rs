@@ -188,6 +188,50 @@ impl From<wit::CallError> for CallError {
     }
 }
 
+/// Why a cast was dropped ([`Ctx::try_cast`](crate::Ctx::try_cast)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CastError {
+    /// No instance has that pid.
+    Noproc,
+    /// Its node is unreachable.
+    Noconnection,
+    /// Its mailbox is full, or the link to its node is over its budget.
+    Overloaded,
+    /// The body is over its `message_max_bytes`.
+    TooLarge,
+    /// Its messaging ACL refused the cast.
+    AccessDenied,
+}
+
+impl fmt::Display for CastError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Noproc => "noproc",
+            Self::Noconnection => "noconnection",
+            Self::Overloaded => "overloaded",
+            Self::TooLarge => "too large",
+            Self::AccessDenied => "access denied",
+        })
+    }
+}
+
+impl std::error::Error for CastError {}
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+impl From<bulkhead_native::protocol::CastError> for CastError {
+    fn from(e: bulkhead_native::protocol::CastError) -> Self {
+        use bulkhead_native::protocol::CastError as P;
+        match e {
+            P::Noproc => Self::Noproc,
+            P::Noconnection => Self::Noconnection,
+            P::Overloaded => Self::Overloaded,
+            P::TooLarge => Self::TooLarge,
+            P::AccessDenied => Self::AccessDenied,
+        }
+    }
+}
+
 /// Why `register` failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegisterError {

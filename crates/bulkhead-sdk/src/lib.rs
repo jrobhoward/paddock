@@ -126,7 +126,9 @@ pub use bulkhead_sdk_macros::Snapshot;
 pub use ctx::Ctx;
 pub use envelope::{CBOR, Envelope, JSON, MessageError, TEXT};
 pub use snapshot::Snapshot;
-pub use types::{CallError, CallRef, ExitReason, Info, MonitorRef, Pid, RegisterError, TimerRef};
+pub use types::{
+    CallError, CallRef, CastError, ExitReason, Info, MonitorRef, Pid, RegisterError, TimerRef,
+};
 
 #[doc(hidden)]
 pub mod __private {

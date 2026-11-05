@@ -20,14 +20,16 @@
 //! upgrades, passivation and moving a singleton with its state. Version 5
 //! added bucket handles ([`Request::KvOpen`]) and the hot frames of
 //! [`hot`](crate::hot): the most frequent keyvalue requests and their
-//! answers in fixed layouts, beside the CBOR frames.
+//! answers in fixed layouts, beside the CBOR frames. Version 6 answers a
+//! cast that was not queued with [`Answer::CastFailed`] instead of
+//! [`Answer::Unit`], so an app can learn why (ROADMAP I1).
 
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -189,6 +191,21 @@ pub enum CallError {
     Exited(ExitReason),
 }
 
+/// Why a cast was not queued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CastError {
+    /// No such instance.
+    Noproc,
+    /// Its node is not reachable.
+    Noconnection,
+    /// Its mailbox is full, or the link to its node is over its budget.
+    Overloaded,
+    /// The message is over the target's limit.
+    TooLarge,
+    /// The target's messaging ACL refuses this app.
+    AccessDenied,
+}
+
 /// Why a name could not be registered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegisterError {
@@ -338,7 +355,9 @@ pub enum FromApp {
 pub enum Request {
     /// This instance's pid: [`Answer::Pid`].
     SelfPid,
-    /// Send a message without waiting: [`Answer::Unit`].
+    /// Send a message without waiting: [`Answer::Unit`] once it is
+    /// queued (in the target's mailbox, or for another node on the link to
+    /// it), [`Answer::CastFailed`] if it was dropped.
     Cast {
         /// To whom.
         to: Pid,
@@ -743,6 +762,8 @@ pub enum Answer {
     Ref(u64),
     /// A call's reply or error.
     Called(Result<Envelope, CallError>),
+    /// Why a cast was dropped.
+    CastFailed(CastError),
     /// A registration's outcome.
     Registered(Result<(), RegisterError>),
     /// A keyvalue operation's outcome.

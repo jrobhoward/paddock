@@ -126,6 +126,11 @@ pub(crate) mod native {
             Ctx::current().cast(pid(to), envelope(msg));
         }
 
+        /// No WIT counterpart: native programs only (ROADMAP I1).
+        pub(crate) fn try_cast(to: wit::Pid, msg: &wit::Envelope) -> Result<(), p::CastError> {
+            Ctx::current().try_cast(pid(to), envelope(msg))
+        }
+
         pub(crate) fn call(
             to: wit::Pid,
             msg: &wit::Envelope,

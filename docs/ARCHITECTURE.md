@@ -123,7 +123,7 @@ sequenceDiagram
 
 - **The caller waits inside its callback,** as a `gen_server:call` does. Its instance task is busy answering the request, so the caller takes no other message until the reply, a timeout or an error (`noproc`, `overloaded`, `too-large`, `access-denied`, `exited`). The wait is host time: the caller's callback deadline does not count it.
 - **A later reply:** the target answers `Reply(None)` and keeps `call_ref`. In any later callback it sends `Request Reply{call_ref, msg}`, and its instance task completes the oneshot it kept. A reply after the caller's timeout is dropped.
-- **A cast** is `Request Cast{to, msg}`: `delivery::cast` queues it in the target's mailbox, and the caller gets `Answer Unit` at once, whether it was queued or dropped (a full mailbox, a dead pid). The target's task hands it on as `Cast{msg}`, and the app answers `Done`.
+- **A cast** is `Request Cast{to, msg}`: `delivery::cast` queues it in the target's mailbox, and the caller gets `Answer Unit` at once if it was queued, or `Answer CastFailed` with the reason if it was dropped (a full mailbox, a dead pid). `cast` ignores the answer; `try_cast` returns it. The target's task hands it on as `Cast{msg}`, and the app answers `Done`.
 - **What each message costs:** two requests and two copies through rings, besides the mailbox. About 13 µs at p50 for a call between two native instances on one node, on the 16-core machine and the Raspberry Pi 5, against 5 to 7 µs for components (BASELINE.md, T5, 2026-11-01).
 
 ### Between nodes

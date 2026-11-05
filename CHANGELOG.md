@@ -63,6 +63,17 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `Ctx::try_cast` in the SDK and `bulkhead_native::app::Ctx::try_cast`
+  (ROADMAP I1): a cast that says whether it was queued, `Ok`, or why it
+  was dropped, `CastError` (`Noproc`, `Noconnection`, `Overloaded` for a
+  full mailbox or a link to another node over its budget, `TooLarge`,
+  `AccessDenied`). For an instance on another node, `Ok` means the link
+  took it, not yet its mailbox. Native programs only: a component's cast
+  is still not told. It costs what a cast does. The node answers a cast
+  it dropped with `Answer::CastFailed`, so the native protocol is version
+  6: native apps built against an earlier `bulkhead-native` or
+  `bulkhead-sdk` must be rebuilt. The conformance app answers
+  `try-cast:<pid>:<command>`.
 - Published buckets (ROADMAP T4): a shared bucket with `publish_ms` in its
   `[buckets.<name>]` node config is checked for changes that often, and
   each change's snapshot (a sealed memfd) is passed to every native

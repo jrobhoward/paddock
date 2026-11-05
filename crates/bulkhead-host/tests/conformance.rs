@@ -350,6 +350,59 @@ async fn guest_call_and_cast____to_another_instance____reply_and_delivery() {
     b.kill();
 }
 
+/// A spec for `app` changed by `change`, for a case that needs a limit of
+/// its own.
+fn start_with(app: &str, change: impl FnOnce(&mut InstanceSpec)) -> InstanceHandle {
+    let (rt, loaded) = shared();
+    let mut s = spec(app, "");
+    change(&mut s);
+    rt.spawn(loaded, s).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn try_cast____each_outcome____says_whether_it_was_queued() {
+    // A component's cast is not told (ROADMAP I1): native programs only.
+    if !native() {
+        return;
+    }
+    let a = up("c-try-cast", "").await;
+    let b = up("c-try-cast", "").await;
+    let small = start_with("c-try-cast-small", |s| s.message_max_bytes = 4);
+    let full = start_with("c-try-cast-full", |s| s.mailbox_max = 1);
+    let closed = start_with("c-try-cast-closed", |s| {
+        s.acl.accept_from = vec!["someone-else".into()];
+    });
+    let stuck = up("c-try-cast", "").await;
+    // `full` waits in a call that is never answered, its mailbox empty.
+    full.cast(text(&format!("call:{}:3000:noreply", pid(&stuck))))
+        .unwrap();
+    let deadline = Instant::now() + LONG;
+    while full.queued() > 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let queued = ask(&a, &format!("try-cast:{}:note:from-a", pid(&b))).await;
+    let notes = ask_until(&b, "notes", |n| !n.is_empty()).await;
+    let dead = ask(&a, "try-cast:0.999999.1@0:note:x").await;
+    let elsewhere = ask(&a, "try-cast:77.1.1@0:note:x").await;
+    let too_large = ask(&a, &format!("try-cast:{}:note:too-long", pid(&small))).await;
+    let refused = ask(&a, &format!("try-cast:{}:note:x", pid(&closed))).await;
+    let fills = ask(&a, &format!("try-cast:{}:note:x", pid(&full))).await;
+    let overloaded = ask(&a, &format!("try-cast:{}:note:x", pid(&full))).await;
+
+    assert_eq!(queued, "ok");
+    assert_eq!(notes, "from-a");
+    assert_eq!(dead, "err:noproc");
+    assert_eq!(elsewhere, "err:noconnection");
+    assert_eq!(too_large, "err:too-large");
+    assert_eq!(refused, "err:access-denied");
+    assert_eq!(fills, "ok");
+    assert_eq!(overloaded, "err:overloaded");
+    for h in [a, b, small, full, closed, stuck] {
+        h.kill();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn self____pid____as_the_host_writes_it() {
     let h = up("c-self", "").await;

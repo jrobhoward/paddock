@@ -40,6 +40,10 @@
 //! - `call:<pid>:<timeout-ms>:<command>`: call `<pid>` with `<command>`;
 //!   `ok:<reply body>` or `err:<call error>`.
 //! - `cast:<pid>:<command>`: cast `<command>`; `sent`.
+//! - `try-cast:<pid>:<command>`: cast `<command>` and say whether it was
+//!   queued: `ok`, or `err:<cast error>` (`noproc`, `noconnection`,
+//!   `overloaded`, `too-large` or `access-denied`). A component is not
+//!   told, so it answers `err:unsupported`; the case runs natively only.
 //! - `register:<name>`: `ok`, `err:access-denied` or `err:taken:<pid>`.
 //!   `whereis:<name>`: the pid or `none`.
 //! - `timer:<ms>:<text>`: a timer carrying `<text>`; its reference.
@@ -185,6 +189,28 @@ fn show_call_error(err: &CallError) -> String {
         CallError::AccessDenied => "access-denied".into(),
         CallError::Exited(reason) => format!("exited:{}", show_exit(reason)),
     }
+}
+
+/// `try-cast`'s answer: native programs learn whether a cast was queued,
+/// components do not.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+fn try_cast(ctx: &mut Ctx, to: Pid, msg: Envelope) -> String {
+    use bulkhead_sdk::CastError;
+
+    match ctx.try_cast(to, msg) {
+        Ok(()) => "ok".into(),
+        Err(CastError::Noproc) => "err:noproc".into(),
+        Err(CastError::Noconnection) => "err:noconnection".into(),
+        Err(CastError::Overloaded) => "err:overloaded".into(),
+        Err(CastError::TooLarge) => "err:too-large".into(),
+        Err(CastError::AccessDenied) => "err:access-denied".into(),
+        Err(other) => format!("err:{other}"),
+    }
+}
+
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+fn try_cast(_ctx: &mut Ctx, _to: Pid, _msg: Envelope) -> String {
+    "err:unsupported".into()
 }
 
 fn register(ctx: &mut Ctx, name: &str) -> String {
@@ -402,6 +428,10 @@ impl Conformance {
                 let (pid, inner) = arg.split_once(':').unwrap_or((arg, ""));
                 ctx.cast(parse_pid(pid), Envelope::text(inner));
                 reply("sent".into())
+            }
+            "try-cast" => {
+                let (pid, inner) = arg.split_once(':').unwrap_or((arg, ""));
+                reply(try_cast(ctx, parse_pid(pid), Envelope::text(inner)))
             }
             "register" => reply(register(ctx, arg)),
             "whereis" => reply(ctx.whereis(arg).map_or("none".into(), show_pid)),

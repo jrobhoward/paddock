@@ -4,7 +4,7 @@
 use bulkhead_native::protocol as p;
 
 use crate::bindings::bulkhead::runtime::types as wit;
-use crate::message::{Envelope, ExitReason, Info, LateEvent};
+use crate::message::{CallError, Envelope, ExitReason, Info, LateEvent};
 use crate::pid::Pid;
 
 pub(crate) fn pid(pid: Pid) -> p::Pid {
@@ -22,6 +22,14 @@ pub(crate) fn wit_pid(pid: p::Pid) -> wit::Pid {
         incarnation: pid.incarnation,
     }
     .into()
+}
+
+pub(crate) fn host_pid(pid: p::Pid) -> Pid {
+    Pid {
+        node: pid.node,
+        id: pid.id,
+        incarnation: pid.incarnation,
+    }
 }
 
 pub(crate) fn from_wit_pid(pid: wit::Pid) -> p::Pid {
@@ -118,6 +126,19 @@ pub(crate) fn call_error(e: wit::CallError) -> p::CallError {
         wit::CallError::Exited(reason) => {
             p::CallError::Exited(exit_reason(&ExitReason::from(reason)))
         }
+    }
+}
+
+/// Why a cast was dropped. `delivery::cast` never answers `timeout` or
+/// `exited`, which belong to calls; were it to, the message was not queued
+/// for want of room or of a target.
+pub(crate) fn cast_error(e: &CallError) -> p::CastError {
+    match e {
+        CallError::Noproc | CallError::Exited(_) => p::CastError::Noproc,
+        CallError::Noconnection => p::CastError::Noconnection,
+        CallError::Overloaded | CallError::Timeout => p::CastError::Overloaded,
+        CallError::TooLarge => p::CastError::TooLarge,
+        CallError::AccessDenied => p::CastError::AccessDenied,
     }
 }
 

@@ -14,7 +14,7 @@ use wasmtime::{Error, Result};
 use crate::bindings::bulkhead::runtime::{process, types};
 use crate::delivery::{self, Origin};
 use crate::instance::Message;
-use crate::message::{Envelope, ExitReason, Info};
+use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
 use crate::probe;
 use crate::state::InstanceState;
@@ -97,19 +97,27 @@ impl Drop for Timers {
 
 impl types::Host for InstanceState {}
 
+impl InstanceState {
+    /// Send a cast from this instance. The error says why it was dropped
+    /// ([`delivery::cast`]); a native app's cast is answered with it, a
+    /// component's is not.
+    pub(crate) fn try_cast(&self, to: Pid, msg: Envelope) -> Result<(), CallError> {
+        let sent = delivery::cast(&self.ctx.rt, Origin::Local(&self.ctx.me), to, msg);
+        if let Err(err) = &sent {
+            tracing::debug!(%to, error = %err, "cast dropped");
+        }
+        sent
+    }
+}
+
 impl process::Host for InstanceState {
     async fn self_(&mut self) -> Result<types::Pid> {
         Ok(self.pid.into())
     }
 
     async fn cast(&mut self, to: types::Pid, msg: types::Envelope) -> Result<()> {
-        let to = Pid::from(to);
-        // At most once: a cast to a dead pid, or one the target refuses, is
-        // dropped without telling the sender.
-        if let Err(err) = delivery::cast(&self.ctx.rt, Origin::Local(&self.ctx.me), to, msg.into())
-        {
-            tracing::debug!(%to, error = %err, "cast dropped");
-        }
+        // At most once: a component is not told why a cast was dropped.
+        let _ = self.try_cast(Pid::from(to), msg.into());
         Ok(())
     }
 

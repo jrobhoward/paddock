@@ -51,7 +51,7 @@ use crate::channel::{AppEnd, FromNode, ToNode};
 
 use crate::hot::KvOp;
 use crate::protocol::{
-    self, Answer, Bytes, CallError, ConfigError, Envelope, ExitReason, FdRef, FromApp,
+    self, Answer, Bytes, CallError, CastError, ConfigError, Envelope, ExitReason, FdRef, FromApp,
     GroupsAnswer, GroupsError, GroupsRequest, Info, KvAnswer, KvError, KvRequest, Level,
     MetricError, MetricKind, MetricUpdate, Pid, RegisterError, Request, ScanPage, ScanQuery,
     SecretError, ToApp, VERSION,
@@ -401,6 +401,21 @@ impl Ctx {
     /// Send `msg` to `to` without waiting; dropped if `to` is gone.
     pub fn cast(&mut self, to: Pid, msg: Envelope) {
         self.request(Request::Cast { to, msg });
+    }
+
+    /// [`Ctx::cast`], saying whether the message was queued: in the
+    /// target's mailbox, or for an instance on another node, on the link
+    /// to that node. It costs what a cast does.
+    ///
+    /// # Errors
+    ///
+    /// The [`CastError`] saying why the message was dropped.
+    pub fn try_cast(&mut self, to: Pid, msg: Envelope) -> Result<(), CastError> {
+        match self.request(Request::Cast { to, msg }) {
+            Answer::Unit => Ok(()),
+            Answer::CastFailed(e) => Err(e),
+            other => unexpected(&other),
+        }
     }
 
     /// Call `to` and wait up to `timeout_ms` for its reply.
