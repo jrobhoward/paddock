@@ -2410,6 +2410,22 @@ The native protocol's most frequent frames in fixed layouts instead of CBOR (`bu
 - **Rows that vary between runs as much as they differ:** a 64 KiB `get` (17.8 to 26 µs in four runs of both steps, 47 to 49 in two; T9 has shown the slow mode too, 42 µs), sequential calls from the host (p50 5.0 to 6.4 µs in every build), and 64 callers.
 - **Not measured:** the Pi (T11), and a profile after T7: the node still copies the key into a `String` and the value out of the bucket before it reaches the ring.
 
+## 2026-11-05: a byte limit on mailboxes (I6)
+
+Each mailbox's byte budget is a semaphore beside the channel: a send takes its body's bytes, and the instance gives them back when it takes the message. Its cost, against the commit before it (I1), on the 16-core machine, idle at the start (load 0.85), 4 workers, components, three rounds alternating, medians:
+
+| | Before (I1) | I6 |
+| --- | --- | --- |
+| Empty call, wall (`call_split 4 bulkhead`) | 3.45 µs | 3.49 µs (3.14 to 3.72 across all six runs) |
+| One cast per point, 1 source to 1 sink (`batch_cost 4`) | 380,000 points/s | 367,000 |
+| One cast per point, 4 sources to 4 sinks | 957,000 | 908,000 |
+| One-item batches, 4 to 4 | 860,000 | 809,000 |
+| Batches of 100 or 1,000, 4 to 4 | 3.77 to 3.94M | 3.78 to 3.95M |
+
+- **Calls and batched casts:** unchanged within run-to-run variation.
+- **Unbatched casts:** 3 to 6% fewer per second, lower in every round, though within the spread of the runs (957,000 was 948,000 to 1,025,000). Likely the semaphore's atomic operations and a reference count per message; ROADMAP I9 would take them off sends that do not wait.
+- **Not measured:** native instances, and the Pi.
+
 ## 2026-11-05: casts that report and casts that wait (I4)
 
 `cluster_throughput`, native programs, 16 instances on node 1 each sending 25,000 `count` messages to its own target, then a call behind them, then the targets' counts read (its "sends by kind"). Each kind of send: `cast` (at most once, not told), `try_cast` (told whether the message was queued, I1) and `cast_timeout` (waits up to 5 s for room in a full mailbox, I2 and I3). Every instance's mailbox holds 65,536 messages, so the targets keep up, or 64 (`CLUSTER_MAILBOX=64`), so the casts outrun them.

@@ -30,7 +30,9 @@ a restricted native process, with Erlang/OTP-style semantics:
   Erlang's processes are. With `bulkhead-sdk` the same Rust source also
   builds as a WebAssembly component (WASI 0.2), which nodes still run.
 - **Messaging** is call (request and reply, with a timeout) and cast (fire and
-  forget), locally or across nodes.
+  forget), locally or across nodes. Mailboxes are bounded, so a cast to a full
+  one is dropped; a native app can instead ask whether a cast was queued, or
+  wait for room ([WRITING_APPS.md](docs/WRITING_APPS.md#casts-that-must-arrive)).
 - **Failure handling** uses links, monitors and supervisors. A crashed or
   runaway app is killed and restarted, and linked apps are told.
 - **Hot upgrade** swaps an app's component between messages, carrying state

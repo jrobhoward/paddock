@@ -34,11 +34,11 @@ Two words have more than one meaning:
 
 - **Envelope:** a message: content type, an optional schema id and a body of bytes. Calls, casts, replies, timer messages and HTTP requests are all envelopes.
 - **Call:** a message that waits for a reply, with a timeout; OTP's `gen_server:call`. Handled by `handle-call`.
-- **Cast:** a message with no reply; OTP's `gen_server:cast`. Handled by `handle-cast`. A cast to a full mailbox is dropped and counted.
+- **Cast:** a message with no reply; OTP's `gen_server:cast`. Handled by `handle-cast`. A cast to a full mailbox is dropped and counted. A native app's `try_cast` is told whether it was queued, and its `cast_timeout` (a waited cast) waits for room in a full mailbox, on any node (WRITING_APPS.md, "Casts that must arrive").
 - **Info:** anything else an instance is told, handled by `handle-info`: a link's `exit`, a monitor's `down`, a `timer` message, or a `host-event`.
 - **Host event:** an info with a name and an envelope, sent by the host: `log-level`, `failover-role`, `io-ready`, watch notices. Guests ignore names they do not know, so new events need no new world version.
 - **Signal:** exits, timer messages and watch notices, which reach an instance ahead of its mailbox, on a queue of their own.
-- **Mailbox:** an instance's bounded queue of calls and casts (`limits.mailbox_max`). Full, it refuses a call with `overloaded` and drops a cast.
+- **Mailbox:** an instance's bounded queue of calls, casts and timer messages, limited in messages (`limits.mailbox_max`) and in bytes of bodies (`limits.mailbox_max_bytes`). Full, it refuses a call with `overloaded` and drops a cast, unless the cast waits (`cast_timeout`).
 - **Noreply:** a callback's answer meaning "the reply comes later": the guest keeps the call ref and answers with `process.reply`.
 - **Send-after:** `process.send-after`, a timer that puts a message in the instance's own mailbox after a delay; Erlang's `erlang:send_after`. Each is a tokio sleep, so it fires on a 1 ms grain; how late it is handled is measured in [BASELINE.md](BASELINE.md) (`timer_cost`).
 - **Batch:** many items sent as one message through `bulkhead_sdk::batch`, flushed by count, bytes or delay.

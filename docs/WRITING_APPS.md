@@ -115,6 +115,29 @@ A `CallError` is one of `Noproc` (dead pid or unknown name), `Noconnection` (the
 
 A blocked `ctx.call` holds up only this instance. The host suspends it without tying up a thread.
 
+### Casts that must arrive
+
+A `cast` is delivered at most once, and its sender is not told when it is dropped: at a full mailbox (`limits.mailbox_max` messages or `limits.mailbox_max_bytes` of bodies), at a dead pid, over `message_max_bytes`, refused by `messaging_acl`, or at a congested link to another node. A native program has two more sends, which a component does not (the app world stays frozen):
+
+```rust
+ctx.try_cast(to, msg)?;                                  // Result<(), CastError>: queued, or why not
+ctx.cast_timeout(to, msg, Duration::from_millis(500))?;  // waits up to 500 ms for room in a full mailbox
+```
+
+| Send | What the sender learns | For |
+| --- | --- | --- |
+| `cast` | Nothing | Updates the next one replaces: readings, heartbeats, telemetry |
+| `try_cast` | Whether the message was queued: in the target's mailbox, or, to another node, on the link to it | Shedding load: drop, count or slow down when a target falls behind |
+| `cast_timeout` | That the message is in the target's mailbox, on any node | Messages that must not be lost to a full mailbox |
+| `call` | That the target handled it, and its reply | Work whose result matters, or a receipt |
+
+A `CastError` is one of `Noproc`, `Noconnection`, `Overloaded` (a full mailbox, or the link to the target's node over its budget), `TooLarge`, `AccessDenied` or `Timeout` (`cast_timeout` only: no room came in time, and the message was not queued).
+
+- **Accepted is not handled.** A message in a mailbox is lost if the target crashes before taking it, as in Erlang. Data that must survive that goes by `call`, whose reply is the receipt, or into a bucket.
+- **The wait:** `cast_timeout` waits for the body's bytes and then a slot, in arrival order with other waiters, up to the timeout. The node caps the timeout at the sender's callback deadline, and the wait does not count against it. The sender handles nothing else meanwhile. A cast to its own pid never waits, since the sender cannot empty its mailbox while waiting. Two instances waiting on each other's full mailboxes are freed when the first times out.
+- **Between nodes** the other node waits and answers, and the sender waits 250 ms longer, so `Timeout` normally means the message was not queued. Only an answer later than that leaves it unknown, and a retry may then deliver it twice. A node one release older cannot take a waited cast: `Noconnection`. `try_cast`'s `Ok` to another node means only that the link took the message; that node's full mailbox may still drop it.
+- **Costs** (16 senders, [BASELINE.md](BASELINE.md), 2026-11-05): `try_cast` costs what `cast` does. `cast_timeout` moves 26 to 47% fewer casts per second within a node, and between nodes one per round trip per sender: 30,000 to 42,000 a second for 16 senders, against 106,000 to 240,000 for `cast`. Where many small messages must all arrive, batch them (below): a batch is one waited cast.
+
 ## Links, monitors and exits
 
 ```rust
@@ -187,7 +210,7 @@ if let Some(points) = batch::items::<Point>(&msg) {
 ```
 
 - `max_delay` bounds how stale an update can get: a lone point waits at most that long. Without it, call `flush` or `flush_all` (at the end of a burst, in `terminate`).
-- A batch is one message: it counts once against the receiver's mailbox, and a full mailbox drops it whole. Keep `max_bytes` well under the receiver's `limits.message_max_bytes`.
+- A batch is one message: it counts once against the receiver's mailbox, and a full mailbox drops it whole, unless a native program sends it with `cast_timeout`. Keep `max_bytes` well under the receiver's `limits.message_max_bytes`.
 - Batch per destination, not per app: with `instances.routing = "hash:..."`, keep items that must stay in order on one key in one batch to one instance.
 - Items buffered when the sender exits are lost, as unsent casts would be.
 - Protocol extensions already batch: the Modbus extension sends one update per device and scan with every point that changed.
