@@ -331,10 +331,9 @@ Decided with the user (2026-11-05):
 
 Items, in order:
 
-- [ ] **I4 Costs** (S). `batch_cost` and `cluster_throughput` gain `try_cast` and `cast_timeout` next to `cast`, natively, within a node, between two node processes and between the two machines. Measure what a waited cast costs against a plain one, and check that every waited cast reported `Ok` arrived. BASELINE.md. Areas: benchmarks.
 - [ ] **I5 Docs** (S). WRITING_APPS.md: which send for which data (`cast`, `try_cast`, `cast_timeout`, `call`, a batched `call`), what accepted means, and a timeout between nodes, normally the receiving node's answer (I3's 250 ms grace) but unknown when that answer is late. DESIGN.md: "Backpressure between nodes" gains the waited sends (the delivery rules name `try_cast` and `cast_timeout` since I1 and I2), and "Senders are never blocked" becomes "never blocked unless they ask, with a timeout". ARCHITECTURE.md's cast bullets (`try_cast`, `cast_timeout` and `Frame::CastWait` are there since I1 to I3), GLOSSARY.md, PADDOCK.md's differences. Areas: docs.
 
-Order: I1, I6, I2 and I3 done (2026-11-05: `try_cast`, native protocol version 6; `mailbox_max_bytes`, 64 MiB by default; `cast_timeout` within a node, protocol version 7: a cycle of waiting instances breaks when the first times out, which frees room for the other; between nodes, `Frame::CastWait`, wire version 8, the sender waiting 250 ms longer than the receiving node); I4 next, then I5. They are independent of the T items.
+Order: I1 to I4 and I6 done (2026-11-05; I4's numbers in BASELINE.md, "casts that report and casts that wait": every `Ok` of `cast_timeout` arrived; a waited cast costs 26 to 47% of the casts per second within a node, and between nodes one round trip per sender, 30,000 to 42,000 a second for 16 senders); I5 next. They are independent of the T items.
 
 ### Z8: native parity
 

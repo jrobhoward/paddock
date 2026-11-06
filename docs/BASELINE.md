@@ -2410,6 +2410,37 @@ The native protocol's most frequent frames in fixed layouts instead of CBOR (`bu
 - **Rows that vary between runs as much as they differ:** a 64 KiB `get` (17.8 to 26 µs in four runs of both steps, 47 to 49 in two; T9 has shown the slow mode too, 42 µs), sequential calls from the host (p50 5.0 to 6.4 µs in every build), and 64 callers.
 - **Not measured:** the Pi (T11), and a profile after T7: the node still copies the key into a `String` and the value out of the bucket before it reaches the ring.
 
+## 2026-11-05: casts that report and casts that wait (I4)
+
+`cluster_throughput`, native programs, 16 instances on node 1 each sending 25,000 `count` messages to its own target, then a call behind them, then the targets' counts read (its "sends by kind"). Each kind of send: `cast` (at most once, not told), `try_cast` (told whether the message was queued, I1) and `cast_timeout` (waits up to 5 s for room in a full mailbox, I2 and I3). Every instance's mailbox holds 65,536 messages, so the targets keep up, or 64 (`CLUSTER_MAILBOX=64`), so the casts outrun them.
+
+Three placements: both nodes in one process over QUIC on loopback; two processes on the 16-core machine (`scripts/cluster_pair.sh`); node 1 on the 16-core machine and node 2 on the Raspberry Pi 5, over the wired gigabit LAN. "One node" is node 1's instances sending to targets on node 1. Each node runs 4 tokio workers, `[native] spin_us` 20. Three rounds per placement, both mailbox sizes in each round; the tables give medians. Both machines were idle at the start (load 0.9 and 0.1); the load during the runs, up to 11 on the 16-core machine, is the runs' own spinning. Code: I3's commit plus I4's benchmark changes.
+
+Casts handled per second, and the share of the 400,000 sent that arrived:
+
+| Placement, mailbox | `cast` | `try_cast` | `cast_timeout` |
+| --- | --- | --- | --- |
+| One node, 65,536 | 704,000 (100%) | 583,000 (100%) | 392,000 (100%) |
+| One node, 64 | 654,000 (98%) | 527,000 (96%) | 401,000 (100%) |
+| Two nodes in one process, 65,536 | 106,000 (100%) | 104,000 (100%) | 42,600 (100%) |
+| Two nodes in one process, 64 | 107,000 (97%) | 99,500 (98%) | 42,300 (100%) |
+| Two processes, 65,536 | 238,000 (99%) | 246,000 (100%) | 33,400 (100%) |
+| Two processes, 64 | 240,000 (94%) | 258,000 (99%) | 33,600 (100%) |
+| 16-core machine to the Pi, 65,536 | 181,000 (85%) | 185,000 (86%) | 29,700 (100%) |
+| 16-core machine to the Pi, 64 | 176,000 (69%) | 174,000 (72%) | 29,900 (100%) |
+
+What the senders were told, against what arrived:
+- **`cast_timeout`:** every `Ok` arrived, and every send returned `Ok`, in all 36 runs (a 5 s wait was always enough).
+- **`try_cast` within a node:** its `Ok`s matched the arrivals exactly in every run: each drop was reported as `overloaded`.
+- **`try_cast` between nodes, mailboxes of 65,536:** its `Ok`s also matched the arrivals exactly, in every placement. The drops there, up to 15% from the 16-core machine to the Pi, happened at the sending node's link to the other node, and were reported.
+- **`try_cast` between nodes, mailboxes of 64:** more `Ok`s than arrivals (to the Pi, 337,000 `Ok` and 288,000 arrived, at the medians): an `Ok` there means the link took the message, and the receiving node's full mailbox then dropped it unseen, as I1 says.
+
+What a waited cast costs:
+- **Within a node:** 26 to 47% fewer casts per second than `cast` (392,000 against 704,000 in one process with room in the mailbox; 412,000 against 560,000 and 345,000 against 649,000 in the other two placements' node 1), and 33 to 43% fewer when the mailboxes fill. A waited cast is a CBOR request (`Request::CastWait`), where `cast` and `try_cast` travel as hot frames (T7).
+- **Between nodes:** each waited cast is a round trip to the other node, and each sender waits for it, so 16 senders move about 16 casts per round trip: 42,000 a second over loopback in one process, 33,000 between two processes, 30,000 from the 16-core machine to the Pi, against 106,000 to 240,000 for `cast`. That is the price of knowing: the batching of WRITING_APPS.md (`bulkhead_sdk::batch`) applies, a batch of 100 points being one waited cast.
+- **`try_cast` against `cast`:** the same request and answer when the message is queued, yet `try_cast` measured 5 to 26% lower within a node with room in the mailboxes. It always ran right after `cast`, and its rates sit inside `cast`'s own range (545,000 to 779,000 in one process), so the difference is not settled; between nodes the two are within a few percent either way.
+- **Not measured:** the Pi as node 1 (the reverse direction), components (they have neither send), and waited casts in flight several at a time per sender (credit windows, deferred until needed).
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

@@ -63,6 +63,13 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `cluster_throughput` measures sends by kind (ROADMAP I4): `cast`,
+  `try_cast` and `cast_timeout` from instances, native programs only,
+  with how many sends returned `Ok` and how many arrived, and says so if
+  a waited cast's `Ok` did not arrive. `CLUSTER_MAILBOX=<n>` sets every
+  instance's mailbox, so casts can outrun their targets. Its fixture,
+  `bulkhead-fixture-msgbench`, answers `sends:<pid>:<n>:<kind>`. Numbers in
+  BASELINE.md (2026-11-05).
 - Waited casts between nodes (ROADMAP I3): `cast_timeout` to an instance
   on another node waits there for room, carried by a new frame,
   `Frame::CastWait`, answered with `Frame::Reply`, so `Ok` means that
