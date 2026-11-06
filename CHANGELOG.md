@@ -8,6 +8,16 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- A call between two native-process instances on one node is a quarter
+  to a third faster (ROADMAP T12): p50 about 6 to 7 µs from 9 to 10 on
+  the 16-core machine, 5.3 to 6.6 from 7.5 on a Raspberry Pi 5, and
+  sequential calls from the host 3.6 to 3.9 µs from 5.9 on the Pi. The
+  target's task now watches its rings for its app's reply instead of
+  yielding: the flag saying it woke another task, which kept it from
+  watching, no longer carries over from the previous callback's reply.
+  16 instances calling each other lose about 8% on the 16-core machine
+  and 5% on the Pi, since a watching task holds its worker (BASELINE.md,
+  2026-11-05).
 - Native-process apps no longer spin after a callback the node expects
   no other soon after (ROADMAP T1b): when nothing is queued behind a
   callback and it came longer than `[native] spin_us` after the frame

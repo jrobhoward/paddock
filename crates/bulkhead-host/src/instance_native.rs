@@ -1139,6 +1139,11 @@ impl InstanceTask {
         probe::callback_start(self.pid, kind);
         // Before the frame, so the app reads the hint after this callback.
         port.hint_idle(!self.has_work());
+        // A task woken before this callback (the last caller, by its
+        // reply) has run since: this callback's waits may watch the rings.
+        // Kept, the flag made every callback of a call-reply pattern yield
+        // instead, 2.4 to 2.6 µs to notice the app's reply (ROADMAP T12).
+        let _ = self.me.take_woke();
         let started = Instant::now();
         let deadline = spec.callback_deadline;
         let outcome = match message {

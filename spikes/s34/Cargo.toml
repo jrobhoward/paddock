@@ -1,0 +1,10 @@
+[package]
+name = "s34"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+atomic-waker = "1"
+libc = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }

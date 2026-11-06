@@ -2730,6 +2730,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "s34"
+version = "0.0.0"
+dependencies = [
+ "atomic-waker",
+ "libc",
+ "tokio",
+]
+
+[[package]]
 name = "s4-guest"
 version = "0.0.0"
 dependencies = [

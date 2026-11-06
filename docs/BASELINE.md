@@ -2626,8 +2626,12 @@ Clearing that flag when a callback starts, so its first wait may watch (a tempor
 | `native_cost`'s requests, casts and calls in flight | | unchanged | | unchanged |
 
 - **A lone pair calls a quarter to a third faster, and 16 instances calling each other lose about 8% on the 16-core machine** (one session 25%, two 4 to 6%) and 5% on the Pi: a watching task holds its worker while other instances' tasks queue behind it, as T9 found. A shorter watch (2.5 or 1.5 µs instead of 5) lost the gain as well.
-- **Not shipped** (decided with the user): T8's waker, waking a task when its frame arrives instead of having it watch, would give the gain without holding the worker; T12 takes this up again after it.
+- **Shipped after S34** (decided with the user): T8's waker, waking a task when its frame arrives instead of having it watch, would have given the gain without holding the worker, but no waker on stock tokio beats yielding (`spikes/s34`), so T12 took the change with its cost.
 - **The two hand-offs T12 planned to remove cost about 2.3 µs together** (1.3 and 1.0), more after the flag is cleared (about 2 and 1.2).
+
+## 2026-11-05: a waker for a native task's rings (S34)
+
+`spikes/s34` (its README has the tables): tokio tasks paired with app threads replying through shared memory, 1 to 64 pairs on 4 workers, beside 0 or 8 tasks of other work, waiting by yielding, by T9's watch, by a watcher thread waking each task's waker, by a hybrid of the two, or by a parking worker's hook. No way of waking beats yielding: the watcher thread woke a lone pair in 8.8 µs against 1.2 yielding on the 16-core machine, and on the Pi under load waited a scheduler time slice (3 ms) for a core; the park hook stranded tasks whose worker kept finding other work, and woke in 3.65 µs when it worked. Watching stayed fastest when nothing else needed the worker, and starved what did (other work from about a million bursts a second to about 200). T8's waker is dropped.
 
 ## Not measured yet
 
