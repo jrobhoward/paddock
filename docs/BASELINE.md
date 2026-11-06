@@ -2560,6 +2560,37 @@ Two hints the node writes before it hands an app a callback, tried as a temporar
 - **What it costs:** 16 instances calling each other on the Pi, 117,000 to 121,000 a second against 129,000 to 135,000; and 64 in flight on the Pi below the variant without the gap (118,000 against 136,000).
 - **Not measured:** `kv_cost`'s 16-instance rows, and more than 4 workers.
 
+## 2026-11-05: after T1b, a profile on both machines, and the 16-core machine's deepest idle state (T13)
+
+The machines' power settings, recorded from now on with each run (T13): the 16-core machine runs the `acpi_idle` driver with states POLL, C1 and C2 (C2: 100 µs exit latency, 200 µs target residency) and the `schedutil` governor; the Raspberry Pi 5 has no cpuidle driver (cores do not enter deep idle states) and the `ondemand` governor.
+
+A profile of `native_cost` after T1b (`perf record -g`, `perf_event_paranoid` 1, kernel symbols not resolved), against the one before it ("T8's first trial"):
+
+| Share of all samples | 16-core, before T1b | 16-core, after | Pi, after |
+| --- | --- | --- | --- |
+| Apps, in the kernel | 57% | 39% | 37% |
+| Apps, user space | 8% | 9% | 15% |
+| Node's workers, user space (with `[vdso]` and libc) | 25% | 37% | 34% |
+| Node's workers, in the kernel | 7% | 13.5% | 13.0% |
+
+- **The node's kernel time has doubled:** with idle apps sleeping, the node's tasks park and are woken more often. About 4 µs of the 30 to 32 µs of CPU per call, on both machines; on the Pi one kernel address takes 5% of all samples, likely the futex or `epoll` path of a park or wake. What T8's waker would take on.
+
+The 16-core machine with C2 disabled (`cpupower idle-set -D 10`) and enabled, `native_cost` and `cluster_throughput` natively, 4 workers, `spin_us` 20, three rounds each (C2 off first), each idle at the start (load under 1), medians:
+
+| | C2 off | C2 on |
+| --- | --- | --- |
+| Call from the host to an idle instance, p50 (`native_cost`) | 20.3 µs | 18.5 µs |
+| Call between instances through the host, p50 | 50.2 µs | 47.6 µs |
+| Request from a callback | 4.2 to 4.3 µs | 4.4 µs |
+| 16 calls in flight, calls/s and CPU per call | 277,000, 27 to 29 µs | 276,000, 27 to 29 µs |
+| 64 calls in flight | 323,000 | 320,000 |
+| Sequential calls from the host / between instances, p50 (`cluster_throughput`) | 6.3 / 9.5 µs | 5.8 / 9.1 µs |
+| 16 instances calling, calls/s | 263,000 | 298,000 |
+
+- **No measurable difference:** every row is within run-to-run variation, C2 on slightly ahead if anything. Under these loads a core is seldom idle for C2's 200 µs, and the 18 to 20 µs of a call to an idle instance is not C2's 100 µs exit; WRITING_APPS.md puts it down to two sleeping threads woken, the app's and a worker's (not measured apart).
+- **No guidance follows:** a latency-oriented tuned profile would cost power for nothing measured here.
+- **Not measured:** the power drawn, and a node idle for long enough between bursts for C2 to matter.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
