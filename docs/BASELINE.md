@@ -2633,6 +2633,24 @@ Clearing that flag when a callback starts, so its first wait may watch (a tempor
 
 `spikes/s34` (its README has the tables): tokio tasks paired with app threads replying through shared memory, 1 to 64 pairs on 4 workers, beside 0 or 8 tasks of other work, waiting by yielding, by T9's watch, by a watcher thread waking each task's waker, by a hybrid of the two, or by a parking worker's hook. No way of waking beats yielding: the watcher thread woke a lone pair in 8.8 µs against 1.2 yielding on the 16-core machine, and on the Pi under load waited a scheduler time slice (3 ms) for a core; the park hook stranded tasks whose worker kept finding other work, and woke in 3.65 µs when it worked. Watching stayed fastest when nothing else needed the worker, and starved what did (other work from about a million bursts a second to about 200). T8's waker is dropped.
 
+## 2026-11-05: a call's reply written into the caller's ring (T12, not kept)
+
+T12's second step, tried in two forms behind a temporary switch and not kept (decided with the user): the task completing a call's reply writes the answer frame straight into the waiting native caller's ring and wakes its app, so the app need not wait for its own task to wake on a one-shot (about 1.2 µs of a call, by T12's split). A small atomic state settles each call between the replier and the caller's task (a timeout and a direct answer never both reach the app), and a frame that does not fit the ring falls back to the one-shot; both forms passed the native conformance suite and unit tests of the state.
+- **With a marker:** the replier still completes the one-shot, with an empty envelope, so the caller's task wakes as before, off the call's path, and writes nothing.
+- **Without waking the caller:** the caller's task starts the call and goes back to watching its ring, hearing of the answer from its app's next frame; the one-shot and a timer only for a fallback, an exit or a timeout.
+
+`native_call_split` (two instances calling one call at a time, the harness of "where a call between two native instances goes"), `cluster_throughput` and `native_cost`, natively, 4 workers, `spin_us` 20, off and on alternating, two rounds each, each machine idle at the start:
+
+| | 16-core: off | Marker | No wake | Pi: off | Marker | No wake |
+| --- | --- | --- | --- | --- | --- | --- |
+| Call between two instances, p50 | 6.0 to 7.0 µs | 5.4 to 5.6 µs | 10.7 µs | 5.0 to 5.4 µs | 4.96 µs | 4.96 to 5.0 µs |
+| Sequential calls between instances, p50 (`cluster_throughput`) | 8.4 to 9.1 µs | 7.7 to 8.2 µs | 10.0 to 10.2 µs | 5.4 to 6.6 µs | 4.9 µs | 4.9 to 5.0 µs (p99 31 to 35 µs, from 13 to 19) |
+| 16 instances calling each other, calls/s | 244,000 to 313,000 | 280,000 to 295,000 | 207,000 to 271,000 | 114,000 to 118,000 | 98,000 to 101,000 | 94,000 to 103,000 |
+| `native_cost`'s requests, casts and calls in flight | | unchanged | unchanged | | unchanged | unchanged |
+
+- **Neither form saves work, only where it is done:** with the marker, the replier encodes and writes the answer and the caller's task is still woken, so many busy callers lose 3 to 17%; without it, the caller's task watches its ring through the whole call, holding a worker the target's task may need, and on the 16-core machine a pair's call took half as long again.
+- **The same wall stands before the call side** (the caller's task writing a call into an idle target's ring, about 2 µs of a call): the target's task must still be told, by a wake or by watching. With S34's finding that no waker on stock tokio beats yielding, T12's hand-offs stop here.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
