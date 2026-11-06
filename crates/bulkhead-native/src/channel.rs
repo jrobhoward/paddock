@@ -8,7 +8,15 @@
 //! thread, 7 to 20 µs, which only spinning avoids. Each side sleeps on a
 //! pipe the other writes a byte to: the app's door for frames from the
 //! node, whose end of file tells the app the node has gone, and the
-//! node's bell, whose end of file tells the node the app has exited. A pipe, not a futex: a pipe's writer wakes its reader
+//! node's bell, whose end of file tells the node the app has exited.
+//! The node writes `idle_hint` before it hands the app a callback: 1 when
+//! nothing waits behind that callback and it came longer than the spin
+//! after the frame before (ROADMAP T1b). Waiting for its next callback
+//! after one so hinted, the app sleeps at once instead of spinning: with
+//! many instances each called now and then, their spins took the cores
+//! the work needed (the Pi's calls in flight halved), while an instance
+//! called back to back still spins. Waits for an answer within a callback
+//! always spin. A pipe, not a futex: a pipe's writer wakes its reader
 //! with the scheduler's sync hint, which favours the writer's warm core
 //! (not measured apart from T1's other fixes). Only an app's thread
 //! waiting for room in the ring to the node sleeps on a futex in the
@@ -41,6 +49,7 @@
 //! | 128 | `reader_waiting` (u32): 1 while the reader sleeps, or is about to | the reader; cleared by the writer that wakes it |
 //! | 192 | `writer_waiting` (u32): 1 while the writer waits for room | the writer; cleared by the reader that wakes it |
 //! | 256 | `closed` (u32): 1 once the writer will write no more | the writer |
+//! | 320 | `idle_hint` (u32), in the ring to the app: 1 when the node expects no callback soon | the node |
 //!
 //! Positions only grow; a byte at position `p` is at `HEADER + p % RING_CAP`.
 //! A side that finds the other's word set after writing (or reading)
@@ -96,6 +105,7 @@ const TAIL: usize = 64;
 const READER_WAITING: usize = 128;
 const WRITER_WAITING: usize = 192;
 const CLOSED: usize = 256;
+const IDLE_HINT: usize = 320;
 
 /// The other side broke the ring's rules: more queued than the ring
 /// holds. The node ends such an app.
@@ -231,6 +241,13 @@ impl Ring<'_> {
     #[must_use]
     pub fn reader_waiting(&self) -> &AtomicU32 {
         self.word32(READER_WAITING)
+    }
+
+    /// 1 when the node expects no callback soon after the one it handed
+    /// over (the ring to the app only; module docs).
+    #[must_use]
+    pub fn idle_hint(&self) -> &AtomicU32 {
+        self.word32(IDLE_HINT)
     }
 
     /// 1 while the writer waits for room.
@@ -677,6 +694,8 @@ pub struct AppEnd {
     /// Descriptors received before the one asked for, by id.
     untaken: Mutex<HashMap<u64, OwnedFd>>,
     spin: Spin,
+    /// Whether the app waits for its next callback, not an answer.
+    between: std::sync::atomic::AtomicBool,
 }
 
 impl AppEnd {
@@ -718,6 +737,7 @@ impl AppEnd {
             fds,
             untaken: Mutex::new(HashMap::new()),
             spin,
+            between: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -774,6 +794,13 @@ impl AppEnd {
         let _ = rustix::io::write(&self.bell, &[1]);
     }
 
+    /// Say whether the app now waits for its next callback rather than an
+    /// answer: then, after a callback the node hinted idle, a wait sleeps
+    /// at once.
+    pub fn set_between(&self, on: bool) {
+        self.between.store(on, Ordering::Relaxed);
+    }
+
     /// Read what the node sent into `out`, blocking until something is
     /// there; 0 once the node closed the ring and everything is read.
     ///
@@ -793,7 +820,14 @@ impl AppEnd {
             if ring.is_closed() && !ring.is_readable() {
                 return Ok(0);
             }
-            let there = self.spin.block_until(
+            let idle = self.between.load(Ordering::Relaxed)
+                && ring.idle_hint().load(Ordering::SeqCst) == 1;
+            let spin = if idle {
+                Spin(Duration::ZERO)
+            } else {
+                self.spin
+            };
+            let there = spin.block_until(
                 ring.reader_waiting(),
                 || ring.is_readable() || ring.is_closed(),
                 || {

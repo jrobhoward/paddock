@@ -18,6 +18,9 @@
 //! callbacks too, yielding: a task kept runnable keeps its worker awake for
 //! the instance's next message, which a call between instances needs
 //! (ROADMAP T1), and a watch within the poll would not see the mailbox.
+//! Except after a callback hinted idle (nothing queued behind it, and it
+//! came longer than the spin after the frame before): then neither the
+//! task nor the app spins until the next one (ROADMAP T1b).
 //! What the app prints, on stdout or stderr, becomes log lines, as a
 //! component's stderr does. Between fork and exec the child gets the
 //! parent-death signal (`SIGKILL`), no core dumps, its memory limit (the
@@ -126,6 +129,11 @@ mod linux {
         /// The app broke its channel; said once, as the last thing read.
         broken: Option<String>,
         spin: Duration,
+        /// The last callback was hinted idle (`hint_idle`), so the wait
+        /// between callbacks does not spin.
+        idle: bool,
+        /// The budget of the wait in progress.
+        cur_spin: Duration,
         /// When a frame last went either way: the task spins until
         /// `spin` after it.
         active: Instant,
@@ -141,6 +149,12 @@ mod linux {
     /// little cheaper and calls between 16 busy instances about 17% slower
     /// (16-core machine, 2026-11-04).
     const WATCH_SLICE: Duration = Duration::from_micros(5);
+
+    /// Whether a callback is hinted idle: nothing queued behind it, and
+    /// `since` the last frame longer than the `spin` (ROADMAP T1b).
+    pub(crate) fn hinted_idle(nothing_queued: bool, since: Duration, spin: Duration) -> bool {
+        nothing_queued && since > spin
+    }
 
     /// The largest hot-frame buffer a port keeps between frames.
     const KEPT_BUFFER: usize = 1 << 20;
@@ -309,6 +323,8 @@ mod linux {
                 closed: false,
                 broken: None,
                 spin: config.spin,
+                idle: false,
+                cur_spin: config.spin,
                 active: Instant::now(),
                 worker_idle: false,
                 cgroup,
@@ -434,7 +450,21 @@ mod linux {
         /// everything it sent is read. Cancel safe: bytes read stay
         /// buffered for the next call.
         pub(crate) async fn recv(&mut self) -> Option<Incoming> {
+            self.cur_spin = if self.idle { Duration::ZERO } else { self.spin };
             self.next(false).await
+        }
+
+        /// Before a callback's frame is written: hint the app idle when
+        /// nothing waits behind the callback and it came longer than the
+        /// spin after the last frame, so neither side spins after it
+        /// (ROADMAP T1b). An instance called back to back keeps spinning.
+        pub(crate) fn hint_idle(&mut self, nothing_queued: bool) {
+            let idle = hinted_idle(nothing_queued, self.active.elapsed(), self.spin);
+            self.idle = idle;
+            self.channel
+                .to_app()
+                .idle_hint()
+                .store(u32::from(idle), Ordering::SeqCst);
         }
 
         /// [`Port::recv`] inside a callback, where nothing but the app's
@@ -443,6 +473,7 @@ mod linux {
         /// (T9). The caller passes `false` when it just woke another task,
         /// which would wait behind the watch.
         pub(crate) async fn recv_in_callback(&mut self, watch: bool) -> Option<Incoming> {
+            self.cur_spin = self.spin;
             self.next(watch).await
         }
 
@@ -507,12 +538,13 @@ mod linux {
         /// ran no other native instance, a turn of the spin first watches
         /// the rings within the poll.
         async fn wait(&mut self, watch: bool) {
-            if self.active.elapsed() < self.spin {
+            let spin = self.cur_spin;
+            if self.active.elapsed() < spin {
                 if watch && self.worker_idle && self.watch() {
                     return;
                 }
                 // Not watching, or the slice ended with the spin still on.
-                if self.active.elapsed() < self.spin {
+                if self.active.elapsed() < spin {
                     let before = turn();
                     tokio::task::yield_now().await;
                     self.worker_idle = turn() == (before.0, before.1 + 1);
@@ -727,6 +759,8 @@ mod elsewhere {
         pub(crate) async fn recv(&mut self) -> Option<Incoming> {
             match self.0 {}
         }
+
+        pub(crate) fn hint_idle(&mut self, _idle: bool) {}
 
         pub(crate) async fn recv_in_callback(&mut self, _watch: bool) -> Option<Incoming> {
             match self.0 {}

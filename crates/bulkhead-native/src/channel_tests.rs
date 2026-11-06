@@ -323,3 +323,50 @@ fn app_end____node_closed_its_door____read_ends_instead_of_spinning() {
 
     assert_eq!(n, 0);
 }
+
+/// Whether the app goes to sleep within 2 s of waiting for a frame, with
+/// a 10 s spin budget: `idle` the node's hint, `between` whether it waits
+/// for its next callback. The frame is then sent, so the wait ends.
+fn sleeps_at_once(idle: bool, between: bool) -> bool {
+    let (app, _bell, door) = app_end(Duration::from_secs(10));
+    let ring = app.channel.to_app();
+    ring.idle_hint().store(u32::from(idle), Ordering::SeqCst);
+    app.set_between(between);
+    let reader = {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0; 8];
+            app.read_from_node(&mut buf).unwrap()
+        })
+    };
+    let limit = if idle && between {
+        Duration::from_secs(2)
+    } else {
+        Duration::from_millis(200)
+    };
+    let started = std::time::Instant::now();
+    while ring.reader_waiting().load(Ordering::SeqCst) == 0 && started.elapsed() < limit {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let asleep = ring.reader_waiting().load(Ordering::SeqCst) == 1;
+
+    ring.write(b"frame").unwrap();
+    wake_reader(ring.reader_waiting(), door.as_fd());
+    assert_eq!(reader.join().unwrap(), 5);
+    asleep
+}
+
+#[test]
+fn app_end____waiting_for_a_callback_after_an_idle_hint____sleeps_at_once() {
+    assert!(sleeps_at_once(true, true));
+}
+
+#[test]
+fn app_end____waiting_for_a_callback_without_the_hint____spins_first() {
+    assert!(!sleeps_at_once(false, true));
+}
+
+#[test]
+fn app_end____waiting_for_an_answer_after_an_idle_hint____spins_first() {
+    assert!(!sleeps_at_once(true, false));
+}

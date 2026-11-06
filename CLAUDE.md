@@ -397,7 +397,13 @@ Yielding instead cost a busy instance half its throughput, and tokio's
 (B15, `docs/BASELINE.md`, 2026-10-30). `tests/messaging.rs` guards it;
 rerun `wake_cost` after a tokio upgrade.
 
-**A native instance's waits spin, then sleep.** Each side of a native
+**A native instance's waits spin, then sleep, except after an idle
+callback.** The node hints a callback idle (a word in the ring to the
+app's header) when nothing waits behind it and it came longer than the
+spin after the frame before; then neither the app nor the node's task
+spins until the next one. Without it, 100 instances each called now and
+then halved the Pi's calls in flight; waits for an answer within a
+callback always spin (T1b, BASELINE.md, 2026-11-05). Each side of a native
 instance's channel spins for `[native] spin_us` (default 20 µs) before it
 sleeps: a blocking round trip between processes costs two wake-ups of a
 sleeping thread whatever carries the bytes (S30, S32). The app spins with

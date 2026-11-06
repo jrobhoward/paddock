@@ -1137,6 +1137,8 @@ impl InstanceTask {
             Message::Info(_) => "info",
         };
         probe::callback_start(self.pid, kind);
+        // Before the frame, so the app reads the hint after this callback.
+        port.hint_idle(!self.has_work());
         let started = Instant::now();
         let deadline = spec.callback_deadline;
         let outcome = match message {

@@ -224,6 +224,16 @@ fn with_conn<R>(f: impl FnOnce(&mut Conn) -> R) -> R {
 
 /// The node's next frame, answering pings on the way; the end of the
 /// channel means the node stopped this instance, and the process exits.
+/// Tell the channel whether the app waits for its next callback, so a
+/// callback the node hinted idle is followed by sleep, not a spin.
+fn between_callbacks(on: bool) {
+    #[cfg(target_os = "linux")]
+    if let Some(end) = END.get() {
+        end.set_between(on);
+    }
+    let _ = on;
+}
+
 fn next_frame() -> ToApp {
     match next() {
         Next::Frame(frame) => frame,
@@ -1441,7 +1451,10 @@ pub fn serve<A: App>() -> ExitCode {
         }
     };
     loop {
-        match next_frame() {
+        between_callbacks(true);
+        let frame = next_frame();
+        between_callbacks(false);
+        match frame {
             ToApp::Call { call_ref, msg } => {
                 let reply = guarded(|| app.handle_call(&mut ctx, call_ref, msg));
                 flush_metrics();

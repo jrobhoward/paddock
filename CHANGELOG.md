@@ -8,6 +8,18 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Native-process apps no longer spin after a callback the node expects
+  no other soon after (ROADMAP T1b): when nothing is queued behind a
+  callback and it came longer than `[native] spin_us` after the frame
+  before, the node says so in a new word of the ring to the app's header
+  (`idle_hint`, offset 320), and neither the app nor the node's task
+  spins until the next one. With 100 instances under load, calls in
+  flight rose about 1.8 times on a Raspberry Pi 5 (to about 118,000 a
+  second) and CPU per call fell by a third on the 16-core machine;
+  sequential calls, and requests within a callback, are unchanged
+  (BASELINE.md, 2026-11-05). The protocol's frames and version are
+  unchanged; an app built before this ignores the word and spins as it
+  did.
 - A native-process app's keyvalue `get`, `set`, `delete` and `exists`
   cost about half what they did (a `get` 2.1 µs from 4.8 on the 16-core
   machine), and a call between native instances a third less (8.2 µs

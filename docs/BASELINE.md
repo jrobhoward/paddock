@@ -2536,6 +2536,30 @@ The node's workers, spin 20 against 0, one round:
 - **On the 16-core machine, spinning stops paying as the workers approach the cores** (one round each; the rows vary by more than 10% between runs).
 - **Not measured:** why the 16-core machine gains from spinning at the same oversubscription that costs the Pi half (deep idle states make its wake-ups dearer: S32, T1), and `kv_cost`'s 16-instance rows.
 
+## 2026-11-05: spinning only where a callback follows soon (T1b)
+
+Two hints the node writes before it hands an app a callback, tried as a temporary switch; the second shipped. With either, an app waiting for its next callback after a hinted one sleeps at once instead of spinning, and so does the node's task between callbacks; waits for an answer within a callback still spin.
+- **Nothing queued:** nothing waits in the instance's mailbox, signals or operations behind the callback.
+- **Nothing queued, after a gap** (shipped): as well, the callback came longer than `spin_us` after the frame before, so an instance called back to back keeps spinning.
+
+`native_cost` and `cluster_throughput`, native programs, 4 tokio workers, `spin_us` 20 (fixed 0 is from the same runs before the shipped variant); 16-core machine and Raspberry Pi 5, each idle at the start (load under 1), each measuring only itself, two rounds, ranges:
+
+| | 16-core: fixed | Nothing queued | After a gap | Pi: fixed | Nothing queued | After a gap | Pi: `spin_us` 0 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 16 calls in flight, calls/s | 257,000 to 262,000 | 260,000 to 264,000 | 265,000 to 285,000 | 62,600 to 63,900 | 121,500 to 123,200 | 116,500 to 118,600 | 123,700 to 127,100 |
+| CPU per call | 41.6 to 42.5 µs | 25.5 to 25.8 µs | 27.4 to 28.8 µs | 59.8 to 61.2 µs | 27.5 to 28.4 µs | 28.7 to 29.6 µs | 30.0 to 31.5 µs |
+| 64 calls in flight, calls/s | 317,000 to 329,000 | 324,000 to 325,000 | 324,000 to 331,000 | 65,300 to 68,200 | 136,000 to 137,000 | 118,000 to 118,100 | 126,200 to 131,000 |
+| Request from a callback | 3.9 to 4.4 µs | 3.9 to 4.3 µs | 4.3 to 4.4 µs | 2.8 to 2.9 µs | 2.8 to 3.0 µs | 2.8 to 3.0 µs | 12.6 to 13.2 µs |
+| Sequential calls from the host, p50 (`cluster_throughput`, one node) | 4.0 to 5.0 µs | 8.5 to 11.4 µs | 5.2 to 5.7 µs | 5.6 to 5.9 µs | 8.0 to 10.4 µs | 5.8 µs | 15.9 to 16.2 µs |
+| Sequential calls between instances, p50 | 8.1 to 9.1 µs | 11.9 to 15.7 µs | 8.1 to 8.8 µs | 7.2 to 7.5 µs | 10.1 to 14.6 µs | 7.4 to 7.5 µs | 28.2 to 30.8 µs |
+| 16 instances calling, calls/s | 282,000 to 346,000 | 267,000 to 270,000 | 286,000 to 324,000 | 129,000 to 135,000 | 94,000 to 101,000 | 117,000 to 121,000 | 95,000 to 96,000 |
+
+- **Under load, the Pi gets most of what turning spinning off gave** (about 1.8 times the calls in flight, half the CPU per call), and keeps its 3 µs requests, which turning it off loses.
+- **The 16-core machine keeps its rates and spends a third less CPU per call.**
+- **Without the gap, back-to-back calls paid a wake-up:** a caller's next call comes microseconds after the reply, with the mailbox empty when the call began. With it they are as before, within about 1 µs from the host.
+- **What it costs:** 16 instances calling each other on the Pi, 117,000 to 121,000 a second against 129,000 to 135,000; and 64 in flight on the Pi below the variant without the gap (118,000 against 136,000).
+- **Not measured:** `kv_cost`'s 16-instance rows, and more than 4 workers.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
