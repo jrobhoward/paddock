@@ -2591,6 +2591,44 @@ The 16-core machine with C2 disabled (`cpupower idle-set -D 10`) and enabled, `n
 - **No guidance follows:** a latency-oriented tuned profile would cost power for nothing measured here.
 - **Not measured:** the power drawn, and a node idle for long enough between bursts for C2 to matter.
 
+## 2026-11-05: where a call between two native instances goes (T12)
+
+A temporary harness (`native_call_split`, since removed with its trace): two native instances of `bulkhead-fixture-msgbench` on one node, 4 tokio workers, `spin_us` 20, A calling B with `echo:x` one call at a time, timed by A's own clock, five runs of 20,000 calls, the median of their p50s. With a trace on, the node timed its steps and the apps stamped the raw monotonic clock (the same in every process) into spare words of their rings' headers.
+
+16-core machine, idle at the start (load under 1), two runs, means per call:
+
+| Stage | ns |
+| --- | --- |
+| Caller app to its task (the request noticed) | 660 to 810 |
+| Caller's task to target's task (mailbox, wake) | 1,280 to 1,310 |
+| Target's task writes the call frame | 390 to 410 |
+| Target's task to target app (the frame noticed) | 450 |
+| Target app: handles it, writes the reply | 560 to 580 |
+| Target app to its task (the reply noticed) | 2,360 to 2,640 |
+| Target's task to caller's task (one-shot, wake) | 1,030 to 1,040 |
+| Caller's task writes the answer frame | 470 to 550 |
+| Caller's task to caller app (the answer noticed) | 450 to 500 |
+| Caller app: from the answer to its next request | 710 to 800 |
+| In all (the app's p50: 7.95 to 9.50 µs) | 8,350 to 9,100 |
+
+- **The largest stage is the target's task noticing the reply:** it does not watch its rings within the poll (T9) but yields, each turn through tokio's scheduler. T9's watch is skipped after a callback that woke another task, and in a call-reply pattern the last thing each callback's task did was complete the previous caller's reply: the flag is always set, though that caller ran long ago.
+- **The apps notice a frame in about 0.45 µs, and their own work is cheap** (0.56 µs including the SDK's conversions); a profile put 9% of all samples in the apps' code against 53% in their `sched_yield` waits.
+
+Clearing that flag when a callback starts, so its first wait may watch (a temporary switch, not kept), against the code as it was; two to three sessions, ranges:
+
+| | 16-core: as it was | Flag cleared | Pi: as it was | Flag cleared |
+| --- | --- | --- | --- | --- |
+| Call between two instances, p50 (the harness) | 8.7 to 10.2 µs | 6.1 to 7.2 µs | 7.5 µs | 5.3 to 6.6 µs |
+| The target noticing the reply | 2.7 to 3.6 µs | 0.74 µs | | |
+| Sequential calls from the host, p50 (`cluster_throughput`) | 4.0 to 6.4 µs | 3.6 to 6.2 µs | 5.9 µs | 3.6 to 3.9 µs |
+| Sequential calls between instances, p50 | 6.5 to 9.8 µs | 7.8 to 9.3 µs | 7.5 to 8.4 µs | 5.4 µs |
+| 16 instances calling each other, calls/s | 264,000 to 335,000 (median 324,000) | 243,000 to 315,000 (median 298,000) | 111,000 to 122,000 | 106,000 to 116,000 |
+| `native_cost`'s requests, casts and calls in flight | | unchanged | | unchanged |
+
+- **A lone pair calls a quarter to a third faster, and 16 instances calling each other lose about 8% on the 16-core machine** (one session 25%, two 4 to 6%) and 5% on the Pi: a watching task holds its worker while other instances' tasks queue behind it, as T9 found. A shorter watch (2.5 or 1.5 µs instead of 5) lost the gain as well.
+- **Not shipped** (decided with the user): T8's waker, waking a task when its frame arrives instead of having it watch, would give the gain without holding the worker; T12 takes this up again after it.
+- **The two hand-offs T12 planned to remove cost about 2.3 µs together** (1.3 and 1.0), more after the flag is cleared (about 2 and 1.2).
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
