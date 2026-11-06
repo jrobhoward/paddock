@@ -188,7 +188,8 @@ impl From<wit::CallError> for CallError {
     }
 }
 
-/// Why a cast was dropped ([`Ctx::try_cast`](crate::Ctx::try_cast)).
+/// Why a cast was not queued ([`Ctx::try_cast`](crate::Ctx::try_cast),
+/// [`Ctx::cast_timeout`](crate::Ctx::cast_timeout)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CastError {
@@ -202,6 +203,9 @@ pub enum CastError {
     TooLarge,
     /// Its messaging ACL refused the cast.
     AccessDenied,
+    /// No room in its mailbox within the timeout (`cast_timeout`); the
+    /// message was not queued.
+    Timeout,
 }
 
 impl fmt::Display for CastError {
@@ -212,6 +216,7 @@ impl fmt::Display for CastError {
             Self::Overloaded => "overloaded",
             Self::TooLarge => "too large",
             Self::AccessDenied => "access denied",
+            Self::Timeout => "timeout",
         })
     }
 }
@@ -228,6 +233,7 @@ impl From<bulkhead_native::protocol::CastError> for CastError {
             P::Overloaded => Self::Overloaded,
             P::TooLarge => Self::TooLarge,
             P::AccessDenied => Self::AccessDenied,
+            P::Timeout => Self::Timeout,
         }
     }
 }

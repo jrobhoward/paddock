@@ -2,6 +2,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+use std::time::Duration;
+
 use tokio::sync::mpsc::error::TrySendError;
 
 use super::*;
@@ -125,4 +127,104 @@ fn weak_sender____mailbox_dropped____does_not_upgrade() {
     drop(rx);
 
     assert!(weak.upgrade().is_none());
+}
+
+#[tokio::test]
+async fn send_timeout____room_now____queued_at_once() {
+    let (tx, _rx) = channel(2, 10);
+
+    let sent = tx.send_timeout(cast(5), Duration::from_secs(5)).await;
+
+    assert_eq!(sent, Ok(()));
+    assert_eq!(tx.queued(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn send_timeout____no_room____times_out_unqueued() {
+    let (tx, _rx) = channel(1, 10);
+    tx.try_send(cast(1)).unwrap();
+
+    let sent = tx.send_timeout(cast(1), Duration::from_millis(50)).await;
+
+    assert_eq!(sent, Err(WaitError::Timeout));
+    assert_eq!(tx.queued(), 1);
+    assert_eq!(tx.queued_bytes(), 1);
+}
+
+#[tokio::test]
+async fn send_timeout____slot_freed____queued_after_waiting() {
+    let (tx, mut rx) = channel(1, 10);
+    tx.try_send(cast(1)).unwrap();
+    let waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(2), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    rx.recv().await.unwrap();
+    let sent = waiter.await.unwrap();
+
+    assert_eq!(sent, Ok(()));
+    assert_eq!(tx.queued_bytes(), 2);
+}
+
+#[tokio::test]
+async fn send_timeout____bytes_freed____queued_after_waiting() {
+    let (tx, mut rx) = channel(100, 10);
+    tx.try_send(cast(8)).unwrap();
+    let waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(5), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    rx.recv().await.unwrap();
+    let sent = waiter.await.unwrap();
+
+    assert_eq!(sent, Ok(()));
+    assert_eq!(tx.queued_bytes(), 5);
+}
+
+#[tokio::test]
+async fn send_timeout____waiter_owed_room____later_try_send_full() {
+    let (tx, mut rx) = channel(100, 10);
+    tx.try_send(cast(8)).unwrap();
+    let waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(10), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    rx.recv().await.unwrap();
+    let barging = tx.try_send(cast(1));
+    let sent = waiter.await.unwrap();
+
+    assert!(matches!(barging, Err(TrySendError::Full(_))));
+    assert_eq!(sent, Ok(()));
+}
+
+#[tokio::test]
+async fn send_timeout____larger_than_the_limit____full_at_once() {
+    let (tx, _rx) = channel(100, 10);
+
+    let sent = tx.send_timeout(cast(11), Duration::from_secs(5)).await;
+
+    assert_eq!(sent, Err(WaitError::Full));
+}
+
+#[tokio::test]
+async fn send_timeout____mailbox_closed_while_waiting____closed() {
+    let (tx, mut rx) = channel(1, 10);
+    tx.try_send(cast(1)).unwrap();
+    let waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(1), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    rx.close();
+    while rx.try_recv().is_ok() {}
+    let sent = waiter.await.unwrap();
+
+    assert_eq!(sent, Err(WaitError::Closed));
 }

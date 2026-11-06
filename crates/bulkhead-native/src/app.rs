@@ -418,6 +418,33 @@ impl Ctx {
         }
     }
 
+    /// [`Ctx::try_cast`] that waits up to `timeout_ms` for room if `to`'s
+    /// mailbox is full, so `Ok` means the message is in its mailbox. This
+    /// callback handles nothing else meanwhile; the wait is host time,
+    /// capped at the instance's callback deadline. A cast to this
+    /// instance's own pid never waits.
+    ///
+    /// # Errors
+    ///
+    /// The [`CastError`] saying why the message was not queued:
+    /// [`CastError::Timeout`] if no room came in time.
+    pub fn cast_timeout(
+        &mut self,
+        to: Pid,
+        msg: Envelope,
+        timeout_ms: u32,
+    ) -> Result<(), CastError> {
+        match self.request(Request::CastWait {
+            to,
+            msg,
+            timeout_ms,
+        }) {
+            Answer::Unit => Ok(()),
+            Answer::CastFailed(e) => Err(e),
+            other => unexpected(&other),
+        }
+    }
+
     /// Call `to` and wait up to `timeout_ms` for its reply.
     ///
     /// # Errors

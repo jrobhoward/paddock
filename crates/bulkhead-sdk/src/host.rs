@@ -131,6 +131,15 @@ pub(crate) mod native {
             Ctx::current().try_cast(pid(to), envelope(msg))
         }
 
+        /// No WIT counterpart: native programs only (ROADMAP I2).
+        pub(crate) fn cast_timeout(
+            to: wit::Pid,
+            msg: &wit::Envelope,
+            timeout_ms: u32,
+        ) -> Result<(), p::CastError> {
+            Ctx::current().cast_timeout(pid(to), envelope(msg), timeout_ms)
+        }
+
         pub(crate) fn call(
             to: wit::Pid,
             msg: &wit::Envelope,

@@ -7,11 +7,15 @@
 //! message, so the bytes come back as soon as the instance takes the
 //! message, or when it is dropped with the mailbox. A message that finds
 //! either limit reached is refused as at a full mailbox
-//! ([`TrySendError::Full`]). Nothing here waits; the semaphore serves
-//! waiters in arrival order, should a send ever wait for room.
+//! ([`TrySendError::Full`]), or, by [`Sender::send_timeout`] (a native
+//! app's `cast_timeout`, ROADMAP I2), waits for room: first for its bytes,
+//! then for a slot. The semaphore and the channel both serve waiters in
+//! arrival order, and a send that does not wait never takes room a waiter
+//! is owed.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
@@ -73,6 +77,17 @@ pub(crate) fn channel(max: usize, max_bytes: u64) -> (Sender, Receiver) {
     (Sender { tx, budget }, Receiver { rx })
 }
 
+/// Why [`Sender::send_timeout`] did not queue its message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WaitError {
+    /// The body is larger than the mailbox's byte limit: it never fits.
+    Full,
+    /// The mailbox closed: the instance exited.
+    Closed,
+    /// No room came within the timeout. The message was not queued.
+    Timeout,
+}
+
 /// The sending side of a mailbox.
 #[derive(Debug, Clone)]
 pub(crate) struct Sender {
@@ -99,6 +114,42 @@ impl Sender {
                 TrySendError::Full(q) => TrySendError::Full(q.message),
                 TrySendError::Closed(q) => TrySendError::Closed(q.message),
             })
+    }
+
+    /// Queue `message`, waiting up to `timeout` for a slot and room for its
+    /// body if the mailbox has neither now.
+    pub(crate) async fn send_timeout(
+        &self,
+        message: Message,
+        timeout: Duration,
+    ) -> Result<(), WaitError> {
+        let message = match self.try_send(message) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Closed(_)) => return Err(WaitError::Closed),
+            Err(TrySendError::Full(message)) => message,
+        };
+        let n = u32::try_from(size(&message))
+            .ok()
+            .filter(|n| u64::from(*n) <= self.budget.max.load(Ordering::Relaxed))
+            .ok_or(WaitError::Full)?;
+        let wait = async {
+            let bytes = self
+                .budget
+                .permits
+                .clone()
+                .acquire_many_owned(n)
+                .await
+                .map_err(|_| WaitError::Closed)?;
+            let slot = self.tx.reserve().await.map_err(|_| WaitError::Closed)?;
+            slot.send(Queued {
+                message,
+                _bytes: bytes,
+            });
+            Ok(())
+        };
+        tokio::time::timeout(timeout, wait)
+            .await
+            .unwrap_or(Err(WaitError::Timeout))
     }
 
     /// A sender that does not keep the mailbox open, for timers.

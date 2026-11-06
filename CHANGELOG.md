@@ -63,6 +63,17 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `Ctx::cast_timeout` in the SDK and `bulkhead_native::app::Ctx::cast_timeout`
+  (ROADMAP I2): a cast that, if the target's mailbox is full, waits up to a
+  timeout for room (its bytes, then a slot, in arrival order), so `Ok`
+  means the message is in the target's mailbox. `CastError::Timeout` when
+  no room came; the timeout is capped at the sender's callback deadline,
+  and the wait does not count against it. A cast to the sender's own pid
+  never waits. Native programs only. A cast to another node does not wait
+  yet (ROADMAP I3): `Ok` there means the link took it. New probe
+  `cast__wait` and histogram `bulkhead_cast_wait_seconds`. The native
+  protocol is version 7 (`Request::CastWait`): native apps must be
+  rebuilt. The conformance app answers `cast-wait` and `cast-wait-n`.
 - `limits.mailbox_max_bytes` (ROADMAP I6, default `"64MiB"`): the bytes
   of message bodies an instance's mailbox may hold, beside the count
   `mailbox_max`. A cast, call or timer message that would go past it is

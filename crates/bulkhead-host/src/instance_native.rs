@@ -37,7 +37,7 @@ use crate::bindings::bulkhead::runtime::process;
 use crate::failover::RunUntil;
 use crate::health;
 use crate::lifecycle::LifecycleState;
-use crate::message::{Envelope, ExitReason, Info};
+use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::native::NativeCode;
 use crate::native::convert;
 use crate::native::port::{Incoming, KvCall, Port};
@@ -263,19 +263,41 @@ async fn log(state: &mut InstanceState, level: p::Level, message: String) {
     logging::record(&mut HostState::<Logging>::service(state), level, message).await;
 }
 
+/// A cast's answer: `Unit` once queued, or why it was not.
+fn cast_answer(sent: Result<(), CallError>) -> Answer {
+    match sent {
+        Ok(()) => Answer::Unit,
+        Err(err) => Answer::CastFailed(convert::cast_error(&err)),
+    }
+}
+
 /// Answer a request with the process functions a component's imports run.
 /// An error (over a host-object limit, a call to itself) crashes the
-/// instance with its message, as a trap does.
-async fn answer(state: &mut InstanceState, request: Request) -> Result<Answer, String> {
+/// instance with its message, as a trap does. `deadline` is the callback's
+/// deadline, which caps how long a cast waits for room.
+async fn answer(
+    state: &mut InstanceState,
+    request: Request,
+    deadline: Duration,
+) -> Result<Answer, String> {
     use process::Host;
     let e = |e: wasmtime::Error| e.to_string();
     Ok(match request {
         Request::SelfPid => Answer::Pid(convert::from_wit_pid(state.self_().await.map_err(e)?)),
         Request::Cast { to, msg } => {
-            match state.try_cast(convert::host_pid(to), convert::host_envelope(msg)) {
-                Ok(()) => Answer::Unit,
-                Err(err) => Answer::CastFailed(convert::cast_error(&err)),
-            }
+            cast_answer(state.try_cast(convert::host_pid(to), convert::host_envelope(msg)))
+        }
+        Request::CastWait {
+            to,
+            msg,
+            timeout_ms,
+        } => {
+            let timeout = Duration::from_millis(timeout_ms.into()).min(deadline);
+            cast_answer(
+                state
+                    .cast_wait(convert::host_pid(to), convert::host_envelope(msg), timeout)
+                    .await,
+            )
         }
         Request::Call {
             to,
@@ -404,6 +426,7 @@ impl InstanceTask {
             me: self.me.clone(),
             mailbox: self.self_mailbox.clone(),
             dropped: self.dropped.clone(),
+            stats: self.stats.clone(),
         };
         let mut state = match InstanceState::new(self.pid, spec, ctx) {
             Ok(state) => state,
@@ -883,8 +906,13 @@ impl InstanceTask {
             match next {
                 Some(Incoming::Frame(FromApp::Request { id, request })) => {
                     let asked = Instant::now();
-                    match super::killable(&self.kill, &self.control, None, answer(state, request))
-                        .await
+                    match super::killable(
+                        &self.kill,
+                        &self.control,
+                        None,
+                        answer(state, request, budget),
+                    )
+                    .await
                     {
                         Ok(Ok(answer)) => port.send(&ToApp::Answer { id, answer }),
                         Ok(Err(why)) => {

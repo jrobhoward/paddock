@@ -44,6 +44,12 @@
 //!   queued: `ok`, or `err:<cast error>` (`noproc`, `noconnection`,
 //!   `overloaded`, `too-large` or `access-denied`). A component is not
 //!   told, so it answers `err:unsupported`; the case runs natively only.
+//! - `cast-wait:<pid>:<ms>:<command>`: cast `<command>`, waiting up to
+//!   `<ms>` for room in a full mailbox (`cast_timeout`): `ok`, or
+//!   `err:<cast error>` as for `try-cast`, `timeout` included.
+//!   `cast-wait-n:<pid>:<ms>:<n>`: the same with the command `note:`
+//!   followed by `<n>` `x`s, so a test can size the body. Natively only;
+//!   a component answers `err:unsupported`.
 //! - `register:<name>`: `ok`, `err:access-denied` or `err:taken:<pid>`.
 //!   `whereis:<name>`: the pid or `none`.
 //! - `timer:<ms>:<text>`: a timer carrying `<text>`; its reference.
@@ -195,15 +201,32 @@ fn show_call_error(err: &CallError) -> String {
 /// components do not.
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 fn try_cast(ctx: &mut Ctx, to: Pid, msg: Envelope) -> String {
+    show_cast(ctx.try_cast(to, msg))
+}
+
+/// `cast-wait`'s answer: a cast that waits up to `ms` for room.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+fn cast_wait(ctx: &mut Ctx, to: Pid, ms: u64, msg: Envelope) -> String {
+    show_cast(ctx.cast_timeout(to, msg, Duration::from_millis(ms)))
+}
+
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+fn cast_wait(_ctx: &mut Ctx, _to: Pid, _ms: u64, _msg: Envelope) -> String {
+    "err:unsupported".into()
+}
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+fn show_cast(result: Result<(), bulkhead_sdk::CastError>) -> String {
     use bulkhead_sdk::CastError;
 
-    match ctx.try_cast(to, msg) {
+    match result {
         Ok(()) => "ok".into(),
         Err(CastError::Noproc) => "err:noproc".into(),
         Err(CastError::Noconnection) => "err:noconnection".into(),
         Err(CastError::Overloaded) => "err:overloaded".into(),
         Err(CastError::TooLarge) => "err:too-large".into(),
         Err(CastError::AccessDenied) => "err:access-denied".into(),
+        Err(CastError::Timeout) => "err:timeout".into(),
         Err(other) => format!("err:{other}"),
     }
 }
@@ -432,6 +455,19 @@ impl Conformance {
             "try-cast" => {
                 let (pid, inner) = arg.split_once(':').unwrap_or((arg, ""));
                 reply(try_cast(ctx, parse_pid(pid), Envelope::text(inner)))
+            }
+            "cast-wait" | "cast-wait-n" => {
+                let mut parts = arg.splitn(3, ':');
+                let pid = parse_pid(parts.next().unwrap_or(""));
+                let ms = number(parts.next().unwrap_or(""));
+                let rest = parts.next().unwrap_or("");
+                let inner = if verb == "cast-wait-n" {
+                    let n = usize::try_from(number(rest)).unwrap_or(0);
+                    format!("note:{}", "x".repeat(n))
+                } else {
+                    rest.to_string()
+                };
+                reply(cast_wait(ctx, pid, ms, Envelope::text(inner)))
             }
             "register" => reply(register(ctx, arg)),
             "whereis" => reply(ctx.whereis(arg).map_or("none".into(), show_pid)),

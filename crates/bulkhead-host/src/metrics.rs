@@ -37,6 +37,9 @@ const CALLBACK_BUCKETS: [f64; 10] = [
     0.000_01, 0.000_05, 0.000_1, 0.000_5, 0.001, 0.005, 0.01, 0.05, 0.1, 1.0,
 ];
 
+/// Buckets for the time a waited cast waits for room, in seconds.
+const CAST_WAIT_BUCKETS: [f64; 9] = [0.000_01, 0.000_1, 0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0];
+
 /// A metric's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -343,6 +346,8 @@ pub(crate) struct AppStats {
     callbacks: [AtomicU64; 3],
     /// Guest time per callback.
     guest_time: Histogram,
+    /// Time waited for room by casts that wait (ROADMAP I2), zero included.
+    cast_wait: Histogram,
     /// Messages dropped at a full mailbox by instances that have exited
     /// (live instances' counts are added when rendering).
     pub(crate) dropped: AtomicU64,
@@ -372,6 +377,7 @@ impl Default for AppStats {
         Self {
             callbacks: Default::default(),
             guest_time: Histogram::new(&CALLBACK_BUCKETS),
+            cast_wait: Histogram::new(&CAST_WAIT_BUCKETS),
             dropped: AtomicU64::new(0),
             exits: Mutex::default(),
             passivations: AtomicU64::new(0),
@@ -394,6 +400,11 @@ impl AppStats {
         };
         self.callbacks[i].fetch_add(1, Ordering::Relaxed);
         self.guest_time.record(guest.as_secs_f64());
+    }
+
+    /// A cast that waits for room waited `waited`.
+    pub(crate) fn cast_waited(&self, waited: Duration) {
+        self.cast_wait.record(waited.as_secs_f64());
     }
 
     /// An instance was passivated.
@@ -532,19 +543,20 @@ impl Metrics {
                 );
             }
         }
-        header(
+        write_histogram(
             &mut out,
+            &apps,
             "bulkhead_callback_guest_seconds",
-            "histogram",
             "Guest execution time per callback.",
+            |s| &s.guest_time,
         );
-        for (app, (_, s)) in &apps {
-            s.guest_time.write(
-                &mut out,
-                "bulkhead_callback_guest_seconds",
-                &format!("app=\"{}\"", escape(app)),
-            );
-        }
+        write_histogram(
+            &mut out,
+            &apps,
+            "bulkhead_cast_wait_seconds",
+            "Time casts that wait for room (cast_timeout) waited, zero included.",
+            |s| &s.cast_wait,
+        );
         header(
             &mut out,
             "bulkhead_mailbox_dropped_total",
@@ -698,6 +710,20 @@ fn render_live(out: &mut String, live: &BTreeMap<&str, Live>) {
         for (app, l) in live {
             let _ = writeln!(out, "{name}{{app=\"{}\"}} {}", escape(app), value(l));
         }
+    }
+}
+
+/// A per-app histogram of the host's counters.
+fn write_histogram(
+    out: &mut String,
+    apps: &BTreeMap<String, AppEntry>,
+    name: &str,
+    help: &str,
+    pick: fn(&AppStats) -> &Histogram,
+) {
+    header(out, name, "histogram", help);
+    for (app, (_, s)) in apps {
+        pick(s).write(out, name, &format!("app=\"{}\"", escape(app)));
     }
 }
 

@@ -22,14 +22,16 @@
 //! [`hot`](crate::hot): the most frequent keyvalue requests and their
 //! answers in fixed layouts, beside the CBOR frames. Version 6 answers a
 //! cast that was not queued with [`Answer::CastFailed`] instead of
-//! [`Answer::Unit`], so an app can learn why (ROADMAP I1).
+//! [`Answer::Unit`], so an app can learn why (ROADMAP I1). Version 7 added
+//! [`Request::CastWait`], a cast that waits for room in a full mailbox
+//! (ROADMAP I2).
 
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -204,6 +206,9 @@ pub enum CastError {
     TooLarge,
     /// The target's messaging ACL refuses this app.
     AccessDenied,
+    /// No room in the target's mailbox within the timeout
+    /// ([`Request::CastWait`]); the message was not queued.
+    Timeout,
 }
 
 /// Why a name could not be registered.
@@ -363,6 +368,19 @@ pub enum Request {
         to: Pid,
         /// The message.
         msg: Envelope,
+    },
+    /// Send a message, waiting up to `timeout_ms` for room if the target's
+    /// mailbox is full: [`Answer::Unit`] once it is queued,
+    /// [`Answer::CastFailed`] if it was not (with [`CastError::Timeout`]
+    /// when no room came). The node caps the wait at the instance's
+    /// callback deadline.
+    CastWait {
+        /// To whom.
+        to: Pid,
+        /// The message.
+        msg: Envelope,
+        /// How long to wait for room.
+        timeout_ms: u32,
     },
     /// Call and wait for the reply: [`Answer::Called`].
     Call {

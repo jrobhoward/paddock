@@ -137,6 +137,33 @@ pub(crate) fn cast(
     }
 }
 
+/// Send a cast, waiting up to `timeout` for room in the target's full
+/// mailbox (a native app's `cast_timeout`, ROADMAP I2). A cast to the
+/// sender's own pid never waits: the sender cannot take a message while it
+/// waits, so it fails at once with `overloaded` if its mailbox is full. A
+/// cast to another node is, until ROADMAP I3, a plain cast: `Ok` once the
+/// link takes it.
+pub(crate) async fn cast_wait(
+    rt: &RuntimeInner,
+    from: Origin<'_>,
+    to: Pid,
+    msg: Envelope,
+    timeout: Duration,
+) -> Result<(), CallError> {
+    if let Origin::Local(me) = from {
+        if me.pid() == to {
+            return cast(rt, from, to, msg);
+        }
+        me.woke_others();
+    }
+    match route(rt, to) {
+        Route::Local(target) if !permits(from, &target) => Err(CallError::AccessDenied),
+        Route::Local(target) => target.cast_wait_from(from.pid(), msg, timeout).await,
+        Route::Dead => Err(CallError::Noproc),
+        Route::Remote(_) => cast(rt, from, to, msg),
+    }
+}
+
 /// Send a call and wait up to `timeout` for the reply.
 pub(crate) async fn call(
     rt: &RuntimeInner,

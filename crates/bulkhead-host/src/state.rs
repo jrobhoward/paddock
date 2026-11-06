@@ -18,6 +18,7 @@ use crate::failover::RunUntil;
 use crate::instance::InstanceHandle;
 use crate::mailbox;
 use crate::message::Envelope;
+use crate::metrics::AppStats;
 use crate::output::{CapturedOutput, Tags};
 use crate::pid::Pid;
 use crate::process::{Timers, limit};
@@ -45,6 +46,8 @@ pub(crate) struct ProcessContext {
     pub(crate) mailbox: mailbox::WeakSender,
     /// Messages dropped because the mailbox was full.
     pub(crate) dropped: Arc<AtomicU64>,
+    /// The app's host counters (the time waited casts wait).
+    pub(crate) stats: Arc<AppStats>,
 }
 
 /// Store data for one instance. Public only as the opaque
@@ -188,6 +191,7 @@ impl InstanceState {
             me: self.ctx.me.clone(),
             mailbox: self.ctx.mailbox.clone(),
             dropped: self.ctx.dropped.clone(),
+            stats: self.ctx.stats.clone(),
         }
     }
 

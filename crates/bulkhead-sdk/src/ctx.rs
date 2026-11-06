@@ -47,6 +47,30 @@ impl Ctx {
         process::try_cast(to.into(), &msg.into()).map_err(Into::into)
     }
 
+    /// [`Ctx::try_cast`] that waits up to `timeout` for room if the
+    /// target's mailbox is full, so `Ok` means the message is in its
+    /// mailbox (not yet handled: a target that crashes loses its mailbox).
+    /// This instance handles no other message meanwhile; the wait does not
+    /// count against its callback deadline, and the node caps it at that
+    /// deadline. A cast to this instance's own pid never waits. Native
+    /// programs only. Until ROADMAP I3, a cast to an instance on another
+    /// node does not wait: `Ok` means the link to that node took it.
+    ///
+    /// # Errors
+    ///
+    /// [`CastError::Timeout`] if no room came in time, and otherwise as
+    /// [`Ctx::try_cast`].
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    pub fn cast_timeout(
+        &mut self,
+        to: Pid,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<(), CastError> {
+        let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        process::cast_timeout(to.into(), &msg.into(), ms).map_err(Into::into)
+    }
+
     /// Send and wait for the reply. This instance handles no other message
     /// meanwhile; the time spent waiting does not count against its
     /// callback deadline.

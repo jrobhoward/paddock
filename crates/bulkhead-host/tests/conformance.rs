@@ -403,6 +403,147 @@ async fn try_cast____each_outcome____says_whether_it_was_queued() {
     }
 }
 
+/// An instance whose mailbox holds at most 100 bytes of bodies, for the
+/// waited-cast cases: room is then a matter of bytes, not timing.
+fn start_small(app: &str) -> InstanceHandle {
+    start_with(app, |s| {
+        s.mailbox_max_bytes = 100;
+        s.message_max_bytes = 100;
+    })
+}
+
+/// Keep `h` in a call to `stuck` that is never answered, for `ms`, its
+/// mailbox empty.
+async fn busy(h: &InstanceHandle, stuck: &InstanceHandle, ms: u64) {
+    h.cast(text(&format!("call:{}:{ms}:noreply", pid(stuck))))
+        .unwrap();
+    wait_queued(h, 0).await;
+}
+
+async fn wait_queued(h: &InstanceHandle, n: usize) {
+    let deadline = Instant::now() + LONG;
+    while h.queued() != n && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    assert_eq!(h.queued(), n);
+}
+
+/// A `note` whose body is `bytes` long.
+fn filler(bytes: usize) -> Envelope {
+    text(&format!("note:{}", "f".repeat(bytes - 5)))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cast_wait____room_comes____queued_after_waiting() {
+    if !native() {
+        return;
+    }
+    let a = up("c-wait-room", "").await;
+    let stuck = up("c-wait-room", "").await;
+    let b = start_small("c-wait-room-b");
+    busy(&b, &stuck, 300).await;
+    b.cast(filler(80)).unwrap();
+
+    let started = Instant::now();
+    let sent = ask(&a, &format!("cast-wait-n:{}:2000:40", pid(&b))).await;
+    let waited = started.elapsed();
+    let notes = ask_until(&b, "notes", |n| n.contains(&"x".repeat(40))).await;
+
+    assert_eq!(sent, "ok");
+    assert!(waited >= Duration::from_millis(100), "{waited:?}");
+    assert!(notes.ends_with(&"x".repeat(40)), "{notes}");
+    for h in [a, stuck, b] {
+        h.kill();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cast_wait____no_room____times_out_capped_at_the_deadline() {
+    if !native() {
+        return;
+    }
+    let a = up("c-wait-none", "").await;
+    let stuck = up("c-wait-none", "").await;
+    let b = start_small("c-wait-none-b");
+    busy(&b, &stuck, 5000).await;
+    b.cast(filler(80)).unwrap();
+
+    let started = Instant::now();
+    let short = ask(&a, &format!("cast-wait-n:{}:150:40", pid(&b))).await;
+    let short_took = started.elapsed();
+    let started = Instant::now();
+    let long = ask(&a, &format!("cast-wait-n:{}:60000:40", pid(&b))).await;
+    let long_took = started.elapsed();
+
+    assert_eq!(short, "err:timeout");
+    assert!(short_took >= Duration::from_millis(150), "{short_took:?}");
+    assert_eq!(long, "err:timeout");
+    // The callback deadline (500 ms here) caps the wait.
+    assert!(long_took < Duration::from_secs(2), "{long_took:?}");
+    assert_eq!(b.queued(), 1);
+    for h in [a, stuck, b] {
+        h.kill();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cast_wait____to_its_own_full_mailbox____overloaded_at_once() {
+    if !native() {
+        return;
+    }
+    let stuck = up("c-wait-self", "").await;
+    let a = start_small("c-wait-self-a");
+    busy(&a, &stuck, 300).await;
+    let command = format!("cast-wait-n:{}:2000:60", pid(&a));
+    let asking = tokio::spawn({
+        let a = a.clone();
+        async move { ask(&a, &command).await }
+    });
+    wait_queued(&a, 1).await;
+    a.cast(filler(60)).unwrap();
+
+    let sent = asking.await.unwrap();
+
+    assert_eq!(sent, "err:overloaded");
+    for h in [a, stuck] {
+        h.kill();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cast_wait____two_waiting_on_each_other____first_timeout_frees_the_other() {
+    if !native() {
+        return;
+    }
+    let stuck = up("c-wait-cycle", "").await;
+    let a = start_small("c-wait-cycle-a");
+    let b = start_small("c-wait-cycle-b");
+    busy(&a, &stuck, 300).await;
+    busy(&b, &stuck, 300).await;
+    let mut asking = Vec::new();
+    // `a` gives up first; its callback ends, it takes its filler, and
+    // `b`'s cast finds room before `b`'s own (capped) timeout.
+    for (from, to, ms) in [(&a, &b, 150), (&b, &a, 2000)] {
+        let command = format!("cast-wait-n:{}:{ms}:60", pid(to));
+        let from = from.clone();
+        asking.push(tokio::spawn(async move { ask(&from, &command).await }));
+    }
+    wait_queued(&a, 1).await;
+    wait_queued(&b, 1).await;
+    a.cast(filler(60)).unwrap();
+    b.cast(filler(60)).unwrap();
+
+    let mut answers = Vec::new();
+    for task in asking {
+        answers.push(task.await.unwrap());
+    }
+
+    assert_eq!(answers, ["err:timeout", "ok"]);
+    for h in [a, b, stuck] {
+        h.kill();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn self____pid____as_the_host_writes_it() {
     let h = up("c-self", "").await;

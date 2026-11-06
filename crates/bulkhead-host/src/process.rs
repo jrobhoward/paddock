@@ -109,6 +109,27 @@ impl InstanceState {
         }
         sent
     }
+
+    /// Send a cast from this instance, waiting up to `timeout` for room in
+    /// the target's full mailbox ([`delivery::cast_wait`]): a native app's
+    /// `cast_timeout`. The time waited is counted for the app.
+    pub(crate) async fn cast_wait(
+        &mut self,
+        to: Pid,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<(), CallError> {
+        let started = std::time::Instant::now();
+        let sent =
+            delivery::cast_wait(&self.ctx.rt, Origin::Local(&self.ctx.me), to, msg, timeout).await;
+        let waited = started.elapsed();
+        self.ctx.stats.cast_waited(waited);
+        probe::cast_waited(self.pid, to, waited, &sent);
+        if let Err(err) = &sent {
+            tracing::debug!(%to, error = %err, waited_us = waited.as_micros(), "waited cast not queued");
+        }
+        sent
+    }
 }
 
 impl process::Host for InstanceState {

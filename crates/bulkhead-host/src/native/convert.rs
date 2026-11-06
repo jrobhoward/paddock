@@ -129,14 +129,15 @@ pub(crate) fn call_error(e: wit::CallError) -> p::CallError {
     }
 }
 
-/// Why a cast was dropped. `delivery::cast` never answers `timeout` or
-/// `exited`, which belong to calls; were it to, the message was not queued
-/// for want of room or of a target.
+/// Why a cast was not queued. `timeout` comes only from a cast that
+/// waits; `delivery` never answers a cast with `exited`, which belongs to
+/// calls, and were it to, the target is gone.
 pub(crate) fn cast_error(e: &CallError) -> p::CastError {
     match e {
         CallError::Noproc | CallError::Exited(_) => p::CastError::Noproc,
         CallError::Noconnection => p::CastError::Noconnection,
-        CallError::Overloaded | CallError::Timeout => p::CastError::Overloaded,
+        CallError::Overloaded => p::CastError::Overloaded,
+        CallError::Timeout => p::CastError::Timeout,
         CallError::TooLarge => p::CastError::TooLarge,
         CallError::AccessDenied => p::CastError::AccessDenied,
     }

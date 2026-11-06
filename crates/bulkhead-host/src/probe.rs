@@ -31,6 +31,10 @@ anyprobe::probes! {
     /// A cast was sent: sender id, target id, body bytes, outcome (`ok`, or
     /// why it was not queued).
     pub fn cast(from: u64, to: u64, bytes: u64, outcome: &str);
+    /// A cast that waits for room (a native app's `cast_timeout`) ended:
+    /// sender id, target id, nanoseconds it waited, outcome (`ok`,
+    /// `timeout`, or why it was not queued). The cast also fires `cast`.
+    pub fn cast__wait(from: u64, to: u64, waited_ns: u64, outcome: &str);
     /// A callback started: instance id, kind (`call`, `cast`, `info`).
     pub fn callback__start(pid: u64, kind: &str);
     /// A callback finished: instance id, kind, guest execution time in
@@ -104,6 +108,24 @@ pub(crate) fn cast_sent(from: Option<Pid>, to: Pid, bytes: usize, result: &Resul
         from.map_or(0, |p| p.id),
         to.id,
         bytes as u64,
+        outcome(result)
+    ));
+}
+
+/// A cast that waits for room ended, after `waited`.
+#[inline]
+#[allow(unused_variables)]
+pub(crate) fn cast_waited(
+    from: Pid,
+    to: Pid,
+    waited: std::time::Duration,
+    result: &Result<(), CallError>,
+) {
+    #[cfg(feature = "probes")]
+    anyprobe::fire!(cast__wait(
+        from.id,
+        to.id,
+        u64::try_from(waited.as_nanos()).unwrap_or(u64::MAX),
         outcome(result)
     ));
 }

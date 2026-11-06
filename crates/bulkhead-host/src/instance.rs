@@ -36,7 +36,7 @@ use crate::error::describe;
 use crate::failover::RunUntil;
 use crate::health;
 use crate::lifecycle::LifecycleState;
-use crate::mailbox;
+use crate::mailbox::{self, WaitError};
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::metrics::AppStats;
 use crate::pid::Pid;
@@ -365,6 +365,41 @@ impl InstanceHandle {
         result
     }
 
+    /// [`InstanceHandle::cast_from`] that waits up to `timeout` for room
+    /// in a full mailbox (a native app's `cast_timeout`, ROADMAP I2).
+    /// [`CallError::Timeout`] means the cast was not queued; it is counted
+    /// as dropped, as a cast refused at a full mailbox is.
+    pub(crate) async fn cast_wait_from(
+        &self,
+        from: Option<Pid>,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<(), CallError> {
+        let bytes = msg.body.len();
+        let result = match self.check_size(&msg) {
+            Err(e) => Err(e),
+            Ok(()) => self
+                .shared
+                .mailbox
+                .send_timeout(Message::Cast(msg), timeout)
+                .await
+                .map_err(|e| {
+                    if e == WaitError::Closed {
+                        return CallError::Noproc;
+                    }
+                    self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+                    probe::mailbox_drop(self.pid(), "cast");
+                    if e == WaitError::Timeout {
+                        CallError::Timeout
+                    } else {
+                        CallError::Overloaded
+                    }
+                }),
+        };
+        probe::cast_sent(from, self.pid(), bytes, &result);
+        result
+    }
+
     fn check_size(&self, msg: &Envelope) -> Result<(), CallError> {
         let len = u64::try_from(msg.body.len()).unwrap_or(u64::MAX);
         if len > self.shared.message_max_bytes.load(Ordering::Relaxed) {
@@ -662,6 +697,7 @@ pub(crate) fn detached(
         me: handle.clone(),
         mailbox: task.self_mailbox.clone(),
         dropped: task.dropped.clone(),
+        stats: task.stats.clone(),
     };
     // Dropping the task closes the mailbox and signal receivers.
     drop(task);
@@ -805,6 +841,7 @@ impl InstanceTask {
             me: self.me.clone(),
             mailbox: self.self_mailbox.clone(),
             dropped: self.dropped.clone(),
+            stats: self.stats.clone(),
         };
         let state = match InstanceState::new(self.pid, spec, ctx) {
             Ok(state) => state,
