@@ -63,6 +63,14 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
             to: pid(2),
             msg: Envelope::new("text/plain", "hi"),
         },
+        Frame::CastWait {
+            id: 14,
+            from: Some(pid(1)),
+            sender: None,
+            to: pid(2),
+            msg: Envelope::new("text/plain", "wait"),
+            timeout_ms: 250,
+        },
         Frame::Reply {
             id: 11,
             result: Err(CallError::Exited(ExitReason::Crashed("boom".into()))),

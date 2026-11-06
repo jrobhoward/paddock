@@ -27,8 +27,9 @@ use crate::failover::FailoverMsg;
 /// pair (`Replication`) and carries the witness's record of a partner out
 /// of date (`Record`, `Recorded`, and `Granted`'s `outdated`); version 7
 /// lets a primary yielding in a planned switchover release its lease at
-/// the witness (`Release`).
-pub const VERSION: u16 = 7;
+/// the witness (`Release`); version 8 carries a cast that waits on the
+/// receiving node for room in a full mailbox (`CastWait`).
+pub const VERSION: u16 = 8;
 
 /// The oldest protocol version this node speaks: the one before
 /// [`VERSION`]. A release raises [`VERSION`] by one at most, so a node and
@@ -97,6 +98,7 @@ pub fn since(frame: &Frame) -> u16 {
         | Frame::GroupPublish { .. } => 4,
         Frame::AppCall { .. } => 5,
         Frame::Replication { .. } => 6,
+        Frame::CastWait { .. } => 8,
         Frame::Failover(msg) => match msg {
             FailoverMsg::Renew { .. }
             | FailoverMsg::Request { .. }

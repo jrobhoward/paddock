@@ -50,6 +50,14 @@
 //! - **Casts:** 16 instances each casting `count` to its own target, then
 //!   calling it behind them; then the targets' counts read: casts handled
 //!   per second.
+//! - **Sends by kind** (native programs only): the same with `cast`,
+//!   `try_cast` and `cast_timeout`: casts handled per second, how many
+//!   sends returned `Ok`, and how many arrived. Every `Ok` of
+//!   `cast_timeout` must have arrived; the run says so if one did not.
+//!
+//! `CLUSTER_MAILBOX=<n>` gives every instance a mailbox of `n` messages
+//! (65,536 by default), on the node it is set for, so casts outrun their
+//! targets: set it the same on both nodes.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -161,11 +169,16 @@ impl Code {
         }
     }
 
-    fn kind(&self) -> &'static str {
-        match self {
+    fn kind(&self) -> String {
+        let kind = match self {
             Self::Component(_) => "components",
             Self::Native(_) => "native programs",
-        }
+        };
+        format!("{kind}, mailboxes of {}", mailbox_max())
+    }
+
+    fn native(&self) -> bool {
+        matches!(self, Self::Native(_))
     }
 }
 
@@ -239,10 +252,15 @@ fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
     (rt, quic)
 }
 
+/// Each instance's mailbox: `CLUSTER_MAILBOX`, or 65,536.
+fn mailbox_max() -> usize {
+    std::env::var("CLUSTER_MAILBOX").map_or(1 << 16, |v| v.parse().expect("CLUSTER_MAILBOX"))
+}
+
 fn spec() -> InstanceSpec {
     InstanceSpec {
         memory_max: 64 << 20,
-        mailbox_max: 1 << 16,
+        mailbox_max: mailbox_max(),
         message_max_bytes: 1 << 20,
         // A native instance's casts are answered requests: its 25,000 to
         // another node outlast the default deadline on the Pi.
@@ -386,7 +404,7 @@ async fn local(workers: usize, code: &Code) {
         code.kind()
     );
     let remote_pids: Vec<Pid> = remote.iter().map(InstanceHandle::pid).collect();
-    bench(&rt1, &local, &targets, &remote_pids).await;
+    bench(&rt1, &local, &targets, &remote_pids, code.native()).await;
     for h in local.iter().chain(&targets).chain(&remote) {
         h.kill();
     }
@@ -435,7 +453,7 @@ async fn connect(workers: usize, dir: &Path, bind: SocketAddr, seed: SocketAddr,
          (another process), {INSTANCES} instances per node, {}",
         code.kind()
     );
-    bench(&rt, &local, &targets, &remote).await;
+    bench(&rt, &local, &targets, &remote, code.native()).await;
     for h in local.iter().chain(&targets) {
         h.kill();
     }
@@ -451,6 +469,7 @@ async fn bench(
     local: &[InstanceHandle],
     targets: &[InstanceHandle],
     remote_pids: &[Pid],
+    native: bool,
 ) {
     from_host(rt1, local, remote_pids).await;
     let neighbours: Vec<Pid> = targets.iter().map(InstanceHandle::pid).collect();
@@ -464,6 +483,13 @@ async fn bench(
     );
     app_casts(rt1, local, &neighbours, "one node").await;
     app_casts(rt1, local, remote_pids, "two nodes").await;
+    if native {
+        for (to, label) in [(&neighbours[..], "one node"), (remote_pids, "two nodes")] {
+            for kind in ["cast", "try", "wait"] {
+                app_sends(rt1, local, to, kind, label).await;
+            }
+        }
+    }
 }
 
 /// A pid as the fixture reads it.
@@ -539,6 +565,51 @@ async fn app_casts(rt: &Runtime, from: &[InstanceHandle], to: &[Pid], label: &st
     println!(
         "{label}, from instances: casts {:.0} handled/s ({handled} of {sent} handled)",
         handled as f64 / started.elapsed().as_secs_f64()
+    );
+}
+
+/// Each of `from` sending `count` to its own target in `to` by `kind`
+/// (`cast`, `try`, `wait`), then the targets' counts read: casts handled
+/// per second, sends that returned `Ok`, and whether each `Ok` of a
+/// waited cast arrived.
+async fn app_sends(rt: &Runtime, from: &[InstanceHandle], to: &[Pid], kind: &str, label: &str) {
+    let mut before = 0u64;
+    for t in to {
+        before += count(rt, *t).await;
+    }
+    let started = Instant::now();
+    let tasks: Vec<_> = from
+        .iter()
+        .zip(to)
+        .map(|(h, to)| {
+            let h = h.clone();
+            let body = format!("sends:{}:{APP_CASTS}:{kind}", fixture_pid(*to));
+            tokio::spawn(async move { ask(&h, &body).await })
+        })
+        .collect();
+    let mut ok = 0u64;
+    for t in tasks {
+        let reply = t.await.unwrap();
+        let (_, n) = reply
+            .split_once(' ')
+            .unwrap_or_else(|| panic!("sends: {reply}"));
+        ok += n.parse::<u64>().unwrap();
+    }
+    let took = started.elapsed();
+    let mut after = 0u64;
+    for t in to {
+        after += count(rt, *t).await;
+    }
+    let handled = after - before - to.len() as u64;
+    let sent = from.len() as u64 * APP_CASTS;
+    let check = match kind {
+        "wait" if handled != ok => format!("; MISMATCH: {ok} Ok, {handled} arrived"),
+        "wait" => "; every Ok arrived".to_string(),
+        _ => String::new(),
+    };
+    println!(
+        "{label}, from instances, {kind:>4}: {:.0} handled/s ({handled} of {sent} handled, {ok} Ok{check})",
+        handled as f64 / took.as_secs_f64()
     );
 }
 

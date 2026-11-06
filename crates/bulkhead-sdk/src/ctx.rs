@@ -53,13 +53,17 @@ impl Ctx {
     /// This instance handles no other message meanwhile; the wait does not
     /// count against its callback deadline, and the node caps it at that
     /// deadline. A cast to this instance's own pid never waits. Native
-    /// programs only. Until ROADMAP I3, a cast to an instance on another
-    /// node does not wait: `Ok` means the link to that node took it.
+    /// programs only. To an instance on another node, the wait happens
+    /// there and `Ok` means that node queued it; a timeout is that node's
+    /// answer unless the answer itself is late, in which case the cast may
+    /// still land.
     ///
     /// # Errors
     ///
     /// [`CastError::Timeout`] if no room came in time, and otherwise as
-    /// [`Ctx::try_cast`].
+    /// [`Ctx::try_cast`]; to another node, [`CastError::Noconnection`] also
+    /// when the session ends while it waits or the node is one release
+    /// older and cannot take a waited cast.
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     pub fn cast_timeout(
         &mut self,

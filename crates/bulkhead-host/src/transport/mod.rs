@@ -107,7 +107,26 @@ pub enum Frame {
         /// How long the caller waits.
         timeout_ms: u64,
     },
-    /// The answer to [`Frame::Call`] `id`.
+    /// A cast to `to` that waits up to `timeout_ms` on the receiving node
+    /// for room in a full mailbox (a native app's `cast_timeout`, ROADMAP
+    /// I3); the receiving node answers with [`Frame::Reply`], an empty
+    /// envelope once the cast is queued, or why it was not.
+    CastWait {
+        /// The sender's node's id for this cast.
+        id: u64,
+        /// The sender, if an instance.
+        from: Option<Pid>,
+        /// The sender's app and routes, if an instance ([`crate::acl`]).
+        sender: Option<Stamp>,
+        /// The target, on the receiving node.
+        to: Pid,
+        /// The message.
+        msg: Envelope,
+        /// How long the receiving node waits for room.
+        timeout_ms: u64,
+    },
+    /// The answer to [`Frame::Call`], [`Frame::AppCall`] or
+    /// [`Frame::CastWait`] `id`.
     Reply {
         /// The call's id.
         id: u64,
@@ -413,6 +432,9 @@ impl Drop for IncomingCall {
 enum CallTo {
     /// An instance, from the sending node's `from` (its host if `None`).
     Pid { from: Option<Pid>, to: Pid },
+    /// A cast to an instance that waits for room in its mailbox, answered
+    /// with an empty envelope once queued.
+    CastWait { from: Option<Pid>, to: Pid },
     /// An app's pool, from the sending node's host.
     App(String),
 }
@@ -438,6 +460,12 @@ fn incoming_call(
                     CallTo::Pid { from, to } => {
                         let origin = from.map_or(Origin::Host, Origin::Remote);
                         delivery::call(rt, origin, to, msg, timeout).await
+                    }
+                    CallTo::CastWait { from, to } => {
+                        let origin = from.map_or(Origin::Host, Origin::Remote);
+                        delivery::cast_wait(rt, origin, to, msg, timeout)
+                            .await
+                            .map(|()| Envelope::new("", Vec::new()))
                     }
                     CallTo::App(app) => match rt.route_app(&app, &msg) {
                         Some(target) => target.call(msg, timeout).await,
@@ -555,6 +583,41 @@ pub(crate) async fn call(
     .await
 }
 
+/// How much longer than the receiving node a waited cast's sender waits,
+/// so that a timeout is normally the receiving node's answer, and so
+/// certain: the cast was not queued. Only an answer later than this leaves
+/// it unknown.
+const CAST_WAIT_GRACE: Duration = Duration::from_millis(250);
+
+/// Cast to `to` on `node`, which waits up to `timeout` for room in its
+/// mailbox ([`Frame::CastWait`]). `Ok` once that node queued it.
+pub(crate) async fn cast_wait(
+    rt: &RuntimeInner,
+    node: u32,
+    from: Option<Pid>,
+    sender: Option<Stamp>,
+    to: Pid,
+    msg: Envelope,
+    timeout: Duration,
+) -> Result<(), CallError> {
+    let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+    send_call(
+        rt,
+        node,
+        timeout.saturating_add(CAST_WAIT_GRACE),
+        |id, _| Frame::CastWait {
+            id,
+            from,
+            sender,
+            to,
+            msg,
+            timeout_ms,
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
 /// Call the app called `app` on `node`, from this node's host; its pool
 /// picks the instance.
 pub(crate) async fn call_app(
@@ -623,7 +686,7 @@ fn admits(rt: &RuntimeInner, from: Option<Pid>, stamp: Option<&Stamp>, to: Pid) 
 /// `from_node`: a node speaks only for its own instances.
 fn sender_on(frame: &Frame, from_node: u32) -> bool {
     let sender = match frame {
-        Frame::Cast { from, .. } | Frame::Call { from, .. } => *from,
+        Frame::Cast { from, .. } | Frame::Call { from, .. } | Frame::CastWait { from, .. } => *from,
         Frame::Exit { from, .. }
         | Frame::LinkExit { from, .. }
         | Frame::Link { from, .. }
@@ -730,6 +793,28 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
         } => {
             if admits(rt, from, sender.as_ref(), to) {
                 incoming_call(rt, from_node, id, CallTo::Pid { from, to }, msg, timeout_ms);
+            } else {
+                send(
+                    rt,
+                    from_node,
+                    Frame::Reply {
+                        id,
+                        result: Err(CallError::AccessDenied),
+                    },
+                );
+            }
+        }
+        Frame::CastWait {
+            id,
+            from,
+            sender,
+            to,
+            msg,
+            timeout_ms,
+        } => {
+            let to_pid = CallTo::CastWait { from, to };
+            if admits(rt, from, sender.as_ref(), to) {
+                incoming_call(rt, from_node, id, to_pid, msg, timeout_ms);
             } else {
                 send(
                     rt,

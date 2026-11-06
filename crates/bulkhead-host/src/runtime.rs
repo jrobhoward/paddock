@@ -611,6 +611,25 @@ impl Runtime {
         delivery::cast(&self.inner, Origin::Host, to, msg)
     }
 
+    /// Cast to a pid, waiting up to `timeout` for room if its mailbox is
+    /// full, on this node or another (as a native app's `cast_timeout`):
+    /// `Ok` means the message is in the target's mailbox. For embedders
+    /// and tests; the admin API and the HTTP ingress do not wait.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Timeout`] if no room came in time (the cast was not
+    /// queued; between nodes, unless the answer itself was late), and as
+    /// for [`Runtime::cast`].
+    pub async fn cast_timeout(
+        &self,
+        to: Pid,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<(), CallError> {
+        delivery::cast_wait(&self.inner, Origin::Host, to, msg, timeout).await
+    }
+
     /// Call the app called `app` on node `node`, from this node's host. That
     /// node's pool for the app picks the instance under its
     /// `instances.routing`, as for one of its own callers.

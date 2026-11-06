@@ -62,6 +62,7 @@ impl Class {
         match frame {
             Frame::Cast { .. }
             | Frame::Call { .. }
+            | Frame::CastWait { .. }
             | Frame::Reply { .. }
             | Frame::AppCall { .. }
             | Frame::GroupPublish { .. } => Self::Message,

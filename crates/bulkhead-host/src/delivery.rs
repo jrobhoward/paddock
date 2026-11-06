@@ -141,8 +141,10 @@ pub(crate) fn cast(
 /// mailbox (a native app's `cast_timeout`, ROADMAP I2). A cast to the
 /// sender's own pid never waits: the sender cannot take a message while it
 /// waits, so it fails at once with `overloaded` if its mailbox is full. A
-/// cast to another node is, until ROADMAP I3, a plain cast: `Ok` once the
-/// link takes it.
+/// cast to another node waits there ([`transport::cast_wait`], ROADMAP I3):
+/// `Ok` once that node queued it; `noconnection` if the node cannot be
+/// reached, the session ends meanwhile, or its version cannot read the
+/// frame; `overloaded` past the link's budget.
 pub(crate) async fn cast_wait(
     rt: &RuntimeInner,
     from: Origin<'_>,
@@ -160,7 +162,9 @@ pub(crate) async fn cast_wait(
         Route::Local(target) if !permits(from, &target) => Err(CallError::AccessDenied),
         Route::Local(target) => target.cast_wait_from(from.pid(), msg, timeout).await,
         Route::Dead => Err(CallError::Noproc),
-        Route::Remote(_) => cast(rt, from, to, msg),
+        Route::Remote(node) => {
+            transport::cast_wait(rt, node, from.pid(), stamp(from), to, msg, timeout).await
+        }
     }
 }
 

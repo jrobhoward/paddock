@@ -781,12 +781,13 @@ fn switchover____healthy_pair____standby_takes_over_within_a_lease_old_primary_r
 }
 
 /// A planned switchover with the witness one release older (DESIGN.md,
-/// "Mixed versions during a release"): the old primary's release is a
-/// frame the witness cannot read, so it is not sent, and the witness waits
-/// the lease out as for a release lost; with a witness of this build it
-/// grants within a few beats.
+/// "Mixed versions during a release"): `Release` came with version 7, so
+/// since version 8 (ROADMAP I3) a witness one release older reads it and
+/// grants within a few beats, as one of this build does. Before version 8
+/// the older witness could not read it and waited the lease out; a witness
+/// that old can no longer connect.
 #[test]
-fn switchover____witness_one_release_older____standby_waits_the_lease_out() {
+fn switchover____witness_one_release_older____grants_within_a_few_beats() {
     let switch = |witness_version: u16| {
         simulate(52, 3, move |sim| async move {
             sim.mesh.set_version(3, witness_version);
@@ -807,11 +808,7 @@ fn switchover____witness_one_release_older____standby_waits_the_lease_out() {
 
     assert_eq!((old_accepted, new_accepted), (Ok(()), Ok(())));
     let (old_took, new_took) = (old_took.unwrap(), new_took.unwrap());
-    assert!(old_took >= LEASE, "older witness: {old_took:?}");
-    assert!(
-        old_took <= LEASE + MARGIN * 2 + HEARTBEAT * 4,
-        "{old_took:?}"
-    );
+    assert!(old_took < LEASE, "older witness: {old_took:?}");
     assert!(new_took < LEASE, "this build's witness: {new_took:?}");
     assert_eq!(
         (old_two.standing, old_two.epoch, old_two.may_run),

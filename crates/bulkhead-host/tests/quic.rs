@@ -14,13 +14,12 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use bulkhead_host::failover::FailoverMsg;
 use bulkhead_host::transport::quic::{
     NodeIdentity, PublicKey, QuicConfig, QuicTransport, generate_key,
 };
 use bulkhead_host::transport::{Frame, Packet, SendError, Transport, wire};
 use bulkhead_host::{InstanceHandle, LoadedApp, Runtime, RuntimeConfig};
-use common::{ask, ask_until, fixture, pid_text, spec};
+use common::{ask, ask_until, fixture, pid_text, spec, text};
 
 fn chaos() -> &'static [u8] {
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
@@ -186,11 +185,16 @@ async fn join_seed____two_nodes____members_and_calls_both_ways() {
         &format!("call:{}:2000:echo:and-back", pid_text(a.pid())),
     )
     .await;
+    let waited = n1
+        .rt
+        .cast_timeout(b.pid(), text("echo:waited"), Duration::from_secs(2))
+        .await;
 
     assert_eq!(seed, 1);
     assert_eq!(n1.quic.connected(), vec![2]);
     assert_eq!(there, "ok:over-quic");
     assert_eq!(back, "ok:and-back");
+    assert_eq!(waited, Ok(()));
     a.kill();
     b.kill();
     n1.quic.shutdown();
@@ -226,7 +230,14 @@ async fn join_seed____peer_one_release_older____its_version_and_newer_frames_ref
     };
     let refused = n2.quic.send(
         1,
-        packet(Frame::Failover(FailoverMsg::Release { epoch: 1 })),
+        packet(Frame::CastWait {
+            id: 1,
+            from: None,
+            sender: None,
+            to: a.pid(),
+            msg: text("echo:waited"),
+            timeout_ms: 100,
+        }),
     );
     let back = ask(&b, &format!("call:{}:2000:echo:back", pid_text(a.pid()))).await;
 

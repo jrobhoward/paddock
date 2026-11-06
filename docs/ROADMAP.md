@@ -331,18 +331,10 @@ Decided with the user (2026-11-05):
 
 Items, in order:
 
-- [ ] **I3 Waited casts between nodes** (M). A new frame, `Frame::CastWait { id, from, sender, to, msg, timeout_ms }`, answered by `Frame::Reply`. The sender keeps its entry in `pending_calls`, as for a call. The receiving node runs I2's wait (`InstanceHandle::cast_wait_from`) in a task of its own, counted under `incoming_calls_per_peer`, and answers once the mailbox takes the message or the wait times out. Until then `delivery::cast_wait` sends a remote cast as a plain cast (`Ok` once the link takes it); that branch is what changes.
-  - **The link's budget:** past `send_buffer_bytes` the send fails at once with `Overloaded`, as a call does.
-  - **Ending:** a session that ends while the cast waits fails it with `Noconnection`.
-  - **A peer one release older** cannot read the frame (`wire::since`, `SendError::Unsupported`). The sender fails the cast with `Noconnection` rather than falling back to a plain cast.
-  - **A timeout is ambiguous here,** as for a call: the frame may still land after the sender gives up. The docs say so, and an app that retries may deliver twice.
-  - **Wire version:** one more, under the skew-of-one rule.
-  - **Tests:** the simulation mesh (a full mailbox, a congested link, a cut session, an older peer) and `tests/quic.rs`.
-  - Areas: transport (wire, frames, pending calls), delivery, simulation tests.
 - [ ] **I4 Costs** (S). `batch_cost` and `cluster_throughput` gain `try_cast` and `cast_timeout` next to `cast`, natively, within a node, between two node processes and between the two machines. Measure what a waited cast costs against a plain one, and check that every waited cast reported `Ok` arrived. BASELINE.md. Areas: benchmarks.
-- [ ] **I5 Docs** (S). WRITING_APPS.md: which send for which data (`cast`, `try_cast`, `cast_timeout`, `call`, a batched `call`), what accepted means, and the ambiguous timeout between nodes. DESIGN.md: "Backpressure between nodes" gains the waited sends (the delivery rules name `try_cast` and `cast_timeout` since I1 and I2), and "Senders are never blocked" becomes "never blocked unless they ask, with a timeout". ARCHITECTURE.md's cast bullets between nodes (within a node, `try_cast` and `cast_timeout` are there since I1 and I2), GLOSSARY.md, PADDOCK.md's differences. Areas: docs.
+- [ ] **I5 Docs** (S). WRITING_APPS.md: which send for which data (`cast`, `try_cast`, `cast_timeout`, `call`, a batched `call`), what accepted means, and a timeout between nodes, normally the receiving node's answer (I3's 250 ms grace) but unknown when that answer is late. DESIGN.md: "Backpressure between nodes" gains the waited sends (the delivery rules name `try_cast` and `cast_timeout` since I1 and I2), and "Senders are never blocked" becomes "never blocked unless they ask, with a timeout". ARCHITECTURE.md's cast bullets (`try_cast`, `cast_timeout` and `Frame::CastWait` are there since I1 to I3), GLOSSARY.md, PADDOCK.md's differences. Areas: docs.
 
-Order: I1, I6 and I2 done (2026-11-05: `try_cast`, native protocol version 6; `mailbox_max_bytes`, 64 MiB by default; `cast_timeout` within a node, protocol version 7: a cycle of waiting instances breaks when the first times out, which frees room for the other); I3 next, then I4 and I5. They are independent of the T items.
+Order: I1, I6, I2 and I3 done (2026-11-05: `try_cast`, native protocol version 6; `mailbox_max_bytes`, 64 MiB by default; `cast_timeout` within a node, protocol version 7: a cycle of waiting instances breaks when the first times out, which frees room for the other; between nodes, `Frame::CastWait`, wire version 8, the sender waiting 250 ms longer than the receiving node); I4 next, then I5. They are independent of the T items.
 
 ### Z8: native parity
 

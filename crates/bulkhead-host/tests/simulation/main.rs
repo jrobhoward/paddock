@@ -5,7 +5,8 @@
 //! with a witness;
 //! `random` runs seeded random scenarios against the distribution rules;
 //! `agreement` replays spike S12's counterexamples; `backpressure` a
-//! congested link; `groups` process groups across nodes;
+//! congested link; `cast_wait` casts that wait for room on another node;
+//! `groups` process groups across nodes;
 //! `replication` replicated buckets on an HA pair.
 //!
 //! Each targeted test fixes a frame delay, puts an event inside that window,
@@ -17,6 +18,7 @@
 
 mod agreement;
 mod backpressure;
+mod cast_wait;
 #[path = "../common/mod.rs"]
 mod common;
 mod failover;

@@ -145,6 +145,13 @@ impl SimNode {
         self.rt.spawn(loaded, s).unwrap()
     }
 
+    /// Start a chaos instance with its spec changed by `change`.
+    pub fn spawn_with(&self, change: impl FnOnce(&mut InstanceSpec)) -> InstanceHandle {
+        let mut s = spec("");
+        change(&mut s);
+        self.rt.spawn(&self.app, s).unwrap()
+    }
+
     /// Start a chaos instance as app `app` with messaging routes `acl`.
     pub fn spawn_as(&self, app: &str, init_args: &str, acl: Acl) -> InstanceHandle {
         let mut s = spec(init_args);

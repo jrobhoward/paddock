@@ -917,8 +917,9 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
         };
         node.publish(&rt, Instant::now());
         if let (Some(epoch), Arbiter::Witness(witness)) = (release, node.ctx.cfg.arbiter) {
-            // A witness one release older cannot read a release; it then
-            // waits the lease out, as for a release lost.
+            // A witness older than version 7 cannot read a release; it then
+            // waits the lease out, as for a release lost. Since version 8
+            // such a witness cannot connect, so this is only a guard.
             let release = Frame::Failover(FailoverMsg::Release { epoch });
             if transport::try_send(&rt, witness, release) == Err(SendError::Unsupported) {
                 tracing::info!(

@@ -156,6 +156,7 @@ sequenceDiagram
 
 - **The connection** is one per pair of nodes, with a control stream (heartbeats, membership, failover) and a data stream (messages, links, monitors), so frames between two nodes keep their order and heartbeats never wait behind a large message (`transport::quic`).
 - **Failures:** a session that ends while the call waits fails it with `noconnection` (`PendingCalls::fail_node`), as it ends links and monitors with that node. A caller that times out drops its entry, and a late `Frame::Reply` finds nothing. A remote cast is `Frame::Cast`, `Ok` once the transport takes it, and dropped if the target's mailbox is full.
+- **A waited cast** (`cast_timeout`) is `Frame::CastWait`, sent as a call is (`pending_calls`, `incoming_calls_per_peer`): the receiving node runs `delivery::cast_wait` in a task of its own and answers `Frame::Reply` with an empty envelope once the target's mailbox took it, or why not. The sender waits 250 ms longer than the receiving node (`CAST_WAIT_GRACE`), so a timeout is normally the receiving node's answer. A peer one release older cannot read the frame, and the cast fails with `noconnection`.
 - **What each message costs:** the transport dominates. About 160 to 170 µs at p50 for a call between native instances on two node processes on one host (167 µs on the 16-core machine, 158 µs on the Pi), against 13 µs within a node (BASELINE.md, C4, 2026-11-01). Native apps between the two machines have not been measured since T1.
 
 ### From HTTP

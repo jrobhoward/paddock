@@ -63,14 +63,27 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Waited casts between nodes (ROADMAP I3): `cast_timeout` to an instance
+  on another node waits there for room, carried by a new frame,
+  `Frame::CastWait`, answered with `Frame::Reply`, so `Ok` means that
+  node queued it. The sender waits 250 ms longer than the receiving node,
+  so a timeout is normally that node's answer and the cast was not
+  queued; only a late answer leaves it unknown. Past the link's
+  `send_buffer_bytes` it fails at once with `overloaded`; a session that
+  ends while it waits, or a peer one release older, gives
+  `noconnection`. `Runtime::cast_timeout` does the same from an
+  embedder's host. Wire protocol version 8: a node speaks 7 and 8, so it
+  still talks to a 0.3.0 node, which cannot take a waited cast. A witness
+  one release older now reads a lease release, so a planned switchover
+  with one is as fast as with a witness of this build.
 - `Ctx::cast_timeout` in the SDK and `bulkhead_native::app::Ctx::cast_timeout`
   (ROADMAP I2): a cast that, if the target's mailbox is full, waits up to a
   timeout for room (its bytes, then a slot, in arrival order), so `Ok`
   means the message is in the target's mailbox. `CastError::Timeout` when
   no room came; the timeout is capped at the sender's callback deadline,
   and the wait does not count against it. A cast to the sender's own pid
-  never waits. Native programs only. A cast to another node does not wait
-  yet (ROADMAP I3): `Ok` there means the link took it. New probe
+  never waits. Native programs only. To another node it waits there
+  (ROADMAP I3, below). New probe
   `cast__wait` and histogram `bulkhead_cast_wait_seconds`. The native
   protocol is version 7 (`Request::CastWait`): native apps must be
   rebuilt. The conformance app answers `cast-wait` and `cast-wait-n`.
