@@ -2457,6 +2457,85 @@ What a waited cast costs:
 - **`try_cast` against `cast`:** the same request and answer when the message is queued, yet `try_cast` measured 5 to 26% lower within a node with room in the mailboxes. It always ran right after `cast`, and its rates sit inside `cast`'s own range (545,000 to 779,000 in one process), so the difference is not settled; between nodes the two are within a few percent either way.
 - **Not measured:** the Pi as node 1 (the reverse direction), components (they have neither send), and waited casts in flight several at a time per sender (credit windows, deferred until needed).
 
+## 2026-11-05: T8's first trial: looking at the rings before a yield, and where native CPU goes
+
+T8's first option: before each `yield_now` of a native instance's spin, between callbacks too, look at the rings for a short slice (a temporary `BULKHEAD_T8_PEEK_NS`, since removed), so fewer turns pass through tokio's park. 16-core machine, 4 workers, `[native] spin_us` 20, idle at the start (load 0.93); slices of 0 (as before), 1 and 3 µs alternating, three rounds, medians.
+
+| | 0 | 1 µs | 3 µs |
+| --- | --- | --- | --- |
+| One instance's `get` in a loop (`kv_cost`, `KV_ONLY`) | 1,989 ns | 1,991 ns | 1,957 to 2,076 ns |
+| 16 calls in flight (`native_cost`), calls/s and CPU per call | 262,000, 41.8 µs | 215,000, 47.1 µs | 165,000 to 178,000, 53 to 55 µs |
+| 64 calls in flight | 328,000, 37.1 µs | 278,000, 40.5 µs | 216,000 to 219,000, 46 µs |
+| Call from the host, one at a time, p50 (`cluster_throughput`, one node) | 4.9 µs | 6.0 µs | 7.4 to 7.8 µs |
+| Casts from 16 instances to 16 | 743,000/s | 513,000 to 519,000 | 601,000 to 621,000 |
+
+- **Looking longer costs more,** in throughput and in CPU per call: a task holding its worker, even for 1 µs, keeps the tasks queued behind it waiting, as T9 found for a longer watch. Dropped.
+
+Then a profile (`perf record -g`, `perf_event_paranoid` 1; kernel symbols not resolved, `kptr_restrict` 1), the slice at 0:
+
+| Share of all samples | One instance's `get` loop | `native_cost`, whole run |
+| --- | --- | --- |
+| Apps, in the kernel | 29% | 57% |
+| Apps, user space | 25% | 8% |
+| Node's workers, user space (with `[vdso]` and libc) | 45% | 25% |
+| Node's workers, in the kernel | 0.3% | 7% |
+
+- **The node's time in the kernel is small:** 0.3% with one instance (T9's watch keeps its worker out of tokio's park), 7% over `native_cost`'s many-instance runs. Removing all of it would save about 3 µs of the 42 µs of CPU per call with 16 calls in flight.
+- **The apps' spin is most of the CPU:** each turn of an app's wait calls `sched_yield` (ROADMAP T10), 57% of all samples over `native_cost`.
+- **One instance's node-side waiting:** the watch loop's ring checks (`Ring::is_readable`, 7.5% of all samples) and clock reads (`[vdso]`, about 10%), CPU spent while the app works, not time on the request's path.
+- **Not measured:** the kernel's own symbols (`kptr_restrict` 0 would show them), and the Pi.
+
+What the spin itself costs: `native_cost` with `NATIVE_SPIN_US` at 20, 5 and 0 (the node's and the apps' budget), two runs each, same machine (load 0.8 at the start, up to 8 from the runs):
+
+| `spin_us` | 16 calls in flight: calls/s, CPU per call | 64 in flight | Request from a callback | Bucket `get` from a callback |
+| --- | --- | --- | --- | --- |
+| 20 | 273,000 to 289,000, 40 to 41 µs | 323,000 to 370,000, 35 to 38 µs | 4.3 to 4.4 µs | 3.0 µs |
+| 5 | 255,000 to 256,000, 33 µs | 317,000 to 323,000, 30 µs | 3.7 to 4.4 µs | 2.3 to 3.1 µs |
+| 0 (sleep at once) | 240,000 to 261,000, 25 to 26 µs | 260,000 to 274,000, 25 µs | 24 to 28 µs | 13 to 14 µs |
+
+- **Spinning is about 15 µs of the 40 µs of CPU per call with 16 calls in flight,** and buys about 10% more of them: with every instance busy, a spinning side mostly waits for a core. Alone, it is what keeps a request at 4 µs instead of 24 to 28.
+- **The kernel's share is the waiting, not extra work:** whether an app waits in `sched_yield` (now) or with pause instructions (ROADMAP T10), a spinning thread holds a core for as long as it spins, so T10 would move CPU from the kernel to user space more than reduce it. How long each side spins, under load, is T1b's.
+- **5 µs is bistable, as S32 found:** casts to one instance fell from 221,000 to 89,000 a second between the two runs.
+
+## 2026-11-05: T1b's first trials: what spinning buys on each machine
+
+`native_cost` (100 native instances, 4 tokio workers unless a row says otherwise), with `NATIVE_SPIN_US` the node's and the apps' budget; 16-core machine (16 CPUs) and Raspberry Pi 5 (4 CPUs), each idle at the start (load under 1; the rest of the load is the runs' own), each measuring only itself. Two rounds for the budget sweep, medians or ranges; one round for the worker counts.
+
+The budgets:
+
+| `spin_us` | 16-core: 16 in flight, CPU per call | 64 in flight | Request from a callback | Pi: 16 in flight, CPU per call | 64 in flight | Request from a callback |
+| --- | --- | --- | --- | --- | --- | --- |
+| 20 | 315,000, 38 µs | 334,000 to 373,000 | 3.9 to 4.4 µs | 63,500 to 63,800, 60 µs | 67,100 to 67,600 | 2.9 to 3.1 µs |
+| 10 | 313,000 to 462,000, 29 to 35 µs | 410,000 to 439,000 | 3.8 to 4.4 µs | 62,700 to 62,900, 59 µs | 65,300 to 65,500 | 2.9 µs |
+| 5 | 258,000 to 261,000, 32 µs | 326,000 to 332,000 | 4.3 to 5.0 µs | 62,700 to 62,800, 56 µs | 64,500 to 65,500 | 2.9 µs |
+| 2 | 259,000 to 281,000, 32 µs | 292,000 to 315,000 | 18 to 19 µs | 63,200 to 64,000, 55 µs | 65,400 to 66,900 | 2.9 µs |
+| 0 | 245,000 to 247,000, 26 µs | 266,000 to 276,000 | 28 µs | 128,500 to 129,000, 30 µs | 132,000 to 135,000 | 13 µs |
+
+- **The two machines want opposite things under load.** On the 16-core machine spinning raises calls in flight by up to half (10 µs did best, with less CPU than 20); on the Pi any spinning, even 2 µs, halves them. Lightly loaded, both need it: a request from a callback costs 3 to 4 µs spinning and 13 to 28 µs without.
+- **On the 16-core machine, a budget under about 5 µs loses the request** (18 to 28 µs), as S32 found; on the Pi, 2 µs still holds it.
+
+Spinning only while a waiter's recent waits were short (a waiter's score of short and long waits, a temporary experiment since removed), against fixed budgets:
+
+| | 16-core: 16 / 64 in flight | Pi: 16 / 64 in flight | Requests, both |
+| --- | --- | --- | --- |
+| Fixed 20 µs | 264,000 to 269,000 / 327,000 to 335,000 | 63,000 to 64,500 / 67,200 to 67,500 | as fixed |
+| Adaptive | 263,000 to 282,000 / 291,000 to 293,000 | 69,200 to 70,900 / 70,400 to 71,800 | as fixed 20 |
+| Fixed 0 | 240,000 to 249,000 / 261,000 to 274,000 | 123,700 to 123,800 / 126,200 to 127,500 | 13 to 28 µs |
+
+- **A waiter's own waits do not show the harm:** on the Pi they stay short while 100 apps spin on 4 cores, so the adaptive spin recovered about a tenth of what turning spinning off gains.
+
+The node's workers, spin 20 against 0, one round:
+
+| Workers | 16-core: 16 in flight | 64 in flight | Pi workers | Pi: 16 in flight | 64 in flight |
+| --- | --- | --- | --- | --- | --- |
+| 4 | 408,000 / 234,000 | 340,000 / 258,000 | 1 | 64,500 / 101,600 | 67,600 / 97,000 |
+| 12 | 309,000 / 296,000 | 395,000 / 460,000 | 2 | 64,300 / 140,000 | 66,700 / 133,400 |
+| 16 | 288,000 / 296,000 | 380,000 / 393,000 | 4 | 64,000 / 123,200 | 66,900 / 125,900 |
+
+- **On the Pi it is not the apps against the node's workers:** with 1 worker and 3 cores to spare, spinning still costs a third, and with it on the rate stays near 64,000 whatever the workers. The contention is among the spinning apps themselves.
+- **On the 16-core machine, spinning stops paying as the workers approach the cores** (one round each; the rows vary by more than 10% between runs).
+- **Not measured:** why the 16-core machine gains from spinning at the same oversubscription that costs the Pi half (deep idle states make its wake-ups dearer: S32, T1), and `kv_cost`'s 16-instance rows.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
