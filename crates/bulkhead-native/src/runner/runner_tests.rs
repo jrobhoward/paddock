@@ -24,6 +24,29 @@ fn parse____library_with_reads____all_kept() {
 }
 
 #[test]
+fn parse____writes_beside_reads____kept_apart() {
+    let found = args("--executable /b/app --read /priv --write /data --write /logs").unwrap();
+
+    assert_eq!(found.read, vec![PathBuf::from("/priv")]);
+    assert_eq!(
+        found.write,
+        vec![PathBuf::from("/data"), PathBuf::from("/logs")]
+    );
+}
+
+#[test]
+fn writable_access____a_volume____no_execute_or_devices() {
+    use landlock::AccessFs;
+
+    let access = super::sandbox::writable_access();
+
+    assert!(access.contains(AccessFs::WriteFile | AccessFs::MakeReg | AccessFs::Refer));
+    assert!(!access.intersects(
+        AccessFs::Execute | AccessFs::MakeChar | AccessFs::MakeBlock | AccessFs::MakeSock
+    ));
+}
+
+#[test]
 fn parse____executable_only____landlock_required() {
     let found = args("--executable /b/app").unwrap();
 
@@ -34,6 +57,7 @@ fn parse____executable_only____landlock_required() {
 #[rstest::rstest]
 #[case("")]
 #[case("--read /x")]
+#[case("--executable /a --write")]
 #[case("--library")]
 #[case("--library /a --landlock maybe")]
 #[case("--library /a --verbose")]

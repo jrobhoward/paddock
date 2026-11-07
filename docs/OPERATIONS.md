@@ -39,7 +39,7 @@ Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back t
 | `BULKHEAD_KEY_PASSWORD` | `bulkhead bundle`, `bulkhead keygen` | The signing key's password, instead of a prompt |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | `bulkhead node` | Where HTTP egress reads the system's root certificates, instead of the OS defaults (`[egress] system_roots`) |
 | `RUST_LOG` | `bulkhead node` | Log filter (default `info`), for example `info,bulkhead::lease=debug` |
-| `BULKHEAD_PRIV`, `BULKHEAD_SPIN_US` | a native-process app, set by the node | The directory of the bundle's `priv/` files, and how long the app spins waiting for the node before it sleeps (`[native] spin_us`); a native app's environment holds nothing else |
+| `BULKHEAD_PRIV`, `BULKHEAD_PREOPENS`, `BULKHEAD_SPIN_US` | a native-process app, set by the node | The directory of the bundle's `priv/` files; where each preopened directory is, one guest path and host directory per line, separated by a tab (with `\\`, `\t` and `\n` escaped), for `bulkhead_sdk::files::path`; and how long the app spins waiting for the node before it sleeps (`[native] spin_us`). A native app's environment holds nothing else |
 
 Secrets may also come from variables the node config names (`[secrets.<name>] env = ...`).
 

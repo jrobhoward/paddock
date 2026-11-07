@@ -22,6 +22,7 @@
 //! | `alloc MIB` | `ok` once allocated and touched |
 //! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID` | `ok` or `err:` and the OS error |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
+//! | `vread GUEST`, `vwrite GUEST` | read or write (`x`) the file at a guest path (`/data/f`) where `BULKHEAD_PREOPENS` puts it: `ok` or `err:` and the OS error |
 //! | `dumpable` | `no` if the process is not dumpable, else `yes` (Linux) |
 //! | `kv OP BUCKET ...` | a keyvalue request: `get K`, `set K V`, `del K`, `incr K N`, `many K1,K2`, `setmany K1=V1,K2=V2`, `entry K` (`V@REV`), `rev`, `scan PREFIX`, `cas K EXPECTED V` (`none` for absent), `watch K`, `watchp PREFIX`, `gets N` (the nanoseconds `N` gets of key `t` took); `kv unwatch ID`. A failure is `err:` and the error |
 //! | `group OP GROUP [TEXT]` | `join`, `leave`: `ok`; `members`: how many; `publish GROUP TEXT`: to how many |

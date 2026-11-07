@@ -7,6 +7,7 @@
 //! - [`protocol`]: the frames both sides exchange.
 //! - [`hot`]: the most frequent of them in fixed layouts, beside CBOR.
 //! - [`snapshot`]: a published bucket's snapshot, which apps map and read.
+//! - [`preopens`]: where a native app finds its preopened directories.
 //! - `channel` (feature `channel`, Linux): the shared-memory rings they
 //!   travel over, and the socket descriptors are passed on.
 //! - `app` (feature `app`): a native app as an executable, with the
@@ -16,6 +17,7 @@
 //!   the app.
 
 pub mod hot;
+pub mod preopens;
 pub mod protocol;
 pub mod snapshot;
 

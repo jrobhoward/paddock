@@ -1,4 +1,5 @@
-//! Landlock for a native app: what it may read and execute, and no TCP.
+//! Landlock for a native app: what it may read, write and execute, and no
+//! TCP.
 
 use std::path::PathBuf;
 
@@ -32,9 +33,28 @@ pub fn readable(args: &Args) -> Vec<PathBuf> {
     out
 }
 
+/// What a read-write volume allows: reading, writing and truncating
+/// files, making and removing files, directories and symbolic links, and
+/// renaming within it (`Refer`). Not executing, nor making devices,
+/// sockets or pipes, nor device ioctls.
+#[must_use]
+pub fn writable_access() -> landlock::BitFlags<AccessFs> {
+    AccessFs::ReadFile
+        | AccessFs::ReadDir
+        | AccessFs::WriteFile
+        | AccessFs::Truncate
+        | AccessFs::RemoveFile
+        | AccessFs::RemoveDir
+        | AccessFs::MakeReg
+        | AccessFs::MakeDir
+        | AccessFs::MakeSym
+        | AccessFs::Refer
+}
+
 /// Restrict this process with Landlock. Read access is `ReadFile` and
 /// `ReadDir` only: loading a library maps it, which needs read, and
-/// execution is granted on the executable alone.
+/// execution is granted on the executable alone. Each `--write`
+/// directory gets [`writable_access`].
 ///
 /// # Errors
 ///
@@ -49,6 +69,7 @@ pub fn restrict(args: &Args) -> Result<(), String> {
         .and_then(|r| r.scope(Scope::from_all(abi)))
         .and_then(Ruleset::create)
         .and_then(|r| r.add_rules(path_beneath_rules(readable(args), read)))
+        .and_then(|r| r.add_rules(path_beneath_rules(&args.write, writable_access())))
         .map_err(|e| e.to_string())?;
     if let Program::Executable(path) = &args.program {
         // The kernel opens a dynamic executable's interpreter (`ld.so`)

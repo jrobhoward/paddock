@@ -1,7 +1,7 @@
 //! `bulkhead-runner`: the launcher a node runs every native app through.
 //!
 //! ```text
-//! bulkhead-runner (--library PATH | --executable PATH) [--read DIR]... [--landlock required|best-effort]
+//! bulkhead-runner (--library PATH | --executable PATH) [--read DIR]... [--write DIR]... [--landlock required|best-effort]
 //! ```
 //!
 //! In order, before any code from the bundle runs:
@@ -11,7 +11,8 @@
 //!    second, spike S19), and no ptrace from other processes of the
 //!    node's user.
 //! 2. Landlock ([`sandbox::restrict`]): read the system libraries, the
-//!    program's directory and each `--read` directory; execute only the
+//!    program's directory and each `--read` directory; read and write
+//!    each `--write` directory (no executing from it); execute only the
 //!    program; nothing else on the filesystem; no TCP. Set while the
 //!    runner has one thread, since before Linux 7.1 Landlock covers only
 //!    the calling thread and the threads it starts later. With
@@ -62,6 +63,8 @@ pub struct Args {
     /// Directories the program may read, beyond the system libraries and
     /// its own directory.
     pub read: Vec<PathBuf>,
+    /// Directories the program may read and write (a read-write volume).
+    pub write: Vec<PathBuf>,
     /// Whether to refuse to run without Landlock.
     pub landlock_required: bool,
 }
@@ -76,6 +79,7 @@ impl Args {
         let mut it = args.into_iter();
         let mut program = None;
         let mut read = Vec::new();
+        let mut write = Vec::new();
         let mut landlock_required = true;
         while let Some(flag) = it.next() {
             let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -83,6 +87,7 @@ impl Args {
                 "--library" => program = Some(Program::Library(value()?.into())),
                 "--executable" => program = Some(Program::Executable(value()?.into())),
                 "--read" => read.push(value()?.into()),
+                "--write" => write.push(value()?.into()),
                 "--landlock" => {
                     landlock_required = match value()?.as_str() {
                         "required" => true,
@@ -99,6 +104,7 @@ impl Args {
         Ok(Self {
             program,
             read,
+            write,
             landlock_required,
         })
     }
@@ -135,7 +141,11 @@ pub fn main() -> ExitCode {
             // what the app may know.
             let mut cmd = std::process::Command::new(&path);
             cmd.env_clear();
-            for var in [crate::protocol::PRIV_ENV, crate::channel::SPIN_ENV] {
+            for var in [
+                crate::protocol::PRIV_ENV,
+                crate::preopens::ENV,
+                crate::channel::SPIN_ENV,
+            ] {
                 if let Some(value) = std::env::var_os(var) {
                     cmd.env(var, value);
                 }

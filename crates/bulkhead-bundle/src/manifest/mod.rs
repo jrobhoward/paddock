@@ -71,6 +71,7 @@ pub const NATIVE_CAPABILITIES: &[Capability] = &[
     Capability::Secrets,
     Capability::Metrics,
     Capability::HttpIncoming,
+    Capability::Filesystem,
 ];
 
 /// The `appserver` section of a bundle manifest: everything the server needs
@@ -205,8 +206,7 @@ impl AppSpec {
     }
 
     /// What a `native-process` app may not have: any capability outside
-    /// [`NATIVE_CAPABILITIES`] (no network, filesystem or other service
-    /// yet) and listeners; for a rustbridge plugin, which takes no
+    /// [`NATIVE_CAPABILITIES`] (no network or other service yet) and listeners; for a rustbridge plugin, which takes no
     /// snapshot, passivation and snapshot upgrades too; and the `native`
     /// section on any other kind.
     fn check_native(&self, v: &mut Validator) {

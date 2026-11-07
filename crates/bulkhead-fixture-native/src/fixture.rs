@@ -140,6 +140,8 @@ impl Fixture {
             "write" => outcome(std::fs::write(rest, b"x")),
             "connect" => outcome(std::net::TcpStream::connect(rest)),
             "exec" => outcome(std::process::Command::new("/bin/true").status()),
+            "vread" => outcome(std::fs::read(bulkhead_native::preopens::path(rest))),
+            "vwrite" => outcome(std::fs::write(bulkhead_native::preopens::path(rest), b"x")),
             "priv" => match std::env::var(bulkhead_native::protocol::PRIV_ENV) {
                 Ok(dir) => outcome(std::fs::read(std::path::Path::new(&dir).join(rest))),
                 Err(_) => "err:no priv".into(),

@@ -376,6 +376,53 @@ async fn executable____after_the_runner_execs_it____not_dumpable() {
 }
 
 #[tokio::test]
+async fn executable____volumes____read_write_where_granted_read_only_elsewhere() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let (rw, ro, priv_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    std::fs::write(ro.path().join("table.csv"), b"a,b\n").unwrap();
+    std::fs::write(priv_dir.path().join("p.txt"), b"p").unwrap();
+    let preopen = |dir: &tempfile::TempDir, guest: &str, writable| bulkhead_host::Preopen {
+        host: dir.path().to_path_buf(),
+        guest: guest.into(),
+        writable,
+    };
+    let spec = InstanceSpec {
+        preopens: vec![
+            preopen(&priv_dir, bulkhead_host::PRIV_PATH, false),
+            preopen(&rw, "/data", true),
+            preopen(&ro, "/ref", false),
+        ],
+        ..spec("")
+    };
+    let instance = rt.spawn(&app, spec).unwrap();
+
+    let wrote = ask(&instance, "vwrite /data/new.txt").await;
+    let read_back = ask(&instance, "vread /data/new.txt").await;
+    let read_only = ask(&instance, "vread /ref/table.csv").await;
+    let write_read_only = ask(&instance, "vwrite /ref/table.csv").await;
+    let write_priv = ask(&instance, "vwrite /priv/p.txt").await;
+    let escape = ask(&instance, "vread /data/../ref/table.csv").await;
+    let outside = ask(&instance, "vwrite /elsewhere/f").await;
+
+    assert_eq!(wrote, "ok");
+    assert_eq!(std::fs::read(rw.path().join("new.txt")).unwrap(), b"x");
+    assert_eq!(read_back, "ok");
+    assert_eq!(read_only, "ok");
+    assert!(
+        write_read_only.contains("Permission denied"),
+        "{write_read_only}"
+    );
+    assert!(write_priv.contains("Permission denied"), "{write_priv}");
+    assert!(escape.starts_with("err:"), "{escape}");
+    assert!(outside.starts_with("err:"), "{outside}");
+}
+
+#[tokio::test]
 async fn executable____priv_files____readable_at_bulkhead_priv() {
     let rt = runtime(|_| {});
     let app = executable(&rt);

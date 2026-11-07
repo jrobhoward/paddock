@@ -37,6 +37,8 @@
 //! - [`log`] and its macros (`info!` and friends): `wasi:logging`, always
 //!   available.
 //! - [`batch`]: many small updates in one message, and reading them back.
+//! - [`files`]: the paths of preopened files (`wasi:filesystem`), the same
+//!   in both builds.
 //! - `config` (cargo feature `config`): `wasi:config`.
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
 //! - `groups` (cargo feature `groups`): `bulkhead:groups`, process groups
@@ -73,6 +75,7 @@ pub mod config;
 pub mod connection;
 mod ctx;
 mod envelope;
+pub mod files;
 #[cfg(feature = "groups")]
 pub mod groups;
 mod host;

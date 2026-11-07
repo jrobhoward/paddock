@@ -26,8 +26,9 @@
 //! parent-death signal (`SIGKILL`), no core dumps, its memory limit (the
 //! cgroup it starts in, or `RLIMIT_DATA` without one) and its channel. It
 //! runs in a process group of its own, with an environment of
-//! `BULKHEAD_PRIV` (the bundle's `priv/` files, when it has any) and the
-//! spin budget.
+//! `BULKHEAD_PRIV` (the bundle's `priv/` files, when it has any),
+//! `BULKHEAD_PREOPENS` (where each preopened directory is) and the spin
+//! budget. A read-write volume is a `--write` directory for the runner.
 //!
 //! Native apps run on Linux only (`bulkhead-runner` is Linux only); elsewhere
 //! [`Port::spawn`] refuses and a `Port` never exists.
@@ -210,7 +211,8 @@ mod linux {
             })
             .arg(&program.path);
             for p in &spec.preopens {
-                cmd.arg("--read").arg(&p.host);
+                cmd.arg(if p.writable { "--write" } else { "--read" })
+                    .arg(&p.host);
             }
             if config.landlock_optional {
                 cmd.args(["--landlock", "best-effort"]);
@@ -222,6 +224,15 @@ mod linux {
                 .find(|p| p.guest == crate::spec::PRIV_PATH)
             {
                 cmd.env(protocol::PRIV_ENV, &p.host);
+            }
+            if !spec.preopens.is_empty() {
+                let preopens = bulkhead_native::preopens::encode(
+                    spec.preopens
+                        .iter()
+                        .map(|p| (p.guest.as_str(), p.host.as_path())),
+                )
+                .ok_or("a preopened directory's path is not UTF-8")?;
+                cmd.env(bulkhead_native::preopens::ENV, preopens);
             }
             cmd.env(channel::SPIN_ENV, config.spin.as_micros().to_string());
             let (channel, memfd) = Channel::create().map_err(|e| format!("channel: {e}"))?;

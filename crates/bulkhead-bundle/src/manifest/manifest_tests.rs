@@ -446,6 +446,18 @@ fn validate____native_executable_with_snapshots____accepted() {
 }
 
 #[test]
+fn validate____native_process_with_preopens____accepted() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } } },
+        "upgrade": { "mode": "blue-green" }
+    }));
+
+    assert!(found.is_ok(), "{found:?}");
+}
+
+#[test]
 fn validate____native_process_with_keyvalue____accepted() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",

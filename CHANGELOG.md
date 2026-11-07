@@ -85,6 +85,13 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Native-process apps may declare `wasi:filesystem` (ROADMAP Z8b): each
+  preopened volume is a Landlock rule for `bulkhead-runner`, read-only or
+  read-write as granted (a read-write volume executes nothing), and the
+  app finds it, and the bundle's `priv/` files, where
+  `BULKHEAD_PREOPENS` says. `bulkhead_sdk::files::path("/data/x")`
+  returns the path to open in both builds (`bulkhead_native::preopens::path`
+  on the app API); the runner takes `--write DIR`.
 - `cluster_throughput` measures sends by kind (ROADMAP I4): `cast`,
   `try_cast` and `cast_timeout` from instances, native programs only,
   with how many sends returned `Ok` and how many arrived, and says so if
@@ -250,6 +257,10 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A native-process app deployed on a node now receives its bundle's
+  `priv/` files (`BULKHEAD_PRIV`) when its manifest declares
+  `wasi:filesystem`, as a component does. A native manifest could not
+  declare it before, so the variable was never set on a node.
 - A native-process app run as an executable is no longer dumpable.
   `bulkhead-runner` made itself so, but `execve` reset it for the app, so
   a crashing app went through the system's core handler (the node saw the
