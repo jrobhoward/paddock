@@ -2651,6 +2651,29 @@ T12's second step, tried in two forms behind a temporary switch and not kept (de
 - **Neither form saves work, only where it is done:** with the marker, the replier encodes and writes the answer and the caller's task is still woken, so many busy callers lose 3 to 17%; without it, the caller's task watches its ring through the whole call, holding a worker the target's task may need, and on the 16-core machine a pair's call took half as long again.
 - **The same wall stands before the call side** (the caller's task writing a call into an idle target's ring, about 2 µs of a call): the target's task must still be told, by a wake or by watching. With S34's finding that no waker on stock tokio beats yielding, T12's hand-offs stop here.
 
+## 2026-11-06: the worker's run queue as the watch's idle check (T8, not kept)
+
+T8: a native task watches its rings within the poll (T9) only when its worker's own run queue is empty, in place of T9's guess (no other native instance ran during the task's last yield). tokio 1.54 gives the worker's index on stable (`tokio::runtime::worker_index`) but its queue's depth only with `--cfg tokio_unstable` (`RuntimeMetrics::worker_local_queue_depth`, a live read of the queue's two positions; the LIFO slot is not counted, and the caller already skips the watch after waking a task). Behind a temporary `BULKHEAD_T8` switch in a `tokio_unstable` build, since removed: `guess` (T9's, as shipped), `local` (the worker's queue empty) and `global` (that and the runtime's shared queue empty, the shared queue checked again during the watch, ending it).
+
+`cluster_throughput` natively on one node and `native_cost`, 4 workers, `spin_us` 20, three rounds on the 16-core machine, each starting at load under 1 (0.88 to 0.93), the four builds in a rotating order; the stable build as shipped beside the `tokio_unstable` build in its three modes. Medians of three, ranges in brackets:
+
+| | Stable (as shipped) | Unstable, `guess` | `local` | `global` |
+| --- | --- | --- | --- | --- |
+| Sequential calls from the host, p50 | 5.4 µs [3.8 to 6.2] | 6.7 [6.7 to 6.8] | 4.9 [3.7 to 5.3] | 4.6 [4.0 to 5.7] |
+| Sequential calls between instances, p50 | 9.1 µs [8.0 to 9.1] | 8.5 [8.1 to 8.6] | 8.3 [7.6 to 8.3] | 8.4 [8.2 to 9.1] |
+| The same, p99 | 14.3 µs [12.9 to 15.1] | 13.7 [11.6 to 14.7] | 11.8 [11.3 to 12.0] | 12.2 [11.8 to 13.1] |
+| 16 instances calling each other, calls/s | 319,000 [305,000 to 321,000] | 307,000 [299,000 to 318,000] | 288,000 [279,000 to 290,000] | 268,000 [257,000 to 284,000] |
+| 16 callers from the host, calls/s | 358,000 [313,000 to 404,000] | 308,000 [299,000 to 339,000] | 268,000 [261,000 to 277,000] | 278,000 [276,000 to 291,000] |
+| 64 callers from the host, calls/s | 476,000 [382,000 to 728,000] | 491,000 [447,000 to 700,000] | 372,000 [322,000 to 385,000] | 337,000 [332,000 to 417,000] |
+| Casts from instances, handled/s | 672,000 [671,000 to 792,000] | 669,000 [523,000 to 770,000] | 411,000 [408,000 to 414,000] | 339,000 [320,000 to 415,000] |
+| `native_cost`: a request from a callback | 4.0 µs | 3.9 | 4.3 | 4.3 |
+| `native_cost`: 16 calls in flight, calls/s (CPU per call) | 252,000 (30.0 µs) | 252,000 (30.2) | 221,000 (32.6) | 221,000 (32.0) |
+| `native_cost`: 64 calls in flight, calls/s (CPU per call) | 320,000 (29.4 µs) | 310,000 (29.8) | 277,000 (31.7) | 290,000 (31.1) |
+
+- **An empty run queue is a worse signal than T9's guess:** it holds more often, so tasks watch more, and every busy workload lost: 16 instances calling each other 10 to 16%, casts between instances 39 to 49%, calls in flight 9 to 13% with 6 to 9% more CPU per call. Sequential calls gained a little (p99 between instances about 2 µs lower), less than the spread between rounds for the host's.
+- **The other work is not in the worker's queue:** a woken task goes to the queue of the worker that woke it, so while a task watches, its own queue only shrinks (by steals); what waits is the work other workers would hand on, and the next task woken through the I/O driver. T12's 8% is the cost of watching at all, which no check of this worker's queue sees. Checking the shared queue during the watch did not help.
+- **The `tokio_unstable` build itself** (stable against `guess`, the same code) was within the spread between rounds on most rows, but slower on two from the host in every round: sequential calls 6.7 µs against 3.8 to 6.2, and 16 callers 299,000 to 339,000 calls/s against 313,000 to 404,000. Not looked into; a future use of the setting would measure it again.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
