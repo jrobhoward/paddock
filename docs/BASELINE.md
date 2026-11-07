@@ -2703,9 +2703,67 @@ T10: S33's line wait (`MWAITX`, up to 2 µs before each yield) for the app's wai
 - **No build makes a request cheaper:** a request and a bucket get swing between two levels from run to run whatever the build (a bucket get about 2.2 or about 3.0 µs). S33's three rounds had caught the lower level for its line wait.
 - **The CPU cost is the waits between callbacks:** "all" costs a quarter more CPU per call with 64 calls in flight; T10 costs nothing and gains nothing. Three rounds of `cluster_throughput` before against T10 showed no row beyond the spread either (`spikes/s33/results/t10-16core`).
 
+## 2026-11-06: native apps within a node after T7, T9, T1b and T12 (T11)
+
+T5's native rows again (commit acac568), on both machines, eight rounds, each starting at load under 1: `CLUSTER_NATIVE=1 scripts/cluster_pair.sh 4` (within a node, and between two node processes on one host), `KV_NATIVE=1 kv_cost 4` with `KV_READ_CONCURRENCY` 0 and 1 (alternating first), and `native_cost 4`. The Raspberry Pi 5 ran at nice 10 and idle I/O priority. Medians of eight; components and BEAM were not run again (T5's and C4's).
+
+Within a node:
+
+| | 16-core: T5 | T11 | Pi: T5 | T11 |
+| --- | --- | --- | --- | --- |
+| call from outside, p50 / p99 µs | 6.1 / 10.7 | 5.0 / 8.5 | 6.8 / 8.7 | 3.7 / 10.7 |
+| call from an instance, p50 / p99 µs | 12.8 / 20.8 | 8.3 / 12.9 | 13.1 / 19.8 | 5.0 / 13.9 |
+| 16 / 64 callers from outside, calls/s | 0.32M / 0.35M | 0.31M / 0.39M | 0.13M / 0.15M | 0.15M / 0.20M |
+| 16 instances calling, calls/s | 0.17M | 0.28M | 0.083M | 0.12M |
+| casts from outside, handled/s | 0.81M | 0.82M | 0.31M | 0.43M |
+| casts from instances, handled/s | 0.42M | 0.53M | 0.13M | 0.21M |
+| 1 KiB / 64 KiB bodies, calls/s | 270,000 / 51,000 | 297,000 / 50,000 | 101,000 / 4,600 | 130,000 / 4,100 |
+| a request from a callback (`native_cost`, its own pid) | | 4.3 µs [3.5 to 4.4] | | 2.8 µs [2.8 to 2.9] |
+| a bucket get from a callback (`native_cost`) | | 2.95 µs [2.2 to 3.0] | | 1.3 µs |
+| 16 / 64 calls in flight (`native_cost`), calls/s; CPU per call | | 257,000 / 321,000; 29 µs | | 115,000 / 118,000; 30 µs |
+
+Keyvalue, ns per operation from inside the app (100,000 keys and 16 B values unless the row says), and operations per second across 16 instances; `read_concurrency` off and on:
+
+| | 16-core: T5 | T11, rc off | rc on | Pi: T5 | T11, rc off | rc on |
+| --- | --- | --- | --- | --- | --- | --- |
+| get, 1,000 keys | 5,282 | 2,048 | 2,130 | 5,100 | 1,427 | 1,425 |
+| get | 6,848 | 3,134 | 3,515 | 5,941 | 2,315 | 2,300 |
+| a missing key, 1,000 keys | 5,293 | 1,986 | 1,738 | 5,105 | 1,368 | 1,358 |
+| overwrite | 7,042 | 3,451 | 4,254 | 7,152 | 2,897 | 3,478 |
+| `get_many` of 100, per key | 1,336 | 1,762 | 2,204 | 1,966 | 1,893 | 2,077 |
+| `next`, one key at a time | 8,181 | 8,005 | 7,929 | 8,366 | 7,913 | 7,804 |
+| dependent reads along a chain | 5,734 | 2,604 | 3,213 | 5,996 | 2,288 | 2,336 |
+| 95 reads in 100, 16 instances, ops/s | 0.46M | 0.60M | 1.11M | 0.23M | 0.42M | 0.41M |
+| 50 reads in 100, 16 instances, ops/s | | 0.48M | 0.58M | | 0.37M | 0.31M |
+| every write to one key, 16 instances, ops/s | | 0.78M | 0.55M | | 0.48M | 0.35M |
+| 16 readers beside one writer: reads/s, writes/s | 0.45M, 24,700 | 0.51M, 32,700 | 1.03M, 73,000 | 0.21M, 13,400 | 0.40M, 24,400 | 0.41M, 24,500 |
+| a published bucket: get; reads/s, 16 instances | 221; 30.7M | 189; 36.5M | | 392; 5.1M | 359; 4.7M | |
+
+- **A single request costs a quarter to a half of T5's,** from T7's hot frames and T9's watch: a bucket get 2.0 to 3.1 µs on the 16-core machine and 1.4 to 2.3 µs on the Pi, against 5 to 7. A call between instances costs 8.3 µs and 5.0 µs, against 13. `get_many` and `next` did not change: a batch was already one request, and `next` is not a hot frame.
+- **The 16-core machine's single requests are bimodal from run to run** (a bucket get about 2.2 or about 3.0 µs in `native_cost`, a request 3.5 or 4.4 µs, whichever build: BASELINE.md, T10); the Pi's are not (2.8 to 2.9 µs in every round).
+- **`read_concurrency` helps the 16-core machine's readers and not the Pi's.** With 4 workers, 16 instances read 1.85 times as much on the 16-core machine (1.11 million a second) and 16 readers beside a writer twice as much, but on the Pi's 4 cores the same within the spread: there the cores, not the lock, are the limit. On both it costs a single hot key about 30% of its writes and single operations up to a quarter more.
+- **Throughput with many calls in flight rose a little:** 16 instances calling each other 1.4 to 1.7 times T5's, casts from instances 1.3 to 1.6 times; host callers about the same on the 16-core machine and up to 1.3 times on the Pi.
+- **Between two node processes on one host** (the same runs): a native call from the host 148 µs on the 16-core machine and 133 µs on the Pi (T5: 116 and 124), app to app 179 and 156 µs (T5: 167 and 158); 16 callers 37,900 and 27,800 calls a second (T5: 38,000 and 23,000). The transport dominates; T11's changes are within the node.
+
+**Profile.** One instance's `get` in a loop (`KV_NATIVE=1 KV_ONLY=get:shared:1000:16:20 kv_cost 4`), built with line tables, `perf_event_paranoid` 1 and `kptr_restrict` 0, so the kernel's samples are counted and named: `perf stat`, `perf record` at 5 kHz with frame-pointer call graphs, and at 1 kHz with DWARF call graphs.
+
+| | 16-core machine | Raspberry Pi 5 |
+| --- | --- | --- |
+| a `get` | 1.98 µs (2026-11-01: 5.1 to 5.5) | 1.42 µs |
+| CPUs busy; CPU per `get` | 1.93; 4.2 µs (2026-11-01: 2.4; 12.8) | 1.91; 3.0 µs |
+| the kernel's share of cycles | 30% | 30% |
+| the app's samples: in the kernel / its own code | 29.5% / 25.4% | 26.8% / 25.6% |
+| the node's samples | 45.0% (kernel 0.3%) | 47.5% (kernel 0.1%) |
+
+- **Nearly all the kernel's time is the app's `sched_yield`:** the scheduler's pick and accounting for each turn of its spin, with the seccomp filter on every system call (1.7% of all samples on the 16-core machine). The node's workers no longer park (T9): 0.1 to 0.3% of samples in the kernel.
+- **Most of the node's samples are its own wait:** the watch loop and `Ring::is_readable` (9.7% and 8.6% of all samples), and the clock it reads (`clock_gettime` in the vDSO, 8.4% and 4.7%).
+- **The request's own work is small next to the waiting:** the bucket lookup and apply 3.9% and 4.8% of all samples; the node's copies and the answer's writing (`memmove`, mostly `Port::read` copying the app's frame out of the ring so the node decodes only its own copy, then `send_kv` and `Ring::write`) 12.8% on the 16-core machine and about 5% on the Pi; the app's encoding and decoding a few percent. T7b's candidates (a `&str` key, a copy of the value under the bucket's read lock, cheaper cold frames) are each under 1 to 2% of samples.
+- **In time:** about 4.2 µs of CPU per `get` on the 16-core machine and 3.0 on the Pi, of which the work is well under 1 µs; the rest is each side waiting for the other while it spins, as before, at a third of the CPU it took on 2026-11-01.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
+- Why a single native request on the 16-core machine takes one of two times from run to run (a bucket get about 2.2 or about 3.0 µs), and the Pi's does not (T10, T11); thread placement across the Threadripper's dies is a guess, not measured.
 
 - What makes Erlang's TLS distribution twice its plain TCP with 16 and 64 callers between two processes on the 16-core machine (C4), and only there.
 - Why Bulkhead's calls between nodes gain little or nothing from 16 to 64 callers, where Erlang's double (C4).

@@ -27,9 +27,9 @@ Paddock as forked already had a `native-process` kind: rustbridge plugins and ex
 | Runaway code | The epoch interrupts a callback past its deadline; nothing runs between callbacks | A callback past its wall-clock deadline is killed; threads may run between callbacks, with no CPU quota |
 | Its code's speed | 1.4 to 2.6 times native time on ordinary app code, more for code using SHA or AES instructions | Native |
 | Starting one | About 77 µs, and 56 KiB when idle | A few milliseconds, and 0.25 to 0.5 MiB (1.4 to 2.4 MiB on the Pi) |
-| Asking the node | A host call, about 0.15 µs | A request over shared-memory rings, each side spinning briefly before it sleeps (T1): 4 to 5 µs |
-| A call within a node | 3 to 5 µs from the node, 5 to 7 µs between instances | 6 to 7 µs from the node, 13 µs between instances |
-| A bucket read | A host call, 0.7 to 1.6 µs | A request, 5 to 7 µs; from a published bucket's snapshot in the app's own memory, 0.16 to 0.39 µs (T4) |
+| Asking the node | A host call, about 0.15 µs | A request over shared-memory rings, each side spinning briefly before it sleeps (T1): 1.3 to 4.3 µs |
+| A call within a node | 3 to 5 µs from the node, 5 to 7 µs between instances | 3.7 to 5 µs from the node, 5 to 8 µs between instances |
+| A bucket read | A host call, 0.7 to 1.6 µs | A request, 1.4 to 3.1 µs; from a published bucket's snapshot in the app's own memory, 0.16 to 0.39 µs (T4) |
 | A crash | A trap ends the instance; its Store is discarded | An abort, segfault or panic ends the process; supervision is the same |
 | Upgrade | The new component is swapped in between messages | The new version's process starts beside the old and loads the snapshot (executables); plugins upgrade by restart or blue-green |
 | Passivation | The Store is freed and the state kept as a snapshot | The process ends and the state is kept as a snapshot; a message starts a new one |
@@ -40,15 +40,15 @@ Paddock as forked already had a `native-process` kind: rustbridge plugins and ex
 
 ## What it costs
 
-From BASELINE.md's summary ("summary: BEAM, Paddock's components and Bulkhead's native apps"):
+From BASELINE.md's summary ("summary: BEAM, Paddock's components and Bulkhead's native apps"), with the native columns from T11 (2026-11-06):
 
 | | 16-core: component | native | BEAM | Pi: component | native | BEAM |
 | --- | --- | --- | --- | --- | --- | --- |
-| A call between instances within a node, p50 | 4.9 µs | 12.8 µs | 2.0 µs | 7.0 µs | 13.1 µs | 2.3 µs |
-| A call between two node processes on one host, p50 | 148 µs | 167 µs | 71 µs (TCP) | 136 µs | 158 µs | 53 µs (TCP) |
-| Calls/s between two node processes, 16 callers | 51,000 | 38,000 | 35,000 (TCP), 78,000 (TLS) | 39,000 | 23,000 | 72,000 (TCP), 44,000 (TLS) |
-| Bucket or table: 95 reads in 100, 16 instances, ops/s | 0.69 million | 0.46 million | 6.0 million (ETS) | 0.53 million | 0.23 million | 4.7 million (ETS) |
-| Reads of read-mostly data, 16 instances, reads/s | 0.74 million | 30.7 million (published) | 16.5 million (`persistent_term`) | 0.57 million | 5.1 million (published) | 8.5 million (`persistent_term`) |
+| A call between instances within a node, p50 | 4.9 µs | 8.3 µs | 2.0 µs | 7.0 µs | 5.0 µs | 2.3 µs |
+| A call between two node processes on one host, p50 | 148 µs | 179 µs | 71 µs (TCP) | 136 µs | 156 µs | 53 µs (TCP) |
+| Calls/s between two node processes, 16 callers | 51,000 | 38,000 | 35,000 (TCP), 78,000 (TLS) | 39,000 | 28,000 | 72,000 (TCP), 44,000 (TLS) |
+| Bucket or table: 95 reads in 100, 16 instances, ops/s | 0.69 million | 0.60 million (1.11 with `read_concurrency`) | 6.0 million (ETS) | 0.53 million | 0.42 million | 4.7 million (ETS) |
+| Reads of read-mostly data, 16 instances, reads/s | 0.74 million | 36.5 million (published) | 16.5 million (`persistent_term`) | 0.57 million | 4.7 million (published) | 8.5 million (`persistent_term`) |
 
 - **Within a node, components are cheaper to talk to:** a host call is a function call, and a native app's is a request to another process. Native apps make up for it with their own code's speed, and with published buckets for data many instances read.
 - **Between nodes, the transport dominates and the two are close.**
