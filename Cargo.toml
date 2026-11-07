@@ -158,6 +158,9 @@ rstest = "0.28"
 # Safe system calls: the effective uid for the compiled-component cache's
 # owner check (bulkhead-host, unix only).
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
+# `TCP_INFO`, which rustix does not read: a native listener's idle
+# timeout (bulkhead-host, Linux).
+libc = "0.2"
 tempfile = "3"
 wat = "1.259"
 # Same major as rustbridge-bundle's, so tests add no second copy.

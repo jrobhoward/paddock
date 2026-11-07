@@ -35,7 +35,8 @@
 //! - `secret:<name>`: the secret as text, or `err:<error>`.
 //! - `fetch <method> <url> [<body>]` (space separated): an outgoing HTTP
 //!   request (`bulkhead_sdk::http_client`); replies `<status> <body>`, or
-//!   `err:<error>`.
+//!   `err:<error>`. `fetch-with <header> <url>`: a GET with header
+//!   `<header>: 1`, replied the same way.
 //! - `produce:<app>:<n>:<batch>`: send `n` sample points to the app
 //!   (`whereis`), one cast each with `batch` 0, else in batches of `batch`
 //!   through `bulkhead_sdk::batch`; replies `ok`. Casts of points (single
@@ -467,6 +468,15 @@ impl App for Fixture {
             return http(ctx, &req);
         }
         let command = msg.as_text().unwrap_or("");
+        if let Some(rest) = command.strip_prefix("fetch-with ") {
+            let (header, url) = rest.split_once(' ').unwrap_or((rest, ""));
+            let request = bulkhead_sdk::http_client::Request::new("GET", url).header(header, "1");
+            let reply = match bulkhead_sdk::http_client::send(&request) {
+                Ok(r) => format!("{} {}", r.status, String::from_utf8_lossy(&r.body)),
+                Err(e) => format!("err:{e}"),
+            };
+            return Reply::Now(Envelope::text(reply));
+        }
         if let Some(rest) = command.strip_prefix("fetch ") {
             return Reply::Now(Envelope::text(fetch(rest)));
         }

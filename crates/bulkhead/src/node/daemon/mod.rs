@@ -64,6 +64,10 @@ pub struct Node {
     /// Running connection-handler apps, by name. Locked only briefly,
     /// never across an await.
     connections: std::sync::Mutex<HashMap<String, ConnectionApp>>,
+    /// Native apps' listeners, by app: each hands connections to the app's
+    /// instances (ROADMAP Z8g). Locked only briefly, never across an
+    /// await.
+    native_listeners: std::sync::Mutex<HashMap<String, Vec<bulkhead_host::Listener>>>,
     /// HTTP-handler apps (`wasi:http/proxy`), served by the ingress.
     handlers: std::sync::Mutex<HashMap<String, HandlerApp>>,
     /// Extensions' node-level work, stopped on shutdown.
@@ -284,6 +288,7 @@ impl Node {
                 ..NodeState::default()
             }),
             connections: std::sync::Mutex::default(),
+            native_listeners: std::sync::Mutex::default(),
             handlers: std::sync::Mutex::default(),
             extensions: std::sync::Mutex::default(),
             ingress,
@@ -363,6 +368,10 @@ impl Node {
         let names: Vec<String> = self.connection_apps().keys().cloned().collect();
         for name in names {
             self.stop_connections(&name);
+        }
+        let names: Vec<String> = self.native_listener_map().keys().cloned().collect();
+        for name in names {
+            self.stop_native_listeners(&name);
         }
         let names: Vec<String> = self.handler_apps().keys().cloned().collect();
         for name in names {

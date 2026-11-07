@@ -380,6 +380,7 @@ impl Node {
                 }
                 self.check_slots(name, &deployment)?;
                 self.ingress.set_routes(name, &deployment)?;
+                let manifest = deployment.manifest.clone();
                 let added = match &self.gate {
                     Some(gate) if gate::is_singleton(&deployment) => {
                         gate.hold(name, deployment).await
@@ -387,6 +388,20 @@ impl Node {
                     _ => self.apps.add(deployment).await.map(Some),
                 }
                 .map_err(|e| NodeError::Invalid(e.to_string()));
+                // A native app's listeners hand connections to its
+                // instances (never a singleton's: the manifest refuses).
+                let added = match added {
+                    Ok(Some(handle)) => match self.listen_native(&manifest, &handle) {
+                        Ok(()) => Ok(Some(handle)),
+                        Err(e) => {
+                            if let Err(stop) = self.apps.remove(name).await {
+                                tracing::warn!(app = %name, error = %stop, "app left running after its listeners failed");
+                            }
+                            Err(e)
+                        }
+                    },
+                    other => other,
+                };
                 if added.is_err() {
                     self.ingress.remove_routes(name);
                 }
@@ -475,6 +490,7 @@ impl Node {
         {
             return Ok(());
         }
+        self.stop_native_listeners(name);
         if !self.stop_connections(name) && !self.stop_handler(name) && self.apps.app(name).is_some()
         {
             self.apps

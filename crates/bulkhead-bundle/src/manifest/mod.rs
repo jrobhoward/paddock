@@ -72,6 +72,9 @@ pub const NATIVE_CAPABILITIES: &[Capability] = &[
     Capability::Metrics,
     Capability::HttpIncoming,
     Capability::Filesystem,
+    Capability::Sql,
+    Capability::Sockets,
+    Capability::HttpOutgoing,
 ];
 
 /// The `appserver` section of a bundle manifest: everything the server needs
@@ -205,10 +208,35 @@ impl AppSpec {
         self.check_native(v);
     }
 
+    /// Listeners on a native app: an executable's instances take the
+    /// connections, so never passivated and not a singleton (a listener
+    /// binds on every node the app is deployed to).
+    fn check_native_listeners(&self, executable: bool, v: &mut Validator) {
+        if !executable {
+            v.error_at("listeners", "a rustbridge plugin takes no connections");
+        }
+        if self.instances.passivate_after_ms.is_some() {
+            v.error_at(
+                "instances.passivate_after_ms",
+                "a native app with listeners is never passivated",
+            );
+        }
+        if self
+            .placement
+            .as_ref()
+            .is_some_and(|p| p.mode == PlacementMode::Singleton)
+        {
+            v.error_at(
+                "placement.mode",
+                "a native app with listeners is not a singleton",
+            );
+        }
+    }
+
     /// What a `native-process` app may not have: any capability outside
-    /// [`NATIVE_CAPABILITIES`] (no network or other service yet) and listeners; for a rustbridge plugin, which takes no
-    /// snapshot, passivation and snapshot upgrades too; and the `native`
-    /// section on any other kind.
+    /// [`NATIVE_CAPABILITIES`]; for a rustbridge plugin, which takes no
+    /// snapshot and no connection, passivation, snapshot upgrades and
+    /// listeners too; and the `native` section on any other kind.
     fn check_native(&self, v: &mut Validator) {
         if self.kind != Kind::NativeProcess {
             if self.native.is_some() {
@@ -235,10 +263,11 @@ impl AppSpec {
                 only.clone(),
             );
         }
+        let executable = self.native.unwrap_or_default().program == NativeProgram::Executable;
         if !self.listeners.is_empty() {
-            v.error_at("listeners", "a native-process app has no listeners");
+            self.check_native_listeners(executable, v);
         }
-        if self.native.unwrap_or_default().program == NativeProgram::Executable {
+        if executable {
             return;
         }
         if self.instances.passivate_after_ms.is_some() {

@@ -20,8 +20,13 @@
 //! | `published BUCKET` | the revision of the published snapshot it reads `BUCKET` from, or `none` |
 //! | `fd ID` | what the descriptor the node passed as `ID` reads (up to 1 KiB), or `err:` |
 //! | `alloc MIB` | `ok` once allocated and touched |
-//! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID` | `ok` or `err:` and the OS error |
+//! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID`, `io-uring` (set up a ring) | `ok` or `err:` and the OS error |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
+//! | `udp-bind ADDR`; `udp-send S ADDR TEXT`; `udp-recv S`; `net-watch S TAG` | a UDP socket the node holds (its number); a datagram sent; one received as `FROM TEXT`, or `none`; an `io-ready` notice tagged `TAG` (recorded as `event io-ready {"tag":TAG}`) |
+//! | `tcp-connect ADDR`; `tcp-write S TEXT`; `tcp-close S`; `tcp-close-keep S` | a stream passed by the node and kept (its number); bytes written on it; dropped and closed at the node; closed at the node but kept |
+//! | `sql-q DS STMT`, `sql-x DS STMT` | a query's rows (`col=value` cells joined by `,`, rows by `;`) or a statement's count, else `err:` and the error |
+//! | `sql-begin DS`; `sql-tq STMT`, `sql-tx STMT`, `sql-commit`, `sql-rollback` | open a transaction and keep it; then statements in it, and its end |
+//! | `sql-drop` | forget the open transaction as a dropped handle does (`end_transaction_quietly`) |
 //! | `vread GUEST`, `vwrite GUEST` | read or write (`x`) the file at a guest path (`/data/f`) where `BULKHEAD_PREOPENS` puts it: `ok` or `err:` and the OS error |
 //! | `dumpable` | `no` if the process is not dumpable, else `yes` (Linux) |
 //! | `kv OP BUCKET ...` | a keyvalue request: `get K`, `set K V`, `del K`, `incr K N`, `many K1,K2`, `setmany K1=V1,K2=V2`, `entry K` (`V@REV`), `rev`, `scan PREFIX`, `cas K EXPECTED V` (`none` for absent), `watch K`, `watchp PREFIX`, `gets N` (the nanoseconds `N` gets of key `t` took); `kv unwatch ID`. A failure is `err:` and the error |

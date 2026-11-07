@@ -17,6 +17,23 @@
 //! - **Limits:** at most `max_connections` at once; further connections are
 //!   closed at once and counted as refused. Each connection uses an
 //!   instance slot of the runtime's pool.
+//!
+//! A native app's listener ([`Runtime::listen_native`], ROADMAP Z8g)
+//! hands each connection to an instance of the app's pool instead (by the
+//! peer's address under hash routing, otherwise in turn), as an operation
+//! ahead of its mailbox: the node passes the stream on the instance's
+//! descriptor socket and runs its `handle_connection`, and the instance
+//! serves many connections, reading each when the node says it is
+//! readable. The listener keeps its own copy of each socket: it counts the
+//! connection until the app closes it or the instance exits, shuts it
+//! down when the listener stops, and closes it once the kernel's
+//! `TCP_INFO` shows no data either way for the idle timeout. A crash
+//! closes every connection its instance held; `crashed` counts component
+//! handlers only (a native instance's crash is its app's restart). The
+//! app's upgrades are its own; the listener sends new connections to
+//! whichever instances run.
+//!
+//! [`Runtime::listen_native`]: crate::Runtime::listen_native
 
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -34,6 +51,7 @@ use wasmtime::component::Resource;
 use wasmtime_wasi::p2::bindings::io::streams::{InputStream, OutputStream};
 use wasmtime_wasi::p2::pipe::{AsyncReadStream, AsyncWriteStream};
 
+use crate::apps::AppHandle;
 use crate::delivery;
 use crate::error::HostError;
 use crate::instance::{self, classify, new_store};
@@ -156,10 +174,41 @@ pub struct ListenerStats {
     pub idle_closed: u64,
 }
 
+/// Where a listener's connections go.
+enum Target {
+    /// A new connection-handler instance each, of this component.
+    Component(Box<RwLock<(LoadedConnection, InstanceSpec)>>),
+    /// An instance of this native app's pool.
+    Native(AppHandle),
+}
+
+/// A connection accepted for a native app's instance
+/// ([`InstanceHandle::connection`](crate::InstanceHandle)).
+pub(crate) struct Accepted {
+    /// The listener's name.
+    pub(crate) listener: String,
+    pub(crate) stream: std::net::TcpStream,
+    /// Held while the app holds the stream.
+    pub(crate) tie: Tie,
+}
+
+impl std::fmt::Debug for Accepted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Accepted")
+            .field("listener", &self.listener)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Ties a connection passed to a native instance to its listener: dropped
+/// when the app closes the stream or the instance exits, which ends the
+/// listener's count of it.
+pub(crate) struct Tie(#[allow(dead_code)] tokio::sync::oneshot::Sender<()>);
+
 struct Shared {
     spec: ListenerSpec,
     local_addr: SocketAddr,
-    current: RwLock<(LoadedConnection, InstanceSpec)>,
+    target: Target,
     slots: Arc<Semaphore>,
     accepted: AtomicU64,
     refused: AtomicU64,
@@ -211,13 +260,12 @@ impl Listener {
     }
 
     /// Serve new connections with `connection` and `spec` (an upgrade or a
-    /// rollback). Open connections keep what they started with.
+    /// rollback). Open connections keep what they started with. A native
+    /// app's listener ignores it: the app's instances are upgraded instead.
     pub fn replace(&self, connection: LoadedConnection, spec: InstanceSpec) {
-        *self
-            .shared
-            .current
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = (connection, spec);
+        if let Target::Component(current) = &self.shared.target {
+            *current.write().unwrap_or_else(PoisonError::into_inner) = (connection, spec);
+        }
     }
 
     /// Stop accepting and close every open connection.
@@ -226,13 +274,37 @@ impl Listener {
     }
 }
 
-/// Bind `spec.address` and start accepting.
+/// Bind `spec.address` and start accepting, an instance of `connection`
+/// per connection.
 pub(crate) fn listen(
     rt: &Arc<RuntimeInner>,
     spec: ListenerSpec,
     connection: LoadedConnection,
     instance: InstanceSpec,
 ) -> Result<Listener, HostError> {
+    bind(
+        rt,
+        spec,
+        Target::Component(Box::new(RwLock::new((connection, instance)))),
+    )
+}
+
+/// Bind `spec.address` and start accepting for `app`'s instances.
+pub(crate) fn listen_native(
+    rt: &Arc<RuntimeInner>,
+    spec: ListenerSpec,
+    app: AppHandle,
+) -> Result<Listener, HostError> {
+    if !cfg!(target_os = "linux") {
+        return Err(HostError::Listen(format!(
+            "{}: native apps run on Linux only",
+            spec.name
+        )));
+    }
+    bind(rt, spec, Target::Native(app))
+}
+
+fn bind(rt: &Arc<RuntimeInner>, spec: ListenerSpec, target: Target) -> Result<Listener, HostError> {
     let bind =
         |e: std::io::Error| HostError::Listen(format!("{} ({}): {e}", spec.name, spec.address));
     let std_listener = std::net::TcpListener::bind(spec.address).map_err(bind)?;
@@ -243,7 +315,7 @@ pub(crate) fn listen(
     let shared = Arc::new(Shared {
         slots: Arc::new(Semaphore::new(spec.max_connections)),
         local_addr,
-        current: RwLock::new((connection, instance)),
+        target,
         accepted: AtomicU64::new(0),
         refused: AtomicU64::new(0),
         crashed: AtomicU64::new(0),
@@ -275,6 +347,10 @@ async fn accept(rt: Arc<RuntimeInner>, shared: Arc<Shared>, listener: Arc<TcpLis
             continue;
         };
         let _ = stream.set_nodelay(true);
+        if let Target::Native(app) = &shared.target {
+            hand_over(&shared, app, stream, peer, permit);
+            continue;
+        }
         shared.accepted.fetch_add(1, Ordering::Relaxed);
         let (rt, shared) = (rt.clone(), shared.clone());
         tokio::spawn(async move {
@@ -291,9 +367,120 @@ enum End {
     Stopped,
 }
 
+/// Pass a connection to an instance of the native app, and watch it until
+/// the app closes it, the instance exits, the listener stops or it idles.
+/// No instance running refuses it.
+fn hand_over(
+    shared: &Arc<Shared>,
+    app: &AppHandle,
+    stream: TcpStream,
+    peer: SocketAddr,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    let Some(instance) = app.route_peer(peer.ip()) else {
+        shared.refused.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let Ok(stream) = stream.into_std() else {
+        shared.refused.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let Ok(copy) = stream.try_clone() else {
+        shared.refused.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    let (tie, untied) = tokio::sync::oneshot::channel();
+    shared.accepted.fetch_add(1, Ordering::Relaxed);
+    instance.connection(Accepted {
+        listener: shared.spec.name.clone(),
+        stream,
+        tie: Tie(tie),
+    });
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        watch_passed(&shared, &copy, untied).await;
+        drop(permit);
+    });
+}
+
+/// Watch a passed connection through the listener's copy until it ends:
+/// shut down, so its peer sees the end whoever still holds a descriptor.
+async fn watch_passed(
+    shared: &Shared,
+    copy: &std::net::TcpStream,
+    untied: tokio::sync::oneshot::Receiver<()>,
+) {
+    let mut stop = shared.stop.subscribe();
+    tokio::select! {
+        _ = untied => {}
+        _ = stop.wait_for(|s| *s) => {}
+        () = quiet_for(copy, shared.spec.idle_timeout) => {
+            shared.idle_closed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    let _ = copy.shutdown(std::net::Shutdown::Both);
+}
+
+/// Resolve once the kernel has seen no data either way on `stream` for
+/// `limit`.
+async fn quiet_for(stream: &std::net::TcpStream, limit: Duration) {
+    loop {
+        let quiet = match quiet(stream) {
+            Ok(quiet) => quiet,
+            Err(e) => {
+                tracing::debug!(error = %e, "TCP_INFO unread; the connection counts as active");
+                Duration::ZERO
+            }
+        };
+        if quiet >= limit {
+            return;
+        }
+        tokio::time::sleep(limit - quiet).await;
+    }
+}
+
+/// How long since `stream` last sent or received data, from `TCP_INFO`.
+#[cfg(target_os = "linux")]
+fn quiet(stream: &std::net::TcpStream) -> std::io::Result<Duration> {
+    use std::mem::{MaybeUninit, size_of};
+    use std::os::fd::AsRawFd;
+
+    let mut info = MaybeUninit::<libc::tcp_info>::zeroed();
+    let mut len =
+        libc::socklen_t::try_from(size_of::<libc::tcp_info>()).map_err(std::io::Error::other)?;
+    // SAFETY: the descriptor is open for the call (`stream` is borrowed),
+    // and the kernel writes at most `len` bytes into `info`, which is that
+    // large.
+    let r = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::IPPROTO_TCP,
+            libc::TCP_INFO,
+            info.as_mut_ptr().cast(),
+            &raw mut len,
+        )
+    };
+    if r != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: zeroed, then partly written by the kernel; every field is an
+    // integer, for which any bytes are a value.
+    let info = unsafe { info.assume_init() };
+    let ms = info.tcpi_last_data_recv.min(info.tcpi_last_data_sent);
+    Ok(Duration::from_millis(u64::from(ms)))
+}
+
+/// Native listeners run on Linux only ([`listen_native`]).
+#[cfg(not(target_os = "linux"))]
+fn quiet(_stream: &std::net::TcpStream) -> std::io::Result<Duration> {
+    Ok(Duration::ZERO)
+}
+
 async fn serve(rt: &Arc<RuntimeInner>, shared: &Shared, stream: TcpStream, peer: SocketAddr) {
-    let (connection, spec) = shared
-        .current
+    let Target::Component(current) = &shared.target else {
+        return;
+    };
+    let (connection, spec) = current
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();

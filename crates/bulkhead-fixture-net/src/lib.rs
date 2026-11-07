@@ -1,5 +1,7 @@
 //! Test fixture: an app that uses `wasi:sockets` and `bulkhead:io` through
 //! `bulkhead-sdk`'s `net` module, for the host's tests of guest sockets.
+//! The same source builds as a native program (feature `native`), whose
+//! UDP goes through the node (`bulkhead_native::app::Ctx::net`).
 //!
 //! Every socket the fixture holds has an id, which is also the tag of its
 //! readiness notices. Bytes that arrive on a stream it watches are kept as
@@ -18,12 +20,6 @@
 
 use std::collections::BTreeMap;
 
-use bulkhead_sdk::net::wasip2::sockets::instance_network::instance_network;
-use bulkhead_sdk::net::wasip2::sockets::network::{
-    ErrorCode, IpAddressFamily, IpSocketAddress, Ipv4SocketAddress,
-};
-use bulkhead_sdk::net::wasip2::sockets::udp::UdpSocket;
-use bulkhead_sdk::net::wasip2::sockets::udp_create_socket::create_udp_socket;
 use bulkhead_sdk::net::{self, NetError, TcpListener, TcpStream};
 use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Info, Reply};
 
@@ -152,7 +148,16 @@ impl Fixture {
     }
 }
 
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+use bulkhead_sdk::net::wasip2::sockets::udp::UdpSocket;
+
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
 fn bind_udp(addr: std::net::SocketAddr) -> Result<UdpSocket, NetError> {
+    use bulkhead_sdk::net::wasip2::sockets::instance_network::instance_network;
+    use bulkhead_sdk::net::wasip2::sockets::network::{
+        ErrorCode, IpAddressFamily, IpSocketAddress, Ipv4SocketAddress,
+    };
+    use bulkhead_sdk::net::wasip2::sockets::udp_create_socket::create_udp_socket;
     let std::net::SocketAddr::V4(v4) = addr else {
         return Err(NetError::Other("IPv4 only".into()));
     };
@@ -168,6 +173,30 @@ fn bind_udp(addr: std::net::SocketAddr) -> Result<UdpSocket, NetError> {
             Err(ErrorCode::WouldBlock) => socket.subscribe().block(),
             done => return done.map(|()| socket).map_err(NetError::from),
         }
+    }
+}
+
+/// Natively: a UDP socket the node holds, closed when dropped.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+struct UdpSocket(u32);
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+impl Drop for UdpSocket {
+    fn drop(&mut self) {
+        bulkhead_native::app::close_socket_quietly(self.0);
+    }
+}
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+fn bind_udp(addr: std::net::SocketAddr) -> Result<UdpSocket, NetError> {
+    use bulkhead_native::protocol::{NetAnswer, NetError as E, NetRequest};
+    match bulkhead_native::app::Ctx::current().net(NetRequest::UdpBind(addr)) {
+        Ok(NetAnswer::Udp { socket, .. }) => Ok(UdpSocket(socket)),
+        Ok(other) => Err(NetError::Other(format!("unexpected {other:?}"))),
+        Err(E::Denied) => Err(NetError::Denied),
+        Err(E::Limited) => Err(NetError::Limited),
+        Err(E::Closed) => Err(NetError::Closed),
+        Err(E::Other(why)) => Err(NetError::Other(why)),
     }
 }
 

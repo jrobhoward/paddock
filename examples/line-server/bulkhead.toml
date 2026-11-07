@@ -8,10 +8,17 @@
 #   cargo build -p example-line-server --target wasm32-wasip2 --release
 #   bulkhead bundle examples/line-server/bulkhead.toml target/wasm32-wasip2/release/example_line_server.wasm --key bulkhead.key
 # Deploy the counter example too; `inc` and `get` are forwarded to it.
+#
+# Natively (the same source; each instance holds many connections), build
+# `cargo build -p example-line-server --features native --release`, bundle
+# target/release/example-line-server, and add to [appserver]:
+#
+#   kind = "native-process"
+#   native = { program = "executable" }
 [app]
 name = "line-server"
 version = "1.0.0"
-description = "A line protocol over TCP, one instance per connection (bulkhead-sdk example)"
+description = "A line protocol over TCP (bulkhead-sdk example)"
 license = "MIT OR Apache-2.0"
 
 [[appserver.listeners]]

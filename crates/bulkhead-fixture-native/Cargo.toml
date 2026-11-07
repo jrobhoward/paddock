@@ -13,7 +13,7 @@ publish = false
 bulkhead-native = { workspace = true, features = ["app"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix.workspace = true
+rustix = { workspace = true, features = ["io_uring"] }
 
 [lints]
 workspace = true

@@ -4,7 +4,10 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use bulkhead_native::app::{self, App, CallRef, Ctx};
-use bulkhead_native::protocol::{Envelope, ExitReason, FdRef, Info, Level, Pid};
+use bulkhead_native::protocol::{
+    Envelope, ExitReason, FdRef, Info, Level, NetAnswer, NetRequest, Pid, SqlAnswer, SqlRequest,
+    SqlValue,
+};
 
 #[derive(Default)]
 struct Fixture {
@@ -16,6 +19,10 @@ struct Fixture {
     loaded_from: Option<String>,
     /// Fail the next `save_snapshot`.
     fail_save: bool,
+    /// The SQL transaction `sql-begin` opened.
+    tx: Option<u32>,
+    /// Streams `tcp-connect` made, by the node's socket number.
+    streams: std::collections::BTreeMap<u32, std::net::TcpStream>,
 }
 
 fn text(s: impl Into<String>) -> Envelope {
@@ -42,7 +49,158 @@ fn outcome<T, E: std::fmt::Display>(r: Result<T, E>) -> String {
     }
 }
 
+/// A SQL answer as text: rows as `col=value` cells joined by `,`, rows
+/// by `;`; a count; or `ok`.
+fn sql_text(answer: SqlAnswer) -> String {
+    match answer {
+        SqlAnswer::Rows(rows) => rows
+            .rows
+            .iter()
+            .map(|row| {
+                rows.columns
+                    .iter()
+                    .zip(row)
+                    .map(|(c, v)| {
+                        let v = match v {
+                            SqlValue::Null => "null".to_string(),
+                            SqlValue::Bool(b) => b.to_string(),
+                            SqlValue::Int(i) => i.to_string(),
+                            SqlValue::Float(f) => f.to_string(),
+                            SqlValue::Text(s) => s.clone(),
+                            SqlValue::Bytes(b) => format!("{:?}", b.0),
+                        };
+                        format!("{c}={v}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect::<Vec<_>>()
+            .join(";"),
+        SqlAnswer::Changed(n) => n.to_string(),
+        SqlAnswer::Begun(_) | SqlAnswer::Ended => "ok".into(),
+    }
+}
+
 impl Fixture {
+    /// Sockets through the node: `udp-bind ADDR` (its socket),
+    /// `udp-send S ADDR TEXT`, `udp-recv S` (`FROM TEXT` or `none`),
+    /// `net-watch S TAG`; `tcp-connect ADDR` keeps the passed stream (its
+    /// socket), `tcp-write S TEXT`, `tcp-close S` drops it and tells the
+    /// node, `tcp-close-keep S` tells the node and keeps it.
+    fn net(&mut self, ctx: &mut Ctx, verb: &str, first: &str, tail: &str) -> String {
+        use std::io::Write;
+        let socket = || first.parse::<u32>().unwrap_or(u32::MAX);
+        let addr = |s: &str| s.parse::<std::net::SocketAddr>();
+        let request = match verb {
+            "udp-bind" | "tcp-connect" => match addr(first) {
+                Ok(a) if verb == "udp-bind" => NetRequest::UdpBind(a),
+                Ok(a) => NetRequest::Connect(a),
+                Err(e) => return format!("err:{e}"),
+            },
+            "udp-send" => {
+                let (to, text) = tail.split_once(' ').unwrap_or((tail, ""));
+                match addr(to) {
+                    Ok(to) => NetRequest::UdpSend {
+                        socket: socket(),
+                        to,
+                        data: bulkhead_native::protocol::Bytes(text.as_bytes().to_vec()),
+                    },
+                    Err(e) => return format!("err:{e}"),
+                }
+            }
+            "udp-recv" => NetRequest::UdpRecv(socket()),
+            "net-watch" => NetRequest::Notify {
+                socket: socket(),
+                tag: tail.parse().unwrap_or(0),
+            },
+            "tcp-write" => {
+                return match self.streams.get_mut(&socket()) {
+                    Some(s) => outcome(s.write_all(tail.as_bytes())),
+                    None => "err:no stream".into(),
+                };
+            }
+            "tcp-close" => {
+                self.streams.remove(&socket());
+                NetRequest::Close(socket())
+            }
+            _ => NetRequest::Close(socket()),
+        };
+        match ctx.net(request) {
+            Ok(NetAnswer::Udp { socket, .. }) => socket.to_string(),
+            Ok(NetAnswer::Stream(s)) => match app::take_fd(s.fd) {
+                Ok(fd) => {
+                    self.streams.insert(s.socket, std::net::TcpStream::from(fd));
+                    s.socket.to_string()
+                }
+                Err(e) => format!("err:{e}"),
+            },
+            Ok(NetAnswer::Datagram(Some((from, data)))) => {
+                format!("{from} {}", String::from_utf8_lossy(&data.0))
+            }
+            Ok(NetAnswer::Datagram(None)) => "none".into(),
+            Ok(_) => "ok".into(),
+            Err(e) => format!("err:{e:?}"),
+        }
+    }
+
+    /// `sql-q DS STMT`, `sql-x DS STMT`, `sql-begin DS`; inside the open
+    /// transaction `sql-tq STMT`, `sql-tx STMT`, `sql-commit`,
+    /// `sql-rollback`; `sql-drop` forgets it as a dropped handle does
+    /// (`end_transaction_quietly`). Errors as `err:` and the error.
+    fn sql(&mut self, ctx: &mut Ctx, verb: &str, first: &str, tail: &str, rest: &str) -> String {
+        let request = match verb {
+            "sql-q" => SqlRequest::Query {
+                datasource: first.into(),
+                statement: tail.into(),
+                params: Vec::new(),
+            },
+            "sql-x" => SqlRequest::Execute {
+                datasource: first.into(),
+                statement: tail.into(),
+                params: Vec::new(),
+            },
+            "sql-begin" => SqlRequest::Begin(first.into()),
+            "sql-drop" => {
+                if let Some(tx) = self.tx.take() {
+                    app::end_transaction_quietly(tx);
+                }
+                return "ok".into();
+            }
+            _ => {
+                let Some(tx) = self.tx else {
+                    return "err:no transaction".into();
+                };
+                match verb {
+                    "sql-tq" => SqlRequest::TxQuery {
+                        tx,
+                        statement: rest.into(),
+                        params: Vec::new(),
+                    },
+                    "sql-tx" => SqlRequest::TxExecute {
+                        tx,
+                        statement: rest.into(),
+                        params: Vec::new(),
+                    },
+                    _ => {
+                        self.tx = None;
+                        SqlRequest::TxEnd {
+                            tx,
+                            commit: verb == "sql-commit",
+                        }
+                    }
+                }
+            }
+        };
+        match ctx.sql(request) {
+            Ok(SqlAnswer::Begun(tx)) => {
+                self.tx = Some(tx);
+                "ok".into()
+            }
+            Ok(answer) => sql_text(answer),
+            Err(e) => format!("err:{e:?}"),
+        }
+    }
+
     fn run(&mut self, ctx: &mut Ctx, call: CallRef, command: &str) -> Option<String> {
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
         let (first, tail) = rest.split_once(' ').unwrap_or((rest, ""));
@@ -115,6 +273,10 @@ impl Fixture {
                 println!("{rest}");
                 "ok".into()
             }
+            "udp-bind" | "udp-send" | "udp-recv" | "net-watch" | "tcp-connect" | "tcp-write"
+            | "tcp-close" | "tcp-close-keep" => self.net(ctx, verb, first, tail),
+            "sql-q" | "sql-x" | "sql-begin" | "sql-tq" | "sql-tx" | "sql-commit"
+            | "sql-rollback" | "sql-drop" => self.sql(ctx, verb, first, tail, rest),
             "panic" => panic!("asked to"),
             "abort" => std::process::abort(),
             "break-channel" => {
@@ -140,6 +302,13 @@ impl Fixture {
             "write" => outcome(std::fs::write(rest, b"x")),
             "connect" => outcome(std::net::TcpStream::connect(rest)),
             "exec" => outcome(std::process::Command::new("/bin/true").status()),
+            #[cfg(target_os = "linux")]
+            "io-uring" => {
+                let mut params = rustix::io_uring::io_uring_params::default();
+                // SAFETY: one entry and zeroed parameters; the ring's
+                // descriptor, if one came, is dropped without being mapped.
+                outcome(unsafe { rustix::io_uring::io_uring_setup(1, &mut params) })
+            }
             "vread" => outcome(std::fs::read(bulkhead_native::preopens::path(rest))),
             "vwrite" => outcome(std::fs::write(bulkhead_native::preopens::path(rest), b"x")),
             "priv" => match std::env::var(bulkhead_native::protocol::PRIV_ENV) {
@@ -244,6 +413,9 @@ impl App for Fixture {
             } => format!("down {reference} {} {reason:?}", pid_text(pid)),
             Info::Timer { reference, msg } => {
                 format!("timer {reference} {}", String::from_utf8_lossy(&msg.body))
+            }
+            Info::HostEvent { name, msg } if name == "io-ready" => {
+                format!("event {name} {}", String::from_utf8_lossy(&msg.body))
             }
             Info::HostEvent { name, .. } => format!("event {name}"),
             Info::KvChanged {

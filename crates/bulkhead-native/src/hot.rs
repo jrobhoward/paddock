@@ -354,7 +354,7 @@ pub enum FromAppHot<'a> {
 
 /// A hot frame from the node: a keyvalue answer, borrowed, or a frame of
 /// [`protocol`](crate::protocol)'s.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ToAppHot<'a> {
     /// A keyvalue request's answer: its id and the reply.
     Kv(u64, KvReply<'a>),

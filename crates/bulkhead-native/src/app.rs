@@ -52,9 +52,10 @@ use crate::channel::{AppEnd, FromNode, ToNode};
 use crate::hot::KvOp;
 use crate::protocol::{
     self, Answer, Bytes, CallError, CastError, ConfigError, Envelope, ExitReason, FdRef, FromApp,
-    GroupsAnswer, GroupsError, GroupsRequest, Info, KvAnswer, KvError, KvRequest, Level,
-    MetricError, MetricKind, MetricUpdate, Pid, RegisterError, Request, ScanPage, ScanQuery,
-    SecretError, ToApp, VERSION,
+    GroupsAnswer, GroupsError, GroupsRequest, HttpError, HttpRequest, HttpResponse, Info, KvAnswer,
+    KvError, KvRequest, Level, MetricError, MetricKind, MetricUpdate, NetAnswer, NetError,
+    NetRequest, NetStream, Pid, RegisterError, Request, ScanPage, ScanQuery, SecretError,
+    SqlAnswer, SqlError, SqlRequest, ToApp, VERSION,
 };
 
 /// A call's reference, for a later [`Ctx::reply`].
@@ -79,6 +80,17 @@ pub trait App: Sized {
 
     /// Handle an exit signal, a monitor's notice, a timer or a host event.
     fn handle_info(&mut self, _ctx: &mut Ctx, _info: Info) {}
+
+    /// Take a connection accepted on the listener `listener` (an app
+    /// declaring `listeners`): take its descriptor with [`take_fd`], ask
+    /// for readiness with [`NetRequest::Notify`] and close it with
+    /// [`NetRequest::Close`], as a stream from [`NetRequest::Connect`].
+    /// Closes it by default.
+    fn handle_connection(&mut self, ctx: &mut Ctx, listener: String, stream: NetStream) {
+        let _ = listener;
+        drop(take_fd(stream.fd));
+        let _ = ctx.net(NetRequest::Close(stream.socket));
+    }
 
     /// Stop gracefully.
     fn terminate(&mut self, _ctx: &mut Ctx, _reason: ExitReason) {}
@@ -371,6 +383,42 @@ fn request(request: Request) -> Answer {
     }
 }
 
+/// Roll back the transaction `tx` from a `Drop`: sent only from the
+/// thread that runs the callbacks and not while it panics; otherwise left
+/// for the node, which rolls it back when the instance exits. A failure is
+/// ignored: the transaction has ended either way.
+pub fn end_transaction_quietly(tx: u32) {
+    request_quietly(Request::Sql(SqlRequest::TxEnd { tx, commit: false }));
+}
+
+/// Close the socket `socket` from a `Drop`, giving back its share of
+/// `max_sockets`: sent as [`end_transaction_quietly`] sends; otherwise the
+/// node keeps counting it until the instance exits.
+pub fn close_socket_quietly(socket: u32) {
+    request_quietly(Request::Net(NetRequest::Close(socket)));
+}
+
+/// Send `r` if this thread runs the callbacks and is not panicking,
+/// ignoring the answer.
+fn request_quietly(r: Request) {
+    let here = CONN.with(|cell| cell.try_borrow().is_ok_and(|c| c.is_some()));
+    if here && !std::thread::panicking() {
+        let _ = request(r);
+    }
+}
+
+/// Read what a passed stream has already received into `buf`, without
+/// waiting (`MSG_DONTWAIT`): the stream stays blocking for writes.
+///
+/// # Errors
+///
+/// `WouldBlock` when nothing has arrived; otherwise the socket's error.
+pub fn recv_dontwait(fd: std::os::fd::BorrowedFd<'_>, buf: &mut [u8]) -> io::Result<usize> {
+    rustix::net::recv(fd, buf, rustix::net::RecvFlags::DONTWAIT)
+        .map(|(n, _)| n)
+        .map_err(io::Error::from)
+}
+
 /// Send the callback's metric updates, if any.
 fn flush_metrics() {
     let updates = with_conn(|conn| std::mem::take(&mut conn.metrics));
@@ -645,6 +693,56 @@ impl Ctx {
     pub fn secret(&mut self, name: impl Into<String>) -> Result<Vec<u8>, SecretError> {
         match self.request(Request::Secret(name.into())) {
             Answer::Secret(result) => result.map(|b| b.0),
+            other => unexpected(&other),
+        }
+    }
+
+    /// A socket operation (`wasi:sockets`, ROADMAP Z8e). A stream comes
+    /// connected, on the descriptor socket ([`take_fd`]); listeners and
+    /// UDP sockets stay in the node. [`close_socket_quietly`] closes one
+    /// from a `Drop`.
+    ///
+    /// # Errors
+    ///
+    /// [`NetError::Denied`] if not granted or outside the manifest's
+    /// rules, [`NetError::Limited`] over `max_sockets`, the others as the
+    /// socket reported them.
+    pub fn net(&mut self, request: NetRequest) -> Result<NetAnswer, NetError> {
+        match self.request(Request::Net(request)) {
+            Answer::Net(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// An HTTP request (`wasi:http/outgoing-handler`, ROADMAP Z8f), sent
+    /// by the node's egress client on the manifest's rules; the whole
+    /// response, up to a frame's size.
+    ///
+    /// # Errors
+    ///
+    /// [`HttpError::Denied`] if not granted or outside the `allow` list or
+    /// methods, [`HttpError::Limited`] over the app's requests in flight,
+    /// the others as the request failed.
+    pub fn http(&mut self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        match self.request(Request::Http(request)) {
+            Answer::Http(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// A SQL operation on a datasource the manifest lists
+    /// (`bulkhead:sql`). A transaction ([`SqlRequest::Begin`]) holds one
+    /// of the app's connections until [`SqlRequest::TxEnd`], or until the
+    /// instance exits, which rolls it back; [`end_transaction_quietly`]
+    /// rolls one back from a `Drop`.
+    ///
+    /// # Errors
+    ///
+    /// [`SqlError::AccessDenied`] if not granted or not listed; the others
+    /// as `bulkhead:sql`'s `error`.
+    pub fn sql(&mut self, request: SqlRequest) -> Result<SqlAnswer, SqlError> {
+        match self.request(Request::Sql(request)) {
+            Answer::Sql(result) => result,
             other => unexpected(&other),
         }
     }
@@ -1467,6 +1565,11 @@ pub fn serve<A: App>() -> ExitCode {
             }
             ToApp::Info { info } => {
                 guarded(|| app.handle_info(&mut ctx, info));
+                flush_metrics();
+                send(&FromApp::Done);
+            }
+            ToApp::Connection { listener, stream } => {
+                guarded(|| app.handle_connection(&mut ctx, listener, stream));
                 flush_metrics();
                 send(&FromApp::Done);
             }

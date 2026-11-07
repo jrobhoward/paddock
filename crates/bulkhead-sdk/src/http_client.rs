@@ -4,7 +4,9 @@
 //! lists in `capabilities."wasi:http/outgoing-handler".allow`, and refuses
 //! the rest with [`HttpError::Denied`]. Waiting for the response does not
 //! count against the callback deadline, but the instance handles no other
-//! message meanwhile; a pool of instances keeps an app responsive.
+//! message meanwhile; a pool of instances keeps an app responsive. The
+//! same calls work in a native program, where the node sends each request
+//! on the same rules (ROADMAP Z8f).
 //!
 //! ```ignore
 //! use bulkhead_sdk::http_client;
@@ -17,10 +19,13 @@
 
 use std::time::Duration;
 
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
 use wasip2::http::outgoing_handler;
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
 use wasip2::http::types::{
     ErrorCode, Fields, IncomingBody, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
 };
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
 use wasip2::io::streams::StreamError;
 
 /// A request.
@@ -137,6 +142,7 @@ impl std::fmt::Display for HttpError {
 
 impl std::error::Error for HttpError {}
 
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
 impl From<ErrorCode> for HttpError {
     fn from(e: ErrorCode) -> Self {
         match e {
@@ -227,6 +233,7 @@ fn parse_url(url: &str) -> Result<Url<'_>, HttpError> {
     })
 }
 
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
 /// Send a request and read the whole response.
 ///
 /// # Errors
@@ -329,6 +336,51 @@ pub fn send(request: &Request) -> Result<Response, HttpError> {
 /// hand the guest no error code for a failure inside a response body (the
 /// host's `http-error-code` answers none), so a timeout is recognised by its
 /// text.
+/// Send `request` and wait for the whole response: in a native program,
+/// the node sends it through its egress client on the manifest's rules
+/// (ROADMAP Z8f), as for a component, and answers with the response, whose
+/// body may be up to 16 MiB.
+///
+/// # Errors
+///
+/// As [`HttpError`] lists.
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub fn send(request: &Request) -> Result<Response, HttpError> {
+    use bulkhead_native::protocol as p;
+    parse_url(&request.url)?;
+    let asked = p::HttpRequest {
+        method: request.method.clone(),
+        url: request.url.clone(),
+        headers: request
+            .headers
+            .iter()
+            .map(|(n, v)| (n.clone(), p::Bytes(v.clone())))
+            .collect(),
+        body: p::Bytes(request.body.clone()),
+        timeout_ms: request
+            .timeout
+            .map(|t| u32::try_from(t.as_millis()).unwrap_or(u32::MAX)),
+    };
+    match bulkhead_native::app::Ctx::current().http(asked) {
+        Ok(r) => Ok(Response {
+            status: r.status,
+            headers: r.headers.into_iter().map(|(n, v)| (n, v.0)).collect(),
+            body: r.body.0,
+        }),
+        Err(e) => Err(match e {
+            p::HttpError::Denied => HttpError::Denied,
+            p::HttpError::Limited => HttpError::Limited,
+            p::HttpError::Prohibited => HttpError::Prohibited,
+            p::HttpError::Timeout => HttpError::Timeout,
+            p::HttpError::Unreachable(why) => HttpError::Unreachable(why),
+            p::HttpError::Tls(why) => HttpError::Tls(why),
+            p::HttpError::Invalid(why) => HttpError::Invalid(why),
+            p::HttpError::Other(why) => HttpError::Other(why),
+        }),
+    }
+}
+
+#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
 fn body_error(e: &wasip2::io::error::Error) -> HttpError {
     if let Some(code) = wasip2::http::types::http_error_code(e) {
         return code.into();
@@ -336,6 +388,7 @@ fn body_error(e: &wasip2::io::error::Error) -> HttpError {
     body_error_text(&e.to_debug_string())
 }
 
+#[cfg_attr(all(unix, not(target_arch = "wasm32")), allow(dead_code))]
 fn body_error_text(text: &str) -> HttpError {
     if text.contains("timeout") {
         HttpError::Timeout

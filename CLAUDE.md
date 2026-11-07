@@ -295,8 +295,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   request and response envelope formats). `examples/http-counter` is its
   example, `crates/bulkhead/tests/http.rs` runs it through a node.
 - `crates/bulkhead-host/src/listener.rs`: listeners and connection handlers,
-  an instance per connection. `crates/bulkhead-fixture-conn` is its test
-  guest; `examples/line-server` the SDK example.
+  an instance per connection, or a native app's instances, many each.
+  `crates/bulkhead-fixture-conn` is its test fixture (the SDK's
+  `connection::Handler`, built as a component and with feature `native`
+  as a program); `examples/line-server` the SDK example.
 - `crates/bulkhead-host/src/http/handler.rs`: HTTP handlers, an unmodified
   `wasi:http/proxy` component with an instance per request on its routes
   (needs the `http` and `egress` features); the node side is

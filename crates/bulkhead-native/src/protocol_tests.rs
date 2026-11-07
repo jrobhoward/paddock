@@ -30,6 +30,13 @@ fn pid() -> Pid {
 #[case(ToApp::Answer { id: 8, answer: Answer::Kv(Err(KvError::Conflict(Some(4)))) })]
 #[case(ToApp::Answer { id: 9, answer: Answer::Groups(Ok(GroupsAnswer::Members(vec![pid()]))) })]
 #[case(ToApp::Answer { id: 10, answer: Answer::Secret(Err(SecretError::Unavailable("gone".into()))) })]
+#[case(ToApp::Answer { id: 11, answer: Answer::Sql(Ok(SqlAnswer::Rows(SqlRows { columns: vec!["id".into(), "b".into()], rows: vec![vec![SqlValue::Int(1), SqlValue::Bytes(Bytes(vec![0, 255]))], vec![SqlValue::Null, SqlValue::Float(0.5)]] }))) })]
+#[case(ToApp::Answer { id: 12, answer: Answer::Sql(Err(SqlError::Query { code: "23505".into(), message: "dup".into() })) })]
+#[case(ToApp::Answer { id: 13, answer: Answer::Net(Ok(NetAnswer::Stream(NetStream { socket: 2, fd: FdRef(5), local: "127.0.0.1:4000".parse().unwrap(), peer: "[::1]:80".parse().unwrap() }))) })]
+#[case(ToApp::Answer { id: 14, answer: Answer::Net(Ok(NetAnswer::Datagram(Some(("10.0.0.1:53".parse().unwrap(), Bytes(vec![0, 255])))))) })]
+#[case(ToApp::Answer { id: 15, answer: Answer::Net(Err(NetError::Limited)) })]
+#[case(ToApp::Answer { id: 16, answer: Answer::Http(Ok(HttpResponse { status: 200, headers: vec![("content-type".into(), Bytes(b"text/plain".to_vec()))], body: Bytes(vec![0, 255]) })) })]
+#[case(ToApp::Answer { id: 17, answer: Answer::Http(Err(HttpError::Tls("bad certificate".into()))) })]
 fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
     let bytes = encode(&frame);
 
@@ -49,6 +56,11 @@ fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
 #[case(FromApp::Request { id: 5, request: Request::Groups(GroupsRequest::Publish { group: "g".into(), msg: Envelope::new("x", vec![1]) }) })]
 #[case(FromApp::Request { id: 6, request: Request::MetricRegister { kind: MetricKind::Histogram, name: "lat".into(), help: "h".into(), labels: vec![("l".into(), "v".into())], buckets: vec![0.5, 1.0] } })]
 #[case(FromApp::Metrics(vec![MetricUpdate::Add(1, 2.5), MetricUpdate::Observe(2, 0.25)]))]
+#[case(FromApp::Request { id: 7, request: Request::Sql(SqlRequest::TxQuery { tx: 3, statement: "SELECT $1".into(), params: vec![SqlValue::Text("x".into()), SqlValue::Bool(true)] }) })]
+#[case(FromApp::Request { id: 8, request: Request::Sql(SqlRequest::TxEnd { tx: 3, commit: false }) })]
+#[case(FromApp::Request { id: 9, request: Request::Net(NetRequest::UdpSend { socket: 1, to: "127.0.0.1:9".parse().unwrap(), data: Bytes(vec![1]) }) })]
+#[case(FromApp::Request { id: 10, request: Request::Net(NetRequest::ConnectHost { host: "example.com".into(), port: 443 }) })]
+#[case(FromApp::Request { id: 11, request: Request::Http(HttpRequest { method: "POST".into(), url: "https://a.example/x".into(), headers: vec![("x".into(), Bytes(vec![1]))], body: Bytes(vec![0, 255]), timeout_ms: Some(500) }) })]
 #[case(FromApp::Request { id: 4, request: Request::Kv(KvRequest::Scan { bucket: "b".into(), query: ScanQuery { prefix: Some("p".into()), limit: 10, ..ScanQuery::default() } }) })]
 fn encode____from_app_frames____read_back_unchanged(#[case] frame: FromApp) {
     let bytes = encode(&frame);

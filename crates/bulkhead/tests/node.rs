@@ -1477,14 +1477,14 @@ async fn native____executable_deployed____answers_and_network_refused() {
         .unwrap();
     let echo = call(&n, "vendor", "echo native").await;
     let read = call(&n, "vendor", "read /etc/hostname").await;
-    let sockets = n
+    let egress = n
         .client
         .deploy(native_bundle(
             &n.key,
             "vendor2",
             "1.0.0",
             &program,
-            manifest(json!({ "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/8" }] } } })),
+            manifest(json!({ "capabilities": { "extensions": { "acme:x": {} } } })),
         ))
         .await
         .unwrap_err();
@@ -1492,7 +1492,7 @@ async fn native____executable_deployed____answers_and_network_refused() {
     assert_eq!(echo, "native");
     assert!(read.contains("Permission denied"), "{read}");
     assert!(
-        format!("{sockets:?}").contains("a native-process app may declare only"),
-        "{sockets:?}"
+        format!("{egress:?}").contains("a native-process app may declare only"),
+        "{egress:?}"
     );
 }

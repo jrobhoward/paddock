@@ -20,7 +20,7 @@ What an operator can see on a running node: instance stats, events and log recor
 
 `bulkhead state <pid>` shows an instance's state through its `save-snapshot`.
 
-Connection handlers do not appear in `ps` (an instance per connection, with no mailbox). `bulkhead status <app>` lists their listeners instead: address, connections open now, and totals accepted, refused (over `max_connections`), crashed and closed by the idle timeout.
+Connection handlers do not appear in `ps` (an instance per connection, with no mailbox); a native app with listeners does, its instances holding the connections. `bulkhead status <app>` lists either's listeners: address, connections open now, and totals accepted, refused (over `max_connections`), crashed and closed by the idle timeout.
 
 ## Events and logs as they happen
 
@@ -72,7 +72,7 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `bulkhead_memory_bytes` | gauge | | Linear memory of live instances. |
 | `bulkhead_mailbox_depth` | gauge | | Messages waiting in live instances' mailboxes. |
 | `bulkhead_mailbox_bytes` | gauge | | Bytes of message bodies waiting in live instances' mailboxes (`mailbox_max_bytes` bounds each). |
-| `bulkhead_callbacks_total` | counter | `kind` (`call`, `cast`, `info`) | Callbacks run. |
+| `bulkhead_callbacks_total` | counter | `kind` (`call`, `cast`, `info`) | Callbacks run; a native app's `handle_connection` counts as `info`. |
 | `bulkhead_callback_guest_seconds` | histogram | | Guest execution time per callback: guest code and host work that did not wait (10 µs to 1 s buckets). |
 | `bulkhead_cast_wait_seconds` | histogram | | Time a native app's `cast_timeout` waited for room in a full mailbox, zero included, by the sender's app (10 µs to 5 s buckets). Its count is the number of waited casts. |
 | `bulkhead_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox (by count or by bytes). |
@@ -107,7 +107,7 @@ An instance is identified by its pid's whole `id` (and `incarnation` where shown
 | `call__done` | call id, target id, outcome (`ok`, `timeout`, `noproc`, `overloaded`, `too-large`, `access-denied`, `exited`, `noconnection`) |
 | `cast` | sender id, target id, body bytes, outcome |
 | `cast__wait` | sender id, target id, nanoseconds waited for room, outcome (`ok`, `timeout`, or why it was not queued); a native app's `cast_timeout`, which also fires `cast` |
-| `callback__start` | instance id, kind (`call`, `cast`, `info`) |
+| `callback__start` | instance id, kind (`call`, `cast`, `info`, or `connection` for a native app's `handle_connection`) |
 | `callback__done` | instance id, kind, guest execution in nanoseconds (time spent waiting excluded), succeeded |
 | `instance__exit` | instance id, incarnation, exit reason |
 | `supervisor__restart` | new instance id, incarnation, child id |

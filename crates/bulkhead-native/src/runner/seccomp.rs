@@ -1,7 +1,11 @@
 //! A seccomp filter for a native app: it closes what Landlock leaves open
 //! before Linux 6.12 (signals to other processes) and what it never covers
-//! (ptrace, other processes' memory), and refuses new sockets, since a
-//! native app has no network.
+//! (ptrace, other processes' memory), and refuses new sockets: a native
+//! app's sockets come from the node, connected (ROADMAP Z8e). `connect`
+//! would move a passed socket elsewhere and `accept` take connections
+//! the node does not count; `io_uring`'s operations would bypass this
+//! filter (its socket operation makes sockets without `socket`), so it is
+//! refused whole.
 //!
 //! Each listed system call fails with `EPERM` when its condition holds;
 //! everything else is allowed.
@@ -11,7 +15,8 @@
 //! | `kill`, `tgkill`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` | the target is not this process (a negative or zero pid is a group) |
 //! | `tkill`, `pidfd_send_signal`, `pidfd_getfd` | always |
 //! | `ptrace`, `process_vm_readv`, `process_vm_writev` | always |
-//! | `socket` | always |
+//! | `socket`, `connect`, `accept`, `accept4` | always |
+//! | `io_uring_setup`, `io_uring_enter`, `io_uring_register` | always |
 
 use std::collections::BTreeMap;
 
@@ -48,6 +53,12 @@ pub fn rules(pid: u32) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompiler::E
         libc::SYS_process_vm_readv,
         libc::SYS_process_vm_writev,
         libc::SYS_socket,
+        libc::SYS_connect,
+        libc::SYS_accept,
+        libc::SYS_accept4,
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
     ] {
         // No rules: the call always matches.
         rules.insert(call, Vec::new());

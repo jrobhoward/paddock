@@ -327,6 +327,12 @@ impl AppHandle {
         self.shared.pool.as_ref()?.pick(Some(msg))
     }
 
+    /// The instance a connection from `peer` goes to under
+    /// `instances.routing` (by the peer's address for `hash`).
+    pub(crate) fn route_peer(&self, peer: std::net::IpAddr) -> Option<InstanceHandle> {
+        self.shared.pool.as_ref()?.pick_peer(peer)
+    }
+
     /// Call the instance `msg` routes to.
     ///
     /// # Errors

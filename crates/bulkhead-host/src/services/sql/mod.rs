@@ -14,6 +14,11 @@
 //! A transaction is a resource holding its connection; dropping it without
 //! `commit`, or the instance exiting, rolls it back.
 //!
+//! A native app asks over the protocol (`ServiceCtx::native`, ROADMAP
+//! Z8d), on the same checks, pools and caps; its transactions are kept by
+//! number in its instance's state, and those still open when it exits are
+//! rolled back.
+//!
 //! Without the `sql` feature the interface is still linked and every call
 //! answers `unavailable`.
 
@@ -26,6 +31,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
+use bulkhead_native::protocol as p;
 use wasmtime::Result;
 use wasmtime::component::{Linker, Resource};
 
@@ -86,6 +92,9 @@ pub(crate) struct Instance {
     app: String,
     datasources: BTreeMap<String, u32>,
     granted: bool,
+    /// A native app's open transactions, by the number it was given.
+    native_txs: BTreeMap<u32, Transaction>,
+    next_tx: u32,
 }
 
 /// A transaction handed to the guest: its connection until it ends.
@@ -154,6 +163,8 @@ impl Service for Sql {
             app: info.handle.app().to_string(),
             datasources: spec.datasources.clone(),
             granted: info.granted,
+            native_txs: BTreeMap::new(),
+            next_tx: 0,
         }
     }
 
@@ -177,7 +188,7 @@ mod run {
 
     use super::pool::{self, Fault};
     use super::values::Value;
-    use super::{Answer, Instance, ServiceCtx, Transaction, sql};
+    use super::{Answer, Instance, ServiceCtx, Transaction, p, sql};
 
     impl From<Fault> for sql::Error {
         fn from(f: Fault) -> Self {
@@ -260,6 +271,119 @@ mod run {
         }
     }
 
+    fn value_native(v: p::SqlValue) -> Value {
+        match v {
+            p::SqlValue::Null => Value::Null,
+            p::SqlValue::Bool(b) => Value::Bool(b),
+            p::SqlValue::Int(i) => Value::Int(i),
+            p::SqlValue::Float(f) => Value::Float(f),
+            p::SqlValue::Text(s) => Value::Text(s),
+            p::SqlValue::Bytes(b) => Value::Bytes(b.0),
+        }
+    }
+
+    fn rows_native(rows: pool::Rows) -> p::SqlRows {
+        p::SqlRows {
+            columns: rows.columns,
+            rows: rows
+                .rows
+                .into_iter()
+                .map(|r| {
+                    r.into_iter()
+                        .map(|v| match v {
+                            Value::Null => p::SqlValue::Null,
+                            Value::Bool(b) => p::SqlValue::Bool(b),
+                            Value::Int(i) => p::SqlValue::Int(i),
+                            Value::Float(f) => p::SqlValue::Float(f),
+                            Value::Text(s) => p::SqlValue::Text(s),
+                            Value::Bytes(b) => p::SqlValue::Bytes(p::Bytes(b)),
+                        })
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+
+    fn ended() -> sql::Error {
+        sql::Error::Unavailable("the transaction has ended".into())
+    }
+
+    impl ServiceCtx<'_, Instance> {
+        /// [`ServiceCtx::native`]'s work.
+        pub(super) async fn native_run(&mut self, request: p::SqlRequest) -> Answer<p::SqlAnswer> {
+            let values = |params: Vec<p::SqlValue>| -> Vec<Value> {
+                params.into_iter().map(value_native).collect()
+            };
+            match request {
+                p::SqlRequest::Query {
+                    datasource,
+                    statement,
+                    params,
+                } => {
+                    let (conn, max) = self.connect(&datasource).await?;
+                    let rows = pool::query(conn.client(), &statement, &values(params), max).await?;
+                    Ok(p::SqlAnswer::Rows(rows_native(rows)))
+                }
+                p::SqlRequest::Execute {
+                    datasource,
+                    statement,
+                    params,
+                } => {
+                    let (conn, _) = self.connect(&datasource).await?;
+                    let changed = pool::execute(conn.client(), &statement, &values(params)).await?;
+                    Ok(p::SqlAnswer::Changed(changed))
+                }
+                p::SqlRequest::Begin(datasource) => {
+                    let (conn, max) = self.connect(&datasource).await?;
+                    conn.simple("BEGIN").await?;
+                    let state = &mut *self.state;
+                    let mut id = state.next_tx;
+                    while state.native_txs.contains_key(&id) {
+                        id = id.wrapping_add(1);
+                    }
+                    state.next_tx = id.wrapping_add(1);
+                    state.native_txs.insert(id, Transaction::new(conn, max));
+                    Ok(p::SqlAnswer::Begun(id))
+                }
+                p::SqlRequest::TxQuery {
+                    tx,
+                    statement,
+                    params,
+                } => {
+                    // The connection stays in the transaction while the
+                    // statement runs: if the instance is killed meanwhile,
+                    // dropping its state rolls the transaction back.
+                    let t = self.state.native_txs.get(&tx).ok_or_else(ended)?;
+                    let rows = pool::query(
+                        t.conn()?.client(),
+                        &statement,
+                        &values(params),
+                        t.max_result_bytes(),
+                    )
+                    .await?;
+                    Ok(p::SqlAnswer::Rows(rows_native(rows)))
+                }
+                p::SqlRequest::TxExecute {
+                    tx,
+                    statement,
+                    params,
+                } => {
+                    let t = self.state.native_txs.get(&tx).ok_or_else(ended)?;
+                    let changed =
+                        pool::execute(t.conn()?.client(), &statement, &values(params)).await?;
+                    Ok(p::SqlAnswer::Changed(changed))
+                }
+                p::SqlRequest::TxEnd { tx, commit } => {
+                    let mut t = self.state.native_txs.remove(&tx).ok_or_else(ended)?;
+                    let conn = t.take().ok_or_else(ended)?;
+                    conn.simple(if commit { "COMMIT" } else { "ROLLBACK" })
+                        .await?;
+                    Ok(p::SqlAnswer::Ended)
+                }
+            }
+        }
+    }
+
     impl Transaction {
         pub(super) fn conn(&self) -> Answer<&pool::Conn> {
             self.conn
@@ -281,6 +405,42 @@ mod run {
         pub(super) fn take(&mut self) -> Option<pool::Conn> {
             self.conn.take()
         }
+    }
+}
+
+impl ServiceCtx<'_, Instance> {
+    /// A native app's SQL request (ROADMAP Z8d): the import's checks, pool
+    /// and caps, with transactions kept by number.
+    pub(crate) async fn native(
+        &mut self,
+        request: p::SqlRequest,
+    ) -> Result<p::SqlAnswer, p::SqlError> {
+        #[cfg(not(feature = "sql"))]
+        {
+            let _ = request;
+            not_built().map_err(native_error)
+        }
+        #[cfg(feature = "sql")]
+        {
+            self.native_run(request).await.map_err(native_error)
+        }
+    }
+}
+
+/// `bulkhead:sql`'s error as the native protocol's.
+fn native_error(e: sql::Error) -> p::SqlError {
+    match e {
+        sql::Error::AccessDenied => p::SqlError::AccessDenied,
+        sql::Error::NotFound => p::SqlError::NotFound,
+        sql::Error::LimitReached => p::SqlError::LimitReached,
+        sql::Error::Unavailable(why) => p::SqlError::Unavailable(why),
+        sql::Error::Timeout => p::SqlError::Timeout,
+        sql::Error::TooLarge => p::SqlError::TooLarge,
+        sql::Error::Unsupported(why) => p::SqlError::Unsupported(why),
+        sql::Error::Query(db) => p::SqlError::Query {
+            code: db.code,
+            message: db.message,
+        },
     }
 }
 

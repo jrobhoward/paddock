@@ -15,8 +15,13 @@
 //! Node config's `[egress] allow` is a ceiling every app's `allow` must fit
 //! inside; the node checks it at deploy ([`within`]).
 //!
+//! A native app asks over the protocol (`Instance::native`, ROADMAP Z8f):
+//! the same filter, cap, timeouts and pool, with the forbidden headers
+//! refused, and the whole response, up to a frame's size, in the answer.
+//!
 //! Without the `egress` cargo feature the interface is not linked, so an
-//! app importing it gets the usual deny stubs.
+//! app importing it gets the usual deny stubs, and a native app's request
+//! is answered `Other`.
 
 mod policy;
 
@@ -131,6 +136,26 @@ impl Service for Egress {
     }
 }
 
+impl Instance {
+    /// A native app's HTTP request (ROADMAP Z8f), on a component's rules.
+    pub(crate) async fn native(
+        &self,
+        request: bulkhead_native::protocol::HttpRequest,
+    ) -> Result<bulkhead_native::protocol::HttpResponse, bulkhead_native::protocol::HttpError> {
+        #[cfg(feature = "egress")]
+        {
+            self.hooks.native(request).await
+        }
+        #[cfg(not(feature = "egress"))]
+        {
+            let _ = request;
+            Err(bulkhead_native::protocol::HttpError::Other(
+                "this node was built without egress (cargo feature `egress`)".into(),
+            ))
+        }
+    }
+}
+
 /// wasi:http's view of an instance: the egress state and the instance's
 /// resource table, which `wasi:io` streams share.
 #[cfg(feature = "egress")]
@@ -160,6 +185,8 @@ mod hooks {
 
     use tokio::sync::Semaphore;
     use wasmtime_wasi_http::{Error, RequestOptions, WasiBody, WasiHttpHooks};
+
+    use bulkhead_native::protocol as p;
 
     use super::policy::{self, Allow, Scheme};
     use super::{EgressSpec, InstanceInfo, Shared};
@@ -259,6 +286,123 @@ mod hooks {
                 return Some("method not in the manifest's methods");
             }
             None
+        }
+    }
+
+    /// The most a native app's response body carries: a frame holds it.
+    const MAX_NATIVE_BODY: usize = 16 << 20;
+
+    impl Hooks {
+        /// A native app's request: refused as a component's would be
+        /// (forbidden headers too), then sent through the pool, and the
+        /// whole response read.
+        pub(crate) async fn native(
+            &self,
+            request: p::HttpRequest,
+        ) -> Result<p::HttpResponse, p::HttpError> {
+            use http_body_util::BodyExt;
+
+            let invalid = |what: &str, e: &dyn std::fmt::Display| {
+                p::HttpError::Invalid(format!("{what}: {e}"))
+            };
+            let method = hyper::Method::from_bytes(request.method.as_bytes())
+                .map_err(|e| invalid("method", &e))?;
+            let uri: hyper::Uri = request.url.parse().map_err(|e| invalid("url", &e))?;
+            let mut builder = hyper::Request::builder().method(method).uri(uri);
+            for (name, value) in &request.headers {
+                let name = hyper::header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|e| invalid("header", &e))?;
+                if wasmtime_wasi_http::DEFAULT_FORBIDDEN_HEADERS.contains(&name) {
+                    return Err(p::HttpError::Invalid(format!("header {name} is forbidden")));
+                }
+                let value = hyper::header::HeaderValue::from_bytes(&value.0)
+                    .map_err(|e| invalid("header", &e))?;
+                builder = builder.header(name, value);
+            }
+            let body: WasiBody = http_body_util::Full::new(bytes::Bytes::from(request.body.0))
+                .map_err(|never| match never {})
+                .boxed_unsync();
+            let request_out = builder.body(body).map_err(|e| invalid("request", &e))?;
+            if let Some(why) = self.refuse(&request_out) {
+                tracing::debug!(app = %self.app, uri = %request_out.uri(), why, "egress request denied");
+                self.stats.egress(DENIED);
+                return Err(p::HttpError::Denied);
+            }
+            let Ok(permit) = self.limit.clone().try_acquire_owned() else {
+                self.stats.egress(LIMITED);
+                return Err(p::HttpError::Limited);
+            };
+            let config = &self.shared.config;
+            let asked = request
+                .timeout_ms
+                .map(|ms| std::time::Duration::from_millis(ms.into()));
+            let shorter = |node: std::time::Duration| asked.map_or(node, |a| a.min(node));
+            let sent = self.shared.pool.send(
+                request_out,
+                shorter(config.first_byte_timeout),
+                shorter(config.between_bytes_timeout),
+                permit,
+            );
+            let read = async {
+                let response = sent.await?;
+                let status = response.status().as_u16();
+                let headers = response
+                    .headers()
+                    .iter()
+                    .filter(|(n, _)| !wasmtime_wasi_http::DEFAULT_FORBIDDEN_HEADERS.contains(n))
+                    .map(|(n, v)| (n.as_str().to_string(), p::Bytes(v.as_bytes().to_vec())))
+                    .collect();
+                let mut body = response.into_body();
+                let mut bytes = Vec::new();
+                while let Some(frame) = body.frame().await {
+                    if let Ok(data) = frame?.into_data() {
+                        if bytes.len() + data.len() > MAX_NATIVE_BODY {
+                            return Err(Error::HttpResponseBodySize(None));
+                        }
+                        bytes.extend_from_slice(&data);
+                    }
+                }
+                Ok(p::HttpResponse {
+                    status,
+                    headers,
+                    body: p::Bytes(bytes),
+                })
+            };
+            let response = read.await;
+            self.stats
+                .egress(if response.is_ok() { SENT } else { FAILED });
+            response.map_err(|e| native_error(&e))
+        }
+    }
+
+    /// An egress error as the native protocol's, as the SDK classifies a
+    /// component's.
+    fn native_error(e: &Error) -> p::HttpError {
+        match e {
+            Error::HttpRequestDenied => p::HttpError::Denied,
+            Error::ConnectionLimitReached => p::HttpError::Limited,
+            Error::DestinationIpProhibited => p::HttpError::Prohibited,
+            Error::ConnectionReadTimeout
+            | Error::ConnectionTimeout
+            | Error::ConnectionWriteTimeout
+            | Error::HttpResponseTimeout => p::HttpError::Timeout,
+            Error::ConnectionRefused
+            | Error::DestinationNotFound
+            | Error::DestinationUnavailable
+            | Error::DestinationIpUnroutable
+            | Error::DnsTimeout
+            | Error::DnsError { .. }
+            | Error::ConnectionTerminated => p::HttpError::Unreachable(format!("{e:?}")),
+            Error::TlsProtocolError
+            | Error::TlsCertificateError
+            | Error::TlsAlertReceived { .. } => p::HttpError::Tls(format!("{e:?}")),
+            Error::HttpRequestMethodInvalid | Error::HttpRequestUriInvalid => {
+                p::HttpError::Invalid(format!("{e:?}"))
+            }
+            Error::HttpResponseBodySize(_) => {
+                p::HttpError::Other(format!("response body over {MAX_NATIVE_BODY} bytes"))
+            }
+            other => p::HttpError::Other(format!("{other:?}")),
         }
     }
 

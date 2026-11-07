@@ -82,7 +82,7 @@ Two words have more than one meaning:
 - **Host service:** an interface the host implements for guests (config, keyvalue, groups, logging, secrets, metrics, egress, sockets, SQL), each on the `Service` pattern. [DESIGN.md](DESIGN.md), "Host services".
 - **Ingress:** the node's HTTP server: a request to a route becomes a call to the owning app's pool.
 - **HTTP handler:** a `wasi:http/proxy` component given a new instance per request, with no mailbox.
-- **Listener, connection handler:** a TCP port whose every accepted connection gets a new instance of a `bulkhead:connection` component.
+- **Listener, connection handler:** a TCP port the node owns, whose every accepted connection gets a new instance of a `bulkhead:connection` component, or goes to an instance of a native app's pool that holds many (MANIFEST.md, `listeners`).
 - **Egress:** outgoing HTTP from a guest through `wasi:http`, filtered by the manifest's `allow` and node config's ceiling, through the node's connection pool.
 - **Volume:** a host directory node config names (`[volumes]`), mapped into a guest path by a manifest preopen, read-only or read-write.
 - **Datasource:** a Postgres database node config binds (`[datasources.<name>]`), pooled, that granted apps query through `bulkhead:sql` by name.

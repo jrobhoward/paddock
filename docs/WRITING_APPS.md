@@ -269,11 +269,11 @@ Each service must be declared under `capabilities` in the manifest **and** grant
 | `wasi:keyvalue` | `bulkhead_sdk::kv::Bucket::open("orders")`, with the SDK's `keyvalue` feature: `get`, `set`, `delete`, `exists`, `keys` (all pages), `increment`, the batch calls, and CBOR-typed `get_value` and `set_value`. Only the buckets the manifest names open. `memory` buckets survive instance crashes; `disk` buckets also survive node restarts. Each bucket can have a quota. Shared buckets (manifest `shared`, defined by the node and granted by policy) open the same way and hold one copy for every app that lists them: the place for a point table or settings several apps read. A read-only one refuses writes with `KvError::AccessDenied`. A memory bucket many instances read at once, far more than it is written, can take `read_concurrency = true` (MANIFEST.md): reads scale with cores (on a machine with cores to spare; on 4 cores native apps gained nothing), single operations and writes cost more, and readers may see part of a batch. With the SDK's `watch` feature, `bulkhead_sdk::watch` adds, on the same buckets: `get` with the value's revision, `compare_and_swap` and `compare_and_delete` on a revision (a lock-free update: read, then swap, retrying on `Conflict`), `watch`, `watch_prefix` and `resume`, and `scan`: entries in key order, as ETS's `ordered_set` (`watch::scan("orders").prefix("c42/").reverse().entries()`, or a page at a time; `first`, `last`, `next` and `prev` for one entry). Each page is read at one revision and carries it, so a scan followed by `resume` from that revision misses no change. A watch delivers `kv-changed` host events to `handle_info` (`Change::from_info`) naming the key and revision, not the value; notices are conflated per key, so a slow instance skips intermediate values but always sees the latest. Store the last revision handled to `resume` after a restart; `TooOld` means reread the keys and watch from the revision it carries. Watches end when the instance exits and survive upgrades, so `init` is the place to start them. A shared bucket the node scopes to the cluster is replicated on an HA pair: writes return once committed on the primary, reads and watches use this node's copy, `get_linearizable` reads through the primary, and `Unavailable` means no primary could take the operation (for a write, it may still have committed: reread before retrying a compare-and-swap). |
 | `bulkhead:groups` | `bulkhead_sdk::groups::join("prices")`, `leave`, `members` and `publish("prices", envelope)`, with the SDK's `groups` feature. `publish` casts one copy to each member, on every node of the cluster (the publisher too, if it is a member; not across a `messaging_acl` refusal), and returns how many members took it (on another node, all its members once the copy is sent); members receive it in `handle_cast`. The manifest lists the groups an app may join and publish to. An instance leaves its groups when it exits and keeps them across an upgrade, so `init` (not `load_snapshot`) is the place to join. |
 | `bulkhead:metrics` | `bulkhead_sdk::metrics::{Counter, Gauge, Histogram}`, with the SDK's `metrics` feature: make them in `init` (`Counter::new("orders_total", "Orders taken.", &[("region", "eu")])?`) and keep them in state; `inc`, `add`, `set` and `observe` are one host call each. Names are exported as `<prefix>_<name>` with an `app` label, per app: all instances add into the same series. Keep label values few (no ids or timestamps); `max_series` caps them. |
-| `bulkhead:sql` | `bulkhead_sdk::sql::query("main", "SELECT ... WHERE id = $1", &[id.into()])`, `execute`, and `begin` for a transaction (`commit`, or drop it to roll back), with the SDK's `sql` feature. Name each datasource in the manifest with its `max_connections`; the operator grants it and binds it to a Postgres database. Parameters are bound, never interpolated; columns of types the interface does not carry are refused, so cast them (`col::text`). |
+| `bulkhead:sql` | `bulkhead_sdk::sql::query("main", "SELECT ... WHERE id = $1", &[id.into()])`, `execute`, and `begin` for a transaction (`commit`, or drop it to roll back), with the SDK's `sql` feature. Name each datasource in the manifest with its `max_connections`; the operator grants it and binds it to a Postgres database. Parameters are bound, never interpolated; columns of types the interface does not carry are refused, so cast them (`col::text`). The same calls work in a native build, each a request to the node. |
 | `bulkhead:secrets` | `bulkhead_sdk::secrets::get_string("db-password")` (or `get` for bytes), with the SDK's `secrets` feature. List the names in the manifest; the operator grants each and binds it to a file or variable. Read a secret when it is needed instead of keeping it in state (state goes into snapshots), and never log it. |
 | `wasi:http/incoming-handler` | Declare `routes` (and optionally `max_body`, `timeout_ms`); the node's HTTP ingress sends each request on them to the app as a call. With the SDK's `http` feature, `bulkhead_sdk::http::Request::from_envelope(&msg)` recognises one in `handle_call`; reply `Reply::Now(Response::text(200, "hi").into())` or `Response::json(...)`, or `Reply::Later` and answer with `ctx.reply`. `req.scheme` is `https` when the client came over TLS. The request is spread over the pool, or routed by `key` (a route's `hash_header`) with `instances.routing = "hash:key"`. A full mailbox answers 503, a slow reply 504, a crash 502. See `examples/http-counter`. |
-| `wasi:http/outgoing-handler` | `bulkhead_sdk::http_client::get(url)`, `post`, or `send(&Request::new("PUT", url).header(...).body(...).timeout(...))`, with the SDK's `http-client` feature. Only what the manifest's `allow` lists is reached; anything else is `HttpError::Denied`. Waiting for the response is host time, not counted against the deadline, but the instance handles nothing else meanwhile: use a pool for an app that must stay responsive. Prefer this to raw sockets for HTTP: the node pools connections, verifies TLS and refuses names that resolve to the node itself. |
-| `wasi:sockets` | `bulkhead_sdk::net::TcpStream::connect(addr)` (or `connect_host`), `write_all`, and a non-blocking `read`; `TcpListener::bind` and `accept`, with the SDK's `net` feature. An instance never blocks waiting for bytes between callbacks: `stream.notify_readable(tag)` asks the host to deliver an `io-ready` event with that tag once bytes arrive, handled in `handle_info` (`net::ready_tag(&info)`); read what is there, then ask again. The manifest lists where the app may connect, bind and listen, and `max_sockets`. For a protocol the node does not terminate (MQTT, a database's wire protocol); prefer HTTP egress, listeners or an extension when one fits. UDP goes through the re-exported `wasip2` crate with `net::notify` on its pollables. |
+| `wasi:http/outgoing-handler` | `bulkhead_sdk::http_client::get(url)`, `post`, or `send(&Request::new("PUT", url).header(...).body(...).timeout(...))`, with the SDK's `http-client` feature; the same natively, where the node sends each request (a response body up to 16 MiB). Only what the manifest's `allow` lists is reached; anything else is `HttpError::Denied`. Waiting for the response is host time, not counted against the deadline, but the instance handles nothing else meanwhile: use a pool for an app that must stay responsive. Prefer this to raw sockets for HTTP: the node pools connections, verifies TLS and refuses names that resolve to the node itself. |
+| `wasi:sockets` | `bulkhead_sdk::net::TcpStream::connect(addr)` (or `connect_host`), `write_all`, and a non-blocking `read`; `TcpListener::bind` and `accept`, with the SDK's `net` feature; the same natively, where the node makes each socket and passes the stream (UDP through `Ctx::net`; `notify` on a pollable and the `wasip2` re-export are component only). An instance never blocks waiting for bytes between callbacks: `stream.notify_readable(tag)` asks the host to deliver an `io-ready` event with that tag once bytes arrive, handled in `handle_info` (`net::ready_tag(&info)`); read what is there, then ask again. The manifest lists where the app may connect, bind and listen, and `max_sockets`. For a protocol the node does not terminate (MQTT, a database's wire protocol); prefer HTTP egress, listeners or an extension when one fits. UDP goes through the re-exported `wasip2` crate with `net::notify` on its pollables. |
 | `wasi:filesystem` | `std::fs`, on the path `bulkhead_sdk::files::path("/data/orders.json")` returns: the guest path itself in a component, the host file under the runner's Landlock rules natively. `/priv` holds the bundle's files read-only (`bulkhead bundle --priv <dir>`), and each preopen maps a guest path to a volume the operator configures. Paths cannot escape their preopen. |
 
 The SDK's cargo features turn each wrapper on: `config`, `keyvalue`, `watch`, `groups`, `metrics`, `sql`, `secrets`, `http` (requests from the ingress), `http-client`, `net` and `connection`; logging and batches are always there. A component imports only the interfaces of the features it uses, so declare those and no more. An app may also generate its own bindings with `wit-bindgen` from the WIT in [`wit/`](../wit/) and [`wit/vendor/`](../wit/vendor/), as [`crates/bulkhead-fixture-services`](../crates/bulkhead-fixture-services/src/lib.rs) does.
@@ -304,33 +304,40 @@ A watch (`watch` feature) says when a key changes, for reacting to changes or ke
 
 ## Connection handlers
 
-A connection handler serves TCP connections instead of messages: the node accepts each connection on a listener and starts an instance of the handler for it. Enable the SDK's `connection` feature, implement `Connection`, and export it with `bulkhead_sdk::connection!`:
+A connection handler serves TCP connections instead of messages: the node accepts each connection on a listener and hands it to the handler. Enable the SDK's `connection` feature, implement `connection::Handler`, and export it with `bulkhead_sdk::connection_handler!`:
 
 ```rust
-use std::io::{BufRead, BufReader, Write};
-use bulkhead_sdk::connection::{Connection, ConnectionInfo, Stream};
+use std::io::Write;
+use bulkhead_sdk::connection::{ConnectionInfo, Flow, Handler, Output};
 use bulkhead_sdk::Ctx;
 
-struct Lines;
+struct Lines {
+    pending: Vec<u8>,
+}
 
-impl Connection for Lines {
-    fn serve(ctx: &mut Ctx, _info: ConnectionInfo, stream: Stream) -> Result<(), String> {
-        let mut out = stream.clone_writer();
-        for line in BufReader::new(stream).lines() {
-            let line = line.map_err(|e| e.to_string())?;
-            writeln!(out, "{line}").map_err(|e| e.to_string())?;
+impl Handler for Lines {
+    fn open(_ctx: &mut Ctx, _info: &ConnectionInfo) -> Result<Self, String> {
+        Ok(Lines { pending: Vec::new() })
+    }
+
+    fn data(&mut self, _ctx: &mut Ctx, bytes: &[u8], out: &mut Output<'_>) -> Result<Flow, String> {
+        self.pending.extend_from_slice(bytes);
+        while let Some(end) = self.pending.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=end).collect();
+            out.write_all(&line).map_err(|e| e.to_string())?;
         }
-        Ok(())
+        Ok(Flow::Continue)
     }
 }
 
-bulkhead_sdk::connection!(Lines);
+bulkhead_sdk::connection_handler!(Lines);
 ```
 
-- `Stream` implements `std::io::Read` and `Write`; a read of 0 bytes means the client closed.
-- Returning closes the connection; an error closes it as a crash. A connection idle for the listener's `idle_timeout_ms` is closed by the host.
-- The handler has a `Ctx` for calling and casting to apps (`ctx.whereis("counter")`), but no mailbox. Keep state that must outlive a connection in an app or a keyvalue bucket, and keep the protocol in the handler: [`examples/line-server`](../examples/line-server) forwards `inc` to the counter example.
+- `Self` is one connection's state: `open` makes it, `data` gets up to 64 KiB of what the peer sent at a time and answers through `out` (`std::io::Write`, blocking until the bytes are taken), and `closed` hears that the peer (or the node, after the idle timeout) closed. `Flow::Close` closes the connection.
+- The same source builds both ways. As a component, each connection gets its own instance, an error from `data` closes it as a crash, and a connection idle for the listener's `idle_timeout_ms` is closed by the host. As a native program (`connection_handler!` adds `bulkhead_main()`; a binary calls it, with `kind = "native-process"`), each instance of the app's pool holds many connections, `data` runs as a callback when the node says a connection has bytes, an error from it closes that connection (logged as a warning), a panic crashes the instance and closes all of its connections, and writes count against `callback_deadline_ms`.
+- The handler has a `Ctx` for calling and casting to apps (`ctx.whereis("counter")`). A component handler has no mailbox. Keep state that must outlive a connection in an app or a keyvalue bucket, and keep the protocol in the handler: [`examples/line-server`](../examples/line-server) forwards `inc` to the counter example.
 - Declare the listeners in the manifest (`[[appserver.listeners]]`, see [MANIFEST.md](MANIFEST.md)); the operator binds each to an address in node config.
+- `connection::Connection` (with `bulkhead_sdk::connection!`) is the older form, components only: `serve` gets the connection as a blocking `Stream` (`std::io::Read` and `Write`) and returns when it is done.
 
 ## HTTP handlers
 

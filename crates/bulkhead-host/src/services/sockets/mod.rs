@@ -17,9 +17,15 @@
 //! Over the count, the guest sees `new-socket-limit`.
 //!
 //! Node config's `[sockets]` is a ceiling every app's rules must fit
-//! inside; the node checks it at deploy ([`within`]).
+//! inside; the node checks it at deploy ([`within`]). Native apps get the
+//! same policy and count over the protocol (`native`, ROADMAP Z8e).
 
+#[cfg(unix)]
+mod native;
 mod policy;
+
+#[cfg(unix)]
+pub(crate) use native::Reply as NativeReply;
 
 pub use policy::within;
 
@@ -70,6 +76,9 @@ pub(crate) struct Instance {
     /// A permit for each socket the guest holds, by resource rep.
     held: HashMap<u32, Held>,
     stats: Arc<AppStats>,
+    /// A native app's sockets.
+    #[cfg(unix)]
+    native: native::Native,
 }
 
 /// One open socket's share of the app's count.
@@ -129,11 +138,17 @@ impl Service for Sockets {
             }
             entry.1.clone()
         };
+        let granted = info.granted && spec.scope.is_some();
         Instance {
-            granted: info.granted && spec.scope.is_some(),
+            granted,
             limit,
             held: HashMap::new(),
             stats: info.metrics.stats(&app),
+            #[cfg(unix)]
+            native: native::Native::new(
+                spec.scope.as_ref().filter(|_| granted).map(Policy::new),
+                info.handle,
+            ),
         }
     }
 

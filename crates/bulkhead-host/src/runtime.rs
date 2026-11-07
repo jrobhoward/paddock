@@ -469,6 +469,21 @@ impl Runtime {
         listener::listen(&self.inner, listener, connection, spec)
     }
 
+    /// Bind a listener and hand each accepted connection to an instance of
+    /// the native app `app`, which takes it in `handle_connection`
+    /// ([`crate::listener`]). Must be called inside the tokio runtime.
+    ///
+    /// # Errors
+    ///
+    /// [`HostError::Listen`] if the address cannot be bound, or off Linux.
+    pub fn listen_native(
+        &self,
+        listener: ListenerSpec,
+        app: crate::AppHandle,
+    ) -> Result<Listener, HostError> {
+        listener::listen_native(&self.inner, listener, app)
+    }
+
     /// Start a new instance (incarnation 1). It begins in `Starting`; watch
     /// [`InstanceHandle::state`] or await [`InstanceHandle::wait`].
     ///

@@ -792,6 +792,14 @@ mod elsewhere {
             match self.0 {}
         }
 
+        #[cfg(unix)]
+        pub(crate) fn send_fd(
+            &mut self,
+            _fd: std::os::fd::BorrowedFd<'_>,
+        ) -> Result<bulkhead_native::protocol::FdRef, String> {
+            match self.0 {}
+        }
+
         pub(crate) async fn exit_reason(&mut self) -> ExitReason {
             match self.0 {}
         }

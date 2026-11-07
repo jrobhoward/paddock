@@ -24,14 +24,16 @@
 //! cast that was not queued with [`Answer::CastFailed`] instead of
 //! [`Answer::Unit`], so an app can learn why (ROADMAP I1). Version 7 added
 //! [`Request::CastWait`], a cast that waits for room in a full mailbox
-//! (ROADMAP I2).
+//! (ROADMAP I2). Versions 8 to 10 added SQL, sockets and HTTP egress
+//! requests (ROADMAP Z8d to Z8f), and version 11 [`ToApp::Connection`],
+//! a connection accepted on one of the app's listeners (ROADMAP Z8g).
 
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 11;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -238,7 +240,7 @@ pub enum Level {
 }
 
 /// A frame from the node to the app.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ToApp {
     /// Start: answered by [`FromApp::Init`].
     Init {
@@ -275,6 +277,17 @@ pub enum ToApp {
     Info {
         /// What happened.
         info: Info,
+    },
+    /// A connection accepted on one of the app's listeners, its stream
+    /// passed on the descriptor socket: answered by [`FromApp::Done`]. The
+    /// app holds it as a stream from [`NetRequest::Connect`], watching it
+    /// with [`NetRequest::Notify`] and closing it with
+    /// [`NetRequest::Close`]; it does not count against `max_sockets`.
+    Connection {
+        /// The listener's name in the manifest.
+        listener: String,
+        /// The stream.
+        stream: NetStream,
     },
     /// Stop: answered by [`FromApp::Done`], after which the app exits.
     Terminate {
@@ -460,6 +473,63 @@ pub enum Request {
         /// A histogram's bucket bounds; empty for the default ones.
         buckets: Vec<f64>,
     },
+    /// A SQL operation (`bulkhead:sql`): [`Answer::Sql`].
+    Sql(SqlRequest),
+    /// A socket operation (`wasi:sockets`): [`Answer::Net`].
+    Net(NetRequest),
+    /// An HTTP request (`wasi:http/outgoing-handler`), sent by the node's
+    /// egress client on the manifest's rules: [`Answer::Http`].
+    Http(HttpRequest),
+}
+
+/// An HTTP request a native app asks the node to send (ROADMAP Z8f), on a
+/// component's terms: the `allow` list, the methods, the forbidden
+/// headers, the app's requests in flight, no redirects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpRequest {
+    /// The method (`GET`).
+    pub method: String,
+    /// The URL (`https://api.example.com/v1/x?y=1`).
+    pub url: String,
+    /// Header names and values.
+    pub headers: Vec<(String, Bytes)>,
+    /// The body.
+    pub body: Bytes,
+    /// The longest wait for the first byte and between bytes, shortened
+    /// to node config's; `None` for node config's.
+    pub timeout_ms: Option<u32>,
+}
+
+/// An HTTP response, whole.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpResponse {
+    /// The status code.
+    pub status: u16,
+    /// Header names and values.
+    pub headers: Vec<(String, Bytes)>,
+    /// The body.
+    pub body: Bytes,
+}
+
+/// Why an HTTP request failed: as `bulkhead_sdk::http_client::HttpError`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HttpError {
+    /// Not granted, or outside the manifest's `allow` list or methods.
+    Denied,
+    /// Over the app's requests in flight.
+    Limited,
+    /// The name resolves only to loopback or link-local addresses.
+    Prohibited,
+    /// No response, or a body chunk, in time.
+    Timeout,
+    /// The server could not be reached.
+    Unreachable(String),
+    /// TLS failed.
+    Tls(String),
+    /// The URL, method or a header is not valid, or a header is forbidden.
+    Invalid(String),
+    /// Anything else.
+    Other(String),
 }
 
 /// A process groups operation, on groups the manifest lists.
@@ -518,6 +588,230 @@ pub enum SecretError {
     NotFound,
     /// The node could not read it.
     Unavailable(String),
+}
+
+/// A socket operation (`wasi:sockets`, ROADMAP Z8e), on the manifest's
+/// rules. A TCP stream is made by the node and passed to the app on the
+/// descriptor socket, connected; the node keeps a copy and shuts the
+/// socket down when the app closes it. Listeners and UDP sockets stay in
+/// the node, which answers for them. Sockets are named by the number the
+/// node gives them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NetRequest {
+    /// Connect a TCP stream: [`NetAnswer::Stream`].
+    Connect(std::net::SocketAddr),
+    /// Connect to the first address `host` resolves to that accepts:
+    /// [`NetAnswer::Stream`]. Only with `connect` rules.
+    ConnectHost {
+        /// The host name.
+        host: String,
+        /// The port.
+        port: u16,
+    },
+    /// Bind and listen: [`NetAnswer::Listener`].
+    Listen(std::net::SocketAddr),
+    /// A connection waiting on a listener, without waiting:
+    /// [`NetAnswer::Accepted`].
+    Accept(u32),
+    /// Bind a UDP socket: [`NetAnswer::Udp`].
+    UdpBind(std::net::SocketAddr),
+    /// Send a datagram from a UDP socket: [`NetAnswer::Unit`].
+    UdpSend {
+        /// The socket.
+        socket: u32,
+        /// Where to.
+        to: std::net::SocketAddr,
+        /// The datagram.
+        data: Bytes,
+    },
+    /// A datagram already received, without waiting:
+    /// [`NetAnswer::Datagram`].
+    UdpRecv(u32),
+    /// Deliver the host event `io-ready` with `tag` once the socket is
+    /// readable (a stream's bytes or its close, a listener's connection, a
+    /// datagram), once: [`NetAnswer::Unit`]. Replaces the socket's notice
+    /// waiting, if any.
+    Notify {
+        /// The socket.
+        socket: u32,
+        /// The event's tag.
+        tag: u64,
+    },
+    /// Close a socket, giving back its share of `max_sockets`:
+    /// [`NetAnswer::Unit`].
+    Close(u32),
+}
+
+/// A TCP stream the node made: its descriptor, passed on the descriptor
+/// socket, and its addresses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetStream {
+    /// The socket's number.
+    pub socket: u32,
+    /// The descriptor.
+    pub fd: FdRef,
+    /// The local address.
+    pub local: std::net::SocketAddr,
+    /// The peer's address.
+    pub peer: std::net::SocketAddr,
+}
+
+/// A successful socket operation's result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NetAnswer {
+    /// Done.
+    Unit,
+    /// A connected stream.
+    Stream(NetStream),
+    /// A listener, and its bound address.
+    Listener {
+        /// The socket's number.
+        socket: u32,
+        /// The bound address.
+        local: std::net::SocketAddr,
+    },
+    /// A connection accepted, or none waiting.
+    Accepted(Option<NetStream>),
+    /// A UDP socket, and its bound address.
+    Udp {
+        /// The socket's number.
+        socket: u32,
+        /// The bound address.
+        local: std::net::SocketAddr,
+    },
+    /// A datagram and its sender, or none waiting.
+    Datagram(Option<(std::net::SocketAddr, Bytes)>),
+}
+
+/// Why a socket operation failed: as `bulkhead_sdk::net::NetError`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NetError {
+    /// Not granted, or outside the manifest's rules.
+    Denied,
+    /// Over the app's `max_sockets`.
+    Limited,
+    /// The peer closed, or the socket was closed.
+    Closed,
+    /// Anything else.
+    Other(String),
+}
+
+/// A SQL operation on a datasource the manifest lists (`bulkhead:sql`).
+/// Parameters are bound (`$1`, `$2`), never interpolated.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SqlRequest {
+    /// A statement that returns rows: [`SqlAnswer::Rows`].
+    Query {
+        /// The datasource's name.
+        datasource: String,
+        /// The statement.
+        statement: String,
+        /// Its parameters.
+        params: Vec<SqlValue>,
+    },
+    /// A statement run for its effect: [`SqlAnswer::Changed`].
+    Execute {
+        /// The datasource's name.
+        datasource: String,
+        /// The statement.
+        statement: String,
+        /// Its parameters.
+        params: Vec<SqlValue>,
+    },
+    /// Begin a transaction on a datasource, holding one of the app's
+    /// connections until it ends: [`SqlAnswer::Begun`].
+    Begin(String),
+    /// [`SqlRequest::Query`] inside a transaction.
+    TxQuery {
+        /// The transaction, as [`SqlAnswer::Begun`] named it.
+        tx: u32,
+        /// The statement.
+        statement: String,
+        /// Its parameters.
+        params: Vec<SqlValue>,
+    },
+    /// [`SqlRequest::Execute`] inside a transaction.
+    TxExecute {
+        /// The transaction.
+        tx: u32,
+        /// The statement.
+        statement: String,
+        /// Its parameters.
+        params: Vec<SqlValue>,
+    },
+    /// End a transaction, committing it or rolling it back:
+    /// [`SqlAnswer::Ended`]. It has ended either way.
+    TxEnd {
+        /// The transaction.
+        tx: u32,
+        /// Commit, or roll back.
+        commit: bool,
+    },
+}
+
+/// A SQL value, as `bulkhead:sql`'s `value`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SqlValue {
+    /// `NULL`.
+    Null,
+    /// A boolean.
+    Bool(bool),
+    /// An integer.
+    Int(i64),
+    /// A float.
+    Float(f64),
+    /// Text (dates, `numeric`, `json` and `uuid` arrive as text).
+    Text(String),
+    /// `bytea`.
+    Bytes(Bytes),
+}
+
+/// A query's result.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SqlRows {
+    /// The columns' names.
+    pub columns: Vec<String>,
+    /// The rows, each a value per column.
+    pub rows: Vec<Vec<SqlValue>>,
+}
+
+/// A successful SQL operation's result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SqlAnswer {
+    /// A query's rows.
+    Rows(SqlRows),
+    /// How many rows a statement changed.
+    Changed(u64),
+    /// A transaction begun: its handle for this instance.
+    Begun(u32),
+    /// A transaction ended.
+    Ended,
+}
+
+/// Why a SQL operation failed: as `bulkhead:sql`'s `error`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SqlError {
+    /// Not granted, or a datasource the manifest does not list.
+    AccessDenied,
+    /// The node binds no datasource of that name.
+    NotFound,
+    /// No connection free in time: the app's cap or the node's pool.
+    LimitReached,
+    /// The database could not be reached, or the transaction has ended.
+    Unavailable(String),
+    /// The statement ran past the datasource's statement timeout.
+    Timeout,
+    /// The result is larger than the node allows.
+    TooLarge,
+    /// A column of a type the interface does not carry.
+    Unsupported(String),
+    /// The database refused the statement.
+    Query {
+        /// Its SQLSTATE code.
+        code: String,
+        /// The server's message.
+        message: String,
+    },
 }
 
 /// A metric's kind.
@@ -768,7 +1062,7 @@ pub enum KvError {
 }
 
 /// The node's answer to a [`Request`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Answer {
     /// Done; nothing to return.
     Unit,
@@ -798,6 +1092,12 @@ pub enum Answer {
     Secret(Result<Bytes, SecretError>),
     /// A registered metric's id.
     Metric(Result<u32, MetricError>),
+    /// A SQL operation's result.
+    Sql(Result<SqlAnswer, SqlError>),
+    /// A socket operation's result.
+    Net(Result<NetAnswer, NetError>),
+    /// An HTTP request's response.
+    Http(Result<HttpResponse, HttpError>),
 }
 
 /// A frame that could not be read.

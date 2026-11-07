@@ -11,6 +11,8 @@ pub(crate) use crate::bindings::bulkhead::groups::groups;
 pub(crate) use crate::bindings::bulkhead::metrics::metrics;
 #[cfg(all(feature = "secrets", not(all(unix, not(target_arch = "wasm32")))))]
 pub(crate) use crate::bindings::bulkhead::secrets::store as secrets_store;
+#[cfg(all(feature = "sql", not(all(unix, not(target_arch = "wasm32")))))]
+pub(crate) use crate::bindings::bulkhead::sql::sql;
 #[cfg(all(feature = "watch", not(all(unix, not(target_arch = "wasm32")))))]
 pub(crate) use crate::bindings::bulkhead::watch::watch;
 #[cfg(all(feature = "config", not(all(unix, not(target_arch = "wasm32")))))]
@@ -30,6 +32,8 @@ pub(crate) use native::keyvalue;
 pub(crate) use native::metrics;
 #[cfg(all(feature = "secrets", unix, not(target_arch = "wasm32")))]
 pub(crate) use native::secrets_store;
+#[cfg(all(feature = "sql", unix, not(target_arch = "wasm32")))]
+pub(crate) use native::sql;
 #[cfg(all(feature = "watch", unix, not(target_arch = "wasm32")))]
 pub(crate) use native::watch;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
@@ -586,6 +590,167 @@ pub(crate) mod native {
                 p::SecretError::NotFound => Error::NotFound,
                 p::SecretError::Unavailable(why) => Error::Unavailable(why),
             })
+        }
+    }
+
+    /// `bulkhead:sql`, over the protocol: the generated types, and a
+    /// transaction kept by the number the node gave it.
+    #[cfg(feature = "sql")]
+    pub(crate) mod sql {
+        pub(crate) use crate::bindings::bulkhead::sql::sql::{DbError, Error, Rows, Value};
+
+        use super::{Ctx, p};
+
+        fn error(e: p::SqlError) -> Error {
+            match e {
+                p::SqlError::AccessDenied => Error::AccessDenied,
+                p::SqlError::NotFound => Error::NotFound,
+                p::SqlError::LimitReached => Error::LimitReached,
+                p::SqlError::Unavailable(why) => Error::Unavailable(why),
+                p::SqlError::Timeout => Error::Timeout,
+                p::SqlError::TooLarge => Error::TooLarge,
+                p::SqlError::Unsupported(why) => Error::Unsupported(why),
+                p::SqlError::Query { code, message } => Error::Query(DbError { code, message }),
+            }
+        }
+
+        fn unexpected(answer: &p::SqlAnswer) -> Error {
+            Error::Unavailable(format!("unexpected answer from the node: {answer:?}"))
+        }
+
+        fn params(values: &[Value]) -> Vec<p::SqlValue> {
+            values
+                .iter()
+                .map(|v| match v {
+                    Value::Null => p::SqlValue::Null,
+                    Value::Boolean(b) => p::SqlValue::Bool(*b),
+                    Value::Int(i) => p::SqlValue::Int(*i),
+                    Value::Float(f) => p::SqlValue::Float(*f),
+                    Value::Text(s) => p::SqlValue::Text(s.clone()),
+                    Value::Bytes(b) => p::SqlValue::Bytes(p::Bytes(b.clone())),
+                })
+                .collect()
+        }
+
+        fn rows(answer: p::SqlAnswer) -> Result<Rows, Error> {
+            let p::SqlAnswer::Rows(r) = answer else {
+                return Err(unexpected(&answer));
+            };
+            Ok(Rows {
+                columns: r.columns,
+                rows: r
+                    .rows
+                    .into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|v| match v {
+                                p::SqlValue::Null => Value::Null,
+                                p::SqlValue::Bool(b) => Value::Boolean(b),
+                                p::SqlValue::Int(i) => Value::Int(i),
+                                p::SqlValue::Float(f) => Value::Float(f),
+                                p::SqlValue::Text(s) => Value::Text(s),
+                                p::SqlValue::Bytes(b) => Value::Bytes(b.0),
+                            })
+                            .collect()
+                    })
+                    .collect(),
+            })
+        }
+
+        fn changed(answer: p::SqlAnswer) -> Result<u64, Error> {
+            match answer {
+                p::SqlAnswer::Changed(n) => Ok(n),
+                other => Err(unexpected(&other)),
+            }
+        }
+
+        fn ask(request: p::SqlRequest) -> Result<p::SqlAnswer, Error> {
+            Ctx::current().sql(request).map_err(error)
+        }
+
+        pub(crate) fn query(
+            datasource: &str,
+            statement: &str,
+            values: &[Value],
+        ) -> Result<Rows, Error> {
+            rows(ask(p::SqlRequest::Query {
+                datasource: datasource.into(),
+                statement: statement.into(),
+                params: params(values),
+            })?)
+        }
+
+        pub(crate) fn execute(
+            datasource: &str,
+            statement: &str,
+            values: &[Value],
+        ) -> Result<u64, Error> {
+            changed(ask(p::SqlRequest::Execute {
+                datasource: datasource.into(),
+                statement: statement.into(),
+                params: params(values),
+            })?)
+        }
+
+        pub(crate) fn begin(datasource: &str) -> Result<Transaction, Error> {
+            match ask(p::SqlRequest::Begin(datasource.into()))? {
+                p::SqlAnswer::Begun(id) => Ok(Transaction { id, ended: false }),
+                other => Err(unexpected(&other)),
+            }
+        }
+
+        /// A transaction the node keeps open under `id`. Dropped without
+        /// [`Transaction::commit`] or [`Transaction::rollback`], it rolls
+        /// back (`bulkhead_native::app::end_transaction_quietly`).
+        #[derive(Debug)]
+        pub(crate) struct Transaction {
+            id: u32,
+            ended: bool,
+        }
+
+        impl Transaction {
+            pub(crate) fn query(&self, statement: &str, values: &[Value]) -> Result<Rows, Error> {
+                rows(ask(p::SqlRequest::TxQuery {
+                    tx: self.id,
+                    statement: statement.into(),
+                    params: params(values),
+                })?)
+            }
+
+            pub(crate) fn execute(&self, statement: &str, values: &[Value]) -> Result<u64, Error> {
+                changed(ask(p::SqlRequest::TxExecute {
+                    tx: self.id,
+                    statement: statement.into(),
+                    params: params(values),
+                })?)
+            }
+
+            pub(crate) fn commit(this: Self) -> Result<(), Error> {
+                Self::end(this, true)
+            }
+
+            pub(crate) fn rollback(this: Self) -> Result<(), Error> {
+                Self::end(this, false)
+            }
+
+            fn end(mut this: Self, commit: bool) -> Result<(), Error> {
+                this.ended = true;
+                match ask(p::SqlRequest::TxEnd {
+                    tx: this.id,
+                    commit,
+                })? {
+                    p::SqlAnswer::Ended => Ok(()),
+                    other => Err(unexpected(&other)),
+                }
+            }
+        }
+
+        impl Drop for Transaction {
+            fn drop(&mut self) {
+                if !self.ended {
+                    bulkhead_native::app::end_transaction_quietly(self.id);
+                }
+            }
         }
     }
 

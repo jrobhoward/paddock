@@ -1,11 +1,12 @@
-//! Connection-handler apps: their listeners, upgrades and rollbacks.
+//! Connection-handler apps: their listeners, upgrades and rollbacks; and
+//! native apps' listeners, which hand connections to the app's instances.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::api::{ListenerInfo, RolloutParams, UpgradeResponse};
 use bulkhead_bundle::manifest::AppManifest;
-use bulkhead_host::{InstanceSpec, Listener, ListenerSpec, LoadedConnection};
+use bulkhead_host::{AppHandle, HostError, InstanceSpec, Listener, ListenerSpec, LoadedConnection};
 
 use super::Node;
 use super::upgrade::upgrade_error;
@@ -47,8 +48,38 @@ impl Node {
     /// Bind every listener a connection handler declares, at the address
     /// node config gives it.
     pub(super) fn listen(&self, build: &ConnectionBuild) -> Result<Vec<Listener>, NodeError> {
+        self.bind_listeners(&build.manifest, |spec| {
+            self.rt
+                .listen(spec, build.connection.clone(), build.spec.clone())
+        })
+    }
+
+    /// Bind every listener a native app declares, handing connections to
+    /// `app`'s instances, and keep them until the app stops.
+    pub(super) fn listen_native(
+        &self,
+        manifest: &AppManifest,
+        app: &AppHandle,
+    ) -> Result<(), NodeError> {
+        if manifest.spec.listeners.is_empty() {
+            return Ok(());
+        }
+        let listeners =
+            self.bind_listeners(manifest, |spec| self.rt.listen_native(spec, app.clone()))?;
+        self.native_listener_map()
+            .insert(manifest.app.name.clone(), listeners);
+        Ok(())
+    }
+
+    /// Bind each of `manifest`'s listeners with `bind`, at the address node
+    /// config gives it; on a failure, stop those already bound.
+    fn bind_listeners(
+        &self,
+        manifest: &AppManifest,
+        bind: impl Fn(ListenerSpec) -> Result<Listener, HostError>,
+    ) -> Result<Vec<Listener>, NodeError> {
         let mut started: Vec<Listener> = Vec::new();
-        for decl in &build.manifest.spec.listeners {
+        for decl in &manifest.spec.listeners {
             let bound = self.config.listeners.get(&decl.name).ok_or_else(|| {
                 NodeError::Invalid(format!(
                     "listener '{}' is not bound in node config ([listeners.{}])",
@@ -60,9 +91,7 @@ impl Node {
                 spec.acceptors = b.acceptors;
                 spec.max_connections = usize::try_from(decl.max_connections).unwrap_or(usize::MAX);
                 spec.idle_timeout = Duration::from_millis(decl.idle_timeout_ms);
-                self.rt
-                    .listen(spec, build.connection.clone(), build.spec.clone())
-                    .map_err(|e| NodeError::Invalid(e.to_string()))
+                bind(spec).map_err(|e| NodeError::Invalid(e.to_string()))
             });
             match listener {
                 Ok(l) => started.push(l),
@@ -75,6 +104,34 @@ impl Node {
             }
         }
         Ok(started)
+    }
+
+    pub(super) fn native_listener_map(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Vec<Listener>>> {
+        self.native_listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Stop a native app's listeners, if it has any; their connections
+    /// close.
+    pub(super) fn stop_native_listeners(&self, name: &str) {
+        for l in self.native_listener_map().remove(name).unwrap_or_default() {
+            l.stop();
+        }
+    }
+
+    /// An app's listeners' counters: a connection handler's, or a native
+    /// app's.
+    pub(super) fn listener_infos(&self, name: &str) -> Vec<ListenerInfo> {
+        if let Some(app) = self.connection_apps().get(name) {
+            return app.listeners.iter().map(listener_info).collect();
+        }
+        self.native_listener_map()
+            .get(name)
+            .map(|ls| ls.iter().map(listener_info).collect())
+            .unwrap_or_default()
     }
 
     /// Stop a connection handler's listeners, if it is one. Returns whether

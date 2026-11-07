@@ -6,8 +6,23 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- `bulkhead-runner`'s seccomp filter also refuses `io_uring_setup`,
+  `io_uring_enter` and `io_uring_register`, whose operations bypass the
+  filter (`io_uring`'s socket operation makes a socket without `socket`,
+  and Landlock does not fence UDP), and `connect`, `accept` and `accept4`,
+  so a socket the node passes cannot be moved elsewhere or accept
+  connections the node does not count.
+
 ### Changed
 
+- wasmtime and its crates move to 50.0.1 (cranelift 0.137.1), for
+  RUSTSEC-2026-0420 to 0424 against 50.0.0, two of them on paths
+  Bulkhead uses (borrowed resources passed between components, and
+  `wasi:http` outgoing `content-length`); pulldown-cmark moves to 0.13.6
+  for RUSTSEC-2026-0433, whose path (`ENABLE_WIKILINKS`) Bulkhead does
+  not reach. `cargo deny` passes again.
 - A call between two native-process instances on one node is a quarter
   to a third faster (ROADMAP T12): p50 about 6 to 7 µs from 9 to 10 on
   the 16-core machine, 5.3 to 6.6 from 7.5 on a Raspberry Pi 5, and
@@ -85,6 +100,54 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Native-process executables may declare `listeners` (ROADMAP Z8g):
+  each accepted connection goes to an instance of the app's pool, in turn
+  or, with `instances.routing = "hash:..."`, by the peer's address; the
+  node passes the stream and runs the new `App::handle_connection`, and
+  the instance reads it on `io-ready` notices, so one instance serves many
+  connections. `max_connections`, the idle timeout (read from the
+  kernel's `TCP_INFO`) and closing on stop stay the node's. Native apps
+  with listeners may not passivate or be singletons, and an upgrade may
+  not change their listeners. `bulkhead_sdk::connection::Handler` and
+  `connection_handler!` serve a connection's bytes as they arrive and
+  build both ways (a component instance per connection, or a native
+  program); `examples/line-server` and `bulkhead-fixture-conn` use it,
+  the example with a native binary (feature `native`), and `listener.rs`
+  and `listeners.rs` run against both builds. The protocol is version 11
+  (`ToApp::Connection`): native apps built against an earlier
+  `bulkhead-native` or `bulkhead-sdk` must be rebuilt.
+- Native-process apps may declare `wasi:http/outgoing-handler` (ROADMAP
+  Z8f): each request goes to the node, which sends it through the egress
+  client components use, on the same rules (the `allow` list, methods,
+  forbidden headers, the app's requests in flight, the address guard,
+  timeouts, the system's roots and the CA file, no redirects), and
+  answers with the whole response, its body up to 16 MiB.
+  `bulkhead_sdk::http_client` works the same in both builds, and
+  `Ctx::http` on `bulkhead-native`'s app API; `egress.rs` runs against both
+  builds. The protocol is version 10: native apps built against an
+  earlier `bulkhead-native` or `bulkhead-sdk` must be rebuilt.
+- Native-process apps may declare `wasi:sockets` (ROADMAP Z8e), on a
+  component's rules, address guard and `max_sockets`: the node connects,
+  resolves names, listens and accepts, and passes each TCP stream to the
+  app on its descriptor socket, keeping a copy that it shuts down when the
+  app closes the stream; listeners and UDP sockets stay in the node, which
+  checks every datagram's destination and source. The node watches
+  readiness and delivers `io-ready` as for a component.
+  `bulkhead_sdk::net`'s `TcpStream` and `TcpListener` work the same in
+  both builds; natively UDP is `Ctx::net` on `bulkhead-native`'s app API.
+  `sockets.rs` runs against both builds. The protocol is version 9:
+  native apps built against an earlier `bulkhead-native` or
+  `bulkhead-sdk` must be rebuilt.
+- Native-process apps may declare `bulkhead:sql` (ROADMAP Z8d): queries,
+  statements and transactions over the protocol, on a component's terms
+  (the grant, the manifest's datasources, the app's connection cap, the
+  node's pool), with `bulkhead_sdk::sql` the same in both builds and
+  `Ctx::sql` on `bulkhead-native`'s app API. A transaction is kept by the
+  node under a number; dropping the SDK's handle rolls it back, and one
+  still open when the instance exits is rolled back. `examples/tally`
+  builds natively (feature `native`), and `tally.rs` runs against both
+  builds. The protocol is version 8: native apps built against an
+  earlier `bulkhead-native` or `bulkhead-sdk` must be rebuilt.
 - Native-process apps may declare `wasi:filesystem` (ROADMAP Z8b): each
   preopened volume is a Landlock rule for `bulkhead-runner`, read-only or
   read-write as granted (a read-write volume executes nothing), and the
@@ -256,6 +319,10 @@ All notable changes are recorded here. The format follows
   `dumpable`.
 
 ### Fixed
+
+- A native-process app's TCP streams (`wasi:sockets`) now close when the
+  app is passivated: the process that held them has gone, and the node's
+  copies had kept them open, unseen by any later process.
 
 - A native-process app deployed on a node now receives its bundle's
   `priv/` files (`BULKHEAD_PRIV`) when its manifest declares

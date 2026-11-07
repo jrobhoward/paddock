@@ -284,8 +284,10 @@ async fn executable____sandboxed____files_sockets_and_node_signals_refused() {
     let connect = ask(&instance, "connect 127.0.0.1:9").await;
     let signal = ask(&instance, &format!("kill {}", std::process::id())).await;
     let printed = ask(&instance, "print to stderr").await;
+    let ring = ask(&instance, "io-uring").await;
 
     assert!(read.contains("Permission denied"), "{read}");
+    assert!(ring.contains("Operation not permitted"), "{ring}");
     assert!(connect.contains("Operation not permitted"), "{connect}");
     assert!(signal.contains("Operation not permitted"), "{signal}");
     assert_eq!(printed, "ok");

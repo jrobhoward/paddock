@@ -77,6 +77,9 @@ enum Op {
     },
     /// Send the services' current host events again.
     Announce,
+    /// Take a connection a listener accepted (a native app's
+    /// `handle_connection`); a component drops it, closing it.
+    Connection(crate::listener::Accepted),
 }
 
 /// What woke an instance waiting for its next message: the message (or
@@ -559,6 +562,12 @@ impl InstanceHandle {
         let _ = self.shared.ops.send(Box::new(Op::Announce));
     }
 
+    /// Hand the instance a connection its app's listener accepted, ahead
+    /// of its mailbox. Ignored (the connection closes) once it has exited.
+    pub(crate) fn connection(&self, accepted: crate::listener::Accepted) {
+        let _ = self.shared.ops.send(Box::new(Op::Connection(accepted)));
+    }
+
     /// Stop now with reason `killed`, without `terminate`. A callback in
     /// progress is abandoned.
     pub fn kill(&self) {
@@ -796,7 +805,7 @@ impl InstanceTask {
                 Op::Snapshot { reply } | Op::MoveOut { reply } => {
                     let _ = reply.send(Err(SnapshotError::NotRunning));
                 }
-                Op::Announce => {}
+                Op::Announce | Op::Connection(_) => {}
             }
         }
         probe::instance_exit(self.pid, &reason);
@@ -1197,6 +1206,8 @@ impl InstanceTask {
                 self.announce(store);
                 None
             }
+            // Only a native app takes connections; dropped, it closes.
+            Op::Connection(_) => None,
         }
     }
 

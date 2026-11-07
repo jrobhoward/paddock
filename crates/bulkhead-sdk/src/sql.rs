@@ -32,9 +32,9 @@
 
 use std::fmt;
 
-use crate::bindings::bulkhead::sql::sql;
+use crate::host::sql;
 
-pub use sql::{Rows, Value};
+pub use crate::bindings::bulkhead::sql::sql::{Rows, Value};
 
 /// Why a call failed.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -85,6 +85,16 @@ fn rules____signals_and_tracing____listed() {
     assert_eq!(found[&libc::SYS_kill].len(), 1);
     assert!(found[&libc::SYS_ptrace].is_empty());
     assert!(found[&libc::SYS_socket].is_empty());
+    for call in [
+        libc::SYS_connect,
+        libc::SYS_accept,
+        libc::SYS_accept4,
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
+    ] {
+        assert!(found[&call].is_empty(), "{call}");
+    }
 }
 
 #[test]

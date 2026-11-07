@@ -10,7 +10,6 @@ use bulkhead_host::{AppHandle, AppStatus, CallError, Envelope, InstanceHandle, P
 use serde_json::json;
 
 use super::Node;
-use super::connections::listener_info;
 use crate::node::error::NodeError;
 use crate::node::logring::LogFeed;
 use crate::node::store::AppState;
@@ -188,11 +187,7 @@ impl Node {
                         .collect()
                 })
                 .unwrap_or_default(),
-            listeners: self
-                .connection_apps()
-                .get(name)
-                .map(|c| c.listeners.iter().map(listener_info).collect())
-                .unwrap_or_default(),
+            listeners: self.listener_infos(name),
         })
     }
 

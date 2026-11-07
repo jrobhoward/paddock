@@ -120,6 +120,17 @@ impl Pool {
         self.pick_among(None, live)
     }
 
+    /// Pick an instance for a connection from `peer`: by the peer's address
+    /// under hash routing (so one client's connections share an instance
+    /// while the pool's size holds), otherwise round-robin.
+    pub(crate) fn pick_peer(&self, peer: std::net::IpAddr) -> Option<InstanceHandle> {
+        let key = match &self.routing {
+            Routing::Hash(_) => Some(peer.to_string().into_bytes()),
+            Routing::RoundRobin => None,
+        };
+        self.pick_among(key.as_deref(), |_| true)
+    }
+
     /// Pick an instance for `msg` (round-robin when there is no message, or
     /// no routing key in it).
     pub(crate) fn pick(&self, msg: Option<&Envelope>) -> Option<InstanceHandle> {

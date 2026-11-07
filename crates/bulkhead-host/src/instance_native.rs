@@ -37,6 +37,7 @@ use crate::bindings::bulkhead::runtime::process;
 use crate::failover::RunUntil;
 use crate::health;
 use crate::lifecycle::LifecycleState;
+use crate::listener::Accepted;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::native::NativeCode;
 use crate::native::convert;
@@ -46,6 +47,7 @@ use crate::probe;
 use crate::runtime::{LoadedApp, RuntimeInner};
 use crate::services::HostState;
 use crate::services::config::Config;
+use crate::services::egress::Egress;
 use crate::services::groups::Groups;
 use crate::services::keyvalue::publish::Publications;
 use crate::services::keyvalue::storage::Outcome;
@@ -53,6 +55,9 @@ use crate::services::keyvalue::{KeyValue, WATCH_EVENT};
 use crate::services::logging::{self, LogRate, Logging};
 use crate::services::metrics::MetricsService;
 use crate::services::secrets::Secrets;
+#[cfg(unix)]
+use crate::services::sockets::{NativeReply, Sockets};
+use crate::services::sql::Sql;
 use crate::spec::InstanceSpec;
 use crate::state::{InstanceState, ProcessContext};
 use crate::upgrade::UpgradeError;
@@ -377,6 +382,35 @@ async fn answer(
                 .map_err(e)?;
             Answer::Unit
         }
+        services => service_answer(state, services).await?,
+    })
+}
+
+/// A socket request's answer, after passing the stream it made, if any,
+/// on the descriptor socket.
+#[cfg(unix)]
+fn pass_socket(
+    port: &mut Port,
+    reply: Result<NativeReply, p::NetError>,
+) -> Result<p::NetAnswer, p::NetError> {
+    use std::os::fd::AsFd;
+    let (mut answer, fd) = reply?;
+    if let Some(fd) = fd {
+        let passed = port.send_fd(fd.as_fd()).map_err(p::NetError::Other)?;
+        match &mut answer {
+            p::NetAnswer::Stream(s) | p::NetAnswer::Accepted(Some(s)) => s.fd = passed,
+            _ => {}
+        }
+    }
+    Ok(answer)
+}
+
+/// Answer a request for a host service the app may declare (keyvalue,
+/// groups, config, secrets, metrics, SQL), on the checks a component's
+/// imports run. [`answer`] handles the process functions first, so any
+/// other request here is an error.
+async fn service_answer(state: &mut InstanceState, request: Request) -> Result<Answer, String> {
+    Ok(match request {
         Request::Kv(request) => {
             Answer::Kv(HostState::<KeyValue>::service(state).native(request).await)
         }
@@ -409,6 +443,16 @@ async fn answer(
                 .native_register(kind, name, help, labels, buckets)
                 .await,
         ),
+        Request::Sql(request) => {
+            Answer::Sql(HostState::<Sql>::service(state).native(request).await)
+        }
+        Request::Http(request) => Answer::Http(
+            HostState::<Egress>::service(state)
+                .state
+                .native(request)
+                .await,
+        ),
+        other => return Err(format!("not a service request: {other:?}")),
     })
 }
 
@@ -671,6 +715,10 @@ impl InstanceTask {
         }
         port.kill();
         port.finish().await;
+        // The streams went with the process; the node's copies go too, so
+        // their peers see the end.
+        #[cfg(unix)]
+        HostState::<Sockets>::service(state).state.close_native();
         self.me.memory_counter().store(0, Ordering::Relaxed);
         self.set_state(LifecycleState::Passive);
         self.stats.passivated();
@@ -904,6 +952,27 @@ impl InstanceTask {
                 Ok(Step::Incoming(incoming)) => incoming,
             };
             match next {
+                #[cfg(unix)]
+                Some(Incoming::Frame(FromApp::Request {
+                    id,
+                    request: Request::Net(request),
+                })) => {
+                    let asked = Instant::now();
+                    let asked_for = HostState::<Sockets>::service(state)
+                        .state
+                        .native(request, budget);
+                    match super::killable(&self.kill, &self.control, None, asked_for).await {
+                        Ok(reply) => {
+                            let answer = Answer::Net(pass_socket(port, reply));
+                            port.send(&ToApp::Answer { id, answer });
+                        }
+                        Err(killed) => {
+                            port.kill();
+                            return Err(killed);
+                        }
+                    }
+                    host += asked.elapsed();
+                }
                 Some(Incoming::Frame(FromApp::Request { id, request })) => {
                     let asked = Instant::now();
                     match super::killable(
@@ -1333,7 +1402,72 @@ impl InstanceTask {
                 self.native_announce(state);
                 None
             }
+            Op::Connection(accepted) => self.native_connection(state, port, spec, accepted).await,
         }
+    }
+
+    /// Pass a connection the app's listener accepted and run its
+    /// `handle_connection`. A stream that cannot be passed is closed; the
+    /// instance carries on.
+    #[cfg(unix)]
+    async fn native_connection(
+        &mut self,
+        state: &mut InstanceState,
+        port: &mut Port,
+        spec: &InstanceSpec,
+        accepted: Accepted,
+    ) -> Option<ExitReason> {
+        use std::os::fd::AsFd;
+        let Accepted {
+            listener,
+            stream,
+            tie,
+        } = accepted;
+        let sockets = &mut HostState::<Sockets>::service(state).state;
+        let (mut stream, fd) = match sockets.connection(stream, tie) {
+            Ok(kept) => kept,
+            Err(e) => {
+                tracing::warn!(%listener, error = ?e, "connection not passed");
+                return None;
+            }
+        };
+        match port.send_fd(fd.as_fd()) {
+            Ok(passed) => stream.fd = passed,
+            Err(why) => {
+                tracing::warn!(%listener, error = %why, "connection not passed");
+                let _ = sockets
+                    .native(p::NetRequest::Close(stream.socket), Duration::ZERO)
+                    .await;
+                return None;
+            }
+        }
+        drop(fd);
+        probe::callback_start(self.pid, "connection");
+        port.hint_idle(!self.has_work());
+        let _ = self.me.take_woke();
+        let started = Instant::now();
+        port.send(&ToApp::Connection { listener, stream });
+        let outcome = self.native_done(state, port, spec.callback_deadline).await;
+        let took = started.elapsed();
+        self.stats.callback("connection", took);
+        if probe::callback_done_enabled() {
+            let ns = u64::try_from(took.as_nanos()).unwrap_or(u64::MAX);
+            probe::callback_done(self.pid, "connection", ns, outcome.is_ok());
+        }
+        outcome.err()
+    }
+
+    /// Native apps take connections on Unix only; elsewhere it closes.
+    #[cfg(not(unix))]
+    #[allow(clippy::unused_async)]
+    async fn native_connection(
+        &mut self,
+        _state: &mut InstanceState,
+        _port: &mut Port,
+        _spec: &InstanceSpec,
+        _accepted: Accepted,
+    ) -> Option<ExitReason> {
+        None
     }
 
     /// Queue the services' host events, ahead of mailbox messages.

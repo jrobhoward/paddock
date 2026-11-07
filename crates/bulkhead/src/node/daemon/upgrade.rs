@@ -131,6 +131,16 @@ impl Node {
             )));
         }
         check_names(&self.st(), name, &built.info.names)?;
+        // A native app's listeners stay bound across its upgrades, as they
+        // were declared.
+        if let Runnable::App(deployment) = &built.run
+            && let Some(running) = self.apps.app(name)
+            && running.deployment().manifest.spec.listeners != deployment.manifest.spec.listeners
+        {
+            return Err(NodeError::Invalid(format!(
+                "{name}'s listeners change between versions; remove and deploy it instead"
+            )));
+        }
         built
             .bundle
             .extract_priv(&self.store.priv_dir(name, &version))

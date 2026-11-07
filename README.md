@@ -48,14 +48,14 @@ a restricted native process, with Erlang/OTP-style semantics:
   disk, or replicated across a pair), watches, process groups, config,
   secrets, logging, metrics, timers, HTTP ingress and allow-listed HTTP
   egress, Postgres datasources, guest sockets, and a Modbus TCP extension.
-  Native apps reach logging, keyvalue with watches, groups, config,
-  secrets, metrics and HTTP routes so far; the rest is components only
-  until it comes to them. A shared bucket can be published: native apps
+  Native apps reach all of them but extensions and HTTP handlers so far;
+  those are components only until they come to them. A shared bucket can be published: native apps
   then read it from a snapshot mapped into their own memory, in 0.16 to
   0.39 µs a read, without asking the node.
-- **Connections**: a connection-handler component serves TCP connections
-  on listeners the node owns, one sandboxed instance per connection, at
-  native throughput (spike S13).
+- **Connections**: a connection handler serves TCP connections on
+  listeners the node owns: as a component, one sandboxed instance per
+  connection, at native throughput (spike S13); as a native app, each
+  instance of its pool holding many.
 - **Distribution** runs over QUIC with mutual TLS, nodes trusting each other
   by pinned public keys (no certificate authority). An HA pair and a witness
   fail over singletons and replicated state, and `bulkhead release` upgrades

@@ -401,12 +401,13 @@ fn AppManifest____invalid_app_name____invalid_at_plugin_name() {
 }
 
 #[rstest]
-#[case(json!({ "kind": "native-process", "capabilities": { "wasi:http/outgoing-handler": {} } }), "capabilities.wasi:http/outgoing-handler")]
-#[case(json!({ "kind": "native-process", "capabilities": { "wasi:sockets": {} } }), "capabilities.wasi:sockets")]
 #[case(json!({ "kind": "native-process", "capabilities": { "extensions": { "acme:x": {} } } }), "capabilities.extensions.\"acme:x\"")]
 #[case(json!({ "kind": "native-process", "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
 #[case(json!({ "kind": "native-process", "upgrade": { "mode": "snapshot", "snapshot_version": 1 } }), "upgrade.mode")]
 #[case(json!({ "native": { "program": "executable" } }), "native")]
+#[case(json!({ "kind": "native-process", "listeners": [{ "name": "lines" }] }), "listeners")]
+#[case(json!({ "kind": "native-process", "native": { "program": "executable" }, "listeners": [{ "name": "lines" }], "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
+#[case(json!({ "kind": "native-process", "native": { "program": "executable" }, "listeners": [{ "name": "lines" }], "placement": { "mode": "singleton" } }), "placement.mode")]
 fn validate____native_process_outside_its_rules____refused_at_path(
     #[case] section: serde_json::Value,
     #[case] path: &str,
@@ -451,6 +452,55 @@ fn validate____native_process_with_preopens____accepted() {
         "kind": "native-process",
         "native": { "program": "executable" },
         "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } } },
+        "upgrade": { "mode": "blue-green" }
+    }));
+
+    assert!(found.is_ok(), "{found:?}");
+}
+
+#[test]
+fn validate____native_process_with_egress____accepted() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": { "wasi:http/outgoing-handler": { "allow": ["https://payments.internal"] } },
+        "upgrade": { "mode": "blue-green" }
+    }));
+
+    assert!(found.is_ok(), "{found:?}");
+}
+
+#[test]
+fn validate____native_executable_with_listeners____accepted() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "listeners": [{ "name": "lines", "max_connections": 64 }],
+        "instances": { "count": 2, "routing": "hash:peer" },
+        "upgrade": { "mode": "blue-green" }
+    }));
+
+    assert!(found.is_ok(), "{found:?}");
+}
+
+#[test]
+fn validate____native_process_with_sockets____accepted() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/8" }] } },
+        "upgrade": { "mode": "blue-green" }
+    }));
+
+    assert!(found.is_ok(), "{found:?}");
+}
+
+#[test]
+fn validate____native_process_with_sql____accepted() {
+    let found = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": { "bulkhead:sql": { "datasources": { "main": { "max_connections": 2 } } } },
         "upgrade": { "mode": "blue-green" }
     }));
 

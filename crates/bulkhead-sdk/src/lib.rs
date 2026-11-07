@@ -57,8 +57,10 @@
 //! - `watch` (cargo feature `watch`): `bulkhead:watch`, revisioned reads,
 //!   compare-and-swap and change watches on keyvalue buckets.
 //!
-//! Connection handlers (cargo feature `connection`) implement `Connection`
-//! instead of [`App`]: one instance per connection on the app's listeners.
+//! Connection handlers (cargo feature `connection`) implement
+//! `connection::Handler` (both builds; natively an instance holds many
+//! connections) or `connection::Connection` (components only, blocking)
+//! instead of [`App`].
 //!
 //! In a guest, a panic is a trap: the host ends the instance with
 //! `crashed` and its supervisor restarts it. The SDK panics only for

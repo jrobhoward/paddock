@@ -1,6 +1,7 @@
-//! A connection handler written with `bulkhead-sdk`: each TCP connection on
-//! the `lines` listener gets its own instance, which reads commands one per
-//! line and answers each with a line.
+//! A connection handler written with `bulkhead-sdk`, speaking a line
+//! protocol on the `lines` listener: one command per line, a line back for
+//! each. As a component each connection gets its own instance; built
+//! natively (feature `native`) each instance holds many connections.
 //!
 //! - `echo <text>`: reply `<text>`.
 //! - `inc`, `get`: forwarded to the `counter` example app (found by its
@@ -8,13 +9,16 @@
 //!   the protocol; the app keeps the state.
 //! - `quit`: close the connection.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::time::Duration;
 
-use bulkhead_sdk::connection::{Connection, ConnectionInfo, Stream};
+use bulkhead_sdk::connection::{ConnectionInfo, Flow, Handler, Output};
 use bulkhead_sdk::{Ctx, Envelope};
 
-struct Lines;
+/// One connection: the bytes of a line not yet complete.
+struct Lines {
+    pending: Vec<u8>,
+}
 
 fn counter(ctx: &mut Ctx, command: &str) -> String {
     let Some(pid) = ctx.whereis("counter") else {
@@ -26,22 +30,30 @@ fn counter(ctx: &mut Ctx, command: &str) -> String {
     }
 }
 
-impl Connection for Lines {
-    fn serve(ctx: &mut Ctx, _info: ConnectionInfo, stream: Stream) -> Result<(), String> {
-        let mut out = stream.clone_writer();
-        for line in BufReader::new(stream).lines() {
-            let line = line.map_err(|e| e.to_string())?;
-            let (verb, rest) = line.split_once(' ').unwrap_or((line.as_str(), ""));
+impl Handler for Lines {
+    fn open(_ctx: &mut Ctx, _info: &ConnectionInfo) -> Result<Self, String> {
+        Ok(Self {
+            pending: Vec::new(),
+        })
+    }
+
+    fn data(&mut self, ctx: &mut Ctx, bytes: &[u8], out: &mut Output<'_>) -> Result<Flow, String> {
+        self.pending.extend_from_slice(bytes);
+        while let Some(end) = self.pending.iter().position(|b| *b == b'\n') {
+            let raw: Vec<u8> = self.pending.drain(..=end).collect();
+            let line = String::from_utf8_lossy(&raw);
+            let line = line.trim_end();
+            let (verb, rest) = line.split_once(' ').unwrap_or((line, ""));
             let reply = match verb {
                 "echo" => rest.to_string(),
                 "inc" | "get" => counter(ctx, verb),
-                "quit" => return Ok(()),
+                "quit" => return Ok(Flow::Close),
                 _ => "commands: echo <text>, inc, get, quit".to_string(),
             };
             writeln!(out, "{reply}").map_err(|e| e.to_string())?;
         }
-        Ok(())
+        Ok(Flow::Continue)
     }
 }
 
-bulkhead_sdk::connection!(Lines);
+bulkhead_sdk::connection_handler!(Lines);
