@@ -1,0 +1,11 @@
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 4.0ms, p99 13.0ms
+call from the host, one at a time: p50 21.0µs, p99 52.7µs
+call between instances (through the host): p50 50.2µs, p99 102.4µs
+request from a callback (its own pid): 4.3 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 2.9 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.077 µs (median of 5 runs of 20,000)
+casts to one instance: 306340 handled per second
+16 calls in flight: 255171 calls/s, 7.63 cores, 29.9 µs of CPU per call
+64 calls in flight: 318597 calls/s, 9.40 cores, 29.5 µs of CPU per call

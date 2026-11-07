@@ -1,0 +1,6 @@
+line waits supported: true
+one line wait, nothing written, timeout 1 us: p50 1.5 us, p99 1.5 us, max 20001.8 us
+one line wait, nothing written, timeout 5 us: p50 5.5 us, p99 5.5 us, max 5.5 us
+one line wait, nothing written, timeout 20 us: p50 20.5 us, p99 20.5 us, max 20.5 us
+one line wait, nothing written, timeout 100 us: p50 100.5 us, p99 100.5 us, max 100.5 us
+one line wait, nothing written, timeout 1000 us: p50 999.9 us, p99 1002.3 us, max 1003.3 us

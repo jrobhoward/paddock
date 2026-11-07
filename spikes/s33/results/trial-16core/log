@@ -1,0 +1,16 @@
+round 1 start load 0.97 4.68 5.81
+  off
+  app
+  node
+  both
+round 2 start load 0.91 4.95 5.96
+  app
+  node
+  both
+  off
+round 3 start load 0.92 5.01 6.04
+  node
+  both
+  off
+  app
+done

@@ -1,0 +1,7 @@
+s33: 4 cores, 2 s per case, budget 20µs, slice 5µs, hogs 0
+pairs    method     rounds/s   p50 us   p99 max   CPU us/rt  vcsw/rt ivcsw/rt  slept%   hogs%
+    1 lineyield      1937080     0.48       0.6        1.03    0.000    0.000     0.0       -
+    2 lineyield      3816887     0.48       0.6        1.03    0.000    0.008     0.0       -
+    4 lineyield      2113499     1.72       3.6        1.86    0.001    1.599     0.0       -
+    8 lineyield      2026988     3.69       7.7        1.95    0.001    2.041     0.1       -
+   16 lineyield      2058059     7.50      15.2        1.92    0.000    2.019     0.0       -

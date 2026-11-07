@@ -1,0 +1,5 @@
+round 1 load 0.87 0.63 0.29
+round 2 load 0.95 1.46 0.72
+round 3 load 0.94 1.89 1.07
+hogs load 0.99 2.75 1.71
+done

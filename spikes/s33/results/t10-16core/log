@@ -1,0 +1,10 @@
+round 1 start load 0.87 0.65 1.46
+  base
+  t10
+round 2 start load 0.94 2.72 2.34
+  t10
+  base
+round 3 start load 0.88 3.35 2.92
+  base
+  t10
+done

@@ -1,0 +1,20 @@
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 188833/s, p50 4.9 us, p99 8.3 us
+two nodes: sequential calls 7531/s, p50 131.4 us, p99 172.7 us
+16 callers: one node 403646 calls/s, two nodes 48316 calls/s
+64 callers: one node 442141 calls/s, two nodes 53438 calls/s
+one node: casts 867940 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 158208 handled/s (369754 of 400000 handled, 30246 refused when sent)
+1 KiB bodies, 16 callers: one node 319785 calls/s (312 MiB/s each way), two nodes 39157 calls/s (38 MiB/s each way)
+64 KiB bodies, 16 callers: one node 50316 calls/s (3145 MiB/s each way), two nodes 4652 calls/s (291 MiB/s each way)
+one node, from an instance: sequential calls 119936/s, p50 8.3 us, p99 12.6 us
+two nodes, from an instance: sequential calls 5992/s, p50 164.3 us, p99 212.5 us
+from instances, 16 callers: one node 331029 calls/s, two nodes 38853 calls/s
+one node, from instances: casts 660242 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 126299 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 591488 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 479623 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 431935 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 140820 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 137426 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 44559 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)

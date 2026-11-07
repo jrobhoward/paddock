@@ -408,7 +408,10 @@ instance's channel spins for `[native] spin_us` (default 20 µs) before it
 sleeps: a blocking round trip between processes costs two wake-ups of a
 sleeping thread whatever carries the bytes (S30, S32). The app spins with
 `sched_yield`, not a pause instruction, which starves the other side when
-busy processes outnumber cores (S32). Each side sleeps on a pipe the
+busy processes outnumber cores (S32); a wait on the ring's cache line
+(`MWAITX`, `WFE`) collapses the same way, and up to 2 µs of one before
+each yield made no request cheaper on either machine and cost CPU per
+call between callbacks (S33, T10). Each side sleeps on a pipe the
 other writes a byte to. The node's instance task spins between callbacks too, which keeps its worker awake for the instance's
 next message. Inside a callback, on a worker whose last yield ran no other
 native instance and when no frame since the callback began woke a task,

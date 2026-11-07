@@ -2674,6 +2674,35 @@ T8: a native task watches its rings within the poll (T9) only when its worker's 
 - **The other work is not in the worker's queue:** a woken task goes to the queue of the worker that woke it, so while a task watches, its own queue only shrinks (by steals); what waits is the work other workers would hand on, and the next task woken through the I/O driver. T12's 8% is the cost of watching at all, which no check of this worker's queue sees. Checking the shared queue during the watch did not help.
 - **The `tokio_unstable` build itself** (stable against `guess`, the same code) was within the spread between rounds on most rows, but slower on two from the host in every round: sequential calls 6.7 µs against 3.8 to 6.2, and 16 callers 299,000 to 339,000 calls/s against 313,000 to 404,000. Not looked into; a future use of the setting would measure it again.
 
+## 2026-11-06: an app waiting on the ring's cache line (S33)
+
+`spikes/s33` (its README has the tables and the method): a wait in the CPU on the ring's tail line (`MONITORX`/`MWAITX` on the 16-core machine, a load-exclusive and `WFE` on the Raspberry Pi 5), alone between threads and then in the node behind a temporary switch, since removed. Between two threads, a line wait notices a write no sooner than spinning on the 16-core machine (1.36 µs a round trip against 1.0 to 1.1) and 2.8 times as soon as `sched_yield` on the Pi (0.20 against 0.56); a pure line wait collapses with more threads than cores, as S32's pause did, and a `WFE` nothing ends lasts the event stream's 76 µs. In the node, `native_cost` and `cluster_throughput` natively, 4 workers, `spin_us` 20, three rounds on each machine, each starting at load under 1, medians:
+
+| | 16-core: as shipped | App waits on the line | Pi: as shipped | App waits on the line |
+| --- | --- | --- | --- | --- |
+| A request from a callback | 4.4 µs | 3.6 | 2.9 | 2.9 |
+| A bucket get from a callback | 3.0 µs | 2.2 | 1.4 | 1.4 |
+| 16 calls in flight, calls/s (CPU per call) | 255,000 (30.0 µs) | 257,000 (32.6) | 116,000 (29.5) | 110,000 (30.3) |
+| 64 calls in flight, calls/s (CPU per call) | 313,000 (29.5 µs) | 333,000 (36.7) | 117,000 (30.5) | 117,000 (30.7) |
+| Casts from instances, handled/s | 742,000 | 651,000 | 210,000 | 201,000 |
+
+- **The app waited up to 2 µs on the line before each yield.** On the 16-core machine it cost 9 to 24% more CPU per call with many calls in flight and 12% fewer casts between instances; on the Pi nothing moved beyond the spread between rounds. The request rows are not a gain: over eight rounds (T10, below) a request and a bucket get swung between the same two levels in every build.
+- **The node's watch (T9) on the line instead of a pause loop** (16-core machine only) changed nothing beyond the spread but casts to one instance, 14% fewer.
+
+## 2026-11-06: the app's line wait inside a callback only (T10, not kept)
+
+T10: S33's line wait (`MWAITX`, up to 2 µs before each yield) for the app's wait for an answer inside a callback only, on CPUs that have it; `sched_yield` between callbacks. Built into `bulkhead-native`'s channel and reverted. The node's side did not change, so the app builds were swapped between runs. 16-core machine, 4 workers, `spin_us` 20, each round starting at load under 1, the builds in a rotating order; eight rounds of `native_cost` with S33's line wait in every wait ("all") as a third build, medians, ranges in brackets:
+
+| | Before | T10 | All |
+| --- | --- | --- | --- |
+| A request from a callback | 4.35 µs [3.5 to 4.5] | 4.05 [3.6 to 4.4] | 4.25 [3.6 to 4.4] |
+| A bucket get from a callback | 2.80 µs [2.2 to 3.0] | 2.65 [2.2 to 2.9] | 2.80 [2.2 to 2.9] |
+| 16 calls in flight, calls/s (CPU per call) | 253,000 (29.6 µs) | 257,000 (29.8) | 259,000 (32.8) |
+| 64 calls in flight, calls/s (CPU per call) | 314,000 (29.6 µs) | 319,000 (29.4) | 333,000 (37.0) |
+
+- **No build makes a request cheaper:** a request and a bucket get swing between two levels from run to run whatever the build (a bucket get about 2.2 or about 3.0 µs). S33's three rounds had caught the lower level for its line wait.
+- **The CPU cost is the waits between callbacks:** "all" costs a quarter more CPU per call with 64 calls in flight; T10 costs nothing and gains nothing. Three rounds of `cluster_throughput` before against T10 showed no row beyond the spread either (`spikes/s33/results/t10-16core`).
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
