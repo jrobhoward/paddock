@@ -2,6 +2,8 @@
 //! change watches, through `bulkhead-sdk`'s `watch` wrapper and the SDK
 //! fixture.
 
+// The SDK fixture runs as a native program, Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -17,7 +19,7 @@ use bulkhead_host::{
     HostObjectRequest, InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig,
     SharedBucket,
 };
-use common::{ask, ask_until, fixture};
+use common::{ask, ask_until};
 
 fn shared() -> &'static (Runtime, LoadedApp) {
     static SHARED: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
@@ -33,10 +35,11 @@ fn shared() -> &'static (Runtime, LoadedApp) {
                     publish: None,
                 },
             )]),
+            native: common::native_config(),
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let app = rt.load(&fixture("bulkhead_fixture_sdk")).unwrap();
+        let app = common::sdk_app(&rt);
         (rt, app)
     })
 }

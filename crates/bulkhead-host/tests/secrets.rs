@@ -2,6 +2,8 @@
 //! operator grants, read from the node's file or environment sources,
 //! through `bulkhead-sdk`'s `secrets` module and the SDK fixture.
 
+// The SDK fixture runs as a native program, Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -17,7 +19,7 @@ use bulkhead_bundle::manifest::Capability;
 use bulkhead_host::{
     InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig, SecretSource,
 };
-use common::{ask, fixture};
+use common::ask;
 
 const ENV_VAR: &str = "BULKHEAD_TEST_SECRET_E3";
 /// In secret values only: no log record or error may carry it.
@@ -55,10 +57,11 @@ fn setup() -> &'static Setup {
                 ("marked".to_string(), SecretSource::File(marked)),
                 ("binary".to_string(), SecretSource::File(binary)),
             ]),
+            native: common::native_config(),
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let app = rt.load(&fixture("bulkhead_fixture_sdk")).unwrap();
+        let app = common::sdk_app(&rt);
         Setup {
             rt,
             app,

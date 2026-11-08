@@ -306,7 +306,10 @@ async fn intensity____child_traps_in_init____restart_loop_escalates() {
         panic!("expected crashed, got {reason:?}");
     };
     assert!(why.contains("max restart intensity"), "{why}");
-    assert!(why.contains("last exit: bad crashed: trap"), "{why}");
+    assert!(
+        why.contains("last exit: bad crashed:") && why.contains("asked to trap in init"),
+        "{why}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -23,7 +23,7 @@ use crate::links::{LinkInfo, LinkTable};
 use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
 use crate::message::{CallError, Envelope};
 use crate::metrics::Metrics;
-use crate::native::NativeCode;
+use crate::native::{NativeCode, Program};
 use crate::pid::Pid;
 use crate::pool::Pool;
 use crate::registry::Registry;
@@ -179,7 +179,7 @@ pub struct LoadedApp {
 #[derive(Clone)]
 enum Code {
     Component(BulkheadAppPre<InstanceState>),
-    Native(Arc<NativeCode>),
+    Native(Arc<Program>),
 }
 
 impl LoadedApp {
@@ -198,7 +198,7 @@ impl LoadedApp {
     }
 
     /// A native-process app's program.
-    pub(crate) fn native(&self) -> Option<&Arc<NativeCode>> {
+    pub(crate) fn native(&self) -> Option<&Arc<Program>> {
         match &self.code {
             Code::Native(program) => Some(program),
             Code::Component(_) => None,
@@ -363,7 +363,21 @@ impl Runtime {
     #[must_use]
     pub fn load_native(&self, program: NativeCode) -> LoadedApp {
         LoadedApp {
-            code: Code::Native(Arc::new(program)),
+            code: Code::Native(Arc::new(Program::Process(program))),
+            stubbed: Arc::new(Vec::new()),
+        }
+    }
+
+    /// An in-process test app (cargo feature `test-apps`): its instances
+    /// run `A` in their own tasks, over the native protocol's frames
+    /// ([`crate::in_process`]).
+    #[cfg(feature = "test-apps")]
+    #[must_use]
+    pub fn load_in_process<A: crate::in_process::TestApp>(&self) -> LoadedApp {
+        LoadedApp {
+            code: Code::Native(Arc::new(Program::InProcess(
+                crate::in_process::InProcessApp::of::<A>(),
+            ))),
             stubbed: Arc::new(Vec::new()),
         }
     }

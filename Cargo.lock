@@ -450,6 +450,7 @@ dependencies = [
  "atomic-waker",
  "base64 0.23.1",
  "bulkhead-bundle",
+ "bulkhead-host",
  "bulkhead-native",
  "bulkhead-workload",
  "bytes",

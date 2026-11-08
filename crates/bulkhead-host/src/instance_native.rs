@@ -38,7 +38,7 @@ use crate::health;
 use crate::lifecycle::LifecycleState;
 use crate::listener::Accepted;
 use crate::message::{CallError, ExitReason, Info};
-use crate::native::NativeCode;
+use crate::native::Program;
 use crate::native::convert;
 use crate::native::port::{Incoming, KvCall, Port};
 use crate::output::{CapturedOutput, Tags};
@@ -475,7 +475,7 @@ impl InstanceTask {
     pub(super) async fn native(
         &mut self,
         rt: Arc<RuntimeInner>,
-        code: &NativeCode,
+        code: &Program,
         spec: &InstanceSpec,
     ) -> ExitReason {
         let weak = Arc::downgrade(&rt);
@@ -511,7 +511,7 @@ impl InstanceTask {
     fn native_port(
         &mut self,
         rt: &RuntimeInner,
-        code: &NativeCode,
+        code: &Program,
         spec: &InstanceSpec,
     ) -> Result<Port, String> {
         let tags = Arc::new(Tags {
@@ -799,7 +799,7 @@ impl InstanceTask {
         let started = std::time::Instant::now();
         let Some(code) = app
             .native()
-            .filter(|code| code.kind == NativeProgram::Executable)
+            .filter(|code| code.kind() == NativeProgram::Executable)
         else {
             return Err(UpgradeError::Invalid(
                 "a native executable upgrades in snapshot mode to a native executable only".into(),
@@ -1361,7 +1361,7 @@ impl InstanceTask {
             .app
             .as_ref()
             .and_then(LoadedApp::native)
-            .is_some_and(|code| code.kind == NativeProgram::Executable);
+            .is_some_and(|code| code.kind() == NativeProgram::Executable);
         match op {
             Op::Upgrade { reply, .. } if !snapshots => {
                 let _ = reply.send(Err(UpgradeError::Invalid(

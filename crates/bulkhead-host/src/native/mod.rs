@@ -18,6 +18,29 @@ use std::path::PathBuf;
 
 use bulkhead_bundle::manifest::NativeProgram;
 
+/// What a native instance runs: a program through `bulkhead-runner`, or an
+/// in-process test app (cargo feature `test-apps`).
+#[derive(Debug, Clone)]
+pub(crate) enum Program {
+    /// A program, run as a process.
+    Process(NativeCode),
+    /// An in-process test app ([`crate::in_process`]).
+    #[cfg(feature = "test-apps")]
+    InProcess(crate::in_process::InProcessApp),
+}
+
+impl Program {
+    /// A rustbridge plugin or an executable; an in-process app behaves as
+    /// an executable.
+    pub(crate) fn kind(&self) -> NativeProgram {
+        match self {
+            Self::Process(code) => code.kind,
+            #[cfg(feature = "test-apps")]
+            Self::InProcess(_) => NativeProgram::Executable,
+        }
+    }
+}
+
 /// A native app's program, written where the runner can read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeCode {

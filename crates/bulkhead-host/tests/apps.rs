@@ -319,7 +319,10 @@ async fn exit_criterion_2____init_traps____app_failed_with_reason_and_dependents
         why.contains("max restart intensity (2 in 10000 ms)"),
         "{why}"
     );
-    assert!(why.contains("last exit: instance-1 crashed: trap"), "{why}");
+    assert!(
+        why.contains("last exit: instance-1 crashed:") && why.contains("asked to trap in init"),
+        "{why}"
+    );
     assert_eq!(
         dependent,
         AppStatus::Failed(ExitReason::Crashed(

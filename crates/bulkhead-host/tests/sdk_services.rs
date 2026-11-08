@@ -1,6 +1,8 @@
 //! `bulkhead-sdk`'s `config` and `kv` wrappers, through the SDK fixture,
 //! against the host's config and keyvalue services.
 
+// The SDK fixture runs as a native program, Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -13,17 +15,18 @@ use std::time::Duration;
 
 use bulkhead_bundle::manifest::{Bucket, ByteSize, Capability, Durability};
 use bulkhead_host::{InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig};
-use common::{ask, fixture};
+use common::ask;
 
 fn shared() -> &'static (Runtime, LoadedApp) {
     static SHARED: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
     SHARED.get_or_init(|| {
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 16,
+            native: common::native_config(),
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let app = rt.load(&fixture("bulkhead_fixture_sdk")).unwrap();
+        let app = common::sdk_app(&rt);
         (rt, app)
     })
 }

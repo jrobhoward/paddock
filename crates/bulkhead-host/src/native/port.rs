@@ -35,7 +35,14 @@
 
 use std::time::Duration;
 
-use bulkhead_native::protocol::FromApp;
+use bulkhead_native::protocol::{FromApp, ToApp};
+
+use crate::config::NativeConfig;
+use crate::failover::RunUntil;
+use crate::message::ExitReason;
+use crate::native::Program;
+use crate::output::CapturedOutput;
+use crate::spec::InstanceSpec;
 
 /// Something from the app.
 #[derive(Debug)]
@@ -62,10 +69,10 @@ pub(crate) struct KvCall {
 const EXIT_GRACE: Duration = Duration::from_secs(1);
 
 #[cfg(target_os = "linux")]
-pub(crate) use linux::Port;
+pub(crate) use linux::ProcessPort;
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) use elsewhere::Port;
+pub(crate) use elsewhere::ProcessPort;
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -105,7 +112,7 @@ mod linux {
 
     /// A running native instance's process.
     #[derive(Debug)]
-    pub(crate) struct Port {
+    pub(crate) struct ProcessPort {
         child: Child,
         channel: Channel,
         /// The bell's read end: a byte when the app woke the node, the end
@@ -264,7 +271,7 @@ mod linux {
         })
     }
 
-    impl Port {
+    impl ProcessPort {
         /// Start `program` for the instance `name` (its pid, as text).
         /// Called on the runtime the instance's task runs on: the bell and
         /// the log pipe register with its I/O driver.
@@ -491,7 +498,7 @@ mod linux {
         }
 
         /// Answer a hot frame's keyvalue request, in a hot frame, as
-        /// [`Port::send`] sends.
+        /// [`ProcessPort::send`] sends.
         pub(crate) fn send_kv(&mut self, id: u64, reply: &bulkhead_native::hot::KvReply<'_>) {
             if self.closed {
                 return;
@@ -606,7 +613,7 @@ mod linux {
                 .store(u32::from(idle), Ordering::SeqCst);
         }
 
-        /// [`Port::recv`] inside a callback, where nothing but the app's
+        /// [`ProcessPort::recv`] inside a callback, where nothing but the app's
         /// answer is expected soon: with `watch`, while the worker has
         /// nothing else to do, the wait watches the rings within the poll
         /// (T9). The caller passes `false` when it just woke another task,
@@ -883,12 +890,12 @@ mod elsewhere {
     use crate::spec::InstanceSpec;
     use bulkhead_native::protocol::ToApp;
 
-    /// No native process runs here: [`Port::spawn`] refuses, so no `Port`
+    /// No native process runs here: [`ProcessPort::spawn`] refuses, so no `ProcessPort`
     /// exists.
     #[derive(Debug)]
-    pub(crate) struct Port(Infallible);
+    pub(crate) struct ProcessPort(Infallible);
 
-    impl Port {
+    impl ProcessPort {
         /// Native apps run on Linux only.
         ///
         /// # Errors
@@ -961,6 +968,114 @@ mod elsewhere {
         pub(crate) async fn finish(&mut self) {
             match self.0 {}
         }
+    }
+}
+
+/// A native instance's app: a process through `bulkhead-runner`, or, for
+/// tests (cargo feature `test-apps`, ROADMAP Z9c), an app polled inside the
+/// instance's own task ([`crate::in_process`]). Both speak the protocol's
+/// frames, so the instance's lifecycle is the same.
+// The in-process variant exists only with the test feature; a node runs
+// processes only, so boxing the process port would cost every instance an
+// allocation for a test's sake.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub(crate) enum Port {
+    /// A process.
+    Process(ProcessPort),
+    /// An in-process test app.
+    #[cfg(feature = "test-apps")]
+    InProcess(crate::in_process::InProcessPort),
+}
+
+/// Call `$method` on whichever port this is.
+macro_rules! each {
+    ($self:ident, $port:ident => $e:expr) => {
+        match $self {
+            Port::Process($port) => $e,
+            #[cfg(feature = "test-apps")]
+            Port::InProcess($port) => $e,
+        }
+    };
+}
+
+impl Port {
+    /// Start `program` for the instance `name` (its pid, as text): a
+    /// process, or an in-process app.
+    ///
+    /// # Errors
+    ///
+    /// As [`ProcessPort::spawn`].
+    pub(crate) fn spawn(
+        config: &NativeConfig,
+        program: &Program,
+        spec: &InstanceSpec,
+        name: &str,
+        output: CapturedOutput,
+        lease: Option<tokio::sync::watch::Receiver<RunUntil>>,
+    ) -> Result<Self, String> {
+        match program {
+            Program::Process(code) => {
+                ProcessPort::spawn(config, code, spec, name, output, lease).map(Port::Process)
+            }
+            #[cfg(feature = "test-apps")]
+            Program::InProcess(app) => Ok(Port::InProcess(app.start())),
+        }
+    }
+
+    pub(crate) fn set_version(&mut self, version: u16) {
+        each!(self, p => p.set_version(version));
+    }
+
+    pub(crate) fn send(&mut self, frame: &ToApp) {
+        each!(self, p => p.send(frame));
+    }
+
+    pub(crate) fn send_kv(&mut self, id: u64, reply: &bulkhead_native::hot::KvReply<'_>) {
+        each!(self, p => p.send_kv(id, reply));
+    }
+
+    pub(crate) fn send_published(
+        &mut self,
+        version: &crate::services::keyvalue::publish::Version,
+    ) -> Result<bulkhead_native::protocol::FdRef, String> {
+        each!(self, p => p.send_published(version))
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn send_fd(
+        &mut self,
+        fd: std::os::fd::BorrowedFd<'_>,
+    ) -> Result<bulkhead_native::protocol::FdRef, String> {
+        each!(self, p => p.send_fd(fd))
+    }
+
+    pub(crate) async fn recv(&mut self) -> Option<Incoming> {
+        each!(self, p => p.recv().await)
+    }
+
+    pub(crate) fn hint_idle(&mut self, nothing_queued: bool) {
+        each!(self, p => p.hint_idle(nothing_queued));
+    }
+
+    pub(crate) async fn recv_in_callback(&mut self, watch: bool) -> Option<Incoming> {
+        each!(self, p => p.recv_in_callback(watch).await)
+    }
+
+    pub(crate) fn kill(&mut self) {
+        each!(self, p => p.kill());
+    }
+
+    pub(crate) async fn exit_reason(&mut self) -> ExitReason {
+        each!(self, p => p.exit_reason().await)
+    }
+
+    pub(crate) fn exited_reason(&mut self) -> Option<ExitReason> {
+        each!(self, p => p.exited_reason())
+    }
+
+    pub(crate) async fn finish(&mut self) {
+        each!(self, p => p.finish().await);
     }
 }
 

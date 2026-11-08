@@ -67,8 +67,8 @@ pub fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
-/// A runtime and the chaos app, shared by every test in a binary so the
-/// component compiles once.
+/// A runtime and the chaos app (in-process, ROADMAP Z9d), shared by every
+/// test in a binary.
 pub fn shared() -> &'static (Runtime, LoadedApp) {
     static SHARED: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
     SHARED.get_or_init(|| {
@@ -77,7 +77,7 @@ pub fn shared() -> &'static (Runtime, LoadedApp) {
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let app = runtime.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+        let app = runtime.load_in_process::<bulkhead_host::in_process::chaos::Chaos>();
         (runtime, app)
     })
 }
@@ -252,5 +252,48 @@ pub fn native_fixtures() -> &'static (PathBuf, PathBuf, PathBuf) {
             debug.join("bulkhead-fixture-native"),
             debug.join("libbulkhead_fixture_plugin.so"),
         )
+    })
+}
+
+/// The SDK fixture built as a native program (ROADMAP Z9d), once per test
+/// binary: the services tests run its commands through the SDK's native
+/// build.
+pub fn native_sdk() -> &'static PathBuf {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let root = workspace_root();
+        let target = root.join("target/fixtures/native-sdk");
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let ok = Command::new(cargo)
+            .current_dir(&root)
+            .args([
+                "build",
+                "-p",
+                "bulkhead-fixture-sdk",
+                "--features",
+                "native",
+            ])
+            .args(["--bin", "bulkhead-fixture-sdk", "--target-dir"])
+            .arg(&target)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "building the native SDK fixture failed");
+        target.join("debug/bulkhead-fixture-sdk")
+    })
+}
+
+/// Native config with the test-built `bulkhead-runner`.
+pub fn native_config() -> bulkhead_host::NativeConfig {
+    let mut native = bulkhead_host::NativeConfig::default();
+    native.runner = Some(native_fixtures().0.clone());
+    native
+}
+
+/// The SDK fixture, native, on `rt` (which needs [`native_config`]).
+pub fn sdk_app(rt: &Runtime) -> LoadedApp {
+    rt.load_native(bulkhead_host::NativeCode {
+        path: native_sdk().clone(),
+        kind: bulkhead_bundle::manifest::NativeProgram::Executable,
     })
 }

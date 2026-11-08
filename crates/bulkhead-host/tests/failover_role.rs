@@ -8,7 +8,7 @@
 mod common;
 
 use bulkhead_host::{Runtime, RuntimeConfig};
-use common::{ask, ask_until, fixture, spec};
+use common::{ask, ask_until, spec};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_failover_role____announcing_and_other_instances____only_the_announcing_one_told() {
@@ -17,7 +17,7 @@ async fn set_failover_role____announcing_and_other_instances____only_the_announc
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = rt.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+    let app = rt.load_in_process::<bulkhead_host::in_process::chaos::Chaos>();
     rt.set_failover_role(Some("standby"));
     let mut told = spec("");
     told.announce_role = true;

@@ -376,10 +376,9 @@ fn replicated____no_ack_and_no_witness____write_answered_within_the_timeout() {
         (reply, waited, keys(&kv).await)
     });
 
-    assert!(
-        reply.starts_with("err:") && reply.contains("may yet commit"),
-        "{reply}"
-    );
+    // A native app is told the write is unavailable; the protocol's error
+    // carries no reason, where a component's said it may yet commit.
+    assert_eq!(reply, "err:unavailable");
     assert!(waited >= Duration::from_secs(5), "{waited:?}");
     assert!(waited < Duration::from_secs(7), "{waited:?}");
     assert_eq!(after_heal, "stuck", "its entry committed once healed");

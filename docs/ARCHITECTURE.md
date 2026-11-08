@@ -210,7 +210,7 @@ Snapshots are frames (`SaveSnapshot` between callbacks, `LoadSnapshot` in place 
 
 ### Processes and shared memory
 
-A node with native apps is one `bulkhead node` process and one process per native instance. `bulkhead-runner` does not add one: it sandboxes itself and then `execve`s the app's executable (or loads its rustbridge `.so`) in the same process. The exception is an instance bound to a failover lease (a singleton): the runner forks first, and its parent stays as a watchdog that kills the app at the lease's end even when the node does not run (`bulkhead_native::lease`), fed each new end by a task of the node's per such instance (`native::port`). Two apps with one instance each, a writer and a watcher of a shared bucket:
+A node with native apps is one `bulkhead node` process and one process per native instance. `bulkhead-runner` does not add one: it sandboxes itself and then `execve`s the app's executable (or loads its rustbridge `.so`) in the same process. The exception is an instance bound to a failover lease (a singleton): the runner forks first, and its parent stays as a watchdog that kills the app at the lease's end even when the node does not run (`bulkhead_native::lease`), fed each new end by a task of the node's per such instance (`native::port`). In tests (`test-apps`), `native::port::Port` can instead be an in-process app (`in_process`), polled inside the instance's task over the same frames: no process at all. Two apps with one instance each, a writer and a watcher of a shared bucket:
 
 ```mermaid
 flowchart LR

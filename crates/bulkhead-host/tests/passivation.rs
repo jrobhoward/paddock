@@ -31,7 +31,9 @@ fn runtime() -> &'static (Runtime, LoadedApp) {
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let app = rt.load(&counter(1)).unwrap();
+        let app = rt.load_in_process::<bulkhead_host::in_process::counter::Counter<
+            bulkhead_host::in_process::counter::V1,
+        >>();
         (rt, app)
     })
 }
@@ -282,7 +284,7 @@ async fn upgrade____then_passivated_and_woken____the_new_version_answers() {
     let (rt, app) = runtime();
     let h = rt.spawn(app, passivating(&[])).unwrap();
     incs(&h, 2).await;
-    let v2 = rt.load(&counter(2)).unwrap();
+    let v2 = rt.load_in_process::<bulkhead_host::in_process::counter::Counter<bulkhead_host::in_process::counter::V2>>();
     let mut next = passivating(&[]);
     next.version = "2.0.0".into();
     h.upgrade(&v2, next, "1.0.0").await.unwrap();
@@ -326,6 +328,8 @@ async fn passivation____passivated_and_woken____counted_in_metrics() {
 /// An SDK app with a watch and a group membership, passivated: a change
 /// notice and a publish each wake it, and its state, kept by its own
 /// `save_snapshot`, carries the notices across.
+// The SDK fixture runs as a native program, Linux only.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn passivation____sdk_app_watching_and_in_a_group____woken_by_notice_and_publish() {
     use bulkhead_bundle::manifest::{AccessMode, Capability, Durability, GroupsScope};
@@ -341,10 +345,11 @@ async fn passivation____sdk_app_watching_and_in_a_group____woken_by_notice_and_p
                 publish: None,
             },
         )]),
+        native: common::native_config(),
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = rt.load(&common::fixture("bulkhead_fixture_sdk")).unwrap();
+    let app = common::sdk_app(&rt);
     let spec = |passivate: bool| {
         let mut s = InstanceSpec {
             callback_deadline: Duration::from_secs(5),

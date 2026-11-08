@@ -220,6 +220,12 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   protocol and the channel). The host side is
   `crates/bulkhead-host/src/native/` (the port, cgroups, conversions) and
   `src/instance_native.rs` (the lifecycle, a child module of `instance`).
+  `src/in_process.rs` (cargo feature `test-apps`, Z9c) runs a test app
+  written in Rust inside its instance's task over the same frames, polled
+  by an in-process `Port`; tests and the simulation use its `chaos` app,
+  since a process cannot follow tokio's paused clock. Code that never
+  yields cannot be stopped there: deadline, kill, memory and sandbox tests
+  use native processes.
 - `crates/bulkhead-fixture-native` (an executable on the app API) and
   `crates/bulkhead-fixture-plugin` (a rustbridge `.so`): native test apps,
   built natively into `target/fixtures/native` by the tests that use them.

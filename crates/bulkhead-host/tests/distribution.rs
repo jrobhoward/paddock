@@ -8,20 +8,13 @@
 
 mod common;
 
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use bulkhead_host::transport::memory::{Faults, Mesh};
 use bulkhead_host::{
     AppDeployment, CallError, ExitReason, InstanceHandle, LoadedApp, Runtime, RuntimeConfig,
 };
-use common::{LONG, app_manifest, ask, ask_until, body, fixture, pid_text, spec, text};
-
-/// The chaos component's bytes, read once.
-fn chaos() -> &'static [u8] {
-    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
-    BYTES.get_or_init(|| fixture("bulkhead_fixture_chaos"))
-}
+use common::{LONG, app_manifest, ask, ask_until, body, pid_text, spec, text};
 
 /// A node running the chaos app.
 struct Node {
@@ -40,7 +33,7 @@ impl Node {
 
     fn with(config: RuntimeConfig) -> Self {
         let rt = Runtime::new(config).unwrap();
-        let app = rt.load(chaos()).unwrap();
+        let app = rt.load_in_process::<bulkhead_host::in_process::chaos::Chaos>();
         Self { rt, app }
     }
 

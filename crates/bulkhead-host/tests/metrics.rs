@@ -1,6 +1,8 @@
 //! Metrics: apps' own through `bulkhead:metrics` and the SDK
 //! fixture, and the host's per-app counters, rendered as Prometheus text.
 
+// The SDK fixture runs as a native program, Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -12,15 +14,16 @@ use std::time::Duration;
 
 use bulkhead_bundle::manifest::Capability;
 use bulkhead_host::{InstanceHandle, InstanceSpec, LoadedApp, Runtime, RuntimeConfig};
-use common::{ask, fixture};
+use common::ask;
 
 fn runtime() -> (Runtime, LoadedApp) {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 8,
+        native: common::native_config(),
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = rt.load(&fixture("bulkhead_fixture_sdk")).unwrap();
+    let app = common::sdk_app(&rt);
     (rt, app)
 }
 

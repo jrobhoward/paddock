@@ -30,27 +30,18 @@ use bulkhead_host::transport::memory::Mesh;
 use bulkhead_host::{InstanceHandle, InstanceSpec, LoadedApp, Role, Runtime, RuntimeConfig};
 use tokio::sync::broadcast;
 
-use crate::common::{fixture, spec};
+use bulkhead_host::in_process::chaos::Chaos;
+use bulkhead_host::in_process::services::Services;
+
+use crate::common::spec;
 
 /// Heartbeat interval on every simulated node.
 pub const HEARTBEAT: Duration = Duration::from_millis(100);
 /// Silence after which a simulated node counts a path as silent.
 pub const NODE_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// The chaos component's bytes, read once.
-fn chaos() -> &'static [u8] {
-    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
-    BYTES.get_or_init(|| fixture("bulkhead_fixture_chaos"))
-}
-
-/// The SDK fixture's bytes, read once.
-fn sdk() -> &'static [u8] {
-    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
-    BYTES.get_or_init(|| fixture("bulkhead_fixture_sdk"))
-}
-
-/// One node: a runtime running the chaos app (and the SDK fixture, loaded
-/// on first use).
+/// One node: a runtime running the chaos app and the services app, in
+/// process (ROADMAP Z9d), so the paused clock holds.
 pub struct SimNode {
     pub rt: Runtime,
     app: LoadedApp,
@@ -83,7 +74,7 @@ impl SimNode {
         };
         configure(&mut config);
         let rt = Runtime::new(config).unwrap();
-        let app = rt.load(chaos()).unwrap();
+        let app = rt.load_in_process::<Chaos>();
         Self {
             rt,
             app,
@@ -99,7 +90,9 @@ impl SimNode {
     /// Start an SDK fixture instance as app `app`, granted `bulkhead:groups`
     /// for `groups` (join and publish), with messaging routes `acl`.
     pub fn spawn_sdk(&self, app: &str, groups: &[&str], acl: Acl) -> InstanceHandle {
-        let loaded = self.sdk.get_or_init(|| self.rt.load(sdk()).unwrap());
+        let loaded = self
+            .sdk
+            .get_or_init(|| self.rt.load_in_process::<Services>());
         let mut s = InstanceSpec {
             callback_deadline: Duration::from_secs(5),
             granted: [Capability::Groups].into(),
@@ -117,7 +110,9 @@ impl SimNode {
     /// Start an SDK fixture instance granted keyvalue, with read-write use
     /// of the node's shared bucket `bucket`.
     pub fn spawn_kv(&self, bucket: &str) -> InstanceHandle {
-        let loaded = self.sdk.get_or_init(|| self.rt.load(sdk()).unwrap());
+        let loaded = self
+            .sdk
+            .get_or_init(|| self.rt.load_in_process::<Services>());
         let mut s = InstanceSpec {
             callback_deadline: Duration::from_secs(5),
             granted: [Capability::KeyValue].into(),
@@ -130,7 +125,9 @@ impl SimNode {
     /// Start an SDK fixture instance as app `app`, with its own
     /// `replicated` bucket `bucket`.
     pub fn spawn_kv_replicated(&self, app: &str, bucket: &str) -> InstanceHandle {
-        let loaded = self.sdk.get_or_init(|| self.rt.load(sdk()).unwrap());
+        let loaded = self
+            .sdk
+            .get_or_init(|| self.rt.load_in_process::<Services>());
         let mut s = InstanceSpec {
             callback_deadline: Duration::from_secs(5),
             granted: [Capability::KeyValue].into(),

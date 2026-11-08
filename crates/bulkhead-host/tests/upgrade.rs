@@ -18,12 +18,20 @@ use bulkhead_host::{
     AppDeployment, CallError, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, UpgradeError,
     UpgradeOptions,
 };
-use common::{LONG, ask, ask_until, counter, pid_text, shared, spec, text};
+use common::{LONG, ask, ask_until, pid_text, shared, spec, text};
 use serde_json::json;
 
 fn counter_app(version: u8) -> &'static LoadedApp {
     static APPS: [OnceLock<LoadedApp>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
-    APPS[usize::from(version - 1)].get_or_init(|| shared().0.load(&counter(version)).unwrap())
+    use bulkhead_host::in_process::counter::{Counter, V1, V2, V3};
+    APPS[usize::from(version - 1)].get_or_init(|| {
+        let rt = &shared().0;
+        match version {
+            1 => rt.load_in_process::<Counter<V1>>(),
+            2 => rt.load_in_process::<Counter<V2>>(),
+            _ => rt.load_in_process::<Counter<V3>>(),
+        }
+    })
 }
 
 fn counter_spec(init_args: &str, names: &[&str]) -> InstanceSpec {

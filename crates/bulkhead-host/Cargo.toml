@@ -25,6 +25,10 @@ sql = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio-postgres-rustls
 # DTrace on macOS and FreeBSD, ETW on Windows. Without it the probe calls
 # compile to nothing.
 probes = ["dep:anyprobe"]
+# In-process test apps (`bulkhead_host::in_process`, ROADMAP Z9c): apps
+# written in Rust that run in their instance's task, for tests and the
+# simulation. Not for production nodes.
+test-apps = []
 
 [dependencies]
 anyprobe = { workspace = true, optional = true }
@@ -72,6 +76,9 @@ rustix = { workspace = true, features = ["pipe"] }
 libc = { workspace = true }
 
 [dev-dependencies]
+# Its own in-process test apps, for its tests (`tests/in_process.rs`, the
+# simulation).
+bulkhead-host = { path = ".", features = ["test-apps"] }
 rcgen = { workspace = true }
 proptest = { workspace = true }
 rstest = { workspace = true }

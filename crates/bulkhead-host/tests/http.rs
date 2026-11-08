@@ -1,6 +1,8 @@
 //! HTTP ingress: requests to an app's routes become calls to
 //! its pool, through `bulkhead-sdk`'s `http` module and the SDK fixture.
 
+// The SDK fixture runs as a native program, Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -16,7 +18,6 @@ use bulkhead_host::http::{
     HttpIngress, HttpRoute, IngressListen, IngressTls, Standby, TlsCertificate,
 };
 use bulkhead_host::{AppDeployment, Apps, Runtime, RuntimeConfig};
-use common::fixture;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -89,10 +90,11 @@ fn start() -> Served {
         .unwrap();
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 16,
+        native: common::native_config(),
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = rt.load(&fixture("bulkhead_fixture_sdk")).unwrap();
+    let app = common::sdk_app(&rt);
     let web = manifest(
         "web",
         json!({

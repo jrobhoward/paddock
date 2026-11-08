@@ -118,6 +118,12 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `bulkhead-host`'s `test-apps` feature (ROADMAP Z9c): in-process test
+  apps (`bulkhead_host::in_process`), written in Rust as `TestApp`s and
+  loaded with `Runtime::load_in_process`, run inside their instance's task
+  over the native protocol's frames, under the native lifecycle, and
+  follow tokio's paused clock. `in_process::chaos::Chaos` is the chaos
+  fixture's commands on it. For tests, not production nodes.
 - A node accepts native apps built against the previous protocol version
   as well as its own (ROADMAP Z9a), so an app survives one node upgrade
   without a rebuild: version 12 nodes run version 11 apps. A frame newer

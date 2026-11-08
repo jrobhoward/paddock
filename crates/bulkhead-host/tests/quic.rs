@@ -11,7 +11,6 @@ mod common;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use bulkhead_host::transport::quic::{
@@ -19,12 +18,7 @@ use bulkhead_host::transport::quic::{
 };
 use bulkhead_host::transport::{Frame, Packet, SendError, Transport, wire};
 use bulkhead_host::{InstanceHandle, LoadedApp, Runtime, RuntimeConfig};
-use common::{ask, ask_until, fixture, pid_text, spec, text};
-
-fn chaos() -> &'static [u8] {
-    static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
-    BYTES.get_or_init(|| fixture("bulkhead_fixture_chaos"))
-}
+use common::{ask, ask_until, pid_text, spec, text};
 
 /// Write a private key readable by its owner only, as the node requires.
 fn write_key(path: &Path, private: &str) {
@@ -124,7 +118,7 @@ impl Node {
             max_version,
         )
         .unwrap();
-        let app = rt.load(chaos()).unwrap();
+        let app = rt.load_in_process::<bulkhead_host::in_process::chaos::Chaos>();
         Self {
             rt,
             app,

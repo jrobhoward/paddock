@@ -2,6 +2,8 @@
 //! fixture: full batches, one cast per point, and a partial batch sent by
 //! its timer.
 
+// The SDK fixture runs as a native program, Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -11,15 +13,16 @@ mod common;
 use std::time::{Duration, Instant};
 
 use bulkhead_host::{AppDeployment, Apps, InstanceHandle, Runtime, RuntimeConfig};
-use common::{app_manifest, ask, ask_until, fixture};
+use common::{app_manifest, ask, ask_until};
 
 async fn pair(name: &str) -> (Apps, InstanceHandle, InstanceHandle) {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 8,
+        native: common::native_config(),
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let loaded = rt.load(&fixture("bulkhead_fixture_sdk")).unwrap();
+    let loaded = common::sdk_app(&rt);
     let spec =
         serde_json::json!({ "limits": { "mailbox_max": 100000, "callback_deadline_ms": 5000 } });
     let sink = format!("{name}-sink");

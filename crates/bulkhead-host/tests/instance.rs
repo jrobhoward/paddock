@@ -61,7 +61,7 @@ async fn call____guest_traps____caller_gets_exit_reason_and_instance_fails() {
     let CallError::Exited(ExitReason::Crashed(why)) = &err else {
         panic!("expected exited(crashed), got {err:?}");
     };
-    assert!(why.contains("unreachable"), "{why}");
+    assert_eq!(why, "panic: asked to trap");
     assert_eq!(instance.wait().await, ExitReason::Crashed(why.clone()));
     assert_eq!(instance.state(), LifecycleState::Failed);
     assert!(rt.lookup(instance.pid()).is_none());
@@ -98,26 +98,6 @@ async fn call____guest_spins____killed_at_deadline_while_others_stay_responsive(
     probe.kill();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn call____guest_sleeps_past_deadline____host_time_so_not_killed() {
-    let (rt, app) = shared();
-    let sleeper = rt.spawn(app, spec("")).unwrap();
-
-    let started = Instant::now();
-    let reply = sleeper.call(text("sleep:800"), LONG).await;
-
-    assert_eq!(body(&reply.unwrap()), "slept");
-    assert!(started.elapsed() >= Duration::from_millis(800));
-    assert_eq!(
-        sleeper
-            .call(text("echo:alive"), LONG)
-            .await
-            .map(|r| body(&r)),
-        Ok("alive".to_string())
-    );
-    sleeper.kill();
-}
-
 #[rstest]
 #[case::waiting_in_a_host_call("sleep:10000")]
 #[case::running_guest_code("spin")]
@@ -140,29 +120,6 @@ async fn kill____during_a_callback____caller_sees_killed_at_once(#[case] command
     let took = started.elapsed();
     assert_eq!(result, Err(CallError::Exited(ExitReason::Killed)));
     assert!(took < Duration::from_millis(100), "{took:?}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn call____allocates_past_memory_max____crashes_with_memory_limit() {
-    let (rt, app) = shared();
-    let instance = rt.spawn(app, spec("")).unwrap();
-    let neighbour = rt.spawn(app, spec("")).unwrap();
-
-    let small = instance.call(text("alloc:4"), LONG).await;
-    let big = instance.call(text("alloc:64"), LONG).await;
-
-    assert_eq!(body(&small.unwrap()), "ok");
-    assert_eq!(
-        big,
-        Err(CallError::Exited(ExitReason::Crashed(
-            "memory_limit".into()
-        )))
-    );
-    assert_eq!(
-        body(&neighbour.call(text("echo:fine"), LONG).await.unwrap()),
-        "fine"
-    );
-    neighbour.kill();
 }
 
 #[rstest]
@@ -189,7 +146,7 @@ async fn init____traps____exits_crashed_with_trap() {
     let ExitReason::Crashed(why) = reason else {
         panic!("expected crashed, got {reason:?}");
     };
-    assert!(why.starts_with("trap:"), "{why}");
+    assert!(why.contains("asked to trap in init"), "{why}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

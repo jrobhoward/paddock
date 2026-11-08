@@ -16,7 +16,7 @@ use bulkhead_host::failover::{
 use bulkhead_host::transport::Frame;
 use bulkhead_host::transport::memory::Faults;
 use bulkhead_host::transport::wire;
-use bulkhead_host::{CallError, LifecycleState};
+use bulkhead_host::{CallError, ExitReason, LifecycleState};
 use tokio::time::Instant;
 
 use crate::common::{body, text};
@@ -234,9 +234,15 @@ fn bound_instances____lease_moves_with_no_gate____guest_code_runs_only_under_the
 
     assert_eq!(before.as_deref(), Ok("one"));
     assert_eq!(standby_before, Err(CallError::Timeout));
-    assert_eq!(cut_off, Err(CallError::Timeout));
+    // A native instance may run threads between callbacks, so the lease's
+    // end ends it, idle or not (a component's only stopped running guest
+    // code, its calls timing out).
+    assert_eq!(
+        cut_off,
+        Err(CallError::Exited(ExitReason::Crashed("lease_ended".into())))
+    );
     assert_eq!(taken_over.as_deref(), Ok("two"));
-    assert_eq!(old_state, LifecycleState::Active);
+    assert_eq!(old_state, LifecycleState::Failed);
 }
 
 /// A standby whose request's answer was lost, and which then hears its

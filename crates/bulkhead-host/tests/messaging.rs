@@ -15,7 +15,7 @@ use bulkhead_host::{
     CallError, Envelope, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, Pid, Runtime,
     RuntimeConfig,
 };
-use common::{LONG, body, fixture, pid_text, shared, spec, text};
+use common::{LONG, body, pid_text, shared, spec, text};
 
 async fn ask(instance: &bulkhead_host::InstanceHandle, command: &str) -> String {
     body(&instance.call(text(command), LONG).await.unwrap())
@@ -359,7 +359,9 @@ async fn runtime_call____stale_pid____noproc() {
 
 /// A runtime whose epoch tick is longer than any test, so an instance
 /// yields only between messages: a woken task left in the worker's LIFO
-/// slot would wait for all the work queued behind its message.
+/// slot would wait for all the work queued behind its message. Components
+/// only: their guest work runs on the worker, where a native app's runs in
+/// its process. These go with components (ROADMAP Z9e).
 fn slow_tick() -> &'static (Runtime, LoadedApp) {
     static SLOW: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
     SLOW.get_or_init(|| {
@@ -369,7 +371,7 @@ fn slow_tick() -> &'static (Runtime, LoadedApp) {
             ..RuntimeConfig::default()
         })
         .unwrap();
-        let app = rt.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+        let app = rt.load(&common::fixture("bulkhead_fixture_chaos")).unwrap();
         (rt, app)
     })
 }
