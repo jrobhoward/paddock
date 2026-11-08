@@ -143,16 +143,23 @@ fn lease_due(
     timer: std::pin::Pin<&mut tokio::time::Sleep>,
 ) -> Result<(), ExitReason> {
     match lease_end(lease) {
-        Some(end) if end <= Instant::now() => {
-            state.lease_ended = true;
-            port.kill();
-            Err(ExitReason::Crashed("lease_ended".into()))
-        }
+        Some(end) if end <= Instant::now() => Err(lease_ended(state, port)),
         end => {
             timer.reset(end.unwrap_or_else(far_off));
             Ok(())
         }
     }
+}
+
+/// The lease has ended: kill the app (`crashed: lease_ended`), unless the
+/// runner's watchdog already did while this node did not run (a stopped
+/// node), whose exit then says so (`crashed: killed_at_lease_end`).
+fn lease_ended(state: &mut InstanceState, port: &mut Port) -> ExitReason {
+    state.lease_ended = true;
+    port.exited_reason().unwrap_or_else(|| {
+        port.kill();
+        ExitReason::Crashed("lease_ended".into())
+    })
 }
 
 /// A time no timer reaches.
@@ -548,7 +555,10 @@ impl InstanceTask {
         if self.native_spawns > 1 {
             name = format!("{name}-{}", self.native_spawns);
         }
-        Port::spawn(rt.native_config(), code, spec, &name, output)
+        // An instance bound to a lease is killed at its end by the
+        // runner's watchdog too, which runs while the node does not.
+        let lease = spec.bound_to_lease.then(|| rt.failover.run_until());
+        Port::spawn(rt.native_config(), code, spec, &name, output, lease)
     }
 
     async fn native_run(
@@ -976,11 +986,7 @@ impl InstanceTask {
                     port.kill();
                     return Err(timeout.clone());
                 }
-                Ok(Step::LeaseEnded) => {
-                    state.lease_ended = true;
-                    port.kill();
-                    return Err(ExitReason::Crashed("lease_ended".into()));
-                }
+                Ok(Step::LeaseEnded) => return Err(lease_ended(state, port)),
                 Ok(Step::LeaseChanged) => continue,
                 Ok(Step::Incoming(incoming)) => incoming,
             };

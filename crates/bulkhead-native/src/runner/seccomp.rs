@@ -12,7 +12,7 @@
 //!
 //! | Call | Refused when |
 //! | --- | --- |
-//! | `kill`, `tgkill`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` | the target is not this process (a negative or zero pid is a group) |
+//! | `kill`, `tgkill`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` | the target is not this process (a negative or zero pid is a group); for the lease watchdog, nor its child |
 //! | `tkill`, `pidfd_send_signal`, `pidfd_getfd` | always |
 //! | `ptrace`, `process_vm_readv`, `process_vm_writev` | always |
 //! | `socket`, `connect`, `accept`, `accept4` | always |
@@ -25,15 +25,26 @@ use seccompiler::{
     TargetArch,
 };
 
-/// The filter's rules for a process whose pid is `pid`.
+/// The filter's rules for a process that may signal only the processes
+/// `pids` (itself, and for the lease watchdog its child too).
 ///
 /// # Errors
 ///
 /// A seccompiler error (none for valid input).
-pub fn rules(pid: u32) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompiler::Error> {
+pub fn rules(pids: &[u32]) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompiler::Error> {
+    // One rule whose conditions all hold: the target is none of `pids`.
     let other = || {
-        SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, u64::from(pid))
-            .and_then(|c| SeccompRule::new(vec![c]))
+        pids.iter()
+            .map(|pid| {
+                SeccompCondition::new(
+                    0,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::Ne,
+                    u64::from(*pid),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(SeccompRule::new)
             .map(|r| vec![r])
     };
     let mut rules = BTreeMap::new();
@@ -72,9 +83,19 @@ pub fn rules(pid: u32) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompiler::E
 ///
 /// An unsupported architecture, or the kernel refused the filter.
 pub fn install() -> Result<(), String> {
+    install_for(&[std::process::id()])
+}
+
+/// Install the filter, with signals allowed to `pids`, on every thread of
+/// this process.
+///
+/// # Errors
+///
+/// As [`install`].
+pub fn install_for(pids: &[u32]) -> Result<(), String> {
     let arch = TargetArch::try_from(std::env::consts::ARCH).map_err(|e| e.to_string())?;
     let filter = SeccompFilter::new(
-        rules(std::process::id()).map_err(|e| e.to_string())?,
+        rules(pids).map_err(|e| e.to_string())?,
         SeccompAction::Allow,
         SeccompAction::Errno(libc::EPERM.unsigned_abs()),
         arch,

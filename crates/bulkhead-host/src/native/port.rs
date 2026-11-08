@@ -87,6 +87,7 @@ mod linux {
 
     use super::{EXIT_GRACE, Incoming};
     use crate::config::NativeConfig;
+    use crate::failover::RunUntil;
     use crate::message::ExitReason;
     use crate::native::{NativeCode, cgroup};
     use crate::output::CapturedOutput;
@@ -142,6 +143,50 @@ mod linux {
         /// last yield: the worker has nothing else to do (T9).
         worker_idle: bool,
         cgroup: Option<PathBuf>,
+        /// For an instance bound to a lease, the task writing its
+        /// deadlines to the runner's watchdog ([`bulkhead_native::lease`]),
+        /// ended with the port.
+        lease: Option<Renewals>,
+    }
+
+    /// The task writing a leased port's deadlines; aborted on drop.
+    #[derive(Debug)]
+    struct Renewals(tokio::task::JoinHandle<()>);
+
+    impl Drop for Renewals {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+
+    /// The deadline the runner's watchdog enforces for `run_until`: its
+    /// end on `CLOCK_MONOTONIC`, in nanoseconds ([`bulkhead_native::lease`]).
+    pub(crate) fn deadline(run_until: RunUntil) -> u64 {
+        use bulkhead_native::lease::{NO_DEADLINE, now_ns};
+        match run_until {
+            RunUntil::Always => NO_DEADLINE,
+            RunUntil::Never => 0,
+            RunUntil::Until(end) => {
+                let left = end.saturating_duration_since(tokio::time::Instant::now());
+                now_ns().saturating_add(u64::try_from(left.as_nanos()).unwrap_or(u64::MAX))
+            }
+        }
+    }
+
+    /// Write each change of `lease` to the watchdog's pipe until the
+    /// runner has gone. A full pipe drops a deadline: the watchdog drains
+    /// it whenever it runs, and the next change follows.
+    async fn renew(mut lease: tokio::sync::watch::Receiver<RunUntil>, pipe: std::os::fd::OwnedFd) {
+        loop {
+            if lease.changed().await.is_err() {
+                return;
+            }
+            let at = deadline(*lease.borrow_and_update());
+            match rustix::io::write(&pipe, &at.to_le_bytes()) {
+                Ok(_) | Err(rustix::io::Errno::AGAIN) => {}
+                Err(_) => return,
+            }
+        }
     }
 
     /// The longest a wait watches the rings within one poll (T9): a task
@@ -202,6 +247,7 @@ mod linux {
             spec: &InstanceSpec,
             name: &str,
             output: CapturedOutput,
+            lease: Option<tokio::sync::watch::Receiver<RunUntil>>,
         ) -> Result<Self, String> {
             let runner = runner(config);
             let mut cmd = Command::new(&runner);
@@ -217,6 +263,24 @@ mod linux {
             if config.landlock_optional {
                 cmd.args(["--landlock", "best-effort"]);
             }
+            // A lease's first deadline is in the pipe before the runner
+            // starts; the rest follow from a task.
+            let lease_pipe = match &lease {
+                Some(rx) => {
+                    let (read, write) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)
+                        .map_err(|e| format!("lease pipe: {e}"))?;
+                    let first = deadline(*rx.borrow());
+                    rustix::io::write(&write, &first.to_le_bytes())
+                        .map_err(|e| format!("lease pipe: {e}"))?;
+                    rustix::fs::fcntl_setfl(&write, rustix::fs::OFlags::NONBLOCK)
+                        .map_err(|e| format!("lease pipe: {e}"))?;
+                    cmd.arg(bulkhead_native::lease::FLAG);
+                    Some((read, write))
+                }
+                None => None,
+            };
+            // The read end goes with the closure below, which `cmd` holds.
+            let (lease_read, lease_write) = lease_pipe.unzip();
             cmd.env_clear();
             if let Some(p) = spec
                 .preopens
@@ -288,6 +352,17 @@ mod linux {
                             },
                         )?;
                     }
+                    // Above the channel's descriptors before they move
+                    // into place, then to its own; the copy closes at exec.
+                    let lease = lease_read
+                        .as_ref()
+                        .map(|fd| {
+                            rustix::io::fcntl_dupfd_cloexec(
+                                fd,
+                                bulkhead_native::lease::LEASE_FD + 1,
+                            )
+                        })
+                        .transpose()?;
                     if let Some(procs) = &procs {
                         let fd = rustix::fs::open(
                             procs.as_c_str(),
@@ -302,6 +377,9 @@ mod linux {
                         door_app.as_fd(),
                         fds_app.as_fd(),
                     )?;
+                    if let Some(lease) = &lease {
+                        bulkhead_native::lease::install(lease.as_fd())?;
+                    }
                     Ok(())
                 });
             }
@@ -312,6 +390,9 @@ mod linux {
             // the log pipe's): dropping it closes the node's copies, so the
             // bell's end of file means the app has exited.
             drop(cmd);
+            let lease = lease
+                .zip(lease_write)
+                .map(|(rx, write)| Renewals(tokio::spawn(renew(rx, write))));
             let bell = pipe::Receiver::from_owned_fd(bell).map_err(|e| format!("bell: {e}"))?;
             let log = pipe::Receiver::from_owned_fd(log).map_err(|e| format!("log pipe: {e}"))?;
             tokio::spawn(copy_log(log, output));
@@ -339,6 +420,7 @@ mod linux {
                 active: Instant::now(),
                 worker_idle: false,
                 cgroup,
+                lease,
             })
         }
 
@@ -686,11 +768,27 @@ mod linux {
                     self.child.wait().await.ok()
                 }
             };
+            self.reason(status)
+        }
+
+        /// Why the process ended, if it has already: for a lease's end,
+        /// which the runner's watchdog may have enforced while the node
+        /// did not run.
+        pub(crate) fn exited_reason(&mut self) -> Option<ExitReason> {
+            let status = self.child.try_wait().ok().flatten()?;
+            Some(self.reason(Some(status)))
+        }
+
+        fn reason(&self, status: Option<std::process::ExitStatus>) -> ExitReason {
             if self.cgroup.as_deref().is_some_and(cgroup::oom_killed) {
                 return ExitReason::Crashed("memory_limit".into());
             }
+            let killed_exit = i32::from(bulkhead_native::lease::KILLED_EXIT);
             ExitReason::Crashed(match status {
                 Some(s) => match (s.code(), s.signal()) {
+                    (Some(code), _) if code == killed_exit && self.lease.is_some() => {
+                        "killed_at_lease_end".into()
+                    }
                     (Some(code), _) => format!("exited with status {code}"),
                     (_, Some(signal)) => format!("killed by signal {signal}"),
                     _ => "exited".into(),
@@ -732,6 +830,7 @@ mod elsewhere {
 
     use super::Incoming;
     use crate::config::NativeConfig;
+    use crate::failover::RunUntil;
     use crate::message::ExitReason;
     use crate::native::NativeCode;
     use crate::output::CapturedOutput;
@@ -755,6 +854,7 @@ mod elsewhere {
             _spec: &InstanceSpec,
             _name: &str,
             _output: CapturedOutput,
+            _lease: Option<tokio::sync::watch::Receiver<RunUntil>>,
         ) -> Result<Self, String> {
             Err("native apps run on Linux only".into())
         }
@@ -801,6 +901,10 @@ mod elsewhere {
         }
 
         pub(crate) async fn exit_reason(&mut self) -> ExitReason {
+            match self.0 {}
+        }
+
+        pub(crate) fn exited_reason(&mut self) -> Option<ExitReason> {
             match self.0 {}
         }
 

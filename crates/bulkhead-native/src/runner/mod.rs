@@ -1,11 +1,15 @@
 //! `bulkhead-runner`: the launcher a node runs every native app through.
 //!
 //! ```text
-//! bulkhead-runner (--library PATH | --executable PATH) [--read DIR]... [--write DIR]... [--landlock required|best-effort]
+//! bulkhead-runner (--library PATH | --executable PATH) [--read DIR]... [--write DIR]... [--landlock required|best-effort] [--lease]
 //! ```
 //!
 //! In order, before any code from the bundle runs:
 //!
+//! 0. With `--lease`, for an instance bound to a failover lease: fork a
+//!    watchdog ([`watchdog`], [`crate::lease`]) that kills the app once
+//!    the lease's last deadline from the node has passed, whether or not
+//!    the node runs. The steps below run in the child.
 //! 1. Not dumpable: no core dump (a `core_pattern` that pipes to a helper
 //!    ignores `RLIMIT_CORE` and holds the dying process for about a
 //!    second, spike S19), and no ptrace from other processes of the
@@ -31,6 +35,7 @@
 pub mod library;
 pub mod sandbox;
 pub mod seccomp;
+pub mod watchdog;
 
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -67,6 +72,8 @@ pub struct Args {
     pub write: Vec<PathBuf>,
     /// Whether to refuse to run without Landlock.
     pub landlock_required: bool,
+    /// Whether a lease bounds the app ([`crate::lease`]): fork a watchdog.
+    pub lease: bool,
 }
 
 impl Args {
@@ -81,7 +88,12 @@ impl Args {
         let mut read = Vec::new();
         let mut write = Vec::new();
         let mut landlock_required = true;
+        let mut lease = false;
         while let Some(flag) = it.next() {
+            if flag == crate::lease::FLAG {
+                lease = true;
+                continue;
+            }
             let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
             match flag.as_str() {
                 "--library" => program = Some(Program::Library(value()?.into())),
@@ -106,6 +118,7 @@ impl Args {
             read,
             write,
             landlock_required,
+            lease,
         })
     }
 }
@@ -124,6 +137,12 @@ pub fn main() -> ExitCode {
         rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
     {
         eprintln!("bulkhead-runner: not dumpable: {e}");
+        return ExitCode::from(2);
+    }
+    if args.lease
+        && let Err(e) = watchdog::fork()
+    {
+        eprintln!("bulkhead-runner: lease: {e}");
         return ExitCode::from(2);
     }
     if let Err(e) = sandbox::restrict(&args) {

@@ -174,7 +174,7 @@ pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
         ok
         // Dropping the cluster kills every node, recorded.
     };
-    let report = check::check_dir(&args.dir, APP)?;
+    let report = check::check_dir(&args.dir, APP, false)?;
     let mut text = report.render();
     if !outcome && report.unsettled.is_empty() {
         let _ = writeln!(text, "a heal ended without exactly one runner");

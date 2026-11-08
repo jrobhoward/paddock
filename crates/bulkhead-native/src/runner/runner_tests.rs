@@ -80,7 +80,7 @@ fn readable____program_directory_and_reads____included() {
 
 #[test]
 fn rules____signals_and_tracing____listed() {
-    let found = super::seccomp::rules(1234).unwrap();
+    let found = super::seccomp::rules(&[1234]).unwrap();
 
     assert_eq!(found[&libc::SYS_kill].len(), 1);
     assert!(found[&libc::SYS_ptrace].is_empty());

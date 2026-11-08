@@ -13,7 +13,7 @@ publish = false
 default = ["runner"]
 # `bulkhead_native::channel`: the shared-memory rings between a node and
 # an app (Linux).
-channel = ["dep:rustix", "rustix/fs", "rustix/mm", "rustix/thread", "rustix/pipe", "rustix/net"]
+channel = ["dep:rustix", "rustix/fs", "rustix/mm", "rustix/thread", "rustix/pipe", "rustix/net", "rustix/time"]
 # `bulkhead_native::app`: a native app as an executable (Unix; it serves
 # a node on Linux only).
 app = ["channel", "dep:rustix", "rustix/stdio"]
@@ -25,6 +25,7 @@ runner = [
     "dep:libc",
     "dep:rustbridge-consumer",
     "dep:serde_json",
+    "rustix/event",
 ]
 
 [[bin]]

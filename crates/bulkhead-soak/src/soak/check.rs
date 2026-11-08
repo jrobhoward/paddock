@@ -18,6 +18,12 @@
 //! records a run lasts until the gate's kill. Every boundary is taken on the
 //! side that makes a run longer, so the check errs toward reporting an
 //! overlap.
+//!
+//! A native app is a process of its own, which a stopped node does not
+//! stop, so for native runs the time a node is stopped counts. Its lease
+//! still bounds the run: the runner's watchdog kills the app at the
+//! lease's end without the node (`crashed: killed_at_lease_end`, which is
+//! not a cut-off callback).
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -143,8 +149,9 @@ pub(crate) fn event_records(events: &[Event]) -> Vec<Record> {
         .collect()
 }
 
-/// When `node` ran the singleton, up to `horizon` for a run still open.
-pub(crate) fn running(records: &[Record], node: u32, horizon: i64) -> Vec<Span> {
+/// When `node` ran the singleton, up to `horizon` for a run still open;
+/// a `native` app runs on while its node is stopped.
+pub(crate) fn running(records: &[Record], node: u32, horizon: i64, native: bool) -> Vec<Span> {
     let mut mine: Vec<Record> = records.iter().copied().filter(|r| r.node == node).collect();
     mine.sort_by_key(|r| r.at_us);
     let (mut runs, mut frozen): (Vec<Span>, Vec<Span>) = (Vec::new(), Vec::new());
@@ -226,6 +233,9 @@ pub(crate) fn running(records: &[Record], node: u32, horizon: i64) -> Vec<Span> 
         horizon,
     );
     frozen.extend(freeze.map(|s| (s, horizon)));
+    if native {
+        return runs;
+    }
     subtract(&runs, &frozen)
 }
 
@@ -363,8 +373,8 @@ fn seconds(us: i64) -> f64 {
 }
 
 /// Check a failover run's directory: `events.jsonl`, `node-1.log` and
-/// `node-2.log`.
-pub(crate) fn check_dir(dir: &Path, app: &str) -> anyhow::Result<Report> {
+/// `node-2.log`; `native` when the singleton is a native app.
+pub(crate) fn check_dir(dir: &Path, app: &str, native: bool) -> anyhow::Result<Report> {
     let events = events::read(&dir.join("events.jsonl"))?;
     let mut records = event_records(&events);
     for node in [1, 2] {
@@ -381,8 +391,8 @@ pub(crate) fn check_dir(dir: &Path, app: &str) -> anyhow::Result<Report> {
         .unwrap_or(0);
     let starts = records.iter().filter(|r| r.mark == Mark::Start).count();
     let overlaps = overlaps(
-        &running(&records, 1, horizon),
-        &running(&records, 2, horizon),
+        &running(&records, 1, horizon, native),
+        &running(&records, 2, horizon, native),
     );
     let unsettled = events
         .iter()

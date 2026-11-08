@@ -334,7 +334,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   records, the failover
   task's `failover lease ended` (`ended_ms_ago`) and `failover lease
   extended` (debug, target `bulkhead::lease`: `until_ms`, `slack_ms`), and an
-  instance's `crashed: lease_ended` exit; changing their wording breaks the
+  instance's `crashed: lease_ended` exit (not `killed_at_lease_end`, the
+  runner's watchdog's kill at the lease's end; `scada --native` counts a
+  stopped node's time, since its native apps run on); changing their wording breaks the
   check (its tests hold sample lines).
 - `scripts/`: `check.sh` (every check; `--help`), `check-secrets.sh` (run
   before pushing; `--help`) and `soak.sh` (hours of fault injection, not in

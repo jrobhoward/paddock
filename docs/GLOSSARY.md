@@ -48,7 +48,7 @@ Two words have more than one meaning:
 
 - **Callback:** one call from the host into a guest export: `init`, `handle-call`, `handle-cast`, `handle-info`, `terminate`, `save-snapshot`, `load-snapshot`. An instance runs one callback at a time.
 - **Callback deadline:** `limits.callback_deadline_ms`, the most guest time one callback may take. Past it, the instance is killed with reason `timeout`, at the next epoch tick.
-- **Exit reason:** why an instance ended: `normal`, `shutdown`, `killed`, `crashed: <text>` (a trap, `timeout`, `memory_limit`, `unhealthy`, `lease_ended` and others), or `noproc`.
+- **Exit reason:** why an instance ended: `normal`, `shutdown`, `killed`, `crashed: <text>` (a trap, `timeout`, `memory_limit`, `unhealthy`, `lease_ended`, `killed_at_lease_end` and others), or `noproc`.
 - **Link:** a two-way tie between instances: when one exits abnormally, the other exits too, unless it traps exits and gets an `exit` info instead.
 - **Monitor:** a one-way watch on an instance: the watcher gets a `down` info when it exits.
 - **Trap exits:** an instance that traps exits turns exit signals from links into `exit` infos.

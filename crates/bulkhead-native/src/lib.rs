@@ -24,6 +24,9 @@ pub mod snapshot;
 #[cfg(all(target_os = "linux", feature = "channel"))]
 pub mod channel;
 
+#[cfg(all(target_os = "linux", feature = "channel"))]
+pub mod lease;
+
 #[cfg(all(unix, feature = "app"))]
 pub mod app;
 

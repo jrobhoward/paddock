@@ -127,8 +127,17 @@ enum Command {
         #[arg(long, default_value_t = 256)]
         rss_growth_mib: u64,
     },
-    /// Check a failover run's directory again.
-    Check { dir: PathBuf },
+    /// Check a failover or scada run's directory again.
+    Check {
+        dir: PathBuf,
+        /// The singleton's app: `control` for a scada run.
+        #[arg(long, default_value = failover::APP)]
+        app: String,
+        /// The singleton was a native app, which runs on while its node
+        /// is stopped (a `scada --native` run).
+        #[arg(long)]
+        native: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -298,8 +307,8 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
             })
             .await
         }
-        Command::Check { dir } => {
-            let report = check::check_dir(&dir, failover::APP)?;
+        Command::Check { dir, app, native } => {
+            let report = check::check_dir(&dir, &app, native)?;
             print!("{}", report.render());
             Ok(report.passed())
         }

@@ -8,6 +8,16 @@ All notable changes are recorded here. The format follows
 
 ### Security
 
+- A native singleton no longer runs on past its node's failover lease
+  while the node process is stopped or stalled: its process is not the
+  node's, so it kept running until the node resumed and killed it (0.75 s
+  past the lease, with the other node already running it, in a
+  `bulkhead-soak scada --native` run). For an instance bound to a lease,
+  `bulkhead-runner` (`--lease`) forks a watchdog that kills the app once
+  the last end of the lease the node sent on a pipe has passed, with or
+  without the node; the node reports that exit as `crashed:
+  killed_at_lease_end`. `bulkhead-soak`'s check now counts a stopped
+  node's time for native runs (`check --native`, `--app`).
 - `bulkhead-runner`'s seccomp filter also refuses `io_uring_setup`,
   `io_uring_enter` and `io_uring_register`, whose operations bypass the
   filter (`io_uring`'s socket operation makes a socket without `socket`,

@@ -492,6 +492,7 @@ pub(crate) async fn run(build: Build, args: &Args) -> anyhow::Result<bool> {
         windows: Vec::new(),
         problems: Vec::new(),
         at_v2: false,
+        build,
     };
     let outcome = soak.cycle(&mut cluster).await;
     soak.probes.stop.store(true, Ordering::Relaxed);
@@ -511,6 +512,9 @@ struct Soak<'a> {
     problems: Vec<String>,
     /// Whether the last release went to version 2.
     at_v2: bool,
+    /// The apps' build, for the check (a native app runs on while its
+    /// node is stopped).
+    build: Build,
 }
 
 impl Soak<'_> {
@@ -842,7 +846,7 @@ impl Soak<'_> {
             lines.push('\n');
         }
         std::fs::write(self.args.dir.join("windows.txt"), &lines)?;
-        let both = check::check_dir(&self.args.dir, CONTROL)?;
+        let both = check::check_dir(&self.args.dir, CONTROL, self.build == Build::Native)?;
         let mut text = format!(
             "{} windows, {planned} planned; under faults {fault_failed} of {fault_made} requests failed, \
              longest point gap {worst_fault_gap} ms\n",

@@ -84,7 +84,7 @@ fn running____start_then_process_killed____ends_at_the_kill() {
         rec(50, 1, Mark::Gone),
     ];
 
-    let spans = running(&records, 1, 100);
+    let spans = running(&records, 1, 100, false);
 
     assert_eq!(spans, vec![(20, 50)]);
 }
@@ -93,7 +93,7 @@ fn running____start_then_process_killed____ends_at_the_kill() {
 fn running____still_running_at_the_end____runs_to_the_horizon() {
     let records = [rec(20, 1, Mark::Start), rec(30, 2, Mark::Start)];
 
-    let spans = running(&records, 1, 100);
+    let spans = running(&records, 1, 100, false);
 
     assert_eq!(spans, vec![(20, 100)]);
 }
@@ -107,9 +107,48 @@ fn running____frozen_then_thawed____frozen_time_removed() {
         rec(65, 1, Mark::Stop),
     ];
 
-    let spans = running(&records, 1, 100);
+    let spans = running(&records, 1, 100, false);
 
     assert_eq!(spans, vec![(20, 30), (60, 65)]);
+}
+
+#[test]
+fn running____native_frozen_then_thawed____frozen_time_counts() {
+    let records = [
+        rec(20, 1, Mark::Start),
+        rec(30, 1, Mark::Freeze),
+        rec(60, 1, Mark::Thaw),
+        rec(65, 1, Mark::Stop),
+    ];
+
+    let spans = running(&records, 1, 100, true);
+
+    assert_eq!(spans, vec![(20, 65)]);
+}
+
+#[test]
+fn running____native_frozen_past_its_lease____ends_at_the_lease_bound() {
+    let records = [
+        rec(20, 1, Mark::Start),
+        rec(25, 1, Mark::LeaseBound(40)),
+        rec(30, 1, Mark::Freeze),
+        rec(60, 1, Mark::Thaw),
+        rec(61, 1, Mark::Stop),
+    ];
+
+    let spans = running(&records, 1, 100, true);
+
+    assert_eq!(spans, vec![(20, 40)]);
+}
+
+#[test]
+fn log_records____killed_by_the_watchdog____no_cut_off() {
+    let text = "\
+2026-10-10T12:00:09.051000Z  WARN instance{app=counter version=1.0.0 pid=1.4294967297.1 node=1}: bulkhead_host::instance: instance failed reason=crashed: killed_at_lease_end";
+
+    let records = log_records(1, "counter", text);
+
+    assert_eq!(records, vec![]);
 }
 
 #[test]
@@ -120,7 +159,7 @@ fn running____frozen_then_killed____nothing_after_the_freeze() {
         rec(60, 1, Mark::Gone),
     ];
 
-    let spans = running(&records, 1, 100);
+    let spans = running(&records, 1, 100, false);
 
     assert_eq!(spans, vec![(20, 30)]);
 }
@@ -133,7 +172,7 @@ fn running____restarted_without_a_kill_record____ends_at_the_spawn() {
         rec(50, 1, Mark::Start),
     ];
 
-    let spans = running(&records, 1, 70);
+    let spans = running(&records, 1, 70, false);
 
     assert_eq!(spans, vec![(20, 40), (50, 70)]);
 }
@@ -185,7 +224,7 @@ fn check_dir____handover_after_a_kill____passes() {
         &[("2026-10-10T12:00:09Z", "singleton starting")],
     );
 
-    let report = check_dir(dir.path(), "counter").unwrap();
+    let report = check_dir(dir.path(), "counter", false).unwrap();
 
     assert!(report.passed(), "{}", report.render());
 }
@@ -217,7 +256,7 @@ fn check_dir____old_primary_thawed_after_promotion____overlap_reported() {
         &[("2026-10-10T12:00:06Z", "singleton starting")],
     );
 
-    let report = check_dir(dir.path(), "counter").unwrap();
+    let report = check_dir(dir.path(), "counter", false).unwrap();
 
     assert!(!report.passed());
     assert_eq!(report.overlaps, vec![(base + 9_000_000, base + 9_050_000)]);
@@ -259,7 +298,7 @@ fn check_dir____old_primary_thawed_after_its_lease_ended____no_overlap() {
         &[("2026-10-10T12:00:06Z", "singleton starting")],
     );
 
-    let report = check_dir(dir.path(), "counter").unwrap();
+    let report = check_dir(dir.path(), "counter", false).unwrap();
 
     assert!(report.passed(), "{}", report.render());
 }
@@ -299,7 +338,7 @@ fn check_dir____callback_cut_off_after_the_thaw____overlap_until_the_cut() {
         &[("2026-10-10T12:00:06Z", "singleton starting")],
     );
 
-    let report = check_dir(dir.path(), "counter").unwrap();
+    let report = check_dir(dir.path(), "counter", false).unwrap();
 
     assert_eq!(report.overlaps, vec![(base + 9_000_000, base + 9_001_000)]);
 }
@@ -335,7 +374,7 @@ fn check_dir____paused_past_its_lease_then_killed_at_once____no_overlap() {
         &[("2026-10-10T12:00:06Z", "singleton starting")],
     );
 
-    let report = check_dir(dir.path(), "counter").unwrap();
+    let report = check_dir(dir.path(), "counter", false).unwrap();
 
     assert!(report.passed(), "{}", report.render());
 }
@@ -349,7 +388,7 @@ fn running____lease_bound_after_the_stop____ends_at_the_stop() {
         rec(base + 4_000_000, 1, Mark::Stop),
     ];
 
-    let runs = running(&records, 1, base + 20_000_000);
+    let runs = running(&records, 1, base + 20_000_000, false);
 
     assert_eq!(runs, vec![(base + 1_000_000, base + 4_000_000)]);
 }
@@ -369,7 +408,7 @@ fn check_dir____two_runners_after_a_heal____unsettled() {
     );
     write_log(dir.path(), 2, &[]);
 
-    let report = check_dir(dir.path(), "counter").unwrap();
+    let report = check_dir(dir.path(), "counter", false).unwrap();
 
     assert!(!report.passed());
     assert_eq!(report.unsettled, vec![(base, vec![])]);
@@ -382,7 +421,7 @@ fn check_dir____no_gate_records____fails_as_unchecked() {
     write_log(dir.path(), 1, &[]);
     write_log(dir.path(), 2, &[]);
 
-    let report = check_dir(dir.path(), "counter").unwrap();
+    let report = check_dir(dir.path(), "counter", false).unwrap();
 
     assert!(!report.passed());
     assert!(report.render().contains("nothing was checked"));

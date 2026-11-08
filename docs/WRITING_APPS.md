@@ -148,7 +148,7 @@ ctx.demonitor(m);
 ctx.exit(other, &ExitReason::Shutdown);
 ```
 
-Exit reasons: `Normal`, `Shutdown`, `Killed`, `Noproc`, `Noconnection`, `Timeout` (the CPU deadline), and `Crashed(text)`. The text is the trap message, or one of the host's: `memory_limit`, `table_limit`, `init_timeout`, `unhealthy` (failed health checks), `lease_ended` (a singleton whose node lost its lease), `no_slot` (no Store slot for a start or wake), or a host-object limit (`timer_limit`, `monitor_limit`, `link_limit`, `pending_call_limit`).
+Exit reasons: `Normal`, `Shutdown`, `Killed`, `Noproc`, `Noconnection`, `Timeout` (the CPU deadline), and `Crashed(text)`. The text is the trap message, or one of the host's: `memory_limit`, `table_limit`, `init_timeout`, `unhealthy` (failed health checks), `lease_ended` (a singleton whose node lost its lease), `killed_at_lease_end` (a native singleton `bulkhead-runner` killed at its lease's end while its node did not run), `no_slot` (no Store slot for a start or wake), or a host-object limit (`timer_limit`, `monitor_limit`, `link_limit`, `pending_call_limit`).
 
 The supervisor restarts an app's instances according to `supervision` (strategy, intensity, backoff). It follows OTP: too many restarts within `period_ms` and it gives up. The app is then marked `failed`, with the reason in `bulkhead status`.
 
