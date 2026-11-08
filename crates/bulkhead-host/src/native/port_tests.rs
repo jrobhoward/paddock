@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use rstest::rstest;
 
-use super::linux::{hinted_idle, turn};
+use super::linux::{hinted_idle, too_new, turn};
 
 #[test]
 fn turn____nothing_between____one_count_apart() {
@@ -52,4 +52,29 @@ fn hinted_idle____queue_and_gap____idle_only_when_both_say_so(
     let hinted = hinted_idle(nothing_queued, Duration::from_micros(since_us), spin);
 
     assert_eq!(hinted, idle);
+}
+
+#[test]
+fn too_new____a_frame_newer_than_the_app____refused_naming_both() {
+    use bulkhead_native::protocol::{FdRef, NetStream, ToApp};
+    let connection = ToApp::Connection {
+        listener: "l".into(),
+        stream: NetStream {
+            socket: 1,
+            fd: FdRef(1),
+            local: "127.0.0.1:1".parse().unwrap(),
+            peer: "127.0.0.1:2".parse().unwrap(),
+        },
+    };
+
+    let old = too_new(&connection, 10);
+    let current = too_new(&connection, 11);
+    let ping = too_new(&ToApp::Ping { id: 1 }, 10);
+
+    assert_eq!(
+        old.as_deref(),
+        Some("the app speaks protocol version 10, which has no connection frame (version 11)")
+    );
+    assert_eq!(current, None);
+    assert_eq!(ping, None);
 }

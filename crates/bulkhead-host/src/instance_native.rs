@@ -913,13 +913,15 @@ impl InstanceTask {
                 port.kill();
                 crashed("init_timeout".into())
             }
-            Ok(Some(Incoming::Frame(FromApp::Hello { version }))) if version == p::VERSION => {
+            Ok(Some(Incoming::Frame(FromApp::Hello { version }))) if p::accepts(version) => {
+                port.set_version(version);
                 Ok(())
             }
             Ok(Some(Incoming::Frame(FromApp::Hello { version }))) => {
                 port.kill();
                 crashed(format!(
-                    "native protocol version {version}; this node speaks {}",
+                    "native protocol version {version}; this node accepts {} to {}",
+                    p::MIN_VERSION,
                     p::VERSION
                 ))
             }

@@ -110,6 +110,13 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- A node accepts native apps built against the previous protocol version
+  as well as its own (ROADMAP Z9a), so an app survives one node upgrade
+  without a rebuild: version 12 nodes run version 11 apps. A frame newer
+  than an app's version is never sent to it; the instance ends with a
+  reason naming both versions instead. `bulkhead-native`'s
+  `tests/protocol_versions.rs` holds every frame of both versions as
+  golden bytes, so a change to an existing frame fails it.
 - Every Rust example builds as a native program from the same source
   (ROADMAP Z8i): `ping-pong`, `counter`, `chaos`, `ledger` and the three
   `scada` apps gain a `native` feature and binary, beside `board`,

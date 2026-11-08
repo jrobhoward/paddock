@@ -437,6 +437,16 @@ two threads and put all their node-side work on one core (T1). Rerun
 `native_cost` and `cluster_throughput` natively, with `NATIVE_SPIN_US` 0
 and 20, before changing the budget or the waits.
 
+**The native protocol changes only by adding, within the versions a node
+accepts.** A node accepts apps on `protocol::VERSION` and the one before
+(Z9a). A change adds a variant or a defaulted field; renaming, removing or
+retyping anything, or changing a hot frame's layout, waits until the old
+form's version has left the window. Bump `VERSION` once per release that
+changes frames, give a new `ToApp` frame its version in `ToApp::since`, and
+update `bulkhead-native`'s `tests/protocol/v<N>.txt` (`BULKHEAD_BLESS_PROTOCOL=1`
+for the current version; the next version's file starts as a copy of the
+last one's lines). DESIGN.md, "The protocol as the contract".
+
 **A component imports only what its code calls.** An app that never calls a
 `process` function has no `process` import, so deploy-time checks treat an
 absent import as unused, not as an error.

@@ -147,6 +147,9 @@ mod linux {
         /// deadlines to the runner's watchdog ([`bulkhead_native::lease`]),
         /// ended with the port.
         lease: Option<Renewals>,
+        /// The protocol version the app said it speaks (`Hello`): frames
+        /// newer than it are not sent.
+        version: u16,
     }
 
     /// The task writing a leased port's deadlines; aborted on drop.
@@ -200,6 +203,35 @@ mod linux {
     /// `since` the last frame longer than the `spin` (ROADMAP T1b).
     pub(crate) fn hinted_idle(nothing_queued: bool, since: Duration, spin: Duration) -> bool {
         nothing_queued && since > spin
+    }
+
+    /// Why an app speaking protocol `version` cannot be sent `frame`, if
+    /// it is newer than that version.
+    pub(crate) fn too_new(frame: &ToApp, version: u16) -> Option<String> {
+        (frame.since() > version).then(|| {
+            format!(
+                "the app speaks protocol version {version}, which has no {} frame (version {})",
+                to_app_name(frame),
+                frame.since()
+            )
+        })
+    }
+
+    /// A frame's name, for errors.
+    fn to_app_name(frame: &ToApp) -> &'static str {
+        match frame {
+            ToApp::Init { .. } => "init",
+            ToApp::LoadSnapshot { .. } => "load-snapshot",
+            ToApp::SaveSnapshot => "save-snapshot",
+            ToApp::Call { .. } => "call",
+            ToApp::Cast { .. } => "cast",
+            ToApp::Info { .. } => "info",
+            ToApp::Connection { .. } => "connection",
+            ToApp::Terminate { .. } => "terminate",
+            ToApp::Answer { .. } => "answer",
+            ToApp::Ping { .. } => "ping",
+            ToApp::Published { .. } => "published",
+        }
     }
 
     /// The largest hot-frame buffer a port keeps between frames.
@@ -421,14 +453,28 @@ mod linux {
                 worker_idle: false,
                 cgroup,
                 lease,
+                version: protocol::VERSION,
             })
         }
 
         /// Send a frame to the app: written into its ring now as far as it
         /// fits, the rest as the app reads. Dropped once the ring is
         /// closed.
+        /// The app said it speaks protocol `version` (one the node
+        /// accepts, [`protocol::accepts`]).
+        pub(crate) fn set_version(&mut self, version: u16) {
+            self.version = version;
+        }
+
         pub(crate) fn send(&mut self, frame: &ToApp) {
             if self.closed {
+                return;
+            }
+            // An older app cannot read a newer frame: its instance ends
+            // with the reason rather than waiting on a frame it dropped.
+            if let Some(why) = too_new(frame, self.version) {
+                self.broken.get_or_insert(why);
+                self.close();
                 return;
             }
             // A hot frame where the layouts cover it (T7), CBOR otherwise.
@@ -872,6 +918,10 @@ mod elsewhere {
         }
 
         pub(crate) fn hint_idle(&mut self, _idle: bool) {}
+
+        pub(crate) fn set_version(&mut self, _version: u16) {
+            match self.0 {}
+        }
 
         pub(crate) async fn recv_in_callback(&mut self, _watch: bool) -> Option<Incoming> {
             match self.0 {}

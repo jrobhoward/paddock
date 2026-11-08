@@ -29,6 +29,13 @@
 //! a connection accepted on one of the app's listeners (ROADMAP Z8g), and
 //! version 12 [`Request::Extension`], a call to a function of an
 //! extension the node runs (ROADMAP Z8h).
+//!
+//! A node accepts apps on [`VERSION`] and on [`MIN_VERSION`], the one
+//! before, and sends an app only frames its version has
+//! ([`ToApp::since`]); within that window frames change only by adding
+//! (ROADMAP Z9a; the rules are DESIGN.md's "The protocol as the
+//! contract", and `tests/protocol_versions.rs` holds both versions' frames
+//! as golden bytes).
 
 use std::io::{self, Read, Write};
 
@@ -36,6 +43,19 @@ use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
 pub const VERSION: u16 = 12;
+
+/// The oldest version a node accepts from an app: the one before
+/// [`VERSION`], so an app survives one node upgrade without a rebuild
+/// (ROADMAP Z9a; the rules for a change are in DESIGN.md, "The protocol as
+/// the contract").
+pub const MIN_VERSION: u16 = VERSION - 1;
+
+/// Whether a node speaking [`VERSION`] accepts an app that says it speaks
+/// `version`.
+#[must_use]
+pub fn accepts(version: u16) -> bool {
+    (MIN_VERSION..=VERSION).contains(&version)
+}
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -320,6 +340,42 @@ pub enum ToApp {
         /// The memfd, on the descriptor socket.
         fd: FdRef,
     },
+}
+
+impl ToApp {
+    /// The protocol version this frame first appeared in, so a node sends
+    /// an app only frames its version has. Frames older than the versions
+    /// a node accepts give 1; a new frame gives the version it comes in.
+    #[must_use]
+    pub fn since(&self) -> u16 {
+        match self {
+            Self::Init { .. }
+            | Self::Call { .. }
+            | Self::Cast { .. }
+            | Self::Terminate { .. }
+            | Self::Answer { .. }
+            | Self::Ping { .. }
+            | Self::LoadSnapshot { .. }
+            | Self::SaveSnapshot
+            | Self::Published { .. } => 1,
+            Self::Info { info } => info.since(),
+            Self::Connection { .. } => 11,
+        }
+    }
+}
+
+impl Info {
+    /// As [`ToApp::since`], for the info a `ToApp::Info` carries.
+    #[must_use]
+    pub fn since(&self) -> u16 {
+        match self {
+            Self::Exit { .. }
+            | Self::Down { .. }
+            | Self::Timer { .. }
+            | Self::KvChanged { .. }
+            | Self::HostEvent { .. } => 1,
+        }
+    }
 }
 
 /// A frame from the app to the node.

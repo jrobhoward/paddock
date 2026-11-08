@@ -117,3 +117,43 @@ fn read____not_a_frame_of_the_type____decode_error() {
 
     assert!(matches!(found, Err(FrameError::Decode(_))));
 }
+
+#[rstest]
+#[case(VERSION, true)]
+#[case(MIN_VERSION, true)]
+#[case(MIN_VERSION - 1, false)]
+#[case(VERSION + 1, false)]
+fn accepts____a_version____only_the_current_and_the_one_before(
+    #[case] version: u16,
+    #[case] accepted: bool,
+) {
+    assert_eq!(accepts(version), accepted);
+}
+
+#[test]
+fn since____every_frame____within_the_current_version() {
+    let frames = [
+        ToApp::SaveSnapshot,
+        ToApp::Ping { id: 1 },
+        ToApp::Info {
+            info: Info::Timer {
+                reference: 1,
+                msg: Envelope::new("x", vec![]),
+            },
+        },
+        ToApp::Connection {
+            listener: "l".into(),
+            stream: NetStream {
+                socket: 1,
+                fd: FdRef(1),
+                local: "127.0.0.1:1".parse().unwrap(),
+                peer: "127.0.0.1:2".parse().unwrap(),
+            },
+        },
+    ];
+
+    let since: Vec<u16> = frames.iter().map(ToApp::since).collect();
+
+    assert_eq!(since, vec![1, 1, 1, 11]);
+    assert!(since.iter().all(|v| *v <= VERSION));
+}
