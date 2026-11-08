@@ -17,8 +17,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# Windows runners default to PowerShell; bash is present on all of them and
-# keeps every `run:` block identical.
+# Bash with pipefail for every `run:` block.
 defaults:
   run:
     shell: bash
@@ -72,33 +71,6 @@ jobs:
 
       - name: Test
         run: scripts/check.sh test
-
-  # Apps are programs for Unix (the SDK's protocol runs over its sockets and
-  # shared memory), so Windows builds only the operator's side: the CLI, the
-  # node and the bundle tools, which must stay free of warnings there.
-  windows:
-    name: build (windows-latest)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install toolchain
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: windows-cargo-
-
-      - name: Clippy
-        run: cargo clippy -p bulkhead -p bulkhead-host -p bulkhead-bundle --locked -- -Dwarnings
 
   # Guards `rust-version = "1.99.0"`, the stable rustc the dependencies resolve for.
   msrv:

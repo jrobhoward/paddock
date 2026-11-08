@@ -54,6 +54,18 @@ async fn spawn____memory_max_above_dense_profile____refused() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spawn____memory_max_above_4_gib_on_standard_profile____runs() {
+    let rt = Runtime::new(RuntimeConfig::default()).unwrap();
+    let app = rt.load_in_process::<Chaos>();
+    let mut big = spec("");
+    big.memory_max = 64 << 30;
+
+    let instance = rt.spawn(&app, big).unwrap();
+
+    instance.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn spawn____dense_profile____runs_instances() {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 4,

@@ -397,11 +397,6 @@ integrity, not authorship (S6). Use `verify_manifest_signature_trusted` and
 are bound to the interface instance, not linked separately. Counting them as
 imports refuses every real component (found by the echo fixture).
 
-**Unix-only code compiles cleanly on Windows.** The admin API and its client
-are `cfg(unix)`; code reachable only from them must not warn on Windows, where
-CI runs clippy with `-Dwarnings`. Scope Unix-only imports inside the function,
-or allow dead code for the module with a comment.
-
 **Fixtures and examples build per feature set.** Cargo unifies features within
 one build, so each feature combination (counter v1/v2/v3, services with and
 without `denied`) builds into its own `target/fixtures/<name>` directory, and

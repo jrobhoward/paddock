@@ -210,9 +210,18 @@ fn AppSpec____malformed____parse_error_names_path(
     assert!(msg.contains(message), "{msg}");
 }
 
+#[test]
+fn AppSpec____memory_max_above_4_gib____accepted() {
+    let spec: AppSpec =
+        serde_json::from_value(json!({ "limits": { "memory_max": "64GiB" } })).unwrap();
+
+    let result = spec.validate();
+
+    assert!(result.is_ok(), "{result:?}");
+}
+
 #[rstest]
 #[case(json!({ "limits": { "memory_max": 0 } }), "limits.memory_max")]
-#[case(json!({ "limits": { "memory_max": "5GiB" } }), "limits.memory_max")]
 #[case(json!({ "limits": { "callback_deadline_ms": 0 } }), "limits.callback_deadline_ms")]
 #[case(json!({ "limits": { "mailbox_max": 0 } }), "limits.mailbox_max")]
 #[case(json!({ "limits": { "mailbox_max_bytes": "512KiB" } }), "limits.mailbox_max_bytes")]

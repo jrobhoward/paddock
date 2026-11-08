@@ -47,7 +47,7 @@ pub use lifecycle::{
     Backoff, ChildSpec, Instances, Kind, Lifecycle, Native, NativeProgram, RestartType, Routing,
     Strategy, Supervision, Upgrade, UpgradeMode,
 };
-pub use limits::{Limits, WASM32_MEMORY_MAX};
+pub use limits::Limits;
 pub use sections::{
     Api, ConfigSpec, Dependency, Health, ListenerDecl, LogLevel, MessagePattern, MessageSpec,
     MessagingAcl, NameScope, Observability, Placement, PlacementMode, RegisteredName,

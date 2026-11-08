@@ -6,6 +6,11 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `limits.memory_max` is no longer capped at 4 GiB, a limit that came from
+  wasm32's address space. The `dense` memory profile's 128 MiB stays.
+
 ### Removed
 
 - WebAssembly components from bundles, the SDK and the examples (ROADMAP
@@ -18,8 +23,7 @@ All notable changes are recorded here. The format follows
   `bindings`, `net::wasip2`, `net::notify` or `ConfigError::Upstream`.
   The WIT, the Go SDK, `examples/board-go` and the other-language ping-pong
   examples are gone. Examples and fixtures are plain programs, without
-  `cdylib` or a `native` feature. CI no longer builds apps on Windows,
-  which builds only the CLI, the node and the bundle tools.
+  `cdylib` or a `native` feature. CI no longer builds on Windows.
 - WebAssembly components from the node (ROADMAP Z9e): wasmtime, the
   component instance path, deny stubs, the compile cache, the pooling
   allocator, the epoch ticker, connection handlers and HTTP handlers as

@@ -5,9 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::bytesize::ByteSize;
 use crate::manifest::validate::Validator;
 
-/// Largest linear memory a wasm32 instance can address.
-pub const WASM32_MEMORY_MAX: ByteSize = ByteSize::gib(4);
-
 /// The `limits` section.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -100,11 +97,6 @@ impl Limits {
     pub(crate) fn validate(&self, v: &mut Validator) {
         if self.memory_max.bytes() == 0 {
             v.error_at("memory_max", "must be greater than zero");
-        } else if self.memory_max > WASM32_MEMORY_MAX {
-            v.error_at(
-                "memory_max",
-                format!("must be at most {WASM32_MEMORY_MAX} (the wasm32 address space)"),
-            );
         }
         if self.callback_deadline_ms == 0 {
             v.error_at("callback_deadline_ms", "must be greater than zero");

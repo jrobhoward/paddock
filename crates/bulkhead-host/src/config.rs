@@ -8,19 +8,14 @@ use std::time::Duration;
 
 use crate::transport::membership::Role;
 
-/// How much address space each linear memory reserves (spike S2).
-///
-/// Virtual address space, not RAM, limits how many instances a node can hold.
+/// The cap a node puts on `limits.memory_max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum MemoryProfile {
-    /// wasmtime's default reservations (about 4 GiB plus guards per memory),
-    /// so bounds checks are elided. Suits up to a few thousand instances.
+    /// No cap.
     #[default]
     Standard,
-    /// 128 MiB reservations with 64 KiB guards, for dense nodes (measured past
-    /// 20,000 instances). Caps `limits.memory_max` at 128 MiB. Not measured
-    /// with a memory-heavy guest, which pays for explicit bounds checks.
+    /// At most 128 MiB.
     Dense,
 }
 
@@ -29,7 +24,7 @@ impl MemoryProfile {
     #[must_use]
     pub const fn memory_max(self) -> u64 {
         match self {
-            Self::Standard => 4 << 30,
+            Self::Standard => u64::MAX,
             Self::Dense => 128 << 20,
         }
     }
