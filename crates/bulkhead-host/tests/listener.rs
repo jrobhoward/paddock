@@ -2,7 +2,8 @@
 //! connection fixture's line protocol. The cases both builds share run
 //! against the component (an instance per connection) and, on Linux, the
 //! same source built as a native program, whose pool of instances each
-//! hold many connections (ROADMAP Z8g); the rest are one build's.
+//! hold many connections (ROADMAP Z8g); the rest are one build's. The
+//! component cases go with ROADMAP Z9e, which removes component handlers.
 
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
@@ -177,7 +178,7 @@ async fn serve(
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let chaos = rt.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+    let chaos = rt.load_in_process::<bulkhead_host::in_process::chaos::Chaos>();
     let code = rt.load_native(NativeCode {
         path: native_conn().clone(),
         kind: NativeProgram::Executable,

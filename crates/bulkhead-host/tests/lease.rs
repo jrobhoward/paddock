@@ -12,9 +12,10 @@ mod common;
 use std::time::{Duration, Instant};
 
 use bulkhead_host::failover::{Arbiter, FailoverConfig, WitnessConfig};
+use bulkhead_host::in_process::chaos::Chaos;
 use bulkhead_host::transport::memory::Mesh;
 use bulkhead_host::{ExitReason, Runtime, RuntimeConfig};
-use common::{fixture, spec, text};
+use common::{spec, text};
 
 const LEASE: Duration = Duration::from_millis(600);
 const MARGIN: Duration = Duration::from_millis(100);
@@ -63,7 +64,7 @@ async fn primary_with_a_lease() -> (Vec<Runtime>, Mesh) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bound_instance____lease_ends_mid_callback____ended_lease_ended_without_a_kill() {
     let (nodes, mesh) = primary_with_a_lease().await;
-    let app = nodes[0].load(&fixture("bulkhead_fixture_chaos")).unwrap();
+    let app = nodes[0].load_in_process::<Chaos>();
     let mut bound = spec("");
     bound.bound_to_lease = true;
     bound.callback_deadline = Duration::from_secs(60);
@@ -88,7 +89,7 @@ async fn bound_instance____lease_ends_mid_callback____ended_lease_ended_without_
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bound_instance____no_failover_on_the_node____runs_as_any_other() {
     let rt = node(1);
-    let app = rt.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+    let app = rt.load_in_process::<Chaos>();
     let mut bound = spec("");
     bound.bound_to_lease = true;
     let instance = rt.spawn(&app, bound).unwrap();
