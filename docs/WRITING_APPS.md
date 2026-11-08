@@ -390,7 +390,7 @@ A relative path is taken from the workspace root. Without the variable, the suit
 | `groups____*` | Join, members, publish and leave, an unlisted group | yes | yes |
 | `config____*`, `secrets____*`, `metrics____*` | Config values, bound, unbound and unlisted secrets, counters, gauges and histograms as the node renders them | yes | yes |
 
-The Go column is from a local run (Linux x86-64, TinyGo 0.43.0, 2026-10-30); CI runs the Rust app only until ROADMAP J5.
+The Go column is from a local run (Linux x86-64, TinyGo 0.43.0, 2026-10-30); CI runs the Rust app only.
 
 ## Native-process apps
 

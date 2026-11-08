@@ -104,4 +104,4 @@ sdks/go/build.sh sdks/go/conformance target/sdks-go/conformance.wasm
 BULKHEAD_CONFORMANCE_APP=target/sdks-go/conformance.wasm cargo test -p bulkhead-host --test conformance
 ```
 
-`go test` runs natively; the packages compile for the host, and the tests touch no host function. Not in CI yet (ROADMAP J5).
+`go test` runs natively; the packages compile for the host, and the tests touch no host function. Not in CI; the Go SDK is no longer planned and goes with WebAssembly (ROADMAP Z9).
