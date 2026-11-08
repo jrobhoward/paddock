@@ -223,7 +223,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `src/in_process.rs` (cargo feature `test-apps`, Z9c) runs a test app
   written in Rust inside its instance's task over the same frames, polled
   by an in-process `Port`; tests and the simulation use its `chaos` app,
-  since a process cannot follow tokio's paused clock. Code that never
+  since a process cannot follow tokio's paused clock, and the conformance
+  suite its `conformance` app by default (a copy of
+  `bulkhead-fixture-conformance`'s commands; keep the two in step;
+  `BULKHEAD_CONFORMANCE_NATIVE=1` runs the fixture itself). Code that never
   yields cannot be stopped there: deadline, kill, memory and sandbox tests
   use native processes.
 - `crates/bulkhead-fixture-native` (an executable on the app API) and

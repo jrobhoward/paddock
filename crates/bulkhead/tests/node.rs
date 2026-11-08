@@ -1451,6 +1451,54 @@ async fn native____bundle_for_both_platforms____runs_this_platforms_program() {
 // Native apps run on Linux only (`bulkhead-runner`).
 #[cfg(target_os = "linux")]
 #[tokio::test]
+async fn native____filesystem_declared_and_denied_by_policy____no_volume() {
+    use common::{native_bundle, native_fixtures};
+
+    let (runner, program) = native_fixtures();
+    let program = std::fs::read(program).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let volume = dir.path().join("volume");
+    std::fs::create_dir(&volume).unwrap();
+    std::fs::write(volume.join("f"), "in the volume").unwrap();
+    let policy = dir.path().join("policy.toml");
+    std::fs::write(
+        &policy,
+        "[apps.allowed]\ngrant = [\"wasi:filesystem\"]\n[apps.refused]\ngrant = []\n",
+    )
+    .unwrap();
+    let n = TestNode::start(&format!(
+        "policy = {policy:?}\n[native]\nrunner = {runner:?}\n[volumes]\nscratch = {volume:?}\n"
+    ))
+    .await;
+    let manifest = fast(json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": {
+            "wasi:filesystem": { "preopens": { "/data": { "volume": "scratch", "mode": "ro" } } }
+        }
+    }));
+    for app in ["allowed", "refused"] {
+        n.client
+            .deploy(native_bundle(
+                &n.key,
+                app,
+                "1.0.0",
+                &program,
+                manifest.clone(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let allowed = call(&n, "allowed", "vcat /data/f").await;
+    let refused = call(&n, "refused", "vcat /data/f").await;
+
+    assert_eq!(allowed, "in the volume");
+    assert!(refused.starts_with("err:"), "{refused}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
 async fn native____executable_deployed____answers_and_network_refused() {
     use common::{native_bundle, native_fixtures};
 

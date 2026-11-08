@@ -1,7 +1,10 @@
-//! Host services against the services fixture: logging, stdout capture,
-//! config, keyvalue, the filesystem and deny stubs. Covers Phase 1 exit
-//! criterion 8.
+//! Host services against a native app (`bulkhead-fixture-native`, ROADMAP
+//! Z9d): logging, stdout capture, config, keyvalue and the filesystem.
+//! Covers Phase 1 exit criterion 8. Deny stubs, and a component's
+//! filesystem grant, still run on the component services fixture.
 
+// The native fixture runs on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -13,10 +16,12 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use bulkhead_bundle::manifest::{Bucket, ByteSize, Capability, Durability, LogLevel};
+use bulkhead_bundle::manifest::{
+    Bucket, ByteSize, Capability, Durability, LogLevel, NativeProgram,
+};
 use bulkhead_host::{
-    CallError, ExitReason, HostError, InstanceHandle, InstanceSpec, LoadedApp, Preopen, Runtime,
-    RuntimeConfig,
+    CallError, ExitReason, HostError, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, Preopen,
+    Runtime, RuntimeConfig,
 };
 use common::{LONG, ask, fixture, text};
 use tracing::field::{Field, Visit};
@@ -87,11 +92,33 @@ async fn records(app: &str, n: usize) -> Vec<Record> {
 
 // --- setup -----------------------------------------------------------------
 
+fn load(rt: &Runtime) -> LoadedApp {
+    rt.load_native(NativeCode {
+        path: common::native_fixtures().1.clone(),
+        kind: NativeProgram::Executable,
+    })
+}
+
 fn shared() -> &'static (Runtime, LoadedApp) {
     static SHARED: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
     SHARED.get_or_init(|| {
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 64,
+            native: common::native_config(),
+            ..RuntimeConfig::default()
+        })
+        .unwrap();
+        let app = load(&rt);
+        (rt, app)
+    })
+}
+
+/// The component services fixture, for what only a component has.
+fn component() -> &'static (Runtime, LoadedApp) {
+    static SHARED: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
+    SHARED.get_or_init(|| {
+        let rt = Runtime::new(RuntimeConfig {
+            max_instances: 8,
             ..RuntimeConfig::default()
         })
         .unwrap();
@@ -132,7 +159,7 @@ fn with_buckets(mut s: InstanceSpec, buckets: &[(&str, Bucket)]) -> InstanceSpec
 
 async fn up(rt: &Runtime, app: &LoadedApp, spec: InstanceSpec) -> InstanceHandle {
     let h = rt.spawn(app, spec).unwrap();
-    ask(&h, "config:none").await;
+    ask(&h, "echo up").await;
     h
 }
 
@@ -144,14 +171,15 @@ async fn log____granted____record_carries_level_tags_and_context() {
     let (rt, app) = shared();
     let h = up(rt, app, spec("log-tags", &[Capability::Logging])).await;
 
-    ask(&h, "log:warn:disk almost full").await;
+    ask(&h, "log-at warn disk almost full").await;
     let found = records("log-tags", 1).await;
 
     assert_eq!(found.len(), 1);
     let r = &found[0];
     assert_eq!(r.level, "WARN");
     assert_eq!(r.fields["message"], "disk almost full");
-    assert_eq!(r.fields["context"], "fixture");
+    // The native protocol's records carry no context.
+    assert_eq!(r.fields["context"], "");
     assert_eq!(r.fields["version"], "1.0.0");
     assert_eq!(r.fields["pid"], h.pid().to_string());
     h.kill();
@@ -165,8 +193,8 @@ async fn log____below_max_level____dropped() {
     s.services.logging.level = LogLevel::Warn;
     let h = up(rt, app, s).await;
 
-    ask(&h, "log:info:chatter").await;
-    ask(&h, "log:error:kept").await;
+    ask(&h, "log-at info chatter").await;
+    ask(&h, "log-at error kept").await;
     let found = records("log-level", 1).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -181,7 +209,7 @@ async fn log____not_granted____dropped_without_error() {
     let (rt, app) = shared();
     let h = up(rt, app, spec("log-denied", &[])).await;
 
-    let reply = ask(&h, "log:error:hidden").await;
+    let reply = ask(&h, "log-at error hidden").await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert_eq!(reply, "ok");
@@ -198,10 +226,10 @@ async fn log____rate_limited____excess_dropped_and_count_reported_later() {
     let h = up(rt, app, s).await;
 
     for i in 0..5 {
-        ask(&h, &format!("log:info:burst-{i}")).await;
+        ask(&h, &format!("log-at info burst-{i}")).await;
     }
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    ask(&h, "log:info:after").await;
+    ask(&h, "log-at info after").await;
     let found = records("log-rate", 4).await;
 
     let summary: Vec<String> = found
@@ -224,7 +252,7 @@ async fn log____newline_in_message____one_record_with_it_escaped() {
 
     ask(
         &h,
-        "log:info:first\n2026-10-10T12:00:00Z  INFO bulkhead::node::gate: forged",
+        "log-at info first\n2026-10-10T12:00:00Z  INFO bulkhead::node::gate: forged",
     )
     .await;
     let found = records("log-inject", 1).await;
@@ -246,10 +274,10 @@ async fn stdout____over_the_apps_log_rate____excess_dropped_and_counted() {
     let h = up(rt, app, s).await;
 
     for i in 0..5 {
-        ask(&h, &format!("print:burst-{i}")).await;
+        ask(&h, &format!("print burst-{i}")).await;
     }
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    ask(&h, "print:after").await;
+    ask(&h, "print after").await;
     let found = records("stdout-rate", 4).await;
 
     let summary: Vec<String> = found
@@ -265,22 +293,22 @@ async fn stdout____over_the_apps_log_rate____excess_dropped_and_counted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stdout_and_stderr____written____captured_as_tagged_records() {
+async fn stdout_and_stderr____written____captured_as_stderr_records() {
     capture();
     let (rt, app) = shared();
     let h = up(rt, app, spec("stdio", &[])).await;
 
-    ask(&h, "print:hello from stdout").await;
-    ask(&h, "eprint:trouble on stderr").await;
-    let mut found = records("stdio", 2).await;
-    found.sort_by_key(|r| r.fields["stream"].clone());
+    // A native app's two streams share one pipe, logged as stderr.
+    ask(&h, "print hello from stdout").await;
+    ask(&h, "eprint trouble on stderr").await;
+    let found = records("stdio", 2).await;
 
     assert_eq!(found.len(), 2);
     assert_eq!(found[0].fields["stream"], "stderr");
-    assert_eq!(found[0].fields["message"], "trouble on stderr");
+    assert_eq!(found[0].fields["message"], "hello from stdout");
     assert_eq!(found[0].level, "WARN");
-    assert_eq!(found[1].fields["stream"], "stdout");
-    assert_eq!(found[1].fields["message"], "hello from stdout");
+    assert_eq!(found[1].fields["stream"], "stderr");
+    assert_eq!(found[1].fields["message"], "trouble on stderr");
     assert_eq!(found[1].fields["pid"], h.pid().to_string());
     h.kill();
 }
@@ -297,13 +325,13 @@ async fn config____granted____returns_values() {
     ]);
     let h = up(rt, app, s).await;
 
-    let one = ask(&h, "config:db.host").await;
-    let missing = ask(&h, "config:nope").await;
+    let one = ask(&h, "config db.host").await;
+    let missing = ask(&h, "config nope").await;
     let all = ask(&h, "config-all").await;
 
     assert_eq!(one, "pg.internal");
     assert_eq!(missing, "none");
-    assert_eq!(all, "db.host=pg.internal;mode=fast");
+    assert_eq!(all, "db.host=pg.internal,mode=fast");
     h.kill();
 }
 
@@ -314,9 +342,9 @@ async fn config____not_granted____access_denied() {
     s.services.config.values = BTreeMap::from([("k".into(), "v".into())]);
     let h = rt.spawn(app, s).unwrap();
 
-    let reply = ask(&h, "config:k").await;
+    let reply = ask(&h, "config k").await;
 
-    assert_eq!(reply, "err:io:access-denied");
+    assert_eq!(reply, "err:AccessDenied");
     h.kill();
 }
 
@@ -335,37 +363,25 @@ async fn keyvalue____store_atomics_and_batch____round_trip() {
     let h = up(rt, app, kv_spec("kv-ops")).await;
 
     let replies = [
-        ask(&h, "kv-set:data:a:1").await,
-        ask(&h, "kv-get:data:a").await,
-        ask(&h, "kv-exists:data:a").await,
-        ask(&h, "kv-exists:data:z").await,
-        ask(&h, "kv-incr:data:n:5").await,
-        ask(&h, "kv-incr:data:n:2").await,
-        ask(&h, "kv-set-many:data:b=2,c=3").await,
-        ask(&h, "kv-get-many:data:a,b,z").await,
-        ask(&h, "kv-keys:data").await,
-        ask(&h, "kv-del-many:data:b,c").await,
-        ask(&h, "kv-del:data:a").await,
-        ask(&h, "kv-get:data:a").await,
-        ask(&h, "kv-keys:data").await,
+        ask(&h, "kv set data a 1").await,
+        ask(&h, "kv get data a").await,
+        ask(&h, "kv exists data a").await,
+        ask(&h, "kv exists data z").await,
+        ask(&h, "kv incr data n 5").await,
+        ask(&h, "kv incr data n 2").await,
+        ask(&h, "kv setmany data b=2,c=3").await,
+        ask(&h, "kv many data a,b,z").await,
+        ask(&h, "kv keys data").await,
+        ask(&h, "kv delmany data b,c").await,
+        ask(&h, "kv del data a").await,
+        ask(&h, "kv get data a").await,
+        ask(&h, "kv keys data").await,
     ];
 
     assert_eq!(
         replies,
         [
-            "ok",
-            "1",
-            "true",
-            "false",
-            "5",
-            "7",
-            "ok",
-            "a=1,b=2,-",
-            "a,b,c,n",
-            "ok",
-            "ok",
-            "none",
-            "n"
+            "ok", "1", "true", "false", "5", "7", "ok", "1,2,-", "a,b,c,n", "ok", "ok", "none", "n"
         ]
     );
     h.kill();
@@ -376,8 +392,8 @@ async fn keyvalue____many_keys____list_keys_pages_through_all() {
     let (rt, app) = shared();
     let h = up(rt, app, kv_spec("kv-pages")).await;
 
-    ask(&h, "kv-fill:data:600").await;
-    let keys = ask(&h, "kv-keys:data").await;
+    ask(&h, "kv fill data 600").await;
+    let keys = ask(&h, "kv keys data").await;
 
     assert_eq!(keys.split(',').count(), 600);
     h.kill();
@@ -387,12 +403,12 @@ async fn keyvalue____many_keys____list_keys_pages_through_all() {
 async fn keyvalue____memory_bucket____survives_instance_crash() {
     let (rt, app) = shared();
     let first = up(rt, app, kv_spec("kv-crash")).await;
-    ask(&first, "kv-set:data:k:kept").await;
-    first.call(text("trap"), LONG).await.unwrap_err();
+    ask(&first, "kv set data k kept").await;
+    first.call(text("panic"), LONG).await.unwrap_err();
     first.wait().await;
 
     let second = rt.respawn(app, kv_spec("kv-crash"), first.pid()).unwrap();
-    let kept = ask(&second, "kv-get:data:k").await;
+    let kept = ask(&second, "kv get data k").await;
 
     assert_eq!(kept, "kept");
     second.kill();
@@ -404,8 +420,8 @@ async fn keyvalue____same_bucket_two_apps____isolated() {
     let a = up(rt, app, kv_spec("kv-iso-a")).await;
     let b = up(rt, app, kv_spec("kv-iso-b")).await;
 
-    ask(&a, "kv-set:data:k:from-a").await;
-    let seen = ask(&b, "kv-get:data:k").await;
+    ask(&a, "kv set data k from-a").await;
+    let seen = ask(&b, "kv get data k").await;
 
     assert_eq!(seen, "none");
     a.kill();
@@ -426,11 +442,11 @@ async fn keyvalue____undeclared_bucket_or_not_granted____access_denied() {
     )
     .await;
 
-    let other_bucket = ask(&declared, "kv-get:other:k").await;
-    let not_granted = ask(&ungranted, "kv-get:data:k").await;
+    let other_bucket = ask(&declared, "kv get other k").await;
+    let not_granted = ask(&ungranted, "kv get data k").await;
 
-    assert_eq!(other_bucket, "err:access-denied");
-    assert_eq!(not_granted, "err:access-denied");
+    assert_eq!(other_bucket, "err:AccessDenied");
+    assert_eq!(not_granted, "err:AccessDenied");
     declared.kill();
     ungranted.kill();
 }
@@ -444,21 +460,21 @@ async fn keyvalue____quota_exceeded____set_refused() {
     );
     let h = up(rt, app, s).await;
 
-    let fits = ask(&h, "kv-set:data:a:1234567").await;
-    let over = ask(&h, "kv-set:data:b:1234567890").await;
+    let fits = ask(&h, "kv set data a 1234567").await;
+    let over = ask(&h, "kv set data b 1234567890").await;
 
     assert_eq!(fits, "ok");
-    assert_eq!(over, "err:other:bucket quota of 16 bytes exceeded");
+    assert_eq!(over, "err:Other(\"bucket quota of 16 bytes exceeded\")");
     h.kill();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_8____disk_bucket____survives_crash_and_node_restart() {
     let dir = tempfile::tempdir().unwrap();
-    let component = fixture("bulkhead_fixture_services");
     let config = RuntimeConfig {
         max_instances: 4,
         data_dir: Some(dir.path().to_path_buf()),
+        native: common::native_config(),
         ..RuntimeConfig::default()
     };
     let disk = || {
@@ -469,13 +485,13 @@ async fn exit_criterion_8____disk_bucket____survives_crash_and_node_restart() {
     };
     {
         let rt = Runtime::new(config.clone()).unwrap();
-        let app = rt.load(&component).unwrap();
+        let app = load(&rt);
         let h = up(&rt, &app, disk()).await;
-        ask(&h, "kv-set:orders:o-1:paid").await;
-        h.call(text("trap"), LONG).await.unwrap_err();
+        ask(&h, "kv set orders o-1 paid").await;
+        h.call(text("panic"), LONG).await.unwrap_err();
         h.wait().await;
         let again = rt.respawn(&app, disk(), h.pid()).unwrap();
-        assert_eq!(ask(&again, "kv-get:orders:o-1").await, "paid");
+        assert_eq!(ask(&again, "kv get orders o-1").await, "paid");
         again.kill();
         again.wait().await;
     }
@@ -491,9 +507,9 @@ async fn exit_criterion_8____disk_bucket____survives_crash_and_node_restart() {
             Err(e) => panic!("{e}"),
         }
     };
-    let app = rt.load(&component).unwrap();
+    let app = load(&rt);
     let h = up(&rt, &app, disk()).await;
-    let after_restart = ask(&h, "kv-get:orders:o-1").await;
+    let after_restart = ask(&h, "kv get orders o-1").await;
 
     assert_eq!(after_restart, "paid");
     h.kill();
@@ -544,21 +560,21 @@ async fn exit_criterion_8____filesystem____priv_read_only_data_writable_escapes_
     let d = dirs();
     let h = up(rt, app, fs_spec("fs", &d, &[Capability::Filesystem])).await;
 
-    let read_priv = ask(&h, "read:/priv/hello.txt").await;
-    let write_priv = ask(&h, "write:/priv/new.txt:x").await;
-    let write_data = ask(&h, "write:/data/out.txt:written").await;
-    let read_data = ask(&h, "read:/data/out.txt").await;
-    let escape = ask(&h, "read:/data/../priv/hello.txt").await;
-    let deep_escape = ask(&h, "read:/data/../../../../etc/hostname").await;
-    let ambient = ask(&h, "read:/etc/hostname").await;
+    let read_priv = ask(&h, "vcat /priv/hello.txt").await;
+    let write_priv = ask(&h, "vwrite /priv/new.txt").await;
+    let write_data = ask(&h, "vwrite /data/out.txt").await;
+    let read_data = ask(&h, "vcat /data/out.txt").await;
+    let escape = ask(&h, "vcat /data/../priv/hello.txt").await;
+    let deep_escape = ask(&h, "vcat /data/../../../../etc/hostname").await;
+    let ambient = ask(&h, "vcat /etc/hostname").await;
 
     assert_eq!(read_priv, "from the bundle");
     assert!(write_priv.starts_with("err:"), "{write_priv}");
     assert_eq!(write_data, "ok");
-    assert_eq!(read_data, "written");
+    assert_eq!(read_data, "x");
     assert_eq!(
         std::fs::read_to_string(d.data_dir.join("out.txt")).unwrap(),
-        "written"
+        "x"
     );
     assert!(escape.starts_with("err:"), "{escape}");
     assert!(deep_escape.starts_with("err:"), "{deep_escape}");
@@ -568,11 +584,23 @@ async fn exit_criterion_8____filesystem____priv_read_only_data_writable_escapes_
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filesystem____not_granted____no_preopens() {
-    let (rt, app) = shared();
+    let (rt, app) = component();
     let d = dirs();
     let h = up(rt, app, fs_spec("fs-denied", &d, &[])).await;
 
     let reply = ask(&h, "read:/priv/hello.txt").await;
+
+    assert!(reply.starts_with("err:"), "{reply}");
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filesystem____native_app_not_granted____no_preopens() {
+    let (rt, app) = shared();
+    let d = dirs();
+    let h = up(rt, app, fs_spec("fs-denied-native", &d, &[])).await;
+
+    let reply = ask(&h, "vcat /priv/hello.txt").await;
 
     assert!(reply.starts_with("err:"), "{reply}");
     h.kill();
@@ -597,7 +625,7 @@ async fn spawn____preopen_directory_missing____refused() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deny_stubs____unimplemented_interface____error_channel_returns_access_denied() {
-    let (rt, app) = shared();
+    let (rt, app) = component();
     let h = up(rt, app, spec("deny", &[])).await;
 
     let reply = ask(&h, "denied-ping").await;
@@ -609,7 +637,7 @@ async fn deny_stubs____unimplemented_interface____error_channel_returns_access_d
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deny_stubs____no_error_channel____traps_naming_the_function() {
-    let (rt, app) = shared();
+    let (rt, app) = component();
     let h = up(rt, app, spec("deny-boom", &[])).await;
 
     let result = h.call(text("denied-boom"), LONG).await;
@@ -627,12 +655,12 @@ async fn log_level____operator_override____applies_at_once_and_resets() {
     let h = up(rt, app, spec("log-override", &[Capability::Logging])).await;
 
     rt.set_log_level("log-override", Some(LogLevel::Error));
-    ask(&h, "log:warn:hidden").await;
+    ask(&h, "log-at warn hidden").await;
     rt.set_log_level("log-override", Some(LogLevel::Debug));
-    ask(&h, "log:debug:shown").await;
+    ask(&h, "log-at debug shown").await;
     rt.set_log_level("log-override", None);
-    ask(&h, "log:debug:hidden-again").await;
-    ask(&h, "log:info:back-to-info").await;
+    ask(&h, "log-at debug hidden-again").await;
+    ask(&h, "log-at info back-to-info").await;
     let found = records("log-override", 2).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 

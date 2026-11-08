@@ -14,7 +14,8 @@
 //! | `register NAME`, `whereis NAME` | `ok` or `err:...`, the pid or `none` |
 //! | `exit PID REASON` | `ok` (`normal`, `kill` or any text as `crashed`) |
 //! | `noreply` | nothing now: the reply comes from a cast `reply TEXT` |
-//! | `log TEXT`, `print TEXT` | `ok`, after a warn record or a line on stdout |
+//! | `log TEXT`, `print TEXT`, `eprint TEXT` | `ok`, after a warn record or a line on stdout or stderr |
+//! | `log-at LEVEL TEXT` | `ok`, after a record at `LEVEL` (`trace` to `critical`) |
 //! | `panic`, `abort`, `spin` | never |
 //! | `break-channel` | `ok`, after claiming more in its ring to the node than the ring holds; the node ends it |
 //! | `published BUCKET` | the revision of the published snapshot it reads `BUCKET` from, or `none` |
@@ -28,6 +29,7 @@
 //! | `sql-begin DS`; `sql-tq STMT`, `sql-tx STMT`, `sql-commit`, `sql-rollback` | open a transaction and keep it; then statements in it, and its end |
 //! | `sql-drop` | forget the open transaction as a dropped handle does (`end_transaction_quietly`) |
 //! | `vread GUEST`, `vwrite GUEST` | read or write (`x`) the file at a guest path (`/data/f`) where `BULKHEAD_PREOPENS` puts it: `ok` or `err:` and the OS error |
+//! | `vcat GUEST` | that file's contents, or `err:` and the OS error |
 //! | `dumpable` | `no` if the process is not dumpable, else `yes` (Linux) |
 //! | `kv OP BUCKET ...` | a keyvalue request: `get K`, `set K V`, `del K`, `incr K N`, `many K1,K2`, `setmany K1=V1,K2=V2`, `entry K` (`V@REV`), `rev`, `scan PREFIX`, `cas K EXPECTED V` (`none` for absent), `watch K`, `watchp PREFIX`, `gets N` (the nanoseconds `N` gets of key `t` took); `kv unwatch ID`. A failure is `err:` and the error |
 //! | `group OP GROUP [TEXT]` | `join`, `leave`: `ok`; `members`: how many; `publish GROUP TEXT`: to how many |

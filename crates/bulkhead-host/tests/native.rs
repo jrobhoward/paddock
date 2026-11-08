@@ -11,7 +11,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use bulkhead_bundle::manifest::NativeProgram;
+use bulkhead_bundle::manifest::{Capability, NativeProgram};
 use bulkhead_host::{
     CallError, Envelope, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, NativeCode,
     NativeConfig, Pid, Runtime, RuntimeConfig,
@@ -394,6 +394,7 @@ async fn executable____volumes____read_write_where_granted_read_only_elsewhere()
         writable,
     };
     let spec = InstanceSpec {
+        granted: [Capability::Filesystem].into(),
         preopens: vec![
             preopen(&priv_dir, bulkhead_host::PRIV_PATH, false),
             preopen(&rw, "/data", true),
@@ -431,6 +432,7 @@ async fn executable____priv_files____readable_at_bulkhead_priv() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("table.csv"), b"a,b\n").unwrap();
     let spec = InstanceSpec {
+        granted: [Capability::Filesystem].into(),
         preopens: vec![bulkhead_host::Preopen {
             host: dir.path().to_path_buf(),
             guest: bulkhead_host::PRIV_PATH.into(),

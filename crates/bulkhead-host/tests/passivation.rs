@@ -222,7 +222,10 @@ async fn passivation____every_slot_held_by_an_idle_instance____one_passivates_ea
     }
 }
 
-/// A runtime of its own with one Store slot, so a test can hold it.
+/// A runtime of its own with one Store slot, so a test can hold it. Only a
+/// component takes a slot (a native app's limit is `max_processes`,
+/// `runtime.rs`'s `instance_limit_reached` case): the two tests on it go
+/// with ROADMAP Z9e.
 fn one_slot(component: &[u8]) -> (Runtime, LoadedApp) {
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 1,

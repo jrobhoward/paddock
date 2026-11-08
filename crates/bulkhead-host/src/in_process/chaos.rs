@@ -34,7 +34,7 @@ pub struct Chaos {
     ballast: Vec<u8>,
 }
 
-fn text(body: impl Into<String>) -> Envelope {
+pub(super) fn text(body: impl Into<String>) -> Envelope {
     Envelope::new("text/plain", body.into().into_bytes())
 }
 
@@ -69,7 +69,7 @@ pub fn parse_pid(s: &str) -> Pid {
     }
 }
 
-fn show_exit(reason: &ExitReason) -> String {
+pub(super) fn show_exit(reason: &ExitReason) -> String {
     match reason {
         ExitReason::Normal => "normal".into(),
         ExitReason::Shutdown => "shutdown".into(),
@@ -81,7 +81,7 @@ fn show_exit(reason: &ExitReason) -> String {
     }
 }
 
-fn show_call_error(err: &CallError) -> String {
+pub(super) fn show_call_error(err: &CallError) -> String {
     match err {
         CallError::Noproc => "noproc".into(),
         CallError::Noconnection => "noconnection".into(),
@@ -102,7 +102,7 @@ fn parse_exit(s: &str) -> ExitReason {
     }
 }
 
-async fn register(cx: &mut TestCtx, name: &str) -> String {
+pub(super) async fn register(cx: &mut TestCtx, name: &str) -> String {
     match cx.register(name).await {
         Ok(()) => "ok".into(),
         Err(RegisterError::AccessDenied) => "err:access-denied".into(),
@@ -110,7 +110,7 @@ async fn register(cx: &mut TestCtx, name: &str) -> String {
     }
 }
 
-const NEEDS_A_PROCESS: &str = "needs a process";
+pub(super) const NEEDS_A_PROCESS: &str = "needs a process";
 
 impl Chaos {
     /// Run `msg`'s command; `None` for no reply now.

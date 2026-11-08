@@ -36,6 +36,7 @@
 //! ```
 
 pub mod chaos;
+pub mod conformance;
 pub mod counter;
 pub mod services;
 

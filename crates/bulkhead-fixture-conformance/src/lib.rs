@@ -1,7 +1,10 @@
 //! Test fixture: the Rust SDK's conformance app. Every guest SDK builds an
 //! app that speaks this protocol, and `bulkhead-host`'s
 //! `tests/conformance.rs` runs the same cases against each
-//! (`BULKHEAD_CONFORMANCE_APP=<component.wasm>`; this one by default).
+//! (`BULKHEAD_CONFORMANCE_NATIVE=1` for this one as a native program,
+//! `BULKHEAD_CONFORMANCE_APP=<component.wasm>` for a component). Its default
+//! is `bulkhead_host::in_process::conformance`, a copy of this app's
+//! commands: keep the two in step.
 //!
 //! `init` arguments are UTF-8 words separated by spaces, optionally inside
 //! a JSON string (as manifest `start_args` arrive). The whole argument

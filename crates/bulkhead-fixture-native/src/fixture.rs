@@ -5,8 +5,8 @@ use std::process::ExitCode;
 
 use bulkhead_native::app::{self, App, CallRef, Ctx};
 use bulkhead_native::protocol::{
-    Envelope, ExitReason, FdRef, Info, Level, NetAnswer, NetRequest, Pid, SqlAnswer, SqlRequest,
-    SqlValue,
+    Envelope, ExitReason, FdRef, Info, KvError, Level, NetAnswer, NetRequest, Pid, SqlAnswer,
+    SqlRequest, SqlValue,
 };
 
 #[derive(Default)]
@@ -40,6 +40,32 @@ fn parse_pid(s: &str) -> Option<Pid> {
         id: it.next()?.parse().ok()?,
         incarnation: it.next()?.parse().ok()?,
     })
+}
+
+/// Every key of the bucket, sorted, joined by `,`.
+fn all_keys(bucket: &mut app::Bucket<'_>) -> Result<String, KvError> {
+    let mut all = Vec::new();
+    let mut cursor = None;
+    loop {
+        let (keys, next) = bucket.keys(cursor)?;
+        all.extend(keys);
+        if next.is_none() {
+            all.sort();
+            return Ok(all.join(","));
+        }
+        cursor = next;
+    }
+}
+
+fn level(name: &str) -> Level {
+    match name {
+        "trace" => Level::Trace,
+        "debug" => Level::Debug,
+        "warn" => Level::Warn,
+        "error" => Level::Error,
+        "critical" => Level::Critical,
+        _ => Level::Info,
+    }
 }
 
 fn outcome<T, E: std::fmt::Display>(r: Result<T, E>) -> String {
@@ -269,8 +295,16 @@ impl Fixture {
                 app::log(Level::Warn, rest);
                 "ok".into()
             }
+            "log-at" => {
+                app::log(level(first), tail);
+                "ok".into()
+            }
             "print" => {
                 println!("{rest}");
+                "ok".into()
+            }
+            "eprint" => {
+                eprintln!("{rest}");
                 "ok".into()
             }
             "udp-bind" | "udp-send" | "udp-recv" | "net-watch" | "tcp-connect" | "tcp-write"
@@ -311,6 +345,10 @@ impl Fixture {
             }
             "vread" => outcome(std::fs::read(bulkhead_native::preopens::path(rest))),
             "vwrite" => outcome(std::fs::write(bulkhead_native::preopens::path(rest), b"x")),
+            "vcat" => match std::fs::read_to_string(bulkhead_native::preopens::path(rest)) {
+                Ok(contents) => contents,
+                Err(e) => format!("err:{e}"),
+            },
             "priv" => match std::env::var(bulkhead_native::protocol::PRIV_ENV) {
                 Ok(dir) => outcome(std::fs::read(std::path::Path::new(&dir).join(rest))),
                 Err(_) => "err:no priv".into(),
@@ -477,6 +515,15 @@ fn kv(ctx: &mut Ctx, command: &str) -> String {
             "get" => b.get(arg(2)).map(|v| v.map_or_else(|| "none".into(), text)),
             "set" => b.set(arg(2), arg(3).as_bytes()).map(|()| "ok".into()),
             "del" => b.delete(arg(2)).map(|()| "ok".into()),
+            "exists" => b.exists(arg(2)).map(|found| found.to_string()),
+            "keys" => all_keys(&mut b),
+            "delmany" => {
+                let keys: Vec<String> = arg(2).split(',').map(str::to_string).collect();
+                b.delete_many(&keys).map(|()| "ok".into())
+            }
+            "fill" => (0..arg(2).parse().unwrap_or(0))
+                .try_for_each(|i: u32| b.set(&format!("k{i}"), b"x"))
+                .map(|()| "ok".into()),
             "incr" => b
                 .increment(arg(2), arg(3).parse().unwrap_or(1))
                 .map(|n| n.to_string()),

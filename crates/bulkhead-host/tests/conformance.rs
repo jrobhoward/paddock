@@ -1,17 +1,20 @@
-//! The conformance suite: what an app built with any guest SDK must do, as
-//! cases against an app speaking `bulkhead-fixture-conformance`'s command
-//! protocol (its crate documentation). Runs against the Rust reference app
-//! by default; `BULKHEAD_CONFORMANCE_APP=<component.wasm>` runs it against
-//! another language's:
+//! The conformance suite: what an app must do, as cases against an app
+//! speaking `bulkhead-fixture-conformance`'s command protocol (its crate
+//! documentation). Runs against an in-process copy of the reference app by
+//! default (`bulkhead_host::in_process::conformance`), which needs no build
+//! and covers the node's side of every frame.
+//!
+//! `BULKHEAD_CONFORMANCE_NATIVE=1` runs it against the Rust reference app
+//! built as a native program (Linux), through `bulkhead-runner`: every
+//! case, snapshots and upgrades included, on the SDK and the real channel.
+//! The cases that need a process to hold memory return early in-process.
+//!
+//! `BULKHEAD_CONFORMANCE_APP=<component.wasm>` runs it against a component:
 //!
 //! ```text
 //! BULKHEAD_CONFORMANCE_APP=sdks/go/conformance/app.wasm \
 //!     cargo test -p bulkhead-host --test conformance
 //! ```
-//!
-//! `BULKHEAD_CONFORMANCE_NATIVE=1` runs it against the Rust reference app
-//! built as a native program (Linux), through `bulkhead-runner`: every
-//! case, snapshots and upgrades included.
 //!
 //! Each test is one case; the case names are the rows of WRITING_APPS.md's
 //! table of SDKs.
@@ -32,39 +35,53 @@ use bulkhead_bundle::manifest::{
     AccessMode, Bucket, Capability, Durability, GroupsScope, LogLevel,
 };
 use bulkhead_host::health::HealthCheck;
+use bulkhead_host::in_process::conformance::Conformance;
 use bulkhead_host::{
     AppDeployment, CallError, Envelope, ExitReason, InstanceHandle, InstanceSpec, LoadedApp,
     Runtime, RuntimeConfig, SecretSource, UpgradeError, UpgradeOptions,
 };
-use common::{LONG, app_manifest, ask, ask_until, body, fixture, text};
+use common::{LONG, app_manifest, ask, ask_until, body, text};
 
 /// The native mode: the reference app as a native program.
 fn native() -> bool {
     std::env::var_os("BULKHEAD_CONFORMANCE_NATIVE").is_some_and(|v| v == "1")
 }
 
+/// The component mode: `BULKHEAD_CONFORMANCE_APP`.
+fn component() -> bool {
+    std::env::var_os("BULKHEAD_CONFORMANCE_APP").is_some()
+}
+
+/// The in-process mode, the default.
+fn in_process() -> bool {
+    !native() && !component()
+}
+
 /// Whether a crash's reason is the app's own failure: a trap in a
-/// component, a panic in a native app.
+/// component, a panic in a native app. An in-process app's `init` reports
+/// its panic as an error.
 fn crashed_in_app(why: &str) -> bool {
-    why.starts_with("trap:") || (native() && why.starts_with("panic:"))
+    if component() {
+        why.starts_with("trap:")
+    } else {
+        why.starts_with("panic:") || (in_process() && why.starts_with("init failed: panic:"))
+    }
 }
 
 use serde_json::json;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
-/// The component under test: `BULKHEAD_CONFORMANCE_APP` (a relative path
-/// from the workspace root), or the Rust reference app.
-fn component() -> Vec<u8> {
-    match std::env::var_os("BULKHEAD_CONFORMANCE_APP") {
-        Some(path) => std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join(&path),
-        )
-        .unwrap_or_else(|e| panic!("BULKHEAD_CONFORMANCE_APP {}: {e}", path.display())),
-        None => fixture("bulkhead_fixture_conformance"),
-    }
+/// The component under test: `BULKHEAD_CONFORMANCE_APP`, a relative path
+/// from the workspace root.
+fn component_bytes() -> Vec<u8> {
+    let path = std::env::var_os("BULKHEAD_CONFORMANCE_APP").unwrap();
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(&path),
+    )
+    .unwrap_or_else(|e| panic!("BULKHEAD_CONFORMANCE_APP {}: {e}", path.display()))
 }
 
 /// The secret `token` the runtime binds, from a file written by `echo`.
@@ -113,8 +130,10 @@ fn shared() -> &'static (Runtime, LoadedApp) {
         .unwrap();
         let app = if native() {
             native_app(&rt)
+        } else if component() {
+            rt.load(&component_bytes()).unwrap()
         } else {
-            rt.load(&component()).unwrap()
+            rt.load_in_process::<Conformance>()
         };
         (rt, app)
     })
@@ -361,8 +380,8 @@ fn start_with(app: &str, change: impl FnOnce(&mut InstanceSpec)) -> InstanceHand
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_cast____each_outcome____says_whether_it_was_queued() {
-    // A component's cast is not told (ROADMAP I1): native programs only.
-    if !native() {
+    // A component's cast is not told (ROADMAP I1).
+    if component() {
         return;
     }
     let a = up("c-try-cast", "").await;
@@ -435,7 +454,7 @@ fn filler(bytes: usize) -> Envelope {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____room_comes____queued_after_waiting() {
-    if !native() {
+    if component() {
         return;
     }
     let a = up("c-wait-room", "").await;
@@ -459,7 +478,7 @@ async fn cast_wait____room_comes____queued_after_waiting() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____no_room____times_out_capped_at_the_deadline() {
-    if !native() {
+    if component() {
         return;
     }
     let a = up("c-wait-none", "").await;
@@ -488,7 +507,7 @@ async fn cast_wait____no_room____times_out_capped_at_the_deadline() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____to_its_own_full_mailbox____overloaded_at_once() {
-    if !native() {
+    if component() {
         return;
     }
     let stuck = up("c-wait-self", "").await;
@@ -512,7 +531,7 @@ async fn cast_wait____to_its_own_full_mailbox____overloaded_at_once() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____two_waiting_on_each_other____first_timeout_frees_the_other() {
-    if !native() {
+    if component() {
         return;
     }
     let stuck = up("c-wait-cycle", "").await;
@@ -619,7 +638,7 @@ async fn link____partner_crashes____trapping_instance_gets_an_exit_info() {
     let prefix = format!("exit:{}:crashed(trap:", pid(&b));
     let native_prefix = format!("exit:{}:crashed(panic:", pid(&b));
     assert!(
-        infos.starts_with(&prefix) || (native() && infos.starts_with(&native_prefix)),
+        infos.starts_with(&prefix) || (!component() && infos.starts_with(&native_prefix)),
         "{infos}"
     );
     a.kill();
@@ -826,6 +845,10 @@ async fn trap____in_a_call____caller_gets_crashed_and_instance_exits() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_max____allocation_beyond____crashes_with_memory_limit() {
+    // An in-process app shares the test's memory: nothing to limit.
+    if in_process() {
+        return;
+    }
     let h = up("c-memory", "").await;
 
     let small = ask(&h, "alloc:4").await;
@@ -860,6 +883,10 @@ async fn callback_deadline____guest_spins____exits_timeout() {
 async fn memory____many_calls_and_casts____does_not_grow() {
     // What the host passes each callback must be freed after it: an SDK
     // whose runtime keeps it (TinyGo, spike S21) leaks 4 KiB a message here.
+    // An in-process app has no memory of its own to measure.
+    if in_process() {
+        return;
+    }
     let h = up("c-leak", "").await;
     let command = format!("echo:{}", "x".repeat(4096));
     for _ in 0..1_000 {

@@ -8,6 +8,10 @@ All notable changes are recorded here. The format follows
 
 ### Security
 
+- A native app whose manifest declares `wasi:filesystem` no longer gets
+  its volumes or `priv/` files when the operator's policy denies that
+  capability (ROADMAP Z9i): the node passed them to `bulkhead-runner`
+  without checking the grant, as only a component's start did.
 - A native singleton no longer runs on past its node's failover lease
   while the node process is stopped or stalled: its process is not the
   node's, so it kept running until the node resumed and killed it (0.75 s
@@ -123,7 +127,9 @@ All notable changes are recorded here. The format follows
   loaded with `Runtime::load_in_process`, run inside their instance's task
   over the native protocol's frames, under the native lifecycle, and
   follow tokio's paused clock. `in_process::chaos::Chaos` is the chaos
-  fixture's commands on it. For tests, not production nodes.
+  fixture's commands on it, and `in_process::conformance::Conformance`
+  the conformance app's (ROADMAP Z9d), which the conformance suite now
+  runs by default. For tests, not production nodes.
 - A node accepts native apps built against the previous protocol version
   as well as its own (ROADMAP Z9a), so an app survives one node upgrade
   without a rebuild: version 12 nodes run version 11 apps. A frame newer

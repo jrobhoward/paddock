@@ -6,6 +6,7 @@
 
 mod common;
 
+use bulkhead_host::in_process::chaos::Chaos;
 use bulkhead_host::{HostError, MemoryProfile, Runtime, RuntimeConfig};
 use common::{LONG, body, fixture, spec, text};
 
@@ -16,7 +17,7 @@ async fn spawn____instance_limit_reached____refused_until_a_slot_frees() {
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = rt.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+    let app = rt.load_in_process::<Chaos>();
     let first = rt.spawn(&app, spec("")).unwrap();
 
     let refused = rt.spawn(&app, spec(""));
@@ -40,7 +41,7 @@ async fn spawn____memory_max_above_dense_profile____refused() {
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = rt.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+    let app = rt.load_in_process::<Chaos>();
     let mut big = spec("");
     big.memory_max = 256 << 20;
 
@@ -60,7 +61,7 @@ async fn spawn____dense_profile____runs_instances() {
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = rt.load(&fixture("bulkhead_fixture_chaos")).unwrap();
+    let app = rt.load_in_process::<Chaos>();
     let instance = rt.spawn(&app, spec("")).unwrap();
 
     let reply = instance.call(text("echo:dense"), LONG).await.unwrap();
@@ -68,6 +69,9 @@ async fn spawn____dense_profile____runs_instances() {
     assert_eq!(body(&reply), "dense");
     instance.kill();
 }
+
+// The tests below hold what only a component does (ROADMAP Z9e removes
+// them with the code).
 
 #[test]
 fn load____not_a_component____refused() {

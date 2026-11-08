@@ -84,7 +84,7 @@ mod linux {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
-    use bulkhead_bundle::manifest::NativeProgram;
+    use bulkhead_bundle::manifest::{Capability, NativeProgram};
     use bulkhead_native::channel::{self, Channel, RING_CAP};
     use bulkhead_native::hot::FromAppHot;
     use bulkhead_native::protocol::{self, ToApp};
@@ -295,7 +295,15 @@ mod linux {
                 NativeProgram::Executable => "--executable",
             })
             .arg(&program.path);
-            for p in &spec.preopens {
+            // A manifest's preopens stay in the spec when the operator
+            // denies the capability: they count only with the grant.
+            let preopens: &[crate::spec::Preopen] =
+                if spec.granted.contains(&Capability::Filesystem) {
+                    &spec.preopens
+                } else {
+                    &[]
+                };
+            for p in preopens {
                 cmd.arg(if p.writable { "--write" } else { "--read" })
                     .arg(&p.host);
             }
@@ -321,16 +329,12 @@ mod linux {
             // The read end goes with the closure below, which `cmd` holds.
             let (lease_read, lease_write) = lease_pipe.unzip();
             cmd.env_clear();
-            if let Some(p) = spec
-                .preopens
-                .iter()
-                .find(|p| p.guest == crate::spec::PRIV_PATH)
-            {
+            if let Some(p) = preopens.iter().find(|p| p.guest == crate::spec::PRIV_PATH) {
                 cmd.env(protocol::PRIV_ENV, &p.host);
             }
-            if !spec.preopens.is_empty() {
+            if !preopens.is_empty() {
                 let preopens = bulkhead_native::preopens::encode(
-                    spec.preopens
+                    preopens
                         .iter()
                         .map(|p| (p.guest.as_str(), p.host.as_path())),
                 )
