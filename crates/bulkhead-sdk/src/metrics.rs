@@ -17,7 +17,8 @@
 
 use std::fmt;
 
-use crate::host::metrics as wit;
+use bulkhead_native::app::Ctx;
+use bulkhead_native::protocol as p;
 
 /// Why a metric could not be made.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,29 +44,25 @@ impl fmt::Display for MetricsError {
 
 impl std::error::Error for MetricsError {}
 
-impl From<wit::Error> for MetricsError {
-    fn from(e: wit::Error) -> Self {
+impl From<p::MetricError> for MetricsError {
+    fn from(e: p::MetricError) -> Self {
         match e {
-            wit::Error::AccessDenied => Self::AccessDenied,
-            wit::Error::Invalid(why) => Self::Invalid(why),
-            wit::Error::LimitReached => Self::LimitReached,
-            wit::Error::UnknownMetric => Self::Invalid("unknown metric".into()),
+            p::MetricError::AccessDenied => Self::AccessDenied,
+            p::MetricError::Invalid(why) => Self::Invalid(why),
+            p::MetricError::LimitReached => Self::LimitReached,
+            p::MetricError::UnknownMetric => Self::Invalid("unknown metric".into()),
         }
     }
 }
 
 fn register(
-    kind: wit::Kind,
+    kind: p::MetricKind,
     name: &str,
     help: &str,
     labels: &[(&str, &str)],
     buckets: &[f64],
 ) -> Result<u32, MetricsError> {
-    let labels: Vec<(String, String)> = labels
-        .iter()
-        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-        .collect();
-    Ok(wit::register(kind, name, help, &labels, buckets)?)
+    Ok(Ctx::current().register_metric(kind, name, help, labels, buckets)?)
 }
 
 /// A counter: only goes up.
@@ -79,7 +76,7 @@ impl Counter {
     ///
     /// As [`MetricsError`] lists.
     pub fn new(name: &str, help: &str, labels: &[(&str, &str)]) -> Result<Self, MetricsError> {
-        register(wit::Kind::Counter, name, help, labels, &[]).map(Self)
+        register(p::MetricKind::Counter, name, help, labels, &[]).map(Self)
     }
 
     /// Add one.
@@ -89,7 +86,7 @@ impl Counter {
 
     /// Add `n` (ignored if negative or not finite).
     pub fn add(self, n: f64) {
-        let _ = wit::add(self.0, n);
+        Ctx::current().metric_add(self.0, n);
     }
 }
 
@@ -104,17 +101,17 @@ impl Gauge {
     ///
     /// As [`MetricsError`] lists.
     pub fn new(name: &str, help: &str, labels: &[(&str, &str)]) -> Result<Self, MetricsError> {
-        register(wit::Kind::Gauge, name, help, labels, &[]).map(Self)
+        register(p::MetricKind::Gauge, name, help, labels, &[]).map(Self)
     }
 
     /// Set it (ignored if not finite).
     pub fn set(self, value: f64) {
-        let _ = wit::set(self.0, value);
+        Ctx::current().metric_set(self.0, value);
     }
 
     /// Move it by `delta` (ignored if not finite).
     pub fn add(self, delta: f64) {
-        let _ = wit::add(self.0, delta);
+        Ctx::current().metric_add(self.0, delta);
     }
 }
 
@@ -135,11 +132,11 @@ impl Histogram {
         labels: &[(&str, &str)],
         buckets: &[f64],
     ) -> Result<Self, MetricsError> {
-        register(wit::Kind::Histogram, name, help, labels, buckets).map(Self)
+        register(p::MetricKind::Histogram, name, help, labels, buckets).map(Self)
     }
 
     /// Record `value` (ignored if not finite).
     pub fn observe(self, value: f64) {
-        let _ = wit::observe(self.0, value);
+        Ctx::current().metric_observe(self.0, value);
     }
 }

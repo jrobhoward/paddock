@@ -18,8 +18,6 @@
 
 ```sh
 cargo install cargo-fuzz
-# process_ops runs the chaos fixture:
-cargo build --release --target wasm32-wasip2 -p bulkhead-fixture-chaos --target-dir target/fixtures
 cd fuzz
 cargo +nightly fuzz run parse -- -max_total_time=60
 ```

@@ -30,7 +30,7 @@
 //! `instances.routing = "hash:device"` so each device stays on one
 //! instance, in order. Apps read and write devices, and set the served
 //! registers, through the `client` and `server` interfaces
-//! (`wit/modbus.wit`), declared in the manifest and granted by the
+//! (`bulkhead-modbus-client`), declared in the manifest and granted by the
 //! operator like any extension:
 //!
 //! ```toml
@@ -40,10 +40,9 @@
 //! serve = true
 //! ```
 //!
-//! Native programs call the same functions through the node
-//! (`Extension::call`, ROADMAP Z8h), named by interface and function as
-//! in the WIT (`client#read-holding`, `server#set-coils`), with the
-//! parameters as a CBOR array and the WIT result back in CBOR.
+//! Apps call the functions through the node (`Extension::call`), named by
+//! interface and function (`client#read-holding`, `server#set-coils`),
+//! with the parameters as a CBOR array and the result back in CBOR.
 
 mod config;
 mod device;

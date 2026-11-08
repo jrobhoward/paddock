@@ -20,20 +20,15 @@ pub enum BundleError {
     #[error("cannot read bundle: {0}")]
     Unreadable(#[source] rustbridge_bundle::BundleError),
 
-    /// The bundle has no `wasm32-wasip2` release variant.
-    #[error("bundle has no wasm32-wasip2 release variant")]
-    NoComponent,
+    /// The bundle holds a WebAssembly component, which Bulkhead does not
+    /// run.
+    #[error(
+        "this bundle holds a WebAssembly component, which Bulkhead does not run: \
+         build the app as a native program and bundle that"
+    )]
+    Component,
 
-    /// The component targets a world this node does not implement.
-    #[error("unsupported world '{world}' (this node supports {supported})")]
-    UnsupportedWorld {
-        /// The world the bundle declares; empty if it declares none.
-        world: String,
-        /// The worlds this node supports, comma-separated.
-        supported: String,
-    },
-
-    /// A `native-process` bundle has no release variant for this node's
+    /// A bundle has no release variant for this node's
     /// platform.
     #[error(
         "bundle has no program for {platform}, this node's platform (it has {present}); \
@@ -70,20 +65,6 @@ pub enum BundleError {
     #[error(transparent)]
     Manifest(#[from] ManifestError),
 
-    /// The component bytes are not a valid WebAssembly component.
-    #[error("invalid component: {0}")]
-    InvalidComponent(String),
-
-    /// The component imports interfaces the manifest does not declare, or
-    /// that no host provides.
-    #[error("{}", refused_message(.undeclared, .unknown))]
-    ImportsRefused {
-        /// Imports whose capability is not declared under `capabilities`.
-        undeclared: Vec<String>,
-        /// Imports no host provides.
-        unknown: Vec<String>,
-    },
-
     /// A file under `priv/` has a path that could leave the directory it is
     /// extracted into: absolute, with `..`, or not a plain relative path.
     #[error("bundle file 'priv/{0}' has an unsafe path (absolute, '..' or a drive)")]
@@ -92,20 +73,6 @@ pub enum BundleError {
     /// The operator policy file could not be read or parsed.
     #[error("invalid operator policy: {0}")]
     Policy(String),
-}
-
-fn refused_message(undeclared: &[String], unknown: &[String]) -> String {
-    let mut parts = Vec::new();
-    if !undeclared.is_empty() {
-        parts.push(format!(
-            "imports not declared under capabilities: {}",
-            undeclared.join(", ")
-        ));
-    }
-    if !unknown.is_empty() {
-        parts.push(format!("imports no host provides: {}", unknown.join(", ")));
-    }
-    format!("deploy refused: {}", parts.join("; "))
 }
 
 impl From<rustbridge_bundle::BundleError> for BundleError {

@@ -17,8 +17,10 @@
 
 use std::fmt;
 
+use bulkhead_native::app::Ctx;
+use bulkhead_native::protocol as p;
+
 use crate::envelope::Envelope;
-use crate::host::groups as wit;
 use crate::types::Pid;
 
 /// Why a group operation failed.
@@ -43,11 +45,11 @@ impl fmt::Display for GroupError {
 
 impl std::error::Error for GroupError {}
 
-impl From<wit::Error> for GroupError {
-    fn from(e: wit::Error) -> Self {
+impl From<p::GroupsError> for GroupError {
+    fn from(e: p::GroupsError) -> Self {
         match e {
-            wit::Error::AccessDenied => Self::AccessDenied,
-            wit::Error::LimitReached => Self::LimitReached,
+            p::GroupsError::AccessDenied => Self::AccessDenied,
+            p::GroupsError::LimitReached => Self::LimitReached,
         }
     }
 }
@@ -60,7 +62,7 @@ impl From<wit::Error> for GroupError {
 /// `join` and the capability is granted; [`GroupError::LimitReached`] over
 /// `limits.groups_max`.
 pub fn join(group: &str) -> Result<(), GroupError> {
-    Ok(wit::join(group)?)
+    Ok(Ctx::current().join_group(group)?)
 }
 
 /// Leave `group`; leaving a group this instance is not in does nothing.
@@ -69,7 +71,7 @@ pub fn join(group: &str) -> Result<(), GroupError> {
 ///
 /// [`GroupError::AccessDenied`] as for [`join`].
 pub fn leave(group: &str) -> Result<(), GroupError> {
-    Ok(wit::leave(group)?)
+    Ok(Ctx::current().leave_group(group)?)
 }
 
 /// The members of `group` on every node this node hears, ordered by pid.
@@ -79,7 +81,11 @@ pub fn leave(group: &str) -> Result<(), GroupError> {
 /// [`GroupError::AccessDenied`] unless the manifest lists `group` under
 /// `join` or `publish` and the capability is granted.
 pub fn members(group: &str) -> Result<Vec<Pid>, GroupError> {
-    Ok(wit::members(group)?.into_iter().map(Pid::from).collect())
+    Ok(Ctx::current()
+        .group_members(group)?
+        .into_iter()
+        .map(Pid::from)
+        .collect())
 }
 
 /// Cast `msg` to every member of `group` on any node, this instance too if
@@ -93,5 +99,5 @@ pub fn members(group: &str) -> Result<Vec<Pid>, GroupError> {
 /// [`GroupError::AccessDenied`] unless the manifest lists `group` under
 /// `publish` and the capability is granted.
 pub fn publish(group: &str, msg: Envelope) -> Result<u32, GroupError> {
-    Ok(wit::publish(group, &msg.into())?)
+    Ok(Ctx::current().publish(group, msg.into())?)
 }

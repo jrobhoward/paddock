@@ -13,16 +13,8 @@
 #   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
 #   buckets = ["board"]
 #
-# examples/tutorial walks through it.
-#
-# As a native program (Linux) from the same source: add
-#
-#   [appserver]
-#   kind = "native-process"
-#   native = { program = "executable" }
-#
-# and bundle `target/release/example-board` from
-# `cargo build -p example-board --features native --release`.
+# examples/tutorial walks through it. Bundle `target/release/example-board`
+# from `cargo build -p example-board --release`.
 [app]
 name = "board"
 version = "1.0.0"
@@ -37,7 +29,7 @@ timeout_ms = 5000
 [appserver.capabilities."wasi:keyvalue".shared]
 board = "rw"
 
-# The component imports process groups for its hot-standby mode
+# The app joins process groups in its hot-standby mode
 # (hot-standby.toml); declared without groups here, it is never called.
 [appserver.capabilities."bulkhead:groups"]
 

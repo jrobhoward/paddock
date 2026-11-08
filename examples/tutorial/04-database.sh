@@ -7,7 +7,6 @@
 #
 #   examples/tutorial/04-database.sh          # pauses; you kill node 1
 #   AUTO=1 examples/tutorial/04-database.sh   # runs straight through
-#   BOARD=native examples/tutorial/04-database.sh   # the tally as a native program
 #
 # Needs Postgres's server programs (on Ubuntu: apt install postgresql; the
 # system service is not used and can be disabled). This script starts its
@@ -98,7 +97,6 @@ start_node 2
 # The tally, as a singleton: it runs on the primary only.
 cp "$ROOT/examples/tally/bulkhead.toml" tally.toml
 printf '\n[appserver.placement]\nmode = "singleton"\n' >> tally.toml
-make_native tally.toml
 "$BULKHEAD" bundle tally.toml "$TALLY_PROGRAM" --key signer.key --out tally.rbp >/dev/null
 p 1 deploy tally.rbp >/dev/null
 p 2 deploy tally.rbp >/dev/null

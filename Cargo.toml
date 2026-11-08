@@ -3,20 +3,15 @@ resolver = "3"
 members = [
     "crates/bulkhead",
     "crates/bulkhead-bundle",
-    "crates/bulkhead-fixture-chaos",
     "crates/bulkhead-fixture-conformance",
     "crates/bulkhead-fixture-conn",
     "crates/bulkhead-fixture-counter",
-    "crates/bulkhead-fixture-echo",
-    "crates/bulkhead-fixture-http",
     "crates/bulkhead-fixture-kvbench",
     "crates/bulkhead-fixture-msgbench",
     "crates/bulkhead-fixture-native",
     "crates/bulkhead-fixture-net",
     "crates/bulkhead-fixture-plugin",
     "crates/bulkhead-fixture-sdk",
-    "crates/bulkhead-fixture-services",
-    "crates/bulkhead-fixture-workload",
     "crates/bulkhead-host",
     "crates/bulkhead-modbus",
     "crates/bulkhead-modbus-client",
@@ -24,7 +19,6 @@ members = [
     "crates/bulkhead-sdk",
     "crates/bulkhead-sdk-macros",
     "crates/bulkhead-soak",
-    "crates/bulkhead-workload",
     "examples/board",
     "examples/counter",
     "examples/ping-pong",
@@ -48,7 +42,7 @@ exclude = ["spikes", "fuzz"]
 version = "0.3.0"
 edition = "2024"
 # The current stable rustc: dependencies resolve to their newest releases
-# (resolver 3 picks versions that build on rust-version). wasmtime 50 needs 1.97.0.
+# (resolver 3 picks versions that build on rust-version).
 rust-version = "1.99.0"
 license = "MIT OR Apache-2.0"
 authors = ["James Howard <jrobhoward@gmail.com>"]
@@ -57,16 +51,6 @@ repository = "https://github.com/jrobhoward/bulkhead"
 # Versions pinned by spike S3 (spikes/S3-wasi-target.md). The wasmtime crates are
 # released together and move as a group.
 [workspace.dependencies]
-# HTTP egress: our own sender, so no default-send-request
-# (webpki-roots) and no p3.
-wit-bindgen = "0.63"
-# The SDK's HTTP client (`bulkhead_sdk::http_client`): wasi:http bindings.
-wasip2 = "2"
-# wit-parser and wasmparser on wasmtime 50's line, so host builds carry one
-# copy. wit-bindgen 0.63's macro is a line ahead (0.262); that copy is built
-# only for the guests' proc-macro.
-wit-parser = "0.261"
-wasmparser = { version = "0.261", default-features = false, features = ["component-model", "std"] }
 # 1.54: the current line (`AsyncFd::register`, which the serial tty uses, is 1.53.3 on).
 tokio = "1.54"
 # MIT OR Apache-2.0. Client (polling) and server (serving registers) over TCP.
@@ -129,7 +113,6 @@ bulkhead-modbus-client = { path = "crates/bulkhead-modbus-client" }
 bulkhead-native = { path = "crates/bulkhead-native", default-features = false }
 bulkhead-sdk = { path = "crates/bulkhead-sdk" }
 bulkhead-sdk-macros = { path = "crates/bulkhead-sdk-macros" }
-bulkhead-workload = { path = "crates/bulkhead-workload" }
 # rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2
 # components, manifest extensions, trusted-key verification, signed file
 # checksums). Cargo.lock pins the commit. Move to a crates.io release once one
@@ -203,7 +186,3 @@ opt-level = 3
 [profile.dev.package.salsa20]
 opt-level = 3
 
-# Tests compile guest components with Cranelift; unoptimized, it takes
-# seconds per component, which dominates the distribution and simulation tests.
-[profile.dev.package.wasmparser]
-opt-level = 3

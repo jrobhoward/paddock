@@ -33,13 +33,7 @@ fn native_net() -> &'static PathBuf {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let ok = std::process::Command::new(cargo)
             .current_dir(&root)
-            .args([
-                "build",
-                "-p",
-                "bulkhead-fixture-net",
-                "--features",
-                "native",
-            ])
+            .args(["build", "-p", "bulkhead-fixture-net"])
             .args(["--bin", "bulkhead-fixture-net", "--target-dir"])
             .arg(&target)
             .status()

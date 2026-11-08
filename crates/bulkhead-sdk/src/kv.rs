@@ -15,10 +15,11 @@
 
 use std::fmt;
 
+use bulkhead_native::app::Ctx;
+use bulkhead_native::hot::KvOp;
+use bulkhead_native::protocol as p;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-
-use crate::host::keyvalue::{atomics, batch, store};
 
 /// Why a keyvalue operation failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,33 +50,48 @@ impl fmt::Display for KvError {
 
 impl std::error::Error for KvError {}
 
-impl From<store::Error> for KvError {
-    fn from(e: store::Error) -> Self {
+impl From<p::KvError> for KvError {
+    fn from(e: p::KvError) -> Self {
         match e {
-            store::Error::AccessDenied => Self::AccessDenied,
-            store::Error::NoSuchStore => Self::NoSuchStore,
-            store::Error::Other(msg) => Self::Other(msg),
+            p::KvError::AccessDenied => Self::AccessDenied,
+            p::KvError::NoSuchBucket => Self::NoSuchStore,
+            other => Self::Other(format!("{other:?}")),
         }
     }
 }
 
-/// An open bucket. Dropping it closes the handle; the data stays.
+fn unexpected(answer: &p::KvAnswer) -> KvError {
+    KvError::Other(format!("unexpected keyvalue answer {answer:?}"))
+}
+
+/// A bucket: its name. Opening one asks the node nothing, so an unlisted
+/// bucket's error comes with its first operation.
 #[derive(Debug)]
 pub struct Bucket {
-    inner: store::Bucket,
+    name: String,
 }
 
 impl Bucket {
-    /// Open the bucket the manifest lists as `name`.
+    /// The bucket the manifest lists as `name`.
     ///
     /// # Errors
     ///
-    /// [`KvError::AccessDenied`] for a bucket the manifest does not list or
-    /// without the capability granted.
+    /// None today; each operation reports [`KvError::AccessDenied`] for a
+    /// bucket the manifest does not list or without the capability granted.
     pub fn open(name: &str) -> Result<Self, KvError> {
         Ok(Self {
-            inner: store::open(name)?,
+            name: name.to_string(),
         })
+    }
+
+    fn request(&self, request: p::KvRequest) -> Result<p::KvAnswer, KvError> {
+        Ok(Ctx::current().kv(request)?)
+    }
+
+    /// A hot frame's operation (ROADMAP T7): the bucket and key borrowed,
+    /// nothing built for the request.
+    fn op(&self, op: KvOp, key: &str, value: &[u8]) -> Result<p::KvAnswer, KvError> {
+        Ok(Ctx::current().kv_op(&self.name, op, key, value)?)
     }
 
     /// The bytes stored under `key`.
@@ -84,7 +100,10 @@ impl Bucket {
     ///
     /// The host's error.
     pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
-        Ok(self.inner.get(key)?)
+        match self.op(KvOp::Get, key, &[])? {
+            p::KvAnswer::Value(v) => Ok(v.map(|b| b.0)),
+            other => Err(unexpected(&other)),
+        }
     }
 
     /// Store `value` under `key`.
@@ -94,7 +113,7 @@ impl Bucket {
     /// The host's error, including [`KvError::Other`] past the bucket's
     /// quota.
     pub fn set(&self, key: &str, value: &[u8]) -> Result<(), KvError> {
-        Ok(self.inner.set(key, value)?)
+        self.op(KvOp::Set, key, value).map(|_| ())
     }
 
     /// Remove `key`; removing a missing key is not an error.
@@ -103,7 +122,7 @@ impl Bucket {
     ///
     /// The host's error.
     pub fn delete(&self, key: &str) -> Result<(), KvError> {
-        Ok(self.inner.delete(key)?)
+        self.op(KvOp::Delete, key, &[]).map(|_| ())
     }
 
     /// Whether `key` is set.
@@ -112,7 +131,10 @@ impl Bucket {
     ///
     /// The host's error.
     pub fn exists(&self, key: &str) -> Result<bool, KvError> {
-        Ok(self.inner.exists(key)?)
+        match self.op(KvOp::Exists, key, &[])? {
+            p::KvAnswer::Exists(e) => Ok(e),
+            other => Err(unexpected(&other)),
+        }
     }
 
     /// Every key, in order, fetching page after page.
@@ -124,11 +146,16 @@ impl Bucket {
         let mut keys = Vec::new();
         let mut cursor = None;
         loop {
-            let page = self.inner.list_keys(cursor)?;
-            keys.extend(page.keys);
-            match page.cursor {
-                Some(next) => cursor = Some(next),
-                None => return Ok(keys),
+            let bucket = self.name.clone();
+            match self.request(p::KvRequest::Keys { bucket, cursor })? {
+                p::KvAnswer::Keys(page, next) => {
+                    keys.extend(page);
+                    match next {
+                        Some(next) => cursor = Some(next),
+                        None => return Ok(keys),
+                    }
+                }
+                other => return Err(unexpected(&other)),
             }
         }
     }
@@ -141,7 +168,14 @@ impl Bucket {
     /// The host's error, including [`KvError::Other`] for a value that is
     /// not a counter.
     pub fn increment(&self, key: &str, delta: u64) -> Result<u64, KvError> {
-        Ok(atomics::increment(&self.inner, key, delta)?)
+        match self.request(p::KvRequest::Increment {
+            bucket: self.name.clone(),
+            key: key.to_string(),
+            delta,
+        })? {
+            p::KvAnswer::Count(n) => Ok(n),
+            other => Err(unexpected(&other)),
+        }
     }
 
     /// The values of several keys, in order; `None` for keys not set.
@@ -150,8 +184,13 @@ impl Bucket {
     ///
     /// The host's error.
     pub fn get_many(&self, keys: &[String]) -> Result<Vec<Option<Vec<u8>>>, KvError> {
-        let found = batch::get_many(&self.inner, keys)?;
-        Ok(found.into_iter().map(|kv| kv.map(|(_, v)| v)).collect())
+        match self.request(p::KvRequest::GetMany {
+            bucket: self.name.clone(),
+            keys: keys.to_vec(),
+        })? {
+            p::KvAnswer::Values(found) => Ok(found.into_iter().map(|v| v.map(|b| b.0)).collect()),
+            other => Err(unexpected(&other)),
+        }
     }
 
     /// Store several values in one transaction.
@@ -160,7 +199,15 @@ impl Bucket {
     ///
     /// The host's error; on error nothing is stored.
     pub fn set_many(&self, entries: &[(String, Vec<u8>)]) -> Result<(), KvError> {
-        Ok(batch::set_many(&self.inner, entries)?)
+        let entries = entries
+            .iter()
+            .map(|(k, v)| (k.clone(), p::Bytes(v.clone())))
+            .collect();
+        self.request(p::KvRequest::SetMany {
+            bucket: self.name.clone(),
+            entries,
+        })
+        .map(|_| ())
     }
 
     /// Remove several keys in one transaction.
@@ -169,7 +216,11 @@ impl Bucket {
     ///
     /// The host's error.
     pub fn delete_many(&self, keys: &[String]) -> Result<(), KvError> {
-        Ok(batch::delete_many(&self.inner, keys)?)
+        self.request(p::KvRequest::DeleteMany {
+            bucket: self.name.clone(),
+            keys: keys.to_vec(),
+        })
+        .map(|_| ())
     }
 
     /// The value under `key`, decoded from CBOR.

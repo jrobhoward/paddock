@@ -1,13 +1,5 @@
-//! The conformance app as a native program (feature `native`): the same
-//! source as the component, served over the native protocol.
+//! The conformance app: the program the node runs.
 
-#[cfg(unix)]
 fn main() -> std::process::ExitCode {
     bulkhead_fixture_conformance::bulkhead_main()
-}
-
-#[cfg(not(unix))]
-fn main() -> std::process::ExitCode {
-    eprintln!("bulkhead-fixture-conformance: native apps run on Unix only");
-    std::process::ExitCode::FAILURE
 }

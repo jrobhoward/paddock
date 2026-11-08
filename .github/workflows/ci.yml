@@ -17,32 +17,31 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# Windows runners default to PowerShell; bash is present on all three and keeps
-# every `run:` block identical across the matrix.
+# Windows runners default to PowerShell; bash is present on all of them and
+# keeps every `run:` block identical.
 defaults:
   run:
     shell: bash
 
 jobs:
-  # The host will touch per-OS behaviour (sockets, filesystem preopens,
-  # address-space limits, the serial tty layer), so every OS runs the whole
-  # suite, and Linux on arm64 too (the Raspberry Pi 5 and other
-  # arm64 nodes; wasmtime's code generator differs by architecture).
+  # The host touches per-OS behaviour (sockets, filesystem preopens,
+  # address-space limits, the serial tty layer), so each OS apps build on
+  # runs the whole suite, and Linux on arm64 too (the Raspberry Pi 5 and
+  # other arm64 nodes).
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
-      # The host tests build the guest fixtures (into target/fixtures) on
-      # first use, so the test job needs the wasm target too.
+      # The tests build the apps they run (into target/fixtures) on first use.
       - name: Install toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy --target wasm32-wasip2
+          rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
           rustc --version
 
@@ -74,18 +73,18 @@ jobs:
       - name: Test
         run: scripts/check.sh test
 
-  # Guest components are what the host runs. Build each fixture for
-  # wasm32-wasip2 and confirm the result is a component exporting the
-  # `bulkhead:runtime` app world.
-  guests:
-    name: guest components (wasm32-wasip2)
-    runs-on: ubuntu-latest
+  # Apps are programs for Unix (the SDK's protocol runs over its sockets and
+  # shared memory), so Windows builds only the operator's side: the CLI, the
+  # node and the bundle tools, which must stay free of warnings there.
+  windows:
+    name: build (windows-latest)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install toolchain
         run: |
-          rustup toolchain install stable --profile minimal --target wasm32-wasip2
+          rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
 
       - uses: actions/cache@v4
@@ -95,18 +94,11 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: guests-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: guests-cargo-
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-cargo-
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-tools
-
-      # Every workspace crate built as a cdylib, checked as a component
-      # exporting the app world or `bulkhead:connection/handler`, then the
-      # tests that load a built fixture.
-      - name: Guests
-        run: scripts/check.sh guests
+      - name: Clippy
+        run: cargo clippy -p bulkhead -p bulkhead-host -p bulkhead-bundle --locked -- -Dwarnings
 
   # Guards `rust-version = "1.99.0"`, the stable rustc the dependencies resolve for.
   msrv:
@@ -148,7 +140,7 @@ jobs:
 
       - name: Install toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy --target wasm32-wasip2
+          rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
 
       # `resolver = "3"` is MSRV-aware, so this won't pull dependencies that
@@ -164,9 +156,6 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --all-features
-
-      - name: Build fixtures
-        run: cargo build -p bulkhead-fixture-echo --target wasm32-wasip2 --release
 
   # Supply chain, against the committed lock file: advisories and the
   # permissive-only licence allow-list in `deny.toml`. Runs on every event so a

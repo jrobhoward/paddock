@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use bulkhead_bundle::manifest::{AppInfo, AppSpec, ComponentRef, Provenance};
+use bulkhead_bundle::manifest::{AppInfo, AppSpec, ProgramRef, Provenance};
 
 use super::*;
 
@@ -20,10 +20,9 @@ fn manifest(name: &str, version: &str, deps: &[(&str, &str)]) -> AppManifest {
             license: None,
             repository: None,
         },
-        component: ComponentRef {
+        program: ProgramRef {
             path: String::new(),
             checksum: String::new(),
-            world: String::new(),
         },
         provenance: Provenance {
             signer_key: String::new(),

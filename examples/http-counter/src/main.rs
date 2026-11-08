@@ -1,13 +1,5 @@
-//! The counter as a native program (feature `native`): the same source as
-//! the component, served over the native protocol.
+//! The counter: the program the node runs.
 
-#[cfg(unix)]
 fn main() -> std::process::ExitCode {
     example_http_counter::bulkhead_main()
-}
-
-#[cfg(not(unix))]
-fn main() -> std::process::ExitCode {
-    eprintln!("example-http-counter: native apps run on Unix only");
-    std::process::ExitCode::FAILURE
 }

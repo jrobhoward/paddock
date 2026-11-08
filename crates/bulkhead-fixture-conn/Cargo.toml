@@ -9,19 +9,9 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-# The same handler as a native program (`bulkhead-host`'s `tests/listener.rs`).
-[[bin]]
-name = "bulkhead-fixture-conn"
-path = "src/main.rs"
-required-features = ["native"]
-
 [features]
 # `echo` replies `v2:<text>`, for upgrade tests.
 v2 = []
-native = []
 
 [dependencies]
 bulkhead-sdk = { workspace = true, features = ["connection"] }

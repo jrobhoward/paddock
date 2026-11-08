@@ -19,7 +19,7 @@ arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
 bulkhead = { path = "../crates/bulkhead" }
 bulkhead-bundle = { path = "../crates/bulkhead-bundle" }
-bulkhead-host = { path = "../crates/bulkhead-host" }
+bulkhead-host = { path = "../crates/bulkhead-host", features = ["test-apps"] }
 bulkhead-modbus = { path = "../crates/bulkhead-modbus" }
 bulkhead-native = { path = "../crates/bulkhead-native", default-features = false }
 semver = "1"

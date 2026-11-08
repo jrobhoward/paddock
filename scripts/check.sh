@@ -23,27 +23,23 @@
 #   fmt          cargo fmt --check
 #   clippy       clippy on every target and feature, -Dwarnings
 #   build        cargo build --workspace --all-targets: links what clippy and
-#                the tests do not (the guest crates' native cdylibs)
-#   cli-no-node  bulkhead without its `node` feature builds and has no wasmtime
+#                the tests do not
+#   cli-no-node  bulkhead without its `node` feature builds
 #   features     the node with no optional feature (no HTTP ingress, TLS,
 #                probes or Modbus), and with HTTP but no TLS, each builds
 #                clean; the first has none of their dependencies
-#   test         cargo test --workspace --all-features (needs the
-#                wasm32-wasip2 target), then on Linux the conformance
-#                suite against the reference app built as a native program
+#   test         cargo test --workspace --all-features, then on Linux the
+#                conformance suite against the reference app
 #   doc          rustdoc with warnings as errors
 #   deny         cargo-deny: licences, bans, sources, advisories
 #   msrv         cargo check on the workspace's rust-version, in its own
 #                target directory (target/msrv)
-#   guests       every guest crate built for wasm32-wasip2, each checked with
-#                wasm-tools for the app world or the connection handler, and
-#                the bundle fixture test
 #   secrets      scripts/check-secrets.sh (with --push when there is an upstream)
 #   conventions  what clippy does not check: test names
 #                (subject____condition____result), tests in *_tests.rs files
 #                registered with #[cfg(test)] #[path], no inline test modules,
 #                the #![allow] header on each test file
-#   changelog    a change to crates/, examples/ or wit/ also changes
+#   changelog    a change to crates/ or examples/ also changes
 #                CHANGELOG.md, unless a commit since --base has a line
 #                `Changelog: none`
 
@@ -52,7 +48,7 @@ set -uo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
-all_checks="fmt clippy build cli-no-node features test doc deny msrv guests secrets conventions changelog"
+all_checks="fmt clippy build cli-no-node features test doc deny msrv secrets conventions changelog"
 quick_checks="fmt clippy conventions test"
 
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -98,23 +94,6 @@ need() { # command, how to install it
     return 1
 }
 
-need_target() {
-    if command -v rustup > /dev/null 2>&1 && ! rustup target list --installed | has -x "$1"; then
-        echo "missing: the $1 target (rustup target add $1)"
-        return 1
-    fi
-}
-
-# Workspace members, from the root Cargo.toml.
-members() {
-    awk '/^members = \[/ { on = 1; next } on && /^\]/ { exit } on { gsub(/[ ",]/, ""); if ($0 != "") print }' Cargo.toml
-}
-
-# The [package] name in a Cargo.toml.
-package_name() {
-    awk '/^\[package\]/ { on = 1; next } /^\[/ { on = 0 } on && /^name *=/ { gsub(/.*= *"|".*/, ""); print; exit }' "$1"
-}
-
 check_fmt() {
     cargo fmt --all -- --check
 }
@@ -128,13 +107,9 @@ check_build() {
 }
 
 # `bulkhead` without its `node` feature is the CLI and bundle tooling only; it
-# must build, and must not pull in wasmtime.
+# must build.
 check_cli_no_node() {
-    cargo clippy -p bulkhead --no-default-features --all-targets --locked -- -Dwarnings || return 1
-    if cargo tree -p bulkhead --no-default-features -e normal --locked | has wasmtime; then
-        echo "bulkhead --no-default-features depends on wasmtime"
-        return 1
-    fi
+    cargo clippy -p bulkhead --no-default-features --all-targets --locked -- -Dwarnings
 }
 
 # Each optional capability compiles out: `bulkhead` with `node` alone, and
@@ -154,13 +129,11 @@ check_features() {
     fi
 }
 
-# The host tests build the guest fixtures themselves, so they need the target.
 # Every feature, so the Modbus tests run too.
 check_test() {
-    need_target wasm32-wasip2 || return 1
     local status=0
     cargo test --workspace --all-features --locked --no-fail-fast || status=1
-    # The same SDK source served as a native program (Linux only).
+    # The conformance cases against the reference app (Linux only).
     if [ "$(uname -s)" = Linux ]; then
         BULKHEAD_CONFORMANCE_NATIVE=1 cargo test -p bulkhead-host --test conformance --locked || status=1
     fi
@@ -186,47 +159,6 @@ check_msrv() {
     # build as stable, the two share artifact hashes in target/ and one reads
     # the other's stale metadata.
     CARGO_TARGET_DIR=target/msrv cargo "+$msrv" check --workspace --all-targets --all-features --locked
-}
-
-check_guests() {
-    need_target wasm32-wasip2 || return 1
-    need wasm-tools "cargo install wasm-tools" || return 1
-    local dir name packages="" wasm wit f failed=0
-    for dir in $(members); do
-        grep -q 'crate-type = \["cdylib"\]' "$dir/Cargo.toml" || continue
-        # A native library (a rustbridge plugin), not a guest.
-        grep -q '^native-library = true' "$dir/Cargo.toml" && continue
-        packages="$packages $(package_name "$dir/Cargo.toml")"
-    done
-    echo "guests:$packages"
-    local args=""
-    for name in $packages; do args="$args -p $name"; done
-    # shellcheck disable=SC2086
-    cargo build $args --target wasm32-wasip2 --release --locked || return 1
-    for name in $packages; do
-        wasm=target/wasm32-wasip2/release/$(echo "$name" | tr - _).wasm
-        wasm-tools validate --features all "$wasm" || { failed=1; continue; }
-        wit=$(wasm-tools component wit "$wasm") || { failed=1; continue; }
-        # Connection handlers export `bulkhead:connection/handler`. Apps export
-        # the app world's callbacks; a component imports only what its code
-        # calls (echo has no `process` import), so only exports are checked.
-        if echo "$wit" | has "export bulkhead:connection/handler@"; then
-            echo "$name: connection handler"
-            continue
-        fi
-        # HTTP handlers export `wasi:http/incoming-handler`.
-        if echo "$wit" | has "export wasi:http/incoming-handler@0.2."; then
-            echo "$name: HTTP handler"
-            continue
-        fi
-        for f in init handle-call handle-cast handle-info terminate save-snapshot load-snapshot; do
-            echo "$wit" | has "export $f: func" || { echo "$name: missing export $f"; failed=1; }
-        done
-        echo "$name: app"
-    done
-    [ "$failed" = 0 ] || return 1
-    # Tests that load a built fixture are ignored in the plain test run.
-    cargo test -p bulkhead-bundle --test fixture_echo --locked -- --ignored
 }
 
 check_secrets() {
@@ -324,8 +256,8 @@ check_changelog() {
     # Committed and uncommitted changes since the merge base, and new files.
     changed=$( { git diff --name-only "$mb"; git ls-files --others --exclude-standard; } | sort -u)
     echo "compared with $ref ($(git rev-parse --short "$mb"))"
-    if ! echo "$changed" | has -E '^(crates|examples|wit)/'; then
-        echo "no change to crates/, examples/ or wit/"
+    if ! echo "$changed" | has -E '^(crates|examples)/'; then
+        echo "no change to crates/ or examples/"
         return 0
     fi
     if echo "$changed" | has -x 'CHANGELOG.md'; then
@@ -336,7 +268,7 @@ check_changelog() {
         echo "a commit says Changelog: none"
         return 0
     fi
-    echo "crates/, examples/ or wit/ changed but CHANGELOG.md did not."
+    echo "crates/ or examples/ changed but CHANGELOG.md did not."
     echo "Add an entry, or a line 'Changelog: none' to a commit message when nothing a user would notice changed."
     return 1
 }

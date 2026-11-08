@@ -12,8 +12,7 @@
 //! ["example:greeting"]`). A node runs it with
 //! `bulkhead::node::run(&config, vec![Arc::new(Greeter::default())])`.
 //!
-//! Native programs call its functions through the node
-//! ([`Extension::call`]), named `greet#hello` and `greet#count`, with
+//! Apps call its functions through the node ([`Extension::call`]), named `greet#hello` and `greet#count`, with
 //! arguments and results in CBOR.
 
 use std::any::Any;

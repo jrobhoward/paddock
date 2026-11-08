@@ -43,7 +43,7 @@ ignore = []
 allow = [
     "MIT",
     "Apache-2.0",
-    # wasmtime, cranelift, wasm-tools, wit-bindgen, rustix and cap-std. The
+    # rustix, and others of the same family. The
     # LLVM exception only relaxes Apache-2.0's attribution terms for binaries.
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",

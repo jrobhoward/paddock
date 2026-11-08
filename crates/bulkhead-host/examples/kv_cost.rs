@@ -7,7 +7,7 @@
 //!
 //! ```sh
 //! cargo build --release -p bulkhead-native --bin bulkhead-runner
-//! cargo build --release -p bulkhead-fixture-kvbench --features native \
+//! cargo build --release -p bulkhead-fixture-kvbench \
 //!     --bin bulkhead-fixture-kvbench
 //! cargo run --release -p bulkhead-host --example kv_cost -- [workers]
 //! ```

@@ -119,7 +119,7 @@ two together. Components build for `wasm32-wasip2`:
 cargo test --workspace --all-features
 cargo build --release -p bulkhead -p bulkhead-native   # bulkhead, bulkhead-runner
 rustup target add wasm32-wasip2
-cargo build -p bulkhead-fixture-echo --target wasm32-wasip2 --release
+cargo build -p bulkhead-fixture-echo --release
 ```
 
 `bulkhead`'s cargo features choose what a node can do. The default build has
@@ -208,10 +208,10 @@ The app's `bulkhead.toml` holds its name, version and `appserver` section
 component:
 
 ```sh
-cargo build -p example-counter --target wasm32-wasip2 --release
+cargo build -p example-counter --release
 bulkhead keygen signer                   # signer.key, signer.pub; prints the public key
 bulkhead bundle examples/counter/bulkhead.toml \
-  target/wasm32-wasip2/release/example_counter.wasm --key signer.key
+  target/release/example-counter --key signer.key
 bulkhead deploy counter-1.0.0.rbp
 ```
 
@@ -222,7 +222,7 @@ under `[appserver]`; `examples/board` and `examples/http-counter` are set
 up this way ([`docs/WRITING_APPS.md`](docs/WRITING_APPS.md#native-process-apps)):
 
 ```sh
-cargo build -p example-board --features native --release
+cargo build -p example-board --release
 # board-native.toml: examples/board/bulkhead.toml with those two fields
 bulkhead bundle board-native.toml target/release/example-board --key signer.key
 ```

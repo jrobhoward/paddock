@@ -1,7 +1,6 @@
 //! Phase 1 exit criteria, one test each (named for its criterion), all through
 //! a running node and its admin API. `bulkhead-host` tests cover the same
-//! ground at the runtime level. The apps are native programs (ROADMAP Z9d),
-//! but for criterion 7's import check.
+//! ground at the runtime level.
 
 // Native apps run on Linux only.
 #![cfg(target_os = "linux")]
@@ -15,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use bulkhead::api::RolloutParams;
 use common::{
-    TestNode, app_bundle, app_bundle_with, bundle, call, counter_manifest, fast, fixture, kind,
-    native_app, native_conformance, native_counter, services_manifest,
+    TestNode, app_bundle, app_bundle_with, call, counter_manifest, fast, kind, native_app,
+    native_conformance, native_counter, services_manifest,
 };
 use minisign::KeyPair;
 use serde_json::json;
@@ -340,30 +339,6 @@ async fn exit_criterion_6____upgrade____state_pid_name_and_links_kept_broken_v3_
     assert_eq!(lost, 0);
     assert_eq!(after_revert, "2.0.0 count=23 history=21,22,23");
     assert!(infos.contains(&exit), "link survived the upgrades: {infos}");
-    n.shutdown().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exit_criterion_7____undeclared_import____refused_at_deploy() {
-    let mut n = TestNode::start("").await;
-    let b = bundle(
-        &n.key,
-        "sneaky",
-        "1.0.0",
-        &fixture("bulkhead_fixture_services"),
-        json!({}),
-        &[],
-    );
-
-    let err = n.client.deploy(b).await.unwrap_err();
-
-    assert_eq!(kind(&err), "refused");
-    assert!(
-        err.to_string()
-            .contains("imports not declared under capabilities"),
-        "{err}"
-    );
-    assert!(err.to_string().contains("wasi:keyvalue/store"), "{err}");
     n.shutdown().await;
 }
 

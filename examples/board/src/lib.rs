@@ -1,6 +1,6 @@
 //! A counter kept on a bulletin board: the node's shared `board` bucket,
 //! on disk. The instance holds no state of its own, so when it crashes and
-//! its supervisor restarts it, the count is still there. One component,
+//! its supervisor restarts it, the count is still there. One program,
 //! two apps (each its own manifest):
 //!
 //! - `board` (`bulkhead.toml`) serves HTTP through the node's ingress. Every

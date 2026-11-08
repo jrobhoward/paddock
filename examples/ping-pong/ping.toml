@@ -1,6 +1,6 @@
 # Bundle with:
-#   cargo build -p example-ping-pong --target wasm32-wasip2 --release
-#   bulkhead bundle examples/ping-pong/ping.toml target/wasm32-wasip2/release/example_ping_pong.wasm --key bulkhead.key
+#   cargo build -p example-ping-pong --release
+#   bulkhead bundle examples/ping-pong/ping.toml target/release/example-ping-pong --key bulkhead.key
 [app]
 name = "ping"
 version = "1.0.0"

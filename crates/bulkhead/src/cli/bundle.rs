@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use bulkhead_bundle::manifest::{AppSpec, Kind, is_valid_name};
+use bulkhead_bundle::manifest::{AppSpec, is_valid_name};
 use bulkhead_bundle::{NATIVE_PLATFORMS, check_key_permissions, check_program};
 use minisign::{KeyPair, PublicKey, SecretKey, SecretKeyBox};
 use rustbridge_bundle::{BundleBuilder, Manifest, Platform};
@@ -59,11 +59,11 @@ struct AuthorManifest {
 pub struct BundleRequest<'a> {
     /// The `bulkhead.toml`.
     pub manifest: &'a Path,
-    /// The component, or for a `native-process` app its program (a
-    /// rustbridge `.so` or an executable) for this machine's platform.
-    pub component: Option<&'a Path>,
-    /// A `native-process` app's programs by platform, in place of
-    /// `component` (`--program linux-aarch64=PATH`).
+    /// The app's program (an executable or a rustbridge `.so`) for this
+    /// machine's platform.
+    pub program: Option<&'a Path>,
+    /// The app's programs by platform, in place of `program`
+    /// (`--program linux-aarch64=PATH`).
     pub programs: &'a [(Platform, PathBuf)],
     /// The minisign secret key.
     pub key: &'a Path,
@@ -71,8 +71,6 @@ pub struct BundleRequest<'a> {
     pub priv_dir: Option<&'a Path>,
     /// Output path; defaults to `<name>-<version>.rbp`.
     pub out: Option<&'a Path>,
-    /// Skip the check that every import is declared.
-    pub skip_import_check: bool,
 }
 
 /// What `bundle` produced.
@@ -86,9 +84,7 @@ pub struct Bundled {
     pub version: String,
     /// The signer's public key.
     pub public_key: String,
-    /// The component's imports; none for a native program.
-    pub imports: Vec<String>,
-    /// The platforms packed: `wasm32-wasip2`, or a native app's.
+    /// The platforms packed.
     pub platforms: Vec<String>,
     /// Files added under `priv/`.
     pub priv_files: usize,
@@ -164,7 +160,7 @@ pub fn parse_program(value: &str) -> Result<(Platform, PathBuf), String> {
 /// A `native-process` app's programs by platform: `--program`'s, or the
 /// one argument as this machine's.
 fn native_programs<'a>(req: &BundleRequest<'a>) -> anyhow::Result<Vec<(Platform, &'a Path)>> {
-    match (req.component, req.programs) {
+    match (req.program, req.programs) {
         (Some(_), [_, ..]) => bail!(
             "give the program as the argument (for this machine's platform) or with --program, not both"
         ),
@@ -201,8 +197,7 @@ fn native_programs<'a>(req: &BundleRequest<'a>) -> anyhow::Result<Vec<(Platform,
 /// # Errors
 ///
 /// A message for an unreadable or invalid manifest (with the field's path),
-/// a component importing interfaces its manifest does not declare, an
-/// unreadable key, or a bundle that fails to verify after writing.
+/// a program that is not an ELF file for its platform, an unreadable key, or a bundle that fails to verify after writing.
 pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
     let text = std::fs::read_to_string(req.manifest)
         .with_context(|| format!("cannot read {}", req.manifest.display()))?;
@@ -221,36 +216,14 @@ pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
             .appserver
             .unwrap_or(toml::Value::Table(toml::Table::new())),
     )?;
-    let spec =
-        AppSpec::from_json_value(&appserver).map_err(|e| anyhow::anyhow!("[appserver] {e}"))?;
+    AppSpec::from_json_value(&appserver).map_err(|e| anyhow::anyhow!("[appserver] {e}"))?;
 
-    let native = spec.kind == Kind::NativeProcess;
     let read = |path: &Path| {
         std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))
     };
-    // A native program imports nothing; it asks the node over its pipe.
-    let (programs, component) = if native {
-        let programs = native_programs(req)?;
-        for (platform, path) in &programs {
-            check_program(*platform, &read(path)?)
-                .with_context(|| format!("{}", path.display()))?;
-        }
-        (programs, None)
-    } else {
-        if !req.programs.is_empty() {
-            bail!("--program is for native-process apps; a component is the argument");
-        }
-        let path = req
-            .component
-            .ok_or_else(|| anyhow::anyhow!("the component (.wasm) is required"))?;
-        (Vec::new(), Some((path, read(path)?)))
-    };
-    let imports = match &component {
-        Some((_, bytes)) => bulkhead_bundle::component_imports(bytes)?,
-        None => Vec::new(),
-    };
-    if !req.skip_import_check && !native {
-        bulkhead_bundle::effective_grant(&imports, &spec, &bulkhead_bundle::Granted::default())?;
+    let programs = native_programs(req)?;
+    for (platform, path) in &programs {
+        check_program(*platform, &read(path)?).with_context(|| format!("{}", path.display()))?;
     }
 
     let mut manifest = Manifest::new(&app.name, &app.version);
@@ -264,21 +237,10 @@ pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
     for (platform, path) in &programs {
         builder = builder.add_library(*platform, path)?;
     }
-    if let Some((path, bytes)) = &component {
-        builder = builder.add_component(
-            Platform::Wasm32Wasip2,
-            path,
-            bulkhead_bundle::component_world(bytes)?,
-        )?;
-    }
-    let platforms = if native {
-        programs
-            .iter()
-            .map(|(p, _)| p.as_str().to_string())
-            .collect()
-    } else {
-        vec![Platform::Wasm32Wasip2.as_str().to_string()]
-    };
+    let platforms = programs
+        .iter()
+        .map(|(p, _)| p.as_str().to_string())
+        .collect();
     let mut builder = builder.with_extension(bulkhead_bundle::manifest::SECTION, appserver);
     let mut priv_files = 0;
     if let Some(dir) = req.priv_dir {
@@ -296,23 +258,17 @@ pub fn bundle(req: &BundleRequest<'_>) -> anyhow::Result<Bundled> {
         .with_signing_key(public_key.clone(), secret_key)
         .write(&path)?;
 
-    // Read it back exactly as a node will: a native app's as a node on
-    // each of its platforms.
+    // Read it back exactly as a node on each of its platforms will.
     let keys = std::slice::from_ref(&public_key);
-    let opened = if native {
-        programs.iter().try_for_each(|(platform, _)| {
-            bulkhead_bundle::VerifiedBundle::open_for_platform(&path, keys, *platform).map(drop)
-        })
-    } else {
-        bulkhead_bundle::VerifiedBundle::open(&path, keys).map(drop)
-    };
+    let opened = programs.iter().try_for_each(|(platform, _)| {
+        bulkhead_bundle::VerifiedBundle::open_for_platform(&path, keys, *platform).map(drop)
+    });
     opened.with_context(|| format!("{} does not verify", path.display()))?;
     Ok(Bundled {
         path,
         name: app.name,
         version: app.version,
         public_key,
-        imports,
         platforms,
         priv_files,
     })

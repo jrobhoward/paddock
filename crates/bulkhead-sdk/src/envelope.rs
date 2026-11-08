@@ -118,7 +118,7 @@ fn media_type(content_type: &str) -> &str {
     content_type.split(';').next().unwrap_or("").trim()
 }
 
-impl From<Envelope> for crate::bindings::Envelope {
+impl From<Envelope> for bulkhead_native::protocol::Envelope {
     fn from(e: Envelope) -> Self {
         Self {
             content_type: e.content_type,
@@ -128,8 +128,8 @@ impl From<Envelope> for crate::bindings::Envelope {
     }
 }
 
-impl From<crate::bindings::Envelope> for Envelope {
-    fn from(e: crate::bindings::Envelope) -> Self {
+impl From<bulkhead_native::protocol::Envelope> for Envelope {
+    fn from(e: bulkhead_native::protocol::Envelope) -> Self {
         Self {
             content_type: e.content_type,
             schema: e.schema,

@@ -132,25 +132,19 @@ impl Node {
             .await
             .map_err(internal)?
             .map_err(refused)?;
-        let grant = bundle.effective_grant(&self.policy).map_err(refused)?;
+        let grant = bundle.effective_grant(&self.policy);
         let manifest = bundle.manifest.clone();
         let (name, version) = (manifest.app.name.clone(), manifest.app.version.to_string());
-        if manifest.spec.kind != bulkhead_bundle::manifest::Kind::NativeProcess {
-            return Err(NodeError::Refused(format!(
-                "{name} is a WebAssembly component, which this node does not run: \
-                 build it as a native program (kind = \"native-process\")"
-            )));
-        }
         let rt = self.rt.clone();
-        let component = bundle.component.clone();
+        let program = bundle.program.clone();
         // A program is written where only the node can change it.
         let path = self
             .store
-            .compiled_path(&name, &version, &manifest.component.checksum)
+            .compiled_path(&name, &version, &manifest.program.checksum)
             .with_extension("native");
         let kind = manifest.spec.native.unwrap_or_default().program;
         let app = tokio::task::spawn_blocking(move || {
-            write_program(&path, &component)
+            write_program(&path, &program)
                 .map(|()| rt.load_native(bulkhead_host::NativeCode { path, kind }))
                 .map_err(|e| format!("writing the native program: {e}"))
         })

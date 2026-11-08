@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
+use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, ProgramRef, Provenance};
 
 fuzz_target!(|text: &str| {
     let Ok(spec) = AppSpec::from_json_str(text) else {
@@ -19,10 +19,9 @@ fuzz_target!(|text: &str| {
             license: None,
             repository: None,
         },
-        component: ComponentRef {
-            path: "fuzz.wasm".into(),
+        program: ProgramRef {
+            path: "fuzz".into(),
             checksum: String::new(),
-            world: "bulkhead:runtime/app@0.1.0".into(),
         },
         provenance: Provenance {
             signer_key: String::new(),

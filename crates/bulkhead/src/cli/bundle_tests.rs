@@ -5,23 +5,15 @@
 use super::*;
 use rstest::rstest;
 
-fn component(imports: &[&str]) -> Vec<u8> {
-    let body: String = imports
-        .iter()
-        .map(|i| format!("(import \"{i}\" (instance))"))
-        .collect();
-    wat::parse_str(format!("(component {body})")).unwrap()
-}
-
 struct Setup {
     dir: tempfile::TempDir,
 }
 
 impl Setup {
-    fn new(manifest: &str, imports: &[&str]) -> Self {
+    fn new(manifest: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("bulkhead.toml"), manifest).unwrap();
-        std::fs::write(dir.path().join("app.wasm"), component(imports)).unwrap();
+        std::fs::write(dir.path().join("app"), elf(this_platform())).unwrap();
         keygen(&dir.path().join("signer"), true).unwrap();
         Self { dir }
     }
@@ -30,21 +22,20 @@ impl Setup {
         self.dir.path().join(name)
     }
 
-    fn bundle(&self, priv_dir: Option<&Path>, skip: bool) -> anyhow::Result<Bundled> {
+    fn bundle(&self, priv_dir: Option<&Path>) -> anyhow::Result<Bundled> {
         let (m, c, k, o) = (
             self.path("bulkhead.toml"),
-            self.path("app.wasm"),
+            self.path("app"),
             self.path("signer.key"),
             self.path("out.rbp"),
         );
         bundle(&BundleRequest {
             manifest: &m,
-            component: Some(&c),
+            program: Some(&c),
             programs: &[],
             key: &k,
             priv_dir,
             out: Some(&o),
-            skip_import_check: skip,
         })
     }
 }
@@ -60,16 +51,10 @@ durability = "disk"
 "#;
 
 #[test]
-fn bundle____declared_imports____written_signed_and_verifiable() {
-    let s = Setup::new(
-        KV_APP,
-        &[
-            "bulkhead:runtime/process@0.1.0",
-            "wasi:keyvalue/store@0.2.0-draft",
-        ],
-    );
+fn bundle____program____written_signed_and_verifiable() {
+    let s = Setup::new(KV_APP);
 
-    let out = s.bundle(None, false).unwrap();
+    let out = s.bundle(None).unwrap();
 
     assert_eq!(
         (out.name.as_str(), out.version.as_str()),
@@ -85,64 +70,34 @@ fn bundle____declared_imports____written_signed_and_verifiable() {
 }
 
 #[test]
-fn bundle____undeclared_import____refused_naming_it() {
-    let s = Setup::new(
-        "[app]\nname = \"x\"\nversion = \"1.0.0\"\n",
-        &["wasi:keyvalue/store@0.2.0-draft"],
-    );
-
-    let err = s.bundle(None, false).unwrap_err();
-
-    assert!(
-        err.to_string()
-            .contains("wasi:keyvalue/store@0.2.0-draft (needs wasi:keyvalue)"),
-        "{err}"
-    );
-    assert!(!s.path("out.rbp").exists());
-}
-
-#[test]
-fn bundle____skip_import_check____written_anyway() {
-    let s = Setup::new(
-        "[app]\nname = \"x\"\nversion = \"1.0.0\"\n",
-        &["wasi:keyvalue/store@0.2.0-draft"],
-    );
-
-    let out = s.bundle(None, true);
-
-    assert!(out.is_ok(), "{out:?}");
-}
-
-#[test]
 fn bundle____invalid_appserver____error_names_the_field() {
     let s = Setup::new(
         "[app]\nname = \"x\"\nversion = \"1.0.0\"\n[appserver.limits]\nmemory_max = \"lots\"\n",
-        &[],
     );
 
-    let err = s.bundle(None, false).unwrap_err();
+    let err = s.bundle(None).unwrap_err();
 
     assert!(err.to_string().contains("limits.memory_max"), "{err}");
 }
 
 #[test]
 fn bundle____bad_name_or_version____refused() {
-    let bad_name = Setup::new("[app]\nname = \"Orders\"\nversion = \"1.0.0\"\n", &[]);
-    let bad_version = Setup::new("[app]\nname = \"x\"\nversion = \"one\"\n", &[]);
+    let bad_name = Setup::new("[app]\nname = \"Orders\"\nversion = \"1.0.0\"\n");
+    let bad_version = Setup::new("[app]\nname = \"x\"\nversion = \"one\"\n");
 
-    assert!(bad_name.bundle(None, false).is_err());
-    assert!(bad_version.bundle(None, false).is_err());
+    assert!(bad_name.bundle(None).is_err());
+    assert!(bad_version.bundle(None).is_err());
 }
 
 #[test]
 fn bundle____priv_dir____files_checksummed_under_priv() {
-    let s = Setup::new("[app]\nname = \"x\"\nversion = \"1.0.0\"\n", &[]);
+    let s = Setup::new("[app]\nname = \"x\"\nversion = \"1.0.0\"\n");
     let priv_dir = s.path("priv");
     std::fs::create_dir_all(priv_dir.join("conf")).unwrap();
     std::fs::write(priv_dir.join("README"), "hi").unwrap();
     std::fs::write(priv_dir.join("conf/app.toml"), "a = 1").unwrap();
 
-    let out = s.bundle(Some(&priv_dir), false).unwrap();
+    let out = s.bundle(Some(&priv_dir)).unwrap();
 
     let bundle =
         bulkhead_bundle::VerifiedBundle::open(&out.path, std::slice::from_ref(&out.public_key))
@@ -166,11 +121,11 @@ fn keygen____existing_files____refused() {
 #[test]
 fn bundle____key_readable_by_others____refused() {
     use std::os::unix::fs::PermissionsExt;
-    let setup = Setup::new(KV_APP, &["wasi:keyvalue/store@0.2.0-draft"]);
+    let setup = Setup::new(KV_APP);
     let key = setup.path("signer.key");
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o640)).unwrap();
 
-    let result = setup.bundle(None, false);
+    let result = setup.bundle(None);
 
     let error = format!("{:#}", result.err().unwrap());
     assert!(error.contains("chmod 600"), "{error}");
@@ -216,7 +171,7 @@ impl Setup {
 
     fn bundle_programs(
         &self,
-        component: Option<&Path>,
+        program: Option<&Path>,
         programs: &[(Platform, PathBuf)],
     ) -> anyhow::Result<Bundled> {
         let (m, k, o) = (
@@ -226,12 +181,11 @@ impl Setup {
         );
         bundle(&BundleRequest {
             manifest: &m,
-            component,
+            program,
             programs,
             key: &k,
             priv_dir: None,
             out: Some(&o),
-            skip_import_check: false,
         })
     }
 
@@ -243,19 +197,18 @@ impl Setup {
 
 #[test]
 fn bundle____native_process_app____program_as_this_platforms_variant() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
     let program = s.program("app", this_platform());
 
     let out = s.bundle_programs(Some(&program), &[]).unwrap();
 
-    assert!(out.imports.is_empty());
     assert_eq!(out.platforms, [this_platform().as_str()]);
-    assert_eq!(s.open(&out).component, elf(this_platform()));
+    assert_eq!(s.open(&out).program, elf(this_platform()));
 }
 
 #[test]
 fn bundle____program_per_platform____both_variants_and_the_node_runs_its_own() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
     let programs = [
         (
             Platform::LinuxX86_64,
@@ -270,12 +223,12 @@ fn bundle____program_per_platform____both_variants_and_the_node_runs_its_own() {
     let out = s.bundle_programs(None, &programs).unwrap();
 
     assert_eq!(out.platforms, ["linux-x86_64", "linux-aarch64"]);
-    assert_eq!(s.open(&out).component, elf(this_platform()));
+    assert_eq!(s.open(&out).program, elf(this_platform()));
 }
 
 #[test]
 fn bundle____other_platforms_program_only____written_for_that_platform() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
     let program = s.program("app", other_platform());
 
     let out = s
@@ -288,12 +241,12 @@ fn bundle____other_platforms_program_only____written_for_that_platform() {
         other_platform(),
     )
     .unwrap();
-    assert_eq!(opened.component, elf(other_platform()));
+    assert_eq!(opened.program, elf(other_platform()));
 }
 
 #[test]
 fn bundle____program_for_another_architecture____refused_naming_the_file() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
     let wrong = s.program("app", other_platform());
 
     let result = s.bundle_programs(None, &[(this_platform(), wrong.clone())]);
@@ -312,7 +265,7 @@ fn bundle____program_for_another_architecture____refused_naming_the_file() {
 
 #[test]
 fn bundle____program_not_an_elf_file____refused() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
     let script = s.path("app.sh");
     std::fs::write(&script, "#!/bin/sh\n").unwrap();
 
@@ -324,7 +277,7 @@ fn bundle____program_not_an_elf_file____refused() {
 
 #[test]
 fn bundle____argument_and_program_both____refused() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
     let program = s.program("app", this_platform());
 
     let result = s.bundle_programs(Some(&program), &[(this_platform(), program.clone())]);
@@ -335,7 +288,7 @@ fn bundle____argument_and_program_both____refused() {
 
 #[test]
 fn bundle____native_app_without_a_program____refused() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
 
     let result = s.bundle_programs(None, &[]);
 
@@ -345,7 +298,7 @@ fn bundle____native_app_without_a_program____refused() {
 
 #[test]
 fn bundle____same_platform_twice____refused() {
-    let s = Setup::new(NATIVE_APP, &[]);
+    let s = Setup::new(NATIVE_APP);
     let program = s.program("app", this_platform());
 
     let result = s.bundle_programs(
@@ -358,20 +311,6 @@ fn bundle____same_platform_twice____refused() {
 
     let error = format!("{:#}", result.err().unwrap());
     assert!(error.contains("given twice"), "{error}");
-}
-
-#[test]
-fn bundle____component_app_with_program____refused() {
-    let s = Setup::new(KV_APP, &[]);
-    let program = s.program("app", this_platform());
-
-    let result = s.bundle_programs(Some(&s.path("app.wasm")), &[(this_platform(), program)]);
-
-    let error = format!("{:#}", result.err().unwrap());
-    assert!(
-        error.contains("--program is for native-process apps"),
-        "{error}"
-    );
 }
 
 #[rstest]

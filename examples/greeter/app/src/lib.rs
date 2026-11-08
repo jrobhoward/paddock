@@ -1,7 +1,6 @@
 //! An app that calls the `example:greeting` extension, written with
 //! `bulkhead-sdk` plus a client module for the extension's package
-//! ([`greeting`]), so the same source builds as a component and as a
-//! native program.
+//! ([`greeting`]).
 //!
 //! Commands: `hello:<name>` (the greeting) and `count` (greetings made on
 //! this node). Errors reply `err:<error>`.

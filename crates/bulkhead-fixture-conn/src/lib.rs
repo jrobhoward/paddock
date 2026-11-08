@@ -1,7 +1,6 @@
 //! Test fixture: a connection handler on `bulkhead-sdk`'s
-//! `connection::Handler`, built as a component (`bulkhead:connection`) and,
-//! with the `native` feature, as a native program. A line protocol, one
-//! command per line, one reply line each:
+//! `connection::Handler`. A line protocol, one command per line, one reply
+//! line each:
 //!
 //! - `echo <text>`: reply `<text>` (`v2:<text>` with the `v2` feature).
 //! - `info`: reply `<listener> <peer>`.
@@ -9,11 +8,9 @@
 //! - `call <name> <body>`: call the instance registered as `<name>` with a
 //!   text body; reply its reply, or `err:<error>`.
 //! - `quit`: close the connection normally.
-//! - `error`: return an error (a component's crash with a reason; natively
-//!   this connection closes).
-//! - `crash`: panic (a trap; natively the instance crashes).
-//! - `spin`: loop forever without I/O (a component's idle timeout ends it;
-//!   natively the callback deadline).
+//! - `error`: return an error (this connection closes).
+//! - `crash`: panic (the instance crashes).
+//! - `spin`: loop forever without I/O (the callback deadline ends it).
 
 use std::io::Write;
 use std::time::Duration;

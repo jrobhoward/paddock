@@ -5,16 +5,10 @@
 #   address = "127.0.0.1:7070"
 #
 # Bundle with:
-#   cargo build -p example-line-server --target wasm32-wasip2 --release
-#   bulkhead bundle examples/line-server/bulkhead.toml target/wasm32-wasip2/release/example_line_server.wasm --key bulkhead.key
-# Deploy the counter example too; `inc` and `get` are forwarded to it.
-#
-# Natively (the same source; each instance holds many connections), build
-# `cargo build -p example-line-server --features native --release`, bundle
-# target/release/example-line-server, and add to [appserver]:
-#
-#   kind = "native-process"
-#   native = { program = "executable" }
+#   cargo build -p example-line-server --release
+#   bulkhead bundle examples/line-server/bulkhead.toml target/release/example-line-server --key bulkhead.key
+# Deploy the counter example too; `inc` and `get` are forwarded to it. Each
+# instance holds many connections.
 [app]
 name = "line-server"
 version = "1.0.0"

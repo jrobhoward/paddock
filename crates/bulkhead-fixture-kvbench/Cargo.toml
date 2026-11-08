@@ -9,19 +9,6 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-# The same loops as a native program, for kv_cost's native mode
-# (`KV_NATIVE=1`).
-[[bin]]
-name = "bulkhead-fixture-kvbench"
-path = "src/main.rs"
-required-features = ["native"]
-
-[features]
-native = []
-
 [dependencies]
 bulkhead-sdk = { workspace = true, features = ["keyvalue", "watch"] }
 

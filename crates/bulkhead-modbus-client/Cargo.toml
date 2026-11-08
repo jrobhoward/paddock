@@ -1,7 +1,7 @@
 [package]
 name = "bulkhead-modbus-client"
 version.workspace = true
-description = "Apps' client for the bulkhead-modbus:modbus extension, built as a component or a native program"
+description = "Apps' client for the bulkhead-modbus:modbus extension, through the node"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,7 +12,6 @@ publish = false
 [dependencies]
 bulkhead-sdk = { workspace = true }
 serde = { workspace = true }
-wit-bindgen = { workspace = true }
 
 [lints]
 workspace = true

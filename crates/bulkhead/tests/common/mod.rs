@@ -16,175 +16,8 @@ use serde_json::json;
 use tempfile::TempDir;
 use tracing_subscriber::layer::SubscriberExt;
 
-pub const WORLD: &str = "bulkhead:runtime/app@0.1.0";
-
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn build(package: &str, features: Option<&str>, target_dir: &PathBuf) {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let mut cmd = Command::new(cargo);
-    cmd.current_dir(workspace_root())
-        .args([
-            "build",
-            "--release",
-            "--target",
-            "wasm32-wasip2",
-            "-p",
-            package,
-            "--target-dir",
-        ])
-        .arg(target_dir);
-    if let Some(f) = features {
-        cmd.args(["--features", f]);
-    }
-    assert!(cmd.status().unwrap().success(), "building {package} failed");
-}
-
-/// A fixture component (`bulkhead_fixture_chaos`, `..._services`). The
-/// services fixture is built without its `denied` feature, into its own
-/// directory, so it imports only interfaces a node provides.
-pub fn fixture(name: &str) -> Vec<u8> {
-    static CHAOS: OnceLock<()> = OnceLock::new();
-    static SERVICES: OnceLock<()> = OnceLock::new();
-    static SDK: OnceLock<()> = OnceLock::new();
-    static NET: OnceLock<()> = OnceLock::new();
-    let (package, dir, once) = if name == "bulkhead_fixture_services" {
-        (
-            "bulkhead-fixture-services",
-            "target/fixtures/services-plain",
-            &SERVICES,
-        )
-    } else if name == "bulkhead_fixture_sdk" {
-        ("bulkhead-fixture-sdk", "target/fixtures/sdk-plain", &SDK)
-    } else if name == "bulkhead_fixture_net" {
-        ("bulkhead-fixture-net", "target/fixtures/net-plain", &NET)
-    } else {
-        (
-            "bulkhead-fixture-chaos",
-            "target/fixtures/chaos-plain",
-            &CHAOS,
-        )
-    };
-    let target = workspace_root().join(dir);
-    once.get_or_init(|| build(package, None, &target));
-    std::fs::read(target.join(format!("wasm32-wasip2/release/{name}.wasm"))).unwrap()
-}
-
-/// The counter fixture at `version` (1, 2 or 3).
-pub fn counter(version: u8) -> Vec<u8> {
-    static BUILT: [OnceLock<()>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
-    let target = workspace_root().join(format!("target/fixtures/counter-v{version}"));
-    BUILT[usize::from(version - 1)].get_or_init(|| {
-        let feature = (version > 1).then(|| format!("v{version}"));
-        build("bulkhead-fixture-counter", feature.as_deref(), &target);
-    });
-    std::fs::read(target.join("wasm32-wasip2/release/bulkhead_fixture_counter.wasm")).unwrap()
-}
-
-/// The connection fixture (`bulkhead-fixture-conn`), v1 or v2 (`echo`
-/// replies `v2:<text>`).
-pub fn conn(version: u8) -> Vec<u8> {
-    static BUILT: [OnceLock<()>; 2] = [OnceLock::new(), OnceLock::new()];
-    let target = workspace_root().join(format!("target/fixtures/conn-v{version}"));
-    BUILT[usize::from(version - 1)].get_or_init(|| {
-        let feature = (version > 1).then_some("v2");
-        build("bulkhead-fixture-conn", feature, &target);
-    });
-    std::fs::read(target.join("wasm32-wasip2/release/bulkhead_fixture_conn.wasm")).unwrap()
-}
-
-/// A signed connection-handler bundle (`bulkhead:connection` world).
-pub fn conn_bundle(
-    key: &KeyPair,
-    name: &str,
-    version: &str,
-    component: &[u8],
-    appserver: serde_json::Value,
-) -> Vec<u8> {
-    bundle_world(
-        key,
-        name,
-        version,
-        component,
-        appserver,
-        &[],
-        bulkhead_bundle_world(),
-    )
-}
-
-/// The HTTP-handler fixture (`bulkhead-fixture-http`): version 2 answers
-/// `/hello` with `hello v2`.
-pub fn http_handler(version: u8) -> Vec<u8> {
-    static BUILT: [OnceLock<()>; 2] = [OnceLock::new(), OnceLock::new()];
-    let target = workspace_root().join(format!("target/fixtures/http-handler-v{version}"));
-    BUILT[usize::from(version - 1)].get_or_init(|| {
-        let feature = (version > 1).then_some("v2");
-        build("bulkhead-fixture-http", feature, &target);
-    });
-    std::fs::read(target.join("wasm32-wasip2/release/bulkhead_fixture_http.wasm")).unwrap()
-}
-
-/// A signed HTTP-handler bundle (`wasi:http/proxy` world).
-pub fn http_handler_bundle(
-    key: &KeyPair,
-    name: &str,
-    version: &str,
-    component: &[u8],
-    appserver: serde_json::Value,
-) -> Vec<u8> {
-    bundle_world(
-        key,
-        name,
-        version,
-        component,
-        appserver,
-        &[],
-        bulkhead_bundle::HTTP_HANDLER_WORLD,
-    )
-}
-
-fn bulkhead_bundle_world() -> &'static str {
-    "bulkhead:connection/connection-handler@0.1.0"
-}
-
-/// A signed `.rbp` with `component` and `appserver`, plus checksummed
-/// files.
-pub fn bundle(
-    key: &KeyPair,
-    name: &str,
-    version: &str,
-    component: &[u8],
-    appserver: serde_json::Value,
-    files: &[(&str, &[u8])],
-) -> Vec<u8> {
-    bundle_world(key, name, version, component, appserver, files, WORLD)
-}
-
-fn bundle_world(
-    key: &KeyPair,
-    name: &str,
-    version: &str,
-    component: &[u8],
-    appserver: serde_json::Value,
-    files: &[(&str, &[u8])],
-    world: &str,
-) -> Vec<u8> {
-    let dir = TempDir::new().unwrap();
-    let wasm = dir.path().join(format!("{name}.wasm"));
-    std::fs::write(&wasm, component).unwrap();
-    let mut builder = BundleBuilder::new(Manifest::new(name, version))
-        .add_component(Platform::Wasm32Wasip2, &wasm, world)
-        .unwrap()
-        .with_extension("appserver", appserver)
-        .with_signing_key(key.pk.to_base64(), key.sk.clone());
-    for (path, bytes) in files {
-        builder = builder.add_checksummed_bytes(path, bytes.to_vec());
-    }
-    let out = dir.path().join("out.rbp");
-    builder.write(&out).unwrap();
-    std::fs::read(out).unwrap()
 }
 
 /// `bulkhead-runner` and the native fixture executable, built natively on
@@ -244,9 +77,9 @@ pub fn native_app() -> Vec<u8> {
 pub fn native_counter(version: u8) -> Vec<u8> {
     static BUILT: [OnceLock<()>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
     let features = if version > 1 {
-        format!("native,v{version}")
+        format!("v{version}")
     } else {
-        "native".to_string()
+        String::new()
     };
     native_program(
         "bulkhead-fixture-counter",
@@ -259,7 +92,7 @@ pub fn native_counter(version: u8) -> Vec<u8> {
 /// The SDK fixture as a native program.
 pub fn native_sdk() -> Vec<u8> {
     static BUILT: OnceLock<()> = OnceLock::new();
-    native_program("bulkhead-fixture-sdk", "native", "native-sdk", &BUILT)
+    native_program("bulkhead-fixture-sdk", "", "native-sdk", &BUILT)
 }
 
 /// The conformance app as a native program: the chaos fixture's commands
@@ -268,7 +101,7 @@ pub fn native_conformance() -> Vec<u8> {
     static BUILT: OnceLock<()> = OnceLock::new();
     native_program(
         "bulkhead-fixture-conformance",
-        "native",
+        "",
         "native-conformance",
         &BUILT,
     )
@@ -277,7 +110,7 @@ pub fn native_conformance() -> Vec<u8> {
 /// The net fixture as a native program.
 pub fn native_net() -> Vec<u8> {
     static BUILT: OnceLock<()> = OnceLock::new();
-    native_program("bulkhead-fixture-net", "native", "native-net", &BUILT)
+    native_program("bulkhead-fixture-net", "", "native-net", &BUILT)
 }
 
 /// A signed `.rbp` running `program` as a native-process app under
@@ -616,103 +449,44 @@ pub async fn wait_for_socket(child: &mut tokio::process::Child, socket: &Path, l
     );
 }
 
-/// Which build of the examples (`tests/examples.rs`, `tests/scada.rs`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExampleBuild {
-    /// For `wasm32-wasip2`.
-    Component,
-    /// A native program (feature `native`), Linux only.
-    Native,
-}
-
-/// Where one build of some examples landed.
+/// Where some examples' programs landed.
 pub struct Built {
     dir: PathBuf,
-    build: ExampleBuild,
 }
 
 impl Built {
-    /// The component or program of the package `package`.
+    /// The program of the package `package`.
     pub fn of(&self, package: &str) -> PathBuf {
-        match self.build {
-            ExampleBuild::Component => self.dir.join(format!("{}.wasm", package.replace('-', "_"))),
-            ExampleBuild::Native => self.dir.join(package),
-        }
+        self.dir.join(package)
     }
 }
 
-impl ExampleBuild {
-    /// Build `packages` together into `target/fixtures/examples-<tag>`
-    /// (one directory per feature set, since features unify within a
-    /// build; the native build's in its own), with `features` (`package/name`).
-    pub fn packages(self, packages: &[&str], features: &[&str], tag: &str) -> Built {
-        let native = self == ExampleBuild::Native;
-        let target = workspace_root().join(format!(
-            "target/fixtures/examples-{tag}{}",
-            if native { "-native" } else { "" }
-        ));
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut cmd = Command::new(cargo);
-        cmd.current_dir(workspace_root())
-            .args(["build", "--release"]);
-        if !native {
-            cmd.args(["--target", "wasm32-wasip2"]);
-        }
-        for p in packages {
-            cmd.args(["-p", p]);
-        }
-        cmd.arg("--target-dir").arg(&target);
-        let mut features: Vec<String> = features.iter().map(ToString::to_string).collect();
-        if native {
-            features.extend(packages.iter().map(|p| format!("{p}/native")));
-        }
-        if !features.is_empty() {
-            cmd.args(["--features", &features.join(",")]);
-        }
-        assert!(
-            cmd.status().unwrap().success(),
-            "building {packages:?} ({self:?}) failed"
-        );
-        Built {
-            dir: if native {
-                target.join("release")
-            } else {
-                target.join("wasm32-wasip2/release")
-            },
-            build: self,
-        }
+/// Build `packages` together into `target/fixtures/examples-<tag>` (one
+/// directory per feature set, since features unify within a build), with
+/// `features` (`package/name`).
+pub fn examples(packages: &[&str], features: &[&str], tag: &str) -> Built {
+    let target = workspace_root().join(format!("target/fixtures/examples-{tag}"));
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let mut cmd = Command::new(cargo);
+    cmd.current_dir(workspace_root())
+        .args(["build", "--release"]);
+    for p in packages {
+        cmd.args(["-p", p]);
     }
+    cmd.arg("--target-dir").arg(&target);
+    if !features.is_empty() {
+        cmd.args(["--features", &features.join(",")]);
+    }
+    assert!(
+        cmd.status().unwrap().success(),
+        "building {packages:?} failed"
+    );
+    Built {
+        dir: target.join("release"),
+    }
+}
 
-    /// The manifest at `path`; for the native build, a copy in `into`
-    /// (named after `out`) that runs the program as a native process.
-    pub fn manifest(self, path: &Path, into: &Path, out: &str) -> PathBuf {
-        if self == ExampleBuild::Component {
-            return path.to_path_buf();
-        }
-        let mut doc: toml::Table = std::fs::read_to_string(path).unwrap().parse().unwrap();
-        let appserver = doc
-            .entry("appserver")
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-            .as_table_mut()
-            .unwrap();
-        appserver.insert("kind".into(), "native-process".into());
-        appserver.insert(
-            "native".into(),
-            toml::Value::Table(toml::Table::from_iter([(
-                "program".to_string(),
-                toml::Value::from("executable"),
-            )])),
-        );
-        let native = into.join(format!("native-{out}.toml"));
-        std::fs::write(&native, toml::to_string(&doc).unwrap()).unwrap();
-        native
-    }
-
-    /// Node config this build needs: the native build's runner.
-    pub fn node_extra(self) -> String {
-        match self {
-            ExampleBuild::Native => format!("[native]\nrunner = {:?}\n", native_fixtures().0),
-            ExampleBuild::Component => String::new(),
-        }
-    }
+/// Node config naming the runner.
+pub fn runner_config() -> String {
+    format!("[native]\nrunner = {:?}\n", native_fixtures().0)
 }

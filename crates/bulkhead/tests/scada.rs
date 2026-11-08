@@ -31,8 +31,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bulkhead::node::{LogRing, Node, NodeConfig, builtin_extensions};
-use common::ExampleBuild as Build;
-use rstest::rstest;
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -49,11 +47,11 @@ const APPS: [&str; 3] = [
     "example-scada-control",
 ];
 
-/// Whether `build` runs here: the native one on Linux only.
-fn runs(build: Build) -> bool {
-    let runs = build == Build::Component || cfg!(target_os = "linux");
+/// Whether the apps run here: on Linux only.
+fn runs() -> bool {
+    let runs = cfg!(target_os = "linux");
     if !runs {
-        eprintln!("not Linux: the native case is skipped");
+        eprintln!("not Linux: skipped");
     }
     runs
 }
@@ -195,23 +193,18 @@ fn alarm<'a>(body: &'a Value, name: &str) -> &'a Value {
     &body["alarms"][name]
 }
 
-#[rstest]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded_rolled_back(
-    #[case] build: Build,
-) {
-    if !runs(build) {
+async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded_rolled_back() {
+    if !runs() {
         return;
     }
-    let built = build.packages(&APPS, &[], "scada");
-    let control_v2 = build
-        .packages(
-            &["example-scada-control"],
-            &["example-scada-control/v2"],
-            "scada-v2",
-        )
-        .of("example-scada-control");
+    let built = common::examples(&APPS, &[], "scada");
+    let control_v2 = common::examples(
+        &["example-scada-control"],
+        &["example-scada-control/v2"],
+        "scada-v2",
+    )
+    .of("example-scada-control");
     let dir = TempDir::new().unwrap();
     let socket = dir.path().join("a.sock");
     let holding = Arc::new(Mutex::new((100..110).collect::<Vec<u16>>()));
@@ -257,7 +250,6 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
         } else {
             ex.join(manifest)
         };
-        let manifest = build.manifest(&manifest, dir.path(), name);
         let r = bulkhead(
             &socket,
             &[
@@ -297,7 +289,7 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
         dir.path().join("data"),
         socket,
         keys.stdout,
-        build.node_extra(),
+        common::runner_config(),
     );
     let node = Arc::new(
         Node::open_with(
@@ -513,18 +505,14 @@ async fn reads_in(reads: &AtomicUsize, secs: u64) -> usize {
     reads.load(Ordering::Relaxed) - before
 }
 
-#[rstest]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchover(
-    #[case] build: Build,
-) {
+async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchover() {
     use std::os::unix::fs::PermissionsExt;
 
-    if !runs(build) {
+    if !runs() {
         return;
     }
-    let built = build.packages(&APPS, &[], "scada");
+    let built = common::examples(&APPS, &[], "scada");
     let dir = TempDir::new().unwrap();
     let d = dir.path();
     let cli = d.join("cli.sock");
@@ -542,7 +530,7 @@ async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchove
     for app in ["points", "hmi", "control"] {
         let out = d.join(format!("{app}.rbp"));
         let wasm_file = built.of(&format!("example-scada-{app}"));
-        let manifest = build.manifest(&ex.join(app).join("bulkhead.toml"), d, app);
+        let manifest = ex.join(app).join("bulkhead.toml");
         let r = bulkhead(
             &cli,
             &[
@@ -594,7 +582,7 @@ async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchove
             d.join(format!("n{n}.sock")),
             keys.stdout,
             d.join("policy.toml"),
-            build.node_extra(),
+            common::runner_config(),
         );
         if n != 3 {
             t += &format!(

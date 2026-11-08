@@ -86,8 +86,6 @@ tempfile = { workspace = true }
 tokio-rustls = { workspace = true }
 tokio-modbus = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process"] }
-wat = { workspace = true }
-wit-parser = { workspace = true }
 
 [[test]]
 name = "cli"

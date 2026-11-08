@@ -3,7 +3,7 @@
 //! An app is a type implementing [`App`]: `init` builds its state, and the
 //! host then delivers one message at a time to `handle_call`, `handle_cast`
 //! and `handle_info`, with a [`Ctx`] for messaging, links, monitors, timers
-//! and the registry. [`app!`] exports the type as a component.
+//! and the registry. [`app!`] generates the program's entry point.
 //!
 //! ```ignore
 //! use bulkhead_sdk::{App, Ctx, CallRef, Envelope, Reply};
@@ -27,21 +27,17 @@
 //! bulkhead_sdk::app!(Counter);
 //! ```
 //!
-//! Build for `wasm32-wasip2` and bundle with `bulkhead bundle`. On Unix the
-//! same source also builds as a native program: `app!` then generates
-//! `bulkhead_main()` for a binary's `main`, and the SDK's calls go over
-//! `bulkhead-native`'s protocol (`kind = "native-process"`; WRITING_APPS.md,
-//! "Native-process apps").
+//! An app is a program: `app!` generates `bulkhead_main()` for a binary's
+//! `main`, and the SDK's calls go over `bulkhead-native`'s protocol
+//! (WRITING_APPS.md). Bundle it with `bulkhead bundle`.
 //!
 //! Host services, each needing its capability in the manifest:
 //! - [`log`] and its macros (`info!` and friends): `wasi:logging`, always
 //!   available.
 //! - [`batch`]: many small updates in one message, and reading them back.
-//! - [`files`]: the paths of preopened files (`wasi:filesystem`), the same
-//!   in both builds.
-//! - `extension` (native programs): calls to extensions, the host services
-//!   a node is built with from outside Bulkhead; a component imports their
-//!   WIT packages instead.
+//! - [`files`]: the paths of preopened files (`wasi:filesystem`).
+//! - [`extension`]: calls to extensions, the host services a node is built
+//!   with from outside Bulkhead.
 //! - `config` (cargo feature `config`): `wasi:config`.
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
 //! - `groups` (cargo feature `groups`): `bulkhead:groups`, process groups
@@ -61,14 +57,12 @@
 //!   compare-and-swap and change watches on keyvalue buckets.
 //!
 //! Connection handlers (cargo feature `connection`) implement
-//! `connection::Handler` (both builds; natively an instance holds many
-//! connections) or `connection::Connection` (components only, blocking)
-//! instead of [`App`].
+//! `connection::Handler` instead of [`App`]; an instance holds many
+//! connections.
 //!
-//! In a guest, a panic is a trap: the host ends the instance with
-//! `crashed` and its supervisor restarts it. The SDK panics only for
-//! states that are bugs (a callback before a successful `init`, a snapshot
-//! that cannot serialize).
+//! A panic ends the instance with `crashed` and its supervisor restarts
+//! it. The SDK panics only for states that are bugs (a snapshot that cannot
+//! serialize).
 
 extern crate self as bulkhead_sdk;
 
@@ -80,12 +74,10 @@ pub mod config;
 pub mod connection;
 mod ctx;
 mod envelope;
-#[cfg(all(unix, not(target_arch = "wasm32")))]
 pub mod extension;
 pub mod files;
 #[cfg(feature = "groups")]
 pub mod groups;
-mod host;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http-client")]
@@ -106,31 +98,6 @@ mod types;
 #[cfg(feature = "watch")]
 pub mod watch;
 
-#[doc(hidden)]
-#[allow(missing_docs, clippy::too_many_arguments)]
-pub mod bindings {
-    wit_bindgen::generate!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/vendor/wasi-io",
-            "../../wit/connection",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:sdk/app",
-        pub_export_macro: true,
-        default_bindings_module: "bulkhead_sdk::bindings",
-        generate_all,
-    });
-}
-
 pub use app::{App, Reply};
 pub use bulkhead_sdk_macros::Snapshot;
 pub use ctx::Ctx;
@@ -142,9 +109,7 @@ pub use types::{
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::app::dispatch::*;
-    #[cfg(all(unix, not(target_arch = "wasm32")))]
-    pub use crate::app::native::serve;
+    pub use crate::app::serve;
 }
 
 #[cfg(test)]

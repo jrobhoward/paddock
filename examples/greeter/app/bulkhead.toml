@@ -1,6 +1,6 @@
 # Bundle with:
-#   cargo build -p example-greeter-app --target wasm32-wasip2 --release
-#   bulkhead bundle examples/greeter/app/bulkhead.toml target/wasm32-wasip2/release/example_greeter_app.wasm --key bulkhead.key
+#   cargo build -p example-greeter-app --release
+#   bulkhead bundle examples/greeter/app/bulkhead.toml target/release/example-greeter-app --key bulkhead.key
 # Run on a node built with the greeter service (examples/greeter/node).
 [app]
 name = "greeted"

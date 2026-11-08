@@ -12,17 +12,19 @@ use rustbridge_bundle::{BundleBuilder, Manifest, Platform};
 use serde_json::json;
 use tempfile::TempDir;
 
-pub const WORLD: &str = "bulkhead:runtime/app@0.1.0";
-
-/// A component importing `process` and `wasi:keyvalue`.
-pub fn kv_component() -> Vec<u8> {
-    wat::parse_str(
-        r#"(component
-            (import "bulkhead:runtime/process@0.1.0" (instance))
-            (import "wasi:keyvalue/store@0.2.0-draft" (instance))
-        )"#,
-    )
-    .unwrap()
+/// The start of an ELF file for `platform`'s architecture.
+pub fn elf(platform: Platform) -> Vec<u8> {
+    let machine: u16 = if platform == Platform::LinuxAarch64 {
+        183
+    } else {
+        62
+    };
+    let mut header = vec![0u8; 64];
+    header[..4].copy_from_slice(b"\x7fELF");
+    header[4] = 2;
+    header[5] = 1;
+    header[18..20].copy_from_slice(&machine.to_le_bytes());
+    header
 }
 
 pub fn appserver() -> serde_json::Value {
@@ -37,8 +39,7 @@ pub fn appserver() -> serde_json::Value {
 pub struct Spec {
     pub name: &'static str,
     pub version: &'static str,
-    pub component: Vec<u8>,
-    pub world: &'static str,
+    pub program: Vec<u8>,
     pub appserver: Option<serde_json::Value>,
     pub signer: Option<KeyPair>,
     /// Files added with a checksum in the manifest.
@@ -52,8 +53,7 @@ impl Default for Spec {
         Self {
             name: "orders",
             version: "1.4.0",
-            component: kv_component(),
-            world: WORLD,
+            program: elf(Platform::current().unwrap()),
             appserver: Some(appserver()),
             signer: Some(KeyPair::generate_unencrypted_keypair().unwrap()),
             files: Vec::new(),
@@ -69,10 +69,10 @@ impl Spec {
 
     /// Write the bundle into `dir` and return its path.
     pub fn write(&self, dir: &TempDir) -> PathBuf {
-        let wasm = dir.path().join(format!("{}.wasm", self.name));
-        std::fs::write(&wasm, &self.component).unwrap();
+        let lib = dir.path().join(self.name);
+        std::fs::write(&lib, &self.program).unwrap();
         let mut builder = BundleBuilder::new(Manifest::new(self.name, self.version))
-            .add_component(Platform::Wasm32Wasip2, &wasm, self.world)
+            .add_library(Platform::current().unwrap(), &lib)
             .unwrap();
         if let Some(section) = &self.appserver {
             builder = builder.with_extension("appserver", section.clone());

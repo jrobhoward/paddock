@@ -1,8 +1,6 @@
-//! Test fixture: the Rust SDK's conformance app. Every guest SDK builds an
-//! app that speaks this protocol, and `bulkhead-host`'s
-//! `tests/conformance.rs` runs the same cases against each
-//! (`BULKHEAD_CONFORMANCE_NATIVE=1` for this one as a native program). Its
-//! default is `bulkhead_host::in_process::conformance`, a copy of this app's
+//! Test fixture: the Rust SDK's conformance app. `bulkhead-host`'s
+//! `tests/conformance.rs` runs its cases against this app
+//! (`BULKHEAD_CONFORMANCE_NATIVE=1`). Its default is `bulkhead_host::in_process::conformance`, a copy of this app's
 //! commands: keep the two in step.
 //!
 //! `init` arguments are UTF-8 words separated by spaces, optionally inside
@@ -44,14 +42,12 @@
 //! - `cast:<pid>:<command>`: cast `<command>`; `sent`.
 //! - `try-cast:<pid>:<command>`: cast `<command>` and say whether it was
 //!   queued: `ok`, or `err:<cast error>` (`noproc`, `noconnection`,
-//!   `overloaded`, `too-large` or `access-denied`). A component is not
-//!   told, so it answers `err:unsupported`; the case runs natively only.
+//!   `overloaded`, `too-large` or `access-denied`).
 //! - `cast-wait:<pid>:<ms>:<command>`: cast `<command>`, waiting up to
 //!   `<ms>` for room in a full mailbox (`cast_timeout`): `ok`, or
 //!   `err:<cast error>` as for `try-cast`, `timeout` included.
 //!   `cast-wait-n:<pid>:<ms>:<n>`: the same with the command `note:`
-//!   followed by `<n>` `x`s, so a test can size the body. Natively only;
-//!   a component answers `err:unsupported`.
+//!   followed by `<n>` `x`s, so a test can size the body.
 //! - `register:<name>`: `ok`, `err:access-denied` or `err:taken:<pid>`.
 //!   `whereis:<name>`: the pid or `none`.
 //! - `timer:<ms>:<text>`: a timer carrying `<text>`; its reference.
@@ -199,25 +195,16 @@ fn show_call_error(err: &CallError) -> String {
     }
 }
 
-/// `try-cast`'s answer: native programs learn whether a cast was queued,
-/// components do not.
-#[cfg(all(unix, not(target_arch = "wasm32")))]
+/// `try-cast`'s answer: whether the cast was queued.
 fn try_cast(ctx: &mut Ctx, to: Pid, msg: Envelope) -> String {
     show_cast(ctx.try_cast(to, msg))
 }
 
 /// `cast-wait`'s answer: a cast that waits up to `ms` for room.
-#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn cast_wait(ctx: &mut Ctx, to: Pid, ms: u64, msg: Envelope) -> String {
     show_cast(ctx.cast_timeout(to, msg, Duration::from_millis(ms)))
 }
 
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-fn cast_wait(_ctx: &mut Ctx, _to: Pid, _ms: u64, _msg: Envelope) -> String {
-    "err:unsupported".into()
-}
-
-#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn show_cast(result: Result<(), bulkhead_sdk::CastError>) -> String {
     use bulkhead_sdk::CastError;
 
@@ -231,11 +218,6 @@ fn show_cast(result: Result<(), bulkhead_sdk::CastError>) -> String {
         Err(CastError::Timeout) => "err:timeout".into(),
         Err(other) => format!("err:{other}"),
     }
-}
-
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-fn try_cast(_ctx: &mut Ctx, _to: Pid, _msg: Envelope) -> String {
-    "err:unsupported".into()
 }
 
 fn register(ctx: &mut Ctx, name: &str) -> String {

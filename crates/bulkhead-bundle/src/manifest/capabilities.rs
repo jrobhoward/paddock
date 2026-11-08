@@ -1,23 +1,8 @@
-//! The `capabilities` section, and how component imports map to it.
-//!
-//! A component can call only what it imports, so its imports are the upper
-//! bound of its permissions. Each import falls in one of three classes
-//! ([`classify_import`]):
-//!
-//! - Implicit: granted to every app and narrowed by host configuration, not
-//!   declared. These are `bulkhead:runtime/types` and `bulkhead:runtime/process`
-//!   (narrowed by `messaging_acl`), `wasi:clocks` and `wasi:random`, and the
-//!   WASI plumbing Rust's standard library pulls in: `wasi:io` and `wasi:cli`
-//!   (stdout and stderr become tagged logs, the environment holds only what the
-//!   host sets).
-//! - A [`Capability`]: must be declared under `capabilities`, keyed by
-//!   [`Capability::key`], or the deploy is refused.
-//! - An extension: an interface of a package outside the reserved `wasi` and
-//!   `bulkhead` namespaces, served by a host service the node was built with.
-//!   It must be declared under `capabilities.extensions`, keyed by its
-//!   package (`"example:greeting"`), or the deploy is refused.
-//! - Unknown: a `wasi` or `bulkhead` interface no host provides, so the
-//!   deploy is refused.
+//! The `capabilities` section: what an app asks of the node, keyed by
+//! [`Capability::key`]. An app reaches only what it declares here and the
+//! operator grants; extensions are declared under
+//! `capabilities.extensions`, keyed by their package
+//! (`"example:greeting"`).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -114,33 +99,6 @@ impl Capability {
     pub const fn enforced(self) -> bool {
         !matches!(self, Self::Supervisor | Self::Admin)
     }
-
-    /// The WIT package this capability covers and, if it covers only some of
-    /// the package, which interfaces.
-    const fn interfaces(self) -> (&'static str, Option<&'static [&'static str]>) {
-        match self {
-            Self::Supervisor => ("bulkhead:runtime", Some(&["supervisor"])),
-            Self::Logging => ("wasi:logging", None),
-            Self::Config => ("wasi:config", None),
-            Self::Secrets => ("bulkhead:secrets", None),
-            Self::KeyValue => ("wasi:keyvalue", None),
-            Self::Filesystem => ("wasi:filesystem", None),
-            // `wasi:http/types` comes with either handler.
-            Self::HttpOutgoing => ("wasi:http", Some(&["outgoing-handler", "types"])),
-            Self::HttpIncoming => ("wasi:http", Some(&["incoming-handler", "types"])),
-            Self::Sockets => ("wasi:sockets", None),
-            Self::Sql => ("bulkhead:sql", None),
-            Self::Metrics => ("bulkhead:metrics", None),
-            Self::Admin => ("bulkhead:admin", None),
-            Self::Groups => ("bulkhead:groups", None),
-        }
-    }
-
-    fn covers(self, name: &InterfaceName<'_>) -> bool {
-        let (package, interfaces) = self.interfaces();
-        name.package == package
-            && interfaces.is_none_or(|list| name.interface.is_some_and(|i| list.contains(&i)))
-    }
 }
 
 impl fmt::Display for Capability {
@@ -162,20 +120,6 @@ impl TryFrom<String> for Capability {
         Self::from_key(&key).ok_or_else(|| format!("unknown capability '{key}'"))
     }
 }
-
-/// The index of [`Capability::KeyValue`] in [`Capability::ALL`].
-const KEYVALUE: usize = 4;
-
-/// Imports granted to every app without being declared: `(package,
-/// interfaces)`, where `None` means the whole package.
-const IMPLICIT: &[(&str, Option<&[&str]>)] = &[
-    ("bulkhead:runtime", Some(&["types", "process"])),
-    ("bulkhead:io", None),
-    ("wasi:clocks", None),
-    ("wasi:random", None),
-    ("wasi:io", None),
-    ("wasi:cli", None),
-];
 
 /// A component import name split into parts:
 /// `wasi:keyvalue/store@0.2.0-draft` → package `wasi:keyvalue`, interface
@@ -226,56 +170,6 @@ pub fn is_extension_key(key: &str) -> bool {
                 .split_once(':')
                 .is_some_and(|(ns, _)| !RESERVED_NAMESPACES.contains(&ns))
     })
-}
-
-/// How an import relates to the manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ImportClass {
-    /// Granted to every app; no declaration needed.
-    Implicit,
-    /// Allowed if any of these capabilities is declared (more than one only
-    /// for interfaces shared between capabilities, such as `wasi:http/types`).
-    Capability(&'static [Capability]),
-    /// An extension package (`example:greeting`), allowed if declared under
-    /// `capabilities.extensions`.
-    Extension(String),
-    /// No host provides it.
-    Unknown,
-}
-
-/// Classify one component import by its full name
-/// (`wasi:keyvalue/store@0.2.0-draft`).
-#[must_use]
-pub fn classify_import(name: &str) -> ImportClass {
-    let Some(parsed) = InterfaceName::parse(name) else {
-        return ImportClass::Unknown;
-    };
-    let implicit = IMPLICIT.iter().any(|(package, interfaces)| {
-        parsed.package == *package
-            && interfaces.is_none_or(|list| parsed.interface.is_some_and(|i| list.contains(&i)))
-    });
-    if implicit {
-        return ImportClass::Implicit;
-    }
-    if is_extension_key(parsed.package) {
-        return ImportClass::Extension(parsed.package.to_string());
-    }
-    // Two capabilities share `wasi:http/types`; everything else maps to one.
-    const HTTP_TYPES: &[Capability] = &[Capability::HttpOutgoing, Capability::HttpIncoming];
-    if parsed.package == "wasi:http" && parsed.interface == Some("types") {
-        return ImportClass::Capability(HTTP_TYPES);
-    }
-    // Watches and compare-and-swap reach the same buckets as keyvalue.
-    if parsed.package == "bulkhead:watch" {
-        return ImportClass::Capability(std::slice::from_ref(&Capability::ALL[KEYVALUE]));
-    }
-    Capability::ALL
-        .iter()
-        .position(|c| c.covers(&parsed))
-        .map_or(ImportClass::Unknown, |i| {
-            ImportClass::Capability(std::slice::from_ref(&Capability::ALL[i]))
-        })
 }
 
 /// The `capabilities` section: each host interface the app requests, with
@@ -391,14 +285,6 @@ impl Capabilities {
             .copied()
             .filter(|c| self.is_declared(*c))
             .collect()
-    }
-
-    /// Whether `capability` serves the app without any import: HTTP
-    /// ingress delivers requests as calls (`wasi:http/incoming-handler`'s
-    /// routes), so its grant cannot be read from the component's imports.
-    #[must_use]
-    pub const fn import_free(capability: Capability) -> bool {
-        matches!(capability, Capability::HttpIncoming)
     }
 
     /// Whether `capability` is declared.

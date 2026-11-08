@@ -43,7 +43,7 @@ fn native_conn(version: u8) -> Vec<u8> {
     let path = BUILT[usize::from(version - 1)].get_or_init(|| {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let target = root.join(format!("target/fixtures/native-conn-v{version}"));
-        let features = if version > 1 { "native,v2" } else { "native" };
+        let features = if version > 1 { "v2" } else { "" };
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let ok = std::process::Command::new(cargo)
             .current_dir(&root)

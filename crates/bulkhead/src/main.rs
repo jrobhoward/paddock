@@ -190,13 +190,13 @@ enum Command {
         #[arg(short, long, env = "BULKHEAD_CONFIG")]
         config: PathBuf,
     },
-    /// Build a signed bundle from a component and its bulkhead.toml.
+    /// Build a signed bundle from a program and its bulkhead.toml.
     Bundle {
         /// The app's bulkhead.toml.
         manifest: PathBuf,
-        /// The component (`.wasm`, built for wasm32-wasip2), or for a
-        /// native-process app its program for this machine's platform.
-        component: Option<PathBuf>,
+        /// The program for this machine's platform: an executable, or a
+        /// rustbridge `.so`.
+        program: Option<PathBuf>,
         /// A native-process app's program for a platform (linux-x86_64,
         /// linux-aarch64), in place of the argument; repeat for each.
         #[arg(long = "program", value_name = "PLATFORM=PATH", value_parser = bundle::parse_program)]
@@ -210,9 +210,6 @@ enum Command {
         /// Output file (default: <name>-<version>.rbp).
         #[arg(short, long)]
         out: Option<PathBuf>,
-        /// Write the bundle even if the component imports undeclared interfaces.
-        #[arg(long)]
-        skip_import_check: bool,
     },
     /// A node's key for the cluster transport.
     #[cfg(feature = "node")]
@@ -590,7 +587,7 @@ fn make_bundle(json: bool, request: &bundle::BundleRequest<'_>) -> anyhow::Resul
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "path": b.path, "app": b.name, "version": b.version,
-                "signer": b.public_key, "imports": b.imports, "priv_files": b.priv_files,
+                "signer": b.public_key, "priv_files": b.priv_files,
                 "platforms": b.platforms,
             }))?
         );
@@ -706,22 +703,20 @@ async fn run(client: &Client, json: bool, command: Command) -> anyhow::Result<()
         Command::Node { .. } => unreachable!("handled before the client runtime starts"),
         Command::Bundle {
             manifest,
-            component,
+            program,
             programs,
             key,
             priv_dir,
             out,
-            skip_import_check,
         } => make_bundle(
             json,
             &bundle::BundleRequest {
                 manifest: &manifest,
-                component: component.as_deref(),
+                program: program.as_deref(),
                 programs: &programs,
                 key: &key,
                 priv_dir: priv_dir.as_deref(),
                 out: out.as_deref(),
-                skip_import_check,
             },
         ),
         Command::Keygen {

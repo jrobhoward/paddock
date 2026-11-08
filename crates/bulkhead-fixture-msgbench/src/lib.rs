@@ -1,6 +1,5 @@
 //! Test fixture: calls and casts timed inside an app, for `bulkhead-host`'s
-//! `cluster_throughput` benchmark. One source, built as a component and as
-//! a native program (feature `native`), so both kinds run the same code.
+//! `cluster_throughput` benchmark.
 //!
 //! Text calls:
 //! - `echo:<text>`: `<text>`.
@@ -18,8 +17,7 @@
 //! - `sends:<pid>:<n>:<kind>`: as `casts`, sending with `cast`, `try`
 //!   (`try_cast`) or `wait` (`cast_timeout`, up to 5 s each); replies
 //!   `<ns> <ok>`, `<ok>` the sends that returned `Ok` (all `n` for `cast`,
-//!   which is not told). `try` and `wait` exist natively only; a component
-//!   replies `err:unsupported`.
+//!   which is not told).
 //!
 //! A cast of `count` counts as a call does.
 
@@ -92,7 +90,6 @@ fn casts(ctx: &mut Ctx, to: Pid, n: u64) -> Result<String, String> {
 const WAIT: Duration = Duration::from_secs(5);
 
 /// One send of `count` to `to` by `kind`: whether it returned `Ok`.
-#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn send(ctx: &mut Ctx, to: Pid, kind: &str) -> Result<bool, String> {
     let msg = Envelope::text("count");
     match kind {
@@ -103,17 +100,6 @@ fn send(ctx: &mut Ctx, to: Pid, kind: &str) -> Result<bool, String> {
         "try" => Ok(ctx.try_cast(to, msg).is_ok()),
         "wait" => Ok(ctx.cast_timeout(to, msg, WAIT).is_ok()),
         _ => Err(format!("unknown kind {kind}")),
-    }
-}
-
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-fn send(ctx: &mut Ctx, to: Pid, kind: &str) -> Result<bool, String> {
-    let _ = WAIT;
-    if kind == "cast" {
-        ctx.cast(to, Envelope::text("count"));
-        Ok(true)
-    } else {
-        Err("unsupported".into())
     }
 }
 

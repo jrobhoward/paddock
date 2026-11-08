@@ -6,9 +6,8 @@ with its state kept in four places; then a counter that keeps its state in
 memory, carried through a hot upgrade.
 Each chapter is a script that starts the nodes, prints the commands to
 try, and pauses between steps; it stops everything at the end or on
-Ctrl-C. Run the scripts from the repository root. They need the
-`wasm32-wasip2` target and `curl` (`BOARD=native` needs no target), and
-the first build takes a few minutes.
+Ctrl-C. Run the scripts from the repository root. They need Linux and
+`curl`, and the first build takes a few minutes.
 
 ```bash
 examples/tutorial/01-one-node.sh
@@ -18,22 +17,13 @@ examples/tutorial/04-database.sh             # needs Postgres's server programs
 examples/tutorial/05-replicated.sh
 examples/tutorial/06-hot-upgrade.sh
 AUTO=1 examples/tutorial/02-failover.sh    # no pauses: kills node 1 itself
-BOARD=native examples/tutorial/01-one-node.sh   # the board as a native program
 ```
 
-The app is [`examples/board`](../board): one component deployed as two
-apps. `BOARD=native` runs every chapter with the same Rust source built
-as native programs instead (Linux; the board, and chapter 4's tally and
-chapter 6's counter): each instance is a process of its own, started
-through `bulkhead-runner`, which the script builds beside `bulkhead`, and
-each manifest gets `kind = "native-process"`. `BOARD=go` runs chapters 1,
-2, 3 and 5 with the app written in Go
-([`examples/board-go`](../board-go), on the Go SDK; needs TinyGo, on
-`PATH` or in `TINYGO`), and chapters 4 and 6 with the Rust components. The
-commands and replies are the same with each, except that the native
-board's crash is an abort, which the node logs as `crashed: killed by
-signal 6` where the component's is a trap, and that a native snapshot
-upgrade pauses for a process's start (chapter 6). `board` serves `GET`, `POST` and `DELETE /board` over the node's HTTP
+The app is [`examples/board`](../board): one program deployed as two
+apps. Each instance is a process of its own, started through
+`bulkhead-runner`, which the script builds beside `bulkhead`. The board's
+crash is an abort, which the node logs as `crashed: killed by signal 6`.
+`board` serves `GET`, `POST` and `DELETE /board` over the node's HTTP
 ingress and keeps the count in the node's `board` bucket, not in its own
 memory; `POST /board/crash` makes it trap. Every reply names the instance
 that answered (`"pid"`, and the `x-bulkhead-pid` header). `board-watch`
@@ -282,11 +272,10 @@ v1 would have to read v2's snapshot, the downgrade half of OTP's
 moves the instances by restart instead, from `init`, discarding the state,
 and the audit log records `"restart_requested": true`.
 
-With `BOARD=native` the counter is a process, and the upgrade starts v2's
-process beside v1's, so the pause is the new process's start and load,
-milliseconds (8 ms on the 16-core machine) where a component's is
-hundreds of microseconds; the pid, the name, the queue and the count
-carry over the same way.
+The counter is a process, and the upgrade starts v2's process beside
+v1's, so the pause is the new process's start and load, milliseconds (8 ms
+on the 16-core machine); the pid, the name, the queue and the count carry
+over.
 
 What this shows: code changes without stopping the app or losing what it
 holds in memory, and a version that cannot take the state over is refused

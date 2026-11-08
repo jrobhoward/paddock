@@ -1,4 +1,4 @@
-//! Two apps from one component, chosen by `start_args`: `pong` answers typed
+//! Two apps from one program, chosen by `start_args`: `pong` answers typed
 //! CBOR `Ping` calls; `ping` finds `pong` by its registered name, calls it,
 //! and monitors it.
 //!

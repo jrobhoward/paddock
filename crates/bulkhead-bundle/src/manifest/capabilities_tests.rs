@@ -6,67 +6,6 @@ use rstest::rstest;
 
 use super::*;
 
-#[rstest]
-#[case("bulkhead:runtime/types@0.1.0")]
-#[case("bulkhead:runtime/process@0.1.0")]
-#[case("bulkhead:io/ready@0.1.0")]
-#[case("wasi:clocks/monotonic-clock@0.2.12")]
-#[case("wasi:random/random@0.2.12")]
-#[case("wasi:io/streams@0.2.12")]
-#[case("wasi:cli/stdout@0.2.12")]
-#[case("wasi:cli/environment")]
-fn classify_import____implicit_interface____returns_implicit(#[case] name: &str) {
-    let class = classify_import(name);
-
-    assert_eq!(class, ImportClass::Implicit);
-}
-
-#[rstest]
-#[case("wasi:logging/logging@0.1.0-draft", Capability::Logging)]
-#[case("wasi:config/store@0.2.0-draft", Capability::Config)]
-#[case("wasi:keyvalue/store@0.2.0-draft", Capability::KeyValue)]
-#[case("wasi:keyvalue/atomics@0.2.0-draft", Capability::KeyValue)]
-#[case("wasi:filesystem/preopens@0.2.12", Capability::Filesystem)]
-#[case("wasi:filesystem/types@0.2.12", Capability::Filesystem)]
-#[case("wasi:sockets/tcp@0.2.12", Capability::Sockets)]
-#[case("wasi:http/outgoing-handler@0.2.12", Capability::HttpOutgoing)]
-#[case("wasi:http/incoming-handler@0.2.12", Capability::HttpIncoming)]
-#[case("bulkhead:runtime/supervisor@0.1.0", Capability::Supervisor)]
-#[case("bulkhead:secrets/store@0.1.0", Capability::Secrets)]
-fn classify_import____capability_interface____returns_its_capability(
-    #[case] name: &str,
-    #[case] expected: Capability,
-) {
-    let class = classify_import(name);
-
-    let ImportClass::Capability(capabilities) = class else {
-        panic!("expected Capability, got {class:?}");
-    };
-    assert_eq!(capabilities, [expected]);
-}
-
-#[test]
-fn classify_import____http_types____shared_by_both_http_capabilities() {
-    let class = classify_import("wasi:http/types@0.2.12");
-
-    assert_eq!(
-        class,
-        ImportClass::Capability(&[Capability::HttpOutgoing, Capability::HttpIncoming])
-    );
-}
-
-#[rstest]
-#[case("bulkhead:spike4/kv@0.1.0")]
-#[case("bulkhead:runtime/admin@0.1.0")]
-#[case("wasi:nn/inference@0.2.0")]
-#[case("log")]
-#[case(":x/y")]
-fn classify_import____no_host_provides_it____returns_unknown(#[case] name: &str) {
-    let class = classify_import(name);
-
-    assert_eq!(class, ImportClass::Unknown);
-}
-
 #[test]
 fn InterfaceName____full_name____splits_parts() {
     let name = InterfaceName::parse("wasi:keyvalue/store@0.2.0-draft").unwrap();
@@ -155,14 +94,6 @@ fn PortRange____invalid____returns_error(#[case] s: &str) {
 #[case("/data/../etc", false)]
 fn is_valid_guest_path____cases____match(#[case] path: &str, #[case] expected: bool) {
     assert_eq!(is_valid_guest_path(path), expected);
-}
-
-#[test]
-fn classify_import____bulkhead_watch____needs_keyvalue() {
-    let class = classify_import("bulkhead:watch/watch@0.1.0");
-
-    assert_eq!(class, ImportClass::Capability(&[Capability::KeyValue]));
-    assert_eq!(Capability::ALL[KEYVALUE], Capability::KeyValue);
 }
 
 #[rstest]

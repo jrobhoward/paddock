@@ -11,7 +11,7 @@
 //!
 //! ```sh
 //! cargo build --release -p bulkhead-native --bin bulkhead-runner
-//! cargo build --release -p bulkhead-fixture-msgbench --features native \
+//! cargo build --release -p bulkhead-fixture-msgbench \
 //!     --bin bulkhead-fixture-msgbench
 //! cargo run --release -p bulkhead-host --example cluster_throughput -- 4
 //! # Two processes or two machines: keys for both nodes, copied to both.

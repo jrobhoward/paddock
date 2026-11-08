@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use bulkhead_bundle::manifest::{
-    AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Provenance, UpgradeMode,
+    AppInfo, AppManifest, AppSpec, Capability, ProgramRef, Provenance, UpgradeMode,
 };
 use bulkhead_host::{
     AppDeployment, CallError, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, UpgradeError,
@@ -232,10 +232,9 @@ fn deployment(name: &str, version: u8, appserver: serde_json::Value) -> AppDeplo
                 license: None,
                 repository: None,
             },
-            component: ComponentRef {
+            program: ProgramRef {
                 path: String::new(),
                 checksum: String::new(),
-                world: "bulkhead:runtime/app@0.1.0".into(),
             },
             provenance: Provenance {
                 signer_key: String::new(),

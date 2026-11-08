@@ -10,7 +10,7 @@ mod common;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
+use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, ProgramRef, Provenance};
 use bulkhead_host::{AppDeployment, AppStatus, CallError, Envelope, ExitReason, HostError, Pid};
 use common::{LONG, ask, ask_until, body, pid_text, shared, spec, text};
 use serde_json::json;
@@ -27,10 +27,9 @@ fn deployment(name: &str, version: &str, appserver: serde_json::Value) -> AppDep
                 license: None,
                 repository: None,
             },
-            component: ComponentRef {
+            program: ProgramRef {
                 path: String::new(),
                 checksum: String::new(),
-                world: "bulkhead:runtime/app@0.1.0".into(),
             },
             provenance: Provenance {
                 signer_key: String::new(),

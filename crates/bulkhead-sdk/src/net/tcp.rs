@@ -1,7 +1,7 @@
-//! `net` in a native program (ROADMAP Z8e): the node makes each socket on
-//! the manifest's rules and passes a stream on the descriptor socket; it
-//! keeps listeners itself and watches readiness. Reading and writing are
-//! the app's own system calls on the passed stream.
+//! TCP streams and listeners: the node makes each socket on the manifest's
+//! rules and passes a stream on the descriptor socket; it keeps listeners
+//! itself and watches readiness. Reading and writing are the app's own
+//! system calls on the passed stream.
 
 use std::io::{self, Write};
 use std::net::SocketAddr;

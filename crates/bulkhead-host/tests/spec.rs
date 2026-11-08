@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bulkhead_bundle::manifest::{
-    AppInfo, AppManifest, AppSpec, Capability, ComponentRef, Durability, LogLevel, Provenance,
+    AppInfo, AppManifest, AppSpec, Capability, Durability, LogLevel, ProgramRef, Provenance,
 };
 use bulkhead_host::{HostObjectRequest, InstanceSpec, Preopen};
 
@@ -23,10 +23,9 @@ fn manifest(spec: serde_json::Value) -> AppManifest {
             license: None,
             repository: None,
         },
-        component: ComponentRef {
-            path: "lib/wasm32-wasip2/release/orders.wasm".into(),
+        program: ProgramRef {
+            path: "lib/linux-x86_64/orders".into(),
             checksum: "sha256:00".into(),
-            world: "bulkhead:runtime/app@0.1.0".into(),
         },
         provenance: Provenance {
             signer_key: "RWQ".into(),

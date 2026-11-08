@@ -16,9 +16,5 @@ crate-type = ["cdylib"]
 rustbridge.workspace = true
 serde.workspace = true
 
-# Built for the host, not wasm32-wasip2 (scripts/check.sh's `guests`).
-[package.metadata.bulkhead]
-native-library = true
-
 [lints]
 workspace = true

@@ -17,12 +17,14 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 DEMO_DIR=${DEMO_DIR:-$(mktemp -d -t bulkhead-trace-XXXXXX)}
 BULKHEAD="$ROOT/target/release/bulkhead"
-WASM="$ROOT/target/wasm32-wasip2/release"
+PROGRAMS="$ROOT/target/release"
 
 echo "building (release)..."
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead
+# The node runs apps through the bulkhead-runner beside it.
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead-native --bin bulkhead-runner
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
-  --target wasm32-wasip2 -p example-ping-pong -p example-chaos
+  -p example-ping-pong -p example-chaos
 
 cd "$DEMO_DIR"
 "$BULKHEAD" keygen signer --no-password >/dev/null
@@ -66,12 +68,12 @@ trap cleanup EXIT
 for _ in $(seq 100); do [ -S "$BULKHEAD_SOCKET" ] && break; sleep 0.05; done
 
 bundle() {
-  "$BULKHEAD" bundle "$1" "$WASM/$2.wasm" --key signer.key --out "$3" >/dev/null
+  "$BULKHEAD" bundle "$1" "$PROGRAMS/$2" --key signer.key --out "$3" >/dev/null
   "$BULKHEAD" deploy "$3" >/dev/null
 }
-bundle "$ROOT/examples/ping-pong/pong.toml" example_ping_pong pong.rbp
-bundle "$ROOT/examples/ping-pong/ping.toml" example_ping_pong ping.rbp
-bundle chaos.toml example_chaos chaos.rbp
+bundle "$ROOT/examples/ping-pong/pong.toml" example-ping-pong pong.rbp
+bundle "$ROOT/examples/ping-pong/ping.toml" example-ping-pong ping.rbp
+bundle chaos.toml example-chaos chaos.rbp
 
 cat <<EOF
 

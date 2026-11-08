@@ -10,7 +10,7 @@ use super::*;
 /// The `appserver` section of the example in DESIGN.md (rustbridge
 /// integration → Proposed extensions).
 const DESIGN_EXAMPLE: &str = r#"{
-    "kind": "wasm-component",
+    "kind": "native-process",
     "dependencies": [{ "app": "billing", "version": "^2" }],
     "registered_names": ["orders"],
     "lifecycle": { "restart": "permanent", "shutdown_timeout_ms": 5000 },
@@ -44,10 +44,9 @@ fn app_manifest(spec: AppSpec) -> AppManifest {
             license: None,
             repository: None,
         },
-        component: ComponentRef {
-            path: "lib/wasm32-wasip2/release/orders.wasm".into(),
+        program: ProgramRef {
+            path: "lib/linux-x86_64/release/orders".into(),
             checksum: "sha256:00".into(),
-            world: "bulkhead:runtime/app@0.1.0".into(),
         },
         provenance: Provenance {
             signer_key: "RWQ".into(),
@@ -59,10 +58,30 @@ fn app_manifest(spec: AppSpec) -> AppManifest {
 }
 
 #[test]
+fn AppSpec____kind_wasm_component____refused_saying_so() {
+    let err = AppSpec::from_json_value(&json!({ "kind": "wasm-component" }))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("WebAssembly components are not run"), "{err}");
+}
+
+#[test]
+fn AppSpec____no_kind_or_native_section____a_native_executable() {
+    let spec = AppSpec::from_json_value(&json!({})).unwrap();
+
+    assert_eq!(spec.kind, Kind::NativeProcess);
+    assert_eq!(
+        spec.native.unwrap_or_default().program,
+        NativeProgram::Executable
+    );
+}
+
+#[test]
 fn AppSpec____design_example____parses_every_section() {
     let spec = AppSpec::from_json_str(DESIGN_EXAMPLE).unwrap();
 
-    assert_eq!(spec.kind, Kind::WasmComponent);
+    assert_eq!(spec.kind, Kind::NativeProcess);
     assert_eq!(spec.dependencies[0].app, "billing");
     assert!(
         spec.dependencies[0]
@@ -333,9 +352,6 @@ fn unenforced_fields____every_unenforced_field____listed() {
         "registered_names": [{ "name": "g", "scope": "global" }],
         "instances": { "min": 1, "max": 3 },
         "limits": { "fuel_per_message": 10, "storage_quota": "1GiB", "open_files": 4, "outbound_connections": 2 },
-        "capabilities": {
-            "bulkhead:admin": {}
-        },
         "upgrade": { "mode": "blue-green" },
         "placement": { "mode": "all-nodes", "required_labels": { "zone": "a" }, "spread": "zone" },
         "health": {},
@@ -359,7 +375,6 @@ fn unenforced_fields____every_unenforced_field____listed() {
             "limits.storage_quota".to_string(),
             "limits.open_files".to_string(),
             "limits.outbound_connections".to_string(),
-            "capabilities.bulkhead:admin".to_string(),
             "placement.mode".to_string(),
             "placement.required_labels".to_string(),
             "placement.spread".to_string(),
@@ -402,10 +417,9 @@ fn AppManifest____invalid_app_name____invalid_at_plugin_name() {
 
 #[rstest]
 #[case(json!({ "kind": "native-process", "capabilities": { "bulkhead:runtime/supervisor": {} } }), "capabilities.bulkhead:runtime/supervisor")]
-#[case(json!({ "kind": "native-process", "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
-#[case(json!({ "kind": "native-process", "upgrade": { "mode": "snapshot", "snapshot_version": 1 } }), "upgrade.mode")]
-#[case(json!({ "native": { "program": "executable" } }), "native")]
-#[case(json!({ "kind": "native-process", "listeners": [{ "name": "lines" }] }), "listeners")]
+#[case(json!({ "native": { "program": "library" }, "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
+#[case(json!({ "native": { "program": "library" }, "upgrade": { "mode": "snapshot", "snapshot_version": 1 } }), "upgrade.mode")]
+#[case(json!({ "native": { "program": "library" }, "listeners": [{ "name": "lines" }] }), "listeners")]
 #[case(json!({ "kind": "native-process", "native": { "program": "executable" }, "listeners": [{ "name": "lines" }], "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
 #[case(json!({ "kind": "native-process", "native": { "program": "executable" }, "listeners": [{ "name": "lines" }], "placement": { "mode": "singleton" } }), "placement.mode")]
 fn validate____native_process_outside_its_rules____refused_at_path(

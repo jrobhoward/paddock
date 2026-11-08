@@ -15,7 +15,7 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::host::logging;
+use bulkhead_native::protocol as p;
 
 /// The host event that carries the effective level.
 pub(crate) const LEVEL_EVENT: &str = "log-level";
@@ -75,20 +75,20 @@ pub(crate) fn set_from_host(body: &[u8]) {
     MIN_LEVEL.store(rank, Ordering::Relaxed);
 }
 
-/// Write one record with context `app`, unless the host would drop it.
+/// Write one record, unless the host would drop it.
 pub fn write(level: Level, message: &str) {
     if !enabled(level) {
         return;
     }
     let level = match level {
-        Level::Trace => logging::Level::Trace,
-        Level::Debug => logging::Level::Debug,
-        Level::Info => logging::Level::Info,
-        Level::Warn => logging::Level::Warn,
-        Level::Error => logging::Level::Error,
-        Level::Critical => logging::Level::Critical,
+        Level::Trace => p::Level::Trace,
+        Level::Debug => p::Level::Debug,
+        Level::Info => p::Level::Info,
+        Level::Warn => p::Level::Warn,
+        Level::Error => p::Level::Error,
+        Level::Critical => p::Level::Critical,
     };
-    logging::log(level, "app", message);
+    bulkhead_native::app::log(level, message);
 }
 
 /// Log at `level` with `format!` arguments, formatting only if the host

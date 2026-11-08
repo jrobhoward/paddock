@@ -32,7 +32,8 @@
 
 use std::fmt;
 
-use crate::host::sql;
+use bulkhead_native::app::Ctx;
+use bulkhead_native::protocol as p;
 
 /// A parameter, or a cell of a row. Text carries what the interface has no
 /// type for (dates, `numeric`, `json`, `uuid`); cast other columns in the
@@ -63,39 +64,57 @@ pub struct Rows {
     pub rows: Vec<Vec<Value>>,
 }
 
-/// `params` as the host's values.
-fn to_host(params: &[Value]) -> Vec<sql::Value> {
+/// `params` as the protocol's values.
+fn params_of(params: &[Value]) -> Vec<p::SqlValue> {
     params
         .iter()
         .map(|v| match v {
-            Value::Null => sql::Value::Null,
-            Value::Boolean(b) => sql::Value::Boolean(*b),
-            Value::Int(i) => sql::Value::Int(*i),
-            Value::Float(f) => sql::Value::Float(*f),
-            Value::Text(t) => sql::Value::Text(t.clone()),
-            Value::Bytes(b) => sql::Value::Bytes(b.clone()),
+            Value::Null => p::SqlValue::Null,
+            Value::Boolean(b) => p::SqlValue::Bool(*b),
+            Value::Int(i) => p::SqlValue::Int(*i),
+            Value::Float(f) => p::SqlValue::Float(*f),
+            Value::Text(t) => p::SqlValue::Text(t.clone()),
+            Value::Bytes(b) => p::SqlValue::Bytes(p::Bytes(b.clone())),
         })
         .collect()
 }
 
-/// The host's rows as this module's.
-fn from_host(rows: sql::Rows) -> Rows {
-    let value = |v: sql::Value| match v {
-        sql::Value::Null => Value::Null,
-        sql::Value::Boolean(b) => Value::Boolean(b),
-        sql::Value::Int(i) => Value::Int(i),
-        sql::Value::Float(f) => Value::Float(f),
-        sql::Value::Text(t) => Value::Text(t),
-        sql::Value::Bytes(b) => Value::Bytes(b),
+fn unexpected(answer: &p::SqlAnswer) -> SqlError {
+    SqlError::Unavailable(format!("unexpected answer from the node: {answer:?}"))
+}
+
+/// A statement's answer as this module's rows.
+fn rows_of(answer: p::SqlAnswer) -> Result<Rows, SqlError> {
+    let p::SqlAnswer::Rows(rows) = answer else {
+        return Err(unexpected(&answer));
     };
-    Rows {
+    let value = |v: p::SqlValue| match v {
+        p::SqlValue::Null => Value::Null,
+        p::SqlValue::Bool(b) => Value::Boolean(b),
+        p::SqlValue::Int(i) => Value::Int(i),
+        p::SqlValue::Float(f) => Value::Float(f),
+        p::SqlValue::Text(t) => Value::Text(t),
+        p::SqlValue::Bytes(b) => Value::Bytes(b.0),
+    };
+    Ok(Rows {
         columns: rows.columns,
         rows: rows
             .rows
             .into_iter()
             .map(|row| row.into_iter().map(value).collect())
             .collect(),
+    })
+}
+
+fn changed(answer: p::SqlAnswer) -> Result<u64, SqlError> {
+    match answer {
+        p::SqlAnswer::Changed(n) => Ok(n),
+        other => Err(unexpected(&other)),
     }
+}
+
+fn ask(request: p::SqlRequest) -> Result<p::SqlAnswer, SqlError> {
+    Ok(Ctx::current().sql(request)?)
 }
 
 /// Why a call failed.
@@ -144,20 +163,17 @@ impl fmt::Display for SqlError {
 
 impl std::error::Error for SqlError {}
 
-impl From<sql::Error> for SqlError {
-    fn from(e: sql::Error) -> Self {
+impl From<p::SqlError> for SqlError {
+    fn from(e: p::SqlError) -> Self {
         match e {
-            sql::Error::AccessDenied => Self::AccessDenied,
-            sql::Error::NotFound => Self::NotFound,
-            sql::Error::LimitReached => Self::LimitReached,
-            sql::Error::Unavailable(why) => Self::Unavailable(why),
-            sql::Error::Timeout => Self::Timeout,
-            sql::Error::TooLarge => Self::TooLarge,
-            sql::Error::Unsupported(why) => Self::Unsupported(why),
-            sql::Error::Query(db) => Self::Query {
-                code: db.code,
-                message: db.message,
-            },
+            p::SqlError::AccessDenied => Self::AccessDenied,
+            p::SqlError::NotFound => Self::NotFound,
+            p::SqlError::LimitReached => Self::LimitReached,
+            p::SqlError::Unavailable(why) => Self::Unavailable(why),
+            p::SqlError::Timeout => Self::Timeout,
+            p::SqlError::TooLarge => Self::TooLarge,
+            p::SqlError::Unsupported(why) => Self::Unsupported(why),
+            p::SqlError::Query { code, message } => Self::Query { code, message },
         }
     }
 }
@@ -272,11 +288,11 @@ impl<T: Into<Value>> From<Option<T>> for Value {
 ///
 /// As [`SqlError`] lists.
 pub fn query(datasource: &str, statement: &str, params: &[Value]) -> Result<Rows, SqlError> {
-    Ok(from_host(sql::query(
-        datasource,
-        statement,
-        &to_host(params),
-    )?))
+    rows_of(ask(p::SqlRequest::Query {
+        datasource: datasource.into(),
+        statement: statement.into(),
+        params: params_of(params),
+    })?)
 }
 
 /// Run a statement for its effect on `datasource`; returns the rows it
@@ -286,13 +302,20 @@ pub fn query(datasource: &str, statement: &str, params: &[Value]) -> Result<Rows
 ///
 /// As [`SqlError`] lists.
 pub fn execute(datasource: &str, statement: &str, params: &[Value]) -> Result<u64, SqlError> {
-    Ok(sql::execute(datasource, statement, &to_host(params))?)
+    changed(ask(p::SqlRequest::Execute {
+        datasource: datasource.into(),
+        statement: statement.into(),
+        params: params_of(params),
+    })?)
 }
 
-/// A transaction on one connection. Dropping it without
-/// [`Transaction::commit`] rolls it back.
+/// A transaction on one connection, which the node keeps open under `id`.
+/// Dropping it without [`Transaction::commit`] rolls it back.
 #[derive(Debug)]
-pub struct Transaction(sql::Transaction);
+pub struct Transaction {
+    id: u32,
+    ended: bool,
+}
 
 /// Begin a transaction on `datasource`. It holds one of the app's
 /// connections until it ends.
@@ -301,7 +324,10 @@ pub struct Transaction(sql::Transaction);
 ///
 /// As [`SqlError`] lists.
 pub fn begin(datasource: &str) -> Result<Transaction, SqlError> {
-    Ok(Transaction(sql::begin(datasource)?))
+    match ask(p::SqlRequest::Begin(datasource.into()))? {
+        p::SqlAnswer::Begun(id) => Ok(Transaction { id, ended: false }),
+        other => Err(unexpected(&other)),
+    }
 }
 
 impl Transaction {
@@ -311,7 +337,11 @@ impl Transaction {
     ///
     /// As [`SqlError`] lists.
     pub fn query(&self, statement: &str, params: &[Value]) -> Result<Rows, SqlError> {
-        Ok(from_host(self.0.query(statement, &to_host(params))?))
+        rows_of(ask(p::SqlRequest::TxQuery {
+            tx: self.id,
+            statement: statement.into(),
+            params: params_of(params),
+        })?)
     }
 
     /// As [`execute`], inside the transaction.
@@ -320,7 +350,11 @@ impl Transaction {
     ///
     /// As [`SqlError`] lists.
     pub fn execute(&self, statement: &str, params: &[Value]) -> Result<u64, SqlError> {
-        Ok(self.0.execute(statement, &to_host(params))?)
+        changed(ask(p::SqlRequest::TxExecute {
+            tx: self.id,
+            statement: statement.into(),
+            params: params_of(params),
+        })?)
     }
 
     /// Commit.
@@ -329,7 +363,7 @@ impl Transaction {
     ///
     /// As [`SqlError`] lists; the transaction has ended either way.
     pub fn commit(self) -> Result<(), SqlError> {
-        Ok(sql::Transaction::commit(self.0)?)
+        self.end(true)
     }
 
     /// Roll back.
@@ -338,6 +372,25 @@ impl Transaction {
     ///
     /// As [`SqlError`] lists; the transaction has ended either way.
     pub fn rollback(self) -> Result<(), SqlError> {
-        Ok(sql::Transaction::rollback(self.0)?)
+        self.end(false)
+    }
+
+    fn end(mut self, commit: bool) -> Result<(), SqlError> {
+        self.ended = true;
+        match ask(p::SqlRequest::TxEnd {
+            tx: self.id,
+            commit,
+        })? {
+            p::SqlAnswer::Ended => Ok(()),
+            other => Err(unexpected(&other)),
+        }
+    }
+}
+
+impl Drop for Transaction {
+    fn drop(&mut self) {
+        if !self.ended {
+            bulkhead_native::app::end_transaction_quietly(self.id);
+        }
     }
 }

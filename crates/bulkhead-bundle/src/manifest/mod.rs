@@ -2,8 +2,8 @@
 //! errors, defaults and validation.
 //!
 //! A Bulkhead bundle is a rustbridge `.rbp` (format 1.2). Its `manifest.json`
-//! already carries the app's identity (`plugin`), the component (the
-//! `wasm32-wasip2` variant) and provenance (`build_info`, signatures); the
+//! already carries the app's identity (`plugin`), the program (a variant
+//! per platform) and provenance (`build_info`, signatures); the
 //! `appserver` section carries the rest, modelled here as [`AppSpec`].
 //! [`AppManifest`] combines the four once a bundle has been verified.
 //!
@@ -38,9 +38,9 @@ pub use bytesize::{ByteSize, ParseByteSizeError};
 pub use capabilities::{
     AccessMode, AdminAccess, AdminScope, Bucket, Capabilities, Capability, ConfigScope,
     DEFAULT_MAX_SOCKETS, Datasource, Durability, FilesystemScope, GroupsScope, HttpIncomingScope,
-    HttpOutgoingScope, ImportClass, InterfaceName, KeyValueScope, LoggingScope, MetricsScope,
-    PortRange, Preopen, RESERVED_NAMESPACES, Route, SecretsScope, SocketRule, SocketsScope,
-    SqlScope, SupervisorScope, cidr_contains, classify_import, is_extension_key, parse_cidr,
+    HttpOutgoingScope, InterfaceName, KeyValueScope, LoggingScope, MetricsScope, PortRange,
+    Preopen, RESERVED_NAMESPACES, Route, SecretsScope, SocketRule, SocketsScope, SqlScope,
+    SupervisorScope, cidr_contains, is_extension_key, parse_cidr,
 };
 pub use error::{ManifestError, ValidationError};
 pub use lifecycle::{
@@ -240,9 +240,11 @@ impl AppSpec {
     /// listeners too; and the `native` section on any other kind.
     fn check_native(&self, v: &mut Validator) {
         if self.kind != Kind::NativeProcess {
-            if self.native.is_some() {
-                v.error_at("native", "is only for kind \"native-process\"");
-            }
+            v.error_at(
+                "kind",
+                "WebAssembly components are not run; build the app as a native program \
+                 (kind = \"native-process\", the default)",
+            );
             return;
         }
         let only = format!(
@@ -308,15 +310,13 @@ pub struct AppInfo {
     pub repository: Option<String>,
 }
 
-/// The component, from the bundle's `wasm32-wasip2` variant.
+/// The program, from the bundle's variant for this node's platform.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ComponentRef {
-    /// Path of the component within the bundle.
+pub struct ProgramRef {
+    /// Path of the program within the bundle.
     pub path: String,
-    /// `sha256:<hex>` checksum of the component.
+    /// `sha256:<hex>` checksum of the program.
     pub checksum: String,
-    /// WIT world the component targets (`bulkhead:runtime/app@0.1.0`).
-    pub world: String,
 }
 
 /// Where the bundle came from and who vouched for it.
@@ -332,14 +332,14 @@ pub struct Provenance {
     pub sbom: Option<serde_json::Value>,
 }
 
-/// A verified app: identity, component, provenance and the `appserver`
+/// A verified app: identity, program, provenance and the `appserver`
 /// section together.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppManifest {
     /// Identity.
     pub app: AppInfo,
-    /// The component.
-    pub component: ComponentRef,
+    /// The program.
+    pub program: ProgramRef,
     /// Provenance.
     pub provenance: Provenance,
     /// The `appserver` section.

@@ -45,14 +45,7 @@ fn native() -> &'static (PathBuf, PathBuf) {
         let target = root().join("target/fixtures/greeter-native");
         cargo(
             &target,
-            &[
-                "-p",
-                "bulkhead-native",
-                "-p",
-                "example-greeter-app",
-                "--features",
-                "example-greeter-app/native",
-            ],
+            &["-p", "bulkhead-native", "-p", "example-greeter-app"],
         );
         let debug = target.join("debug");
         (

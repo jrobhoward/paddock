@@ -1,5 +1,5 @@
 # Watches the counter on the bulletin board and logs every change
-# (`bulkhead logs board-watch`). The same component as `board`, started with
+# (`bulkhead logs board-watch`). The same program as `board`, started with
 # {"watch": true}. Needs the `board` bucket in node config (see
 # bulkhead.toml) and in policy:
 #
@@ -18,7 +18,7 @@ start_args = { watch = true }
 [appserver.capabilities."wasi:keyvalue".shared]
 board = "ro"
 
-# The component imports process groups for its hot-standby mode
+# The app joins process groups in its hot-standby mode
 # (hot-standby.toml); declared without groups here, it is never called.
 [appserver.capabilities."bulkhead:groups"]
 

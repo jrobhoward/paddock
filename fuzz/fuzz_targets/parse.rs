@@ -6,7 +6,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use bulkhead_host::Pid;
-use bulkhead_bundle::manifest::{ByteSize, Capability, PortRange, Routing, classify_import, is_valid_name, parse_cidr};
+use bulkhead_bundle::manifest::{ByteSize, Capability, PortRange, Routing, is_valid_name, parse_cidr};
 
 fuzz_target!(|text: &str| {
     if let Ok(pid) = text.parse::<Pid>() {
@@ -20,6 +20,5 @@ fuzz_target!(|text: &str| {
     let _ = text.parse::<PortRange>();
     let _ = parse_cidr(text);
     let _ = Capability::from_key(text);
-    let _ = classify_import(text);
     let _ = is_valid_name(text);
 });

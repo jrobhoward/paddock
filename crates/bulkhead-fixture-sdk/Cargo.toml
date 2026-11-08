@@ -9,18 +9,6 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-# The same app as a native program, for `tests/egress.rs`'s native cases.
-[[bin]]
-name = "bulkhead-fixture-sdk"
-path = "src/main.rs"
-required-features = ["native"]
-
-[features]
-native = []
-
 [dependencies]
 bulkhead-sdk = { workspace = true, features = ["config", "groups", "http", "http-client", "keyvalue", "metrics", "secrets", "sql", "watch"] }
 serde = { workspace = true }

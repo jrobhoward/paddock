@@ -9,19 +9,9 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-# The same app as a native program (`kind = "native-process"`).
-[[bin]]
-name = "example-scada-control"
-path = "src/main.rs"
-required-features = ["native"]
-
 # v1 by default; `v2` counts how often each alarm was raised and migrates
 # v1 snapshots.
 [features]
-native = []
 v2 = []
 
 [dependencies]

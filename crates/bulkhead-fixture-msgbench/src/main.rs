@@ -1,13 +1,5 @@
-//! The msgbench app as a native program (feature `native`): the same
-//! source as the component, served over the native protocol.
+//! The msgbench app: the program the node runs.
 
-#[cfg(unix)]
 fn main() -> std::process::ExitCode {
     bulkhead_fixture_msgbench::bulkhead_main()
-}
-
-#[cfg(not(unix))]
-fn main() -> std::process::ExitCode {
-    eprintln!("bulkhead-fixture-msgbench: native apps run on Unix only");
-    std::process::ExitCode::FAILURE
 }

@@ -8,6 +8,18 @@ All notable changes are recorded here. The format follows
 
 ### Removed
 
+- WebAssembly components from bundles, the SDK and the examples (ROADMAP
+  Z9f). `bulkhead bundle` takes a program, has no `--skip-import-check`,
+  and a bundle holding a component is refused saying so. A manifest needs
+  neither `kind` (`native-process` is the default; `wasm-component` is
+  refused) nor `native.program` (`executable` is the default). The grant
+  comes from the manifest's declarations alone. `bulkhead-sdk` has no
+  wasm build, no `connection::Connection` or `connection!`, and no
+  `bindings`, `net::wasip2`, `net::notify` or `ConfigError::Upstream`.
+  The WIT, the Go SDK, `examples/board-go` and the other-language ping-pong
+  examples are gone. Examples and fixtures are plain programs, without
+  `cdylib` or a `native` feature. CI no longer builds apps on Windows,
+  which builds only the CLI, the node and the bundle tools.
 - WebAssembly components from the node (ROADMAP Z9e): wasmtime, the
   component instance path, deny stubs, the compile cache, the pooling
   allocator, the epoch ticker, connection handlers and HTTP handlers as

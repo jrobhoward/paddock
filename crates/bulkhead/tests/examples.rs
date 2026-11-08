@@ -1,7 +1,5 @@
-//! The SDK examples end to end: built for wasm32-wasip2 and, from the
-//! same source, as native programs (Linux; their manifests with `kind =
-//! "native-process"` added), keyed and bundled with the `bulkhead` binary,
-//! deployed to a node, and driven through the CLI.
+//! The SDK examples end to end (Linux): built, keyed and bundled with the
+//! `bulkhead` binary, deployed to a node, and driven through the CLI.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -15,8 +13,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bulkhead::node::{LogRing, Node, NodeConfig};
-use common::ExampleBuild as Build;
-use rstest::rstest;
 use tempfile::TempDir;
 
 fn root() -> PathBuf {
@@ -49,20 +45,16 @@ fn s(p: &Path) -> &str {
     p.to_str().unwrap()
 }
 
-#[rstest]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed(
-    #[case] build: Build,
-) {
-    if build == Build::Native && !cfg!(target_os = "linux") {
-        eprintln!("not Linux: the native examples' case is skipped");
+async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("not Linux: skipped");
         return;
     }
     let dir = TempDir::new().unwrap();
     let socket = dir.path().join("a.sock");
     let ex = root().join("examples");
-    let built = build.packages(
+    let built = common::examples(
         &[
             "example-counter",
             "example-ping-pong",
@@ -75,11 +67,9 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed(
     );
     let counter = [
         built.of("example-counter"),
-        build
-            .packages(&["example-counter"], &["example-counter/v2"], "counter-v2")
+        common::examples(&["example-counter"], &["example-counter/v2"], "counter-v2")
             .of("example-counter"),
-        build
-            .packages(&["example-counter"], &["example-counter/v3"], "counter-v3")
+        common::examples(&["example-counter"], &["example-counter/v3"], "counter-v3")
             .of("example-counter"),
     ];
     let ping_pong = built.of("example-ping-pong");
@@ -102,7 +92,6 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed(
     let encrypted_key = dir.path().join("signer.key");
     let plain_key = dir.path().join("fast.key");
     let bundle_with = |key_file: PathBuf, manifest: PathBuf, wasm: PathBuf, out: &str| {
-        let manifest = build.manifest(&manifest, dir.path(), out);
         let out = dir.path().join(out);
         let socket = socket.clone();
         async move {
@@ -198,7 +187,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed(
         socket,
         encrypted.stdout,
         plain.stdout,
-        build.node_extra()
+        common::runner_config()
     );
     let node = Arc::new(
         Node::open(NodeConfig::from_toml_str(&toml).unwrap(), LogRing::new(100))

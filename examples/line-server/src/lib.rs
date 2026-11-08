@@ -1,7 +1,6 @@
 //! A connection handler written with `bulkhead-sdk`, speaking a line
 //! protocol on the `lines` listener: one command per line, a line back for
-//! each. As a component each connection gets its own instance; built
-//! natively (feature `native`) each instance holds many connections.
+//! each. Each instance holds many connections.
 //!
 //! - `echo <text>`: reply `<text>`.
 //! - `inc`, `get`: forwarded to the `counter` example app (found by its

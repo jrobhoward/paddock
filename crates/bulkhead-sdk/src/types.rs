@@ -2,9 +2,9 @@
 
 use std::fmt;
 
+use bulkhead_native::protocol as p;
 use serde::{Deserialize, Serialize};
 
-use crate::bindings::bulkhead::runtime::types as wit;
 use crate::envelope::Envelope;
 
 /// Identifies one instance: `{node, id, incarnation}`. A restart keeps the id
@@ -35,8 +35,8 @@ impl fmt::Display for Pid {
     }
 }
 
-impl From<wit::Pid> for Pid {
-    fn from(p: wit::Pid) -> Self {
+impl From<p::Pid> for Pid {
+    fn from(p: p::Pid) -> Self {
         Self {
             node: p.node,
             id: p.id,
@@ -45,7 +45,7 @@ impl From<wit::Pid> for Pid {
     }
 }
 
-impl From<Pid> for wit::Pid {
+impl From<Pid> for p::Pid {
     fn from(p: Pid) -> Self {
         Self {
             node: p.node,
@@ -111,21 +111,21 @@ impl fmt::Display for ExitReason {
     }
 }
 
-impl From<wit::ExitReason> for ExitReason {
-    fn from(r: wit::ExitReason) -> Self {
+impl From<p::ExitReason> for ExitReason {
+    fn from(r: p::ExitReason) -> Self {
         match r {
-            wit::ExitReason::Normal => Self::Normal,
-            wit::ExitReason::Shutdown => Self::Shutdown,
-            wit::ExitReason::Killed => Self::Killed,
-            wit::ExitReason::Noproc => Self::Noproc,
-            wit::ExitReason::Noconnection => Self::Noconnection,
-            wit::ExitReason::Timeout => Self::Timeout,
-            wit::ExitReason::Crashed(why) => Self::Crashed(why),
+            p::ExitReason::Normal => Self::Normal,
+            p::ExitReason::Shutdown => Self::Shutdown,
+            p::ExitReason::Killed => Self::Killed,
+            p::ExitReason::Noproc => Self::Noproc,
+            p::ExitReason::Noconnection => Self::Noconnection,
+            p::ExitReason::Timeout => Self::Timeout,
+            p::ExitReason::Crashed(why) => Self::Crashed(why),
         }
     }
 }
 
-impl From<&ExitReason> for wit::ExitReason {
+impl From<&ExitReason> for p::ExitReason {
     fn from(r: &ExitReason) -> Self {
         match r {
             ExitReason::Normal => Self::Normal,
@@ -174,16 +174,16 @@ impl fmt::Display for CallError {
 
 impl std::error::Error for CallError {}
 
-impl From<wit::CallError> for CallError {
-    fn from(e: wit::CallError) -> Self {
+impl From<p::CallError> for CallError {
+    fn from(e: p::CallError) -> Self {
         match e {
-            wit::CallError::Noproc => Self::Noproc,
-            wit::CallError::Noconnection => Self::Noconnection,
-            wit::CallError::Timeout => Self::Timeout,
-            wit::CallError::Overloaded => Self::Overloaded,
-            wit::CallError::TooLarge => Self::TooLarge,
-            wit::CallError::AccessDenied => Self::AccessDenied,
-            wit::CallError::Exited(reason) => Self::Exited(reason.into()),
+            p::CallError::Noproc => Self::Noproc,
+            p::CallError::Noconnection => Self::Noconnection,
+            p::CallError::Timeout => Self::Timeout,
+            p::CallError::Overloaded => Self::Overloaded,
+            p::CallError::TooLarge => Self::TooLarge,
+            p::CallError::AccessDenied => Self::AccessDenied,
+            p::CallError::Exited(reason) => Self::Exited(reason.into()),
         }
     }
 }
@@ -223,10 +223,9 @@ impl fmt::Display for CastError {
 
 impl std::error::Error for CastError {}
 
-#[cfg(all(unix, not(target_arch = "wasm32")))]
-impl From<bulkhead_native::protocol::CastError> for CastError {
-    fn from(e: bulkhead_native::protocol::CastError) -> Self {
-        use bulkhead_native::protocol::CastError as P;
+impl From<p::CastError> for CastError {
+    fn from(e: p::CastError) -> Self {
+        use p::CastError as P;
         match e {
             P::Noproc => Self::Noproc,
             P::Noconnection => Self::Noconnection,
@@ -295,26 +294,56 @@ pub enum Info {
     },
 }
 
-impl From<wit::Info> for Info {
-    fn from(info: wit::Info) -> Self {
+impl From<p::Info> for Info {
+    fn from(info: p::Info) -> Self {
         match info {
-            wit::Info::Exit((from, reason)) => Self::Exit {
+            p::Info::Exit { from, reason } => Self::Exit {
                 from: from.into(),
                 reason: reason.into(),
             },
-            wit::Info::Down((monitor, pid, reason)) => Self::Down {
-                monitor: MonitorRef(monitor),
+            p::Info::Down {
+                reference,
+                pid,
+                reason,
+            } => Self::Down {
+                monitor: MonitorRef(reference),
                 pid: pid.into(),
                 reason: reason.into(),
             },
-            wit::Info::Timer((timer, msg)) => Self::Timer {
-                timer: TimerRef(timer),
+            p::Info::Timer { reference, msg } => Self::Timer {
+                timer: TimerRef(reference),
                 msg: msg.into(),
             },
-            wit::Info::HostEvent((name, msg)) => Self::Event {
+            p::Info::HostEvent { name, msg } => Self::Event {
                 name,
                 msg: msg.into(),
             },
+            p::Info::KvChanged {
+                watch,
+                bucket,
+                key,
+                entry,
+                revision,
+            } => {
+                // With what the node read when it delivered the notice
+                // (`watch::Change::current`).
+                let (value, revision) = match entry {
+                    Some((value, at)) => (Some(value.0), at),
+                    None => (None, revision),
+                };
+                let body = serde_json::json!({
+                    "watch": watch,
+                    "bucket": bucket,
+                    "key": key,
+                    "revision": revision,
+                    "carried": true,
+                    "value": value,
+                });
+                Self::Event {
+                    name: "kv-changed".to_string(),
+                    msg: Envelope::new("application/json", body.to_string()),
+                }
+            }
         }
     }
 }

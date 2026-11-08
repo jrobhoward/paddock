@@ -27,9 +27,10 @@
 
 use std::fmt;
 
+use bulkhead_native::app::Ctx;
+use bulkhead_native::protocol as p;
 use serde::Deserialize;
 
-use crate::host::watch as wit;
 use crate::types::Info;
 
 /// The host event a change notice arrives as.
@@ -75,18 +76,26 @@ impl fmt::Display for WatchError {
 
 impl std::error::Error for WatchError {}
 
-impl From<wit::Error> for WatchError {
-    fn from(e: wit::Error) -> Self {
+impl From<p::KvError> for WatchError {
+    fn from(e: p::KvError) -> Self {
         match e {
-            wit::Error::AccessDenied => Self::AccessDenied,
-            wit::Error::NoSuchBucket => Self::NoSuchBucket,
-            wit::Error::LimitReached => Self::LimitReached,
-            wit::Error::TooOld(now) => Self::TooOld(now),
-            wit::Error::Conflict(found) => Self::Conflict(found),
-            wit::Error::Unavailable => Self::Unavailable,
-            wit::Error::Other(e) => Self::Other(e),
+            p::KvError::AccessDenied => Self::AccessDenied,
+            p::KvError::NoSuchBucket => Self::NoSuchBucket,
+            p::KvError::LimitReached => Self::LimitReached,
+            p::KvError::TooOld(now) => Self::TooOld(now),
+            p::KvError::Conflict(found) => Self::Conflict(found),
+            p::KvError::Unavailable => Self::Unavailable,
+            p::KvError::Other(why) => Self::Other(why),
         }
     }
+}
+
+fn unexpected(answer: &p::KvAnswer) -> WatchError {
+    WatchError::Other(format!("unexpected keyvalue answer {answer:?}"))
+}
+
+fn ask(request: p::KvRequest) -> Result<p::KvAnswer, WatchError> {
+    Ok(Ctx::current().kv(request)?)
 }
 
 /// A value and the revision it was written at.
@@ -119,10 +128,9 @@ pub struct Change {
     pub key: String,
     /// The key's latest revision when the notice was taken.
     pub revision: u64,
-    /// Whether the notice carries the key's value in [`Change::value`], as
-    /// a native app's do (read by the node when it delivered the notice,
-    /// with `revision` the value's own). A component's notices do not:
-    /// read the value with [`get`], or with [`Change::current`] either way.
+    /// Whether the notice carries the key's value in [`Change::value`] (read
+    /// by the node when it delivered the notice, with `revision` the
+    /// value's own). [`Change::current`] reads it either way.
     #[serde(default)]
     pub carried: bool,
     /// The key's value when `carried`; `None` if it was deleted.
@@ -158,11 +166,15 @@ impl Change {
 }
 
 fn start(bucket: &str, key: &str, prefix: bool, after: Option<u64>) -> Result<Started, WatchError> {
-    let s = wit::watch(bucket, key, prefix, after)?;
-    Ok(Started {
-        id: s.id,
-        revision: s.revision,
-    })
+    match ask(p::KvRequest::Watch {
+        bucket: bucket.to_string(),
+        key: key.to_string(),
+        prefix,
+        after,
+    })? {
+        p::KvAnswer::Started { id, revision } => Ok(Started { id, revision }),
+        other => Err(unexpected(&other)),
+    }
 }
 
 /// Watch one key, from now.
@@ -200,7 +212,21 @@ pub fn resume(bucket: &str, key: &str, prefix: bool, after: u64) -> Result<Start
 ///
 /// None today; reserved.
 pub fn unwatch(id: u64) -> Result<(), WatchError> {
-    Ok(wit::unwatch(id)?)
+    ask(p::KvRequest::Unwatch(id)).map(|_| ())
+}
+
+fn entry(bucket: &str, key: &str, linearizable: bool) -> Result<Option<Entry>, WatchError> {
+    match ask(p::KvRequest::Entry {
+        bucket: bucket.to_string(),
+        key: key.to_string(),
+        linearizable,
+    })? {
+        p::KvAnswer::Entry(e) => Ok(e.map(|(value, revision)| Entry {
+            value: value.0,
+            revision,
+        })),
+        other => Err(unexpected(&other)),
+    }
 }
 
 /// The value of `key` and its revision.
@@ -209,10 +235,7 @@ pub fn unwatch(id: u64) -> Result<(), WatchError> {
 ///
 /// As for [`WatchError`], other than `TooOld` and `Conflict`.
 pub fn get(bucket: &str, key: &str) -> Result<Option<Entry>, WatchError> {
-    Ok(wit::get(bucket, key)?.map(|e| Entry {
-        value: e.value,
-        revision: e.revision,
-    }))
+    entry(bucket, key, false)
 }
 
 /// As [`get`], but linearizable: on a replicated bucket, served by the HA
@@ -223,10 +246,7 @@ pub fn get(bucket: &str, key: &str) -> Result<Option<Entry>, WatchError> {
 ///
 /// As for [`get`]; `Unavailable` when no primary can serve it.
 pub fn get_linearizable(bucket: &str, key: &str) -> Result<Option<Entry>, WatchError> {
-    Ok(wit::get_linearizable(bucket, key)?.map(|e| Entry {
-        value: e.value,
-        revision: e.revision,
-    }))
+    entry(bucket, key, true)
 }
 
 /// The bucket's revision.
@@ -235,7 +255,12 @@ pub fn get_linearizable(bucket: &str, key: &str) -> Result<Option<Entry>, WatchE
 ///
 /// As for [`get`].
 pub fn revision(bucket: &str) -> Result<u64, WatchError> {
-    Ok(wit::revision(bucket)?)
+    match ask(p::KvRequest::Revision {
+        bucket: bucket.to_string(),
+    })? {
+        p::KvAnswer::Revision(r) => Ok(r),
+        other => Err(unexpected(&other)),
+    }
 }
 
 /// Set `key` if its revision is `expected` (`None`: only if absent).
@@ -250,7 +275,15 @@ pub fn compare_and_swap(
     expected: Option<u64>,
     value: &[u8],
 ) -> Result<u64, WatchError> {
-    Ok(wit::compare_and_swap(bucket, key, expected, value)?)
+    match ask(p::KvRequest::CompareAndSwap {
+        bucket: bucket.to_string(),
+        key: key.to_string(),
+        expected,
+        value: p::Bytes::from(value),
+    })? {
+        p::KvAnswer::Revision(r) => Ok(r),
+        other => Err(unexpected(&other)),
+    }
 }
 
 /// Delete `key` if its revision is `expected`. Returns the bucket's new
@@ -260,7 +293,14 @@ pub fn compare_and_swap(
 ///
 /// [`WatchError::Conflict`] with the key's revision if it differs.
 pub fn compare_and_delete(bucket: &str, key: &str, expected: u64) -> Result<u64, WatchError> {
-    Ok(wit::compare_and_delete(bucket, key, expected)?)
+    match ask(p::KvRequest::CompareAndDelete {
+        bucket: bucket.to_string(),
+        key: key.to_string(),
+        expected,
+    })? {
+        p::KvAnswer::Revision(r) => Ok(r),
+        other => Err(unexpected(&other)),
+    }
 }
 
 /// One entry a scan found.
@@ -302,7 +342,7 @@ pub struct Page {
 #[derive(Debug, Clone)]
 pub struct Scan {
     bucket: String,
-    query: wit::ScanQuery,
+    query: p::ScanQuery,
 }
 
 /// A scan of `bucket`; every key, upward, until narrowed.
@@ -310,7 +350,7 @@ pub struct Scan {
 pub fn scan(bucket: &str) -> Scan {
     Scan {
         bucket: bucket.to_string(),
-        query: wit::ScanQuery {
+        query: p::ScanQuery {
             prefix: None,
             start: None,
             end: None,
@@ -366,15 +406,21 @@ impl Scan {
     pub fn page(&self, cursor: Option<&str>) -> Result<Page, WatchError> {
         let mut query = self.query.clone();
         query.cursor = cursor.map(str::to_string);
-        let page = wit::scan(&self.bucket, &query)?;
+        let answer = ask(p::KvRequest::Scan {
+            bucket: self.bucket.clone(),
+            query,
+        })?;
+        let p::KvAnswer::Page(page) = answer else {
+            return Err(unexpected(&answer));
+        };
         Ok(Page {
             entries: page
                 .entries
                 .into_iter()
-                .map(|e| KeyedEntry {
-                    key: e.key,
-                    value: e.value,
-                    revision: e.revision,
+                .map(|(key, value, revision)| KeyedEntry {
+                    key,
+                    value: value.0,
+                    revision,
                 })
                 .collect(),
             next: page.next,

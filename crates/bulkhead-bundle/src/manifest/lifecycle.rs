@@ -14,12 +14,13 @@ use crate::manifest::validate::Validator;
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum Kind {
-    /// A WebAssembly component implementing `bulkhead:runtime/app`.
+    /// A native program (a rustbridge plugin or an executable), run as a
+    /// separate OS process through `bulkhead-runner`.
     #[default]
-    WasmComponent,
-    /// A native program (a rustbridge plugin or an executable) run as a
-    /// separate OS process through `bulkhead-runner`; see [`Native`].
     NativeProcess,
+    /// A WebAssembly component: refused, and named so the refusal can say
+    /// what to do.
+    WasmComponent,
 }
 
 /// The `native` section of a `native-process` app.
@@ -36,10 +37,10 @@ pub struct Native {
 pub enum NativeProgram {
     /// A rustbridge plugin (`.so`), loaded by the runner: callbacks and
     /// logging only.
-    #[default]
     Library,
     /// An executable linking `bulkhead-native`'s app API, run in the
     /// runner's place: the process functions as well.
+    #[default]
     Executable,
 }
 

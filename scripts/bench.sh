@@ -65,8 +65,8 @@ echo "bench: building (release)"
 cargo build -q --release -p bulkhead-host --examples
 cargo build -q --release -p bulkhead-native --bin bulkhead-runner
 cargo build -q --release -p bulkhead-fixture-native
-cargo build -q --release -p bulkhead-fixture-kvbench --features native --bin bulkhead-fixture-kvbench
-cargo build -q --release -p bulkhead-fixture-msgbench --features native --bin bulkhead-fixture-msgbench
+cargo build -q --release -p bulkhead-fixture-kvbench --bin bulkhead-fixture-kvbench
+cargo build -q --release -p bulkhead-fixture-msgbench --bin bulkhead-fixture-msgbench
 
 mkdir -p target/bench
 stamp=$(date -u +%Y-%m-%dT%H%MZ)

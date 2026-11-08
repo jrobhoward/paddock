@@ -10,7 +10,8 @@
 
 use std::fmt;
 
-use crate::host::config_store as store;
+use bulkhead_native::app::Ctx;
+use bulkhead_native::protocol as p;
 
 /// Why a config read failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,8 +19,6 @@ use crate::host::config_store as store;
 pub enum ConfigError {
     /// The operator did not grant `wasi:config`.
     Denied,
-    /// The config source failed.
-    Upstream(String),
     /// Reading it failed.
     Io(String),
 }
@@ -28,7 +27,6 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Denied => f.write_str("access denied"),
-            Self::Upstream(e) => write!(f, "config source: {e}"),
             Self::Io(e) => write!(f, "config read: {e}"),
         }
     }
@@ -36,14 +34,11 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-impl From<store::Error> for ConfigError {
-    fn from(e: store::Error) -> Self {
+impl From<p::ConfigError> for ConfigError {
+    fn from(e: p::ConfigError) -> Self {
         match e {
-            // `wasi:config` has no denial case; Bulkhead's host reports one as
-            // this `io` error.
-            store::Error::Io(msg) if msg == "access-denied" => Self::Denied,
-            store::Error::Io(msg) => Self::Io(msg),
-            store::Error::Upstream(msg) => Self::Upstream(msg),
+            p::ConfigError::AccessDenied => Self::Denied,
+            p::ConfigError::Other(why) => Self::Io(why),
         }
     }
 }
@@ -55,7 +50,7 @@ impl From<store::Error> for ConfigError {
 /// [`ConfigError::Denied`] without the capability granted, and the host's
 /// errors otherwise.
 pub fn get(key: &str) -> Result<Option<String>, ConfigError> {
-    Ok(store::get(key)?)
+    Ok(Ctx::current().config(key)?)
 }
 
 /// Every key and value.
@@ -64,5 +59,5 @@ pub fn get(key: &str) -> Result<Option<String>, ConfigError> {
 ///
 /// As for [`get`].
 pub fn get_all() -> Result<Vec<(String, String)>, ConfigError> {
-    Ok(store::get_all()?)
+    Ok(Ctx::current().config_all()?)
 }

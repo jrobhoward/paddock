@@ -132,12 +132,9 @@ cargo build --release --locked -p bulkhead-modbus --example fake_device || exit 
 cargo build --release --locked -p bulkhead-native --bin bulkhead-runner || exit 1
 cargo build --release --locked -p example-counter -p example-chaos -p example-ledger \
     -p bulkhead-fixture-conformance -p example-scada-points -p example-scada-hmi -p example-scada-control \
-    --features example-counter/native,example-chaos/native,example-ledger/native \
-    --features bulkhead-fixture-conformance/native \
-    --features example-scada-points/native,example-scada-hmi/native,example-scada-control/native \
     || exit 1
 # control's version 2.
-cargo build --release --locked -p example-scada-control --features native,v2 \
+cargo build --release --locked -p example-scada-control --features v2 \
     --target-dir target/fixtures/scada-drill-v2-native || exit 1
 
 now() { date +%s; }

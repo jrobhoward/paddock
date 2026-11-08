@@ -1,6 +1,6 @@
 # Bundle with:
-#   cargo build -p example-chaos --target wasm32-wasip2 --release
-#   bulkhead bundle examples/chaos/bulkhead.toml target/wasm32-wasip2/release/example_chaos.wasm --key bulkhead.key
+#   cargo build -p example-chaos --release
+#   bulkhead bundle examples/chaos/bulkhead.toml target/release/example-chaos --key bulkhead.key
 [app]
 name = "chaos"
 version = "1.0.0"

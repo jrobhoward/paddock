@@ -7,8 +7,8 @@
 mod common;
 
 use bulkhead_bundle::manifest::{Capability, ManifestError};
-use bulkhead_bundle::{BundleError, ImportLink, OperatorPolicy, VerifiedBundle};
-use common::{Spec, WORLD, append, appserver, rewrite};
+use bulkhead_bundle::{BundleError, OperatorPolicy, VerifiedBundle};
+use common::{Spec, append, elf, rewrite};
 use minisign::KeyPair;
 use rstest::rstest;
 use rustbridge_bundle::{BundleBuilder, Manifest, Platform, builder::compute_sha256};
@@ -16,7 +16,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 #[test]
-fn open____signed_by_trusted_key____returns_verified_manifest_and_component() {
+fn open____signed_by_trusted_key____returns_verified_manifest_and_program() {
     let dir = TempDir::new().unwrap();
     let spec = Spec::default();
     let path = spec.write(&dir);
@@ -26,11 +26,14 @@ fn open____signed_by_trusted_key____returns_verified_manifest_and_component() {
     let m = &bundle.manifest;
     assert_eq!(m.app.name, "orders");
     assert_eq!(m.app.version, semver::Version::new(1, 4, 0));
-    assert_eq!(m.component.world, WORLD);
-    assert_eq!(m.component.path, "lib/wasm32-wasip2/release/orders.wasm");
+    assert!(
+        m.program.path.ends_with("/release/orders"),
+        "{}",
+        m.program.path
+    );
     assert_eq!(m.provenance.signer_key, spec.public_key());
     assert_eq!(m.spec.registered_names[0].name, "orders");
-    assert_eq!(bundle.component, spec.component);
+    assert_eq!(bundle.program, spec.program);
 }
 
 #[test]
@@ -122,14 +125,14 @@ fn open____manifest_edited_after_signing____refused_untrusted() {
 }
 
 #[test]
-fn open____component_swapped_after_signing____refused_corrupt() {
+fn open____program_swapped_after_signing____refused_corrupt() {
     let dir = TempDir::new().unwrap();
     let spec = Spec::default();
     let path = spec.write(&dir);
     let tampered = dir.path().join("tampered.rbp");
     rewrite(&path, &tampered, |name, contents| {
-        if name.ends_with(".wasm") {
-            wat::parse_str("(component)").unwrap()
+        if name.ends_with("/release/orders") {
+            vec![0; 80]
         } else {
             contents
         }
@@ -140,29 +143,6 @@ fn open____component_swapped_after_signing____refused_corrupt() {
     assert!(matches!(result, Err(BundleError::Corrupt(_))), "{result:?}");
 }
 
-#[test]
-fn open____native_only_bundle____refused_no_component() {
-    let dir = TempDir::new().unwrap();
-    let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
-    let lib = dir.path().join("liborders.so");
-    std::fs::write(&lib, b"native").unwrap();
-    let path = dir.path().join("native.rbp");
-    BundleBuilder::new(Manifest::new("orders", "1.0.0"))
-        .add_library(Platform::LinuxX86_64, &lib)
-        .unwrap()
-        .with_extension("appserver", json!({}))
-        .with_signing_key(keypair.pk.to_base64(), keypair.sk)
-        .write(&path)
-        .unwrap();
-
-    let result = VerifiedBundle::open(&path, &[keypair.pk.to_base64()]);
-
-    assert!(
-        matches!(result, Err(BundleError::NoComponent)),
-        "{result:?}"
-    );
-}
-
 /// The other native platform than this machine's.
 fn other_platform() -> Platform {
     if Platform::current() == Some(Platform::LinuxAarch64) {
@@ -170,21 +150,6 @@ fn other_platform() -> Platform {
     } else {
         Platform::LinuxAarch64
     }
-}
-
-/// The start of an ELF file for `platform`'s architecture.
-fn elf(platform: Platform) -> Vec<u8> {
-    let machine: u16 = if platform == Platform::LinuxAarch64 {
-        183
-    } else {
-        62
-    };
-    let mut header = vec![0u8; 64];
-    header[..4].copy_from_slice(b"\x7fELF");
-    header[4] = 2;
-    header[5] = 1;
-    header[18..20].copy_from_slice(&machine.to_le_bytes());
-    header
 }
 
 /// A signed bundle of kind `native-process` with a program for each of
@@ -211,141 +176,6 @@ fn native_bundle(
         .write(&path)
         .unwrap();
     path
-}
-
-#[test]
-fn open____unsupported_world____refused() {
-    let dir = TempDir::new().unwrap();
-    let spec = Spec {
-        world: "bulkhead:runtime/app@9.0.0",
-        ..Spec::default()
-    };
-    let path = spec.write(&dir);
-
-    let result = VerifiedBundle::open(&path, &[spec.public_key()]);
-
-    assert!(
-        matches!(&result, Err(BundleError::UnsupportedWorld { world, .. }) if world == "bulkhead:runtime/app@9.0.0"),
-        "{result:?}"
-    );
-}
-
-#[test]
-fn open____connection_world_without_listeners____refused_at_listeners() {
-    let dir = TempDir::new().unwrap();
-    let spec = Spec {
-        world: bulkhead_bundle::CONNECTION_WORLD,
-        ..Spec::default()
-    };
-    let path = spec.write(&dir);
-
-    let result = VerifiedBundle::open(&path, &[spec.public_key()]);
-
-    let Err(BundleError::Manifest(ManifestError::Invalid(errors))) = &result else {
-        panic!("expected an invalid manifest, got {result:?}");
-    };
-    assert_eq!(errors[0].path, "appserver.listeners");
-}
-
-#[test]
-fn open____app_world_with_listeners____refused_at_listeners() {
-    let dir = TempDir::new().unwrap();
-    let mut appserver = appserver();
-    appserver["listeners"] = serde_json::json!([{ "name": "lines" }]);
-    let spec = Spec {
-        appserver: Some(appserver),
-        ..Spec::default()
-    };
-    let path = spec.write(&dir);
-
-    let result = VerifiedBundle::open(&path, &[spec.public_key()]);
-
-    let Err(BundleError::Manifest(ManifestError::Invalid(errors))) = &result else {
-        panic!("expected an invalid manifest, got {result:?}");
-    };
-    assert_eq!(errors[0].path, "appserver.listeners");
-}
-
-#[test]
-fn open____connection_world_with_listener____opens() {
-    let dir = TempDir::new().unwrap();
-    let mut appserver = appserver();
-    appserver["listeners"] = serde_json::json!([{ "name": "lines", "idle_timeout_ms": 5000 }]);
-    let spec = Spec {
-        world: bulkhead_bundle::CONNECTION_WORLD,
-        appserver: Some(appserver),
-        ..Spec::default()
-    };
-    let path = spec.write(&dir);
-
-    let bundle = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap();
-
-    let listeners = &bundle.manifest.spec.listeners;
-    assert_eq!(
-        (
-            listeners[0].name.as_str(),
-            listeners[0].idle_timeout_ms,
-            listeners[0].max_connections
-        ),
-        ("lines", 5000, 1024)
-    );
-}
-
-fn http_handler_spec(extra: serde_json::Value) -> Spec {
-    let mut appserver = appserver();
-    appserver["capabilities"]["wasi:http/incoming-handler"] =
-        json!({ "routes": [{ "path_prefix": "/hello" }] });
-    if let (Some(target), Some(extra)) = (appserver.as_object_mut(), extra.as_object()) {
-        for (k, v) in extra {
-            target.insert(k.clone(), v.clone());
-        }
-    }
-    Spec {
-        world: bulkhead_bundle::HTTP_HANDLER_WORLD,
-        appserver: Some(appserver),
-        ..Spec::default()
-    }
-}
-
-#[test]
-fn open____http_handler_with_route____opens() {
-    let dir = TempDir::new().unwrap();
-    let spec = http_handler_spec(json!({}));
-    let path = spec.write(&dir);
-
-    let bundle = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap();
-
-    assert_eq!(
-        bundle.manifest.component.world,
-        bulkhead_bundle::HTTP_HANDLER_WORLD
-    );
-}
-
-#[rstest]
-#[case::no_routes(json!({ "capabilities": {} }), "appserver.capabilities")]
-#[case::groups(
-    json!({ "capabilities": {
-        "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/hello" }] },
-        "bulkhead:groups": { "join": ["g"] }
-    } }),
-    "appserver.capabilities"
-)]
-#[case::singleton(json!({ "placement": { "mode": "singleton" } }), "appserver.placement")]
-#[case::listeners(json!({ "listeners": [{ "name": "lines" }] }), "appserver.listeners")]
-fn open____http_handler_with_section_it_cannot_use____refused_at_that_section(
-    #[case] extra: serde_json::Value,
-    #[case] at: &str,
-) {
-    let dir = TempDir::new().unwrap();
-    let spec = http_handler_spec(extra);
-    let path = spec.write(&dir);
-
-    let result = VerifiedBundle::open(&path, &[spec.public_key()]);
-
-    let Err(BundleError::Manifest(ManifestError::Invalid(errors))) = &result else {
-        panic!("expected an invalid manifest, got {result:?}");
-    };
-    assert_eq!(errors[0].path, at);
 }
 
 #[test]
@@ -408,33 +238,33 @@ fn open____native_process_for_this_platform____program_and_declared_grant() {
     let path = native_bundle(&dir, keypair, &[(this, elf(this))]);
 
     let bundle = VerifiedBundle::open(&path, &[key]).unwrap();
-    let grant = bundle
-        .effective_grant(
-            &OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"wasi:logging\"]\n").unwrap(),
-        )
-        .unwrap();
+    let grant = bundle.effective_grant(
+        &OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"wasi:logging\"]\n").unwrap(),
+    );
 
-    assert_eq!(bundle.component, elf(this));
-    assert!(bundle.manifest.component.world.is_empty());
-    assert!(bundle.imports().unwrap().is_empty());
+    assert_eq!(bundle.program, elf(this));
     assert!(grant.granted.contains(&Capability::Logging));
 }
 
 #[test]
-fn open____native_process_with_component_only____refused_no_native_variant() {
+fn open____bundle_of_a_component____refused_saying_so() {
     let dir = TempDir::new().unwrap();
-    let spec = Spec {
-        appserver: Some(json!({ "kind": "native-process" })),
-        ..Spec::default()
-    };
-    let path = spec.write(&dir);
+    let keypair = KeyPair::generate_unencrypted_keypair().unwrap();
+    let key = keypair.pk.to_base64();
+    let wasm = dir.path().join("orders.wasm");
+    std::fs::write(&wasm, b"\0asm\x0d\0\x01\0").unwrap();
+    let path = dir.path().join("component.rbp");
+    BundleBuilder::new(Manifest::new("orders", "1.0.0"))
+        .add_component(Platform::Wasm32Wasip2, &wasm, "bulkhead:runtime/app@0.1.0")
+        .unwrap()
+        .with_extension("appserver", json!({}))
+        .with_signing_key(key.clone(), keypair.sk)
+        .write(&path)
+        .unwrap();
 
-    let err = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap_err();
+    let err = VerifiedBundle::open(&path, &[key]).unwrap_err();
 
-    assert!(
-        matches!(err, BundleError::NoNativeVariant { ref present, .. } if present == "none"),
-        "{err:?}"
-    );
+    assert!(matches!(err, BundleError::Component), "{err:?}");
 }
 
 #[test]
@@ -447,7 +277,7 @@ fn open____native_programs_for_both_platforms____this_platforms_program() {
 
     let bundle = VerifiedBundle::open(&path, &[key]).unwrap();
 
-    assert_eq!(bundle.component, elf(this));
+    assert_eq!(bundle.program, elf(this));
 }
 
 #[test]
@@ -460,7 +290,7 @@ fn open_for_platform____native_programs_for_both____that_platforms_program() {
 
     let bundle = VerifiedBundle::open_for_platform(&path, &[key], other).unwrap();
 
-    assert_eq!(bundle.component, elf(other));
+    assert_eq!(bundle.program, elf(other));
 }
 
 #[test]
@@ -532,72 +362,31 @@ fn open____invalid_app_name____error_at_plugin_name() {
 }
 
 #[test]
-fn effective_grant____policy_grants_keyvalue____links_host_implementation() {
+fn effective_grant____policy_grants_keyvalue____granted() {
     let dir = TempDir::new().unwrap();
     let spec = Spec::default();
     let bundle = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap();
     let policy =
         OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"wasi:keyvalue\"]\n").unwrap();
 
-    let grant = bundle.effective_grant(&policy).unwrap();
+    let grant = bundle.effective_grant(&policy);
 
-    assert_eq!(
-        grant.imports["wasi:keyvalue/store@0.2.0-draft"],
-        ImportLink::Granted(Capability::KeyValue)
-    );
-    assert_eq!(
-        grant.imports["bulkhead:runtime/process@0.1.0"],
-        ImportLink::Implicit
-    );
+    assert!(grant.granted.contains(&Capability::KeyValue));
 }
 
 #[test]
-fn effective_grant____policy_silent____links_deny_stubs() {
+fn effective_grant____policy_silent____denied() {
     let dir = TempDir::new().unwrap();
     let spec = Spec::default();
     let bundle = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap();
 
-    let grant = bundle.effective_grant(&OperatorPolicy::default()).unwrap();
+    let grant = bundle.effective_grant(&OperatorPolicy::default());
 
     assert!(grant.denied.contains(&Capability::KeyValue));
 }
 
 #[test]
-fn effective_grant____import_not_declared____deploy_refused() {
-    let dir = TempDir::new().unwrap();
-    let spec = Spec {
-        appserver: Some(json!({})),
-        ..Spec::default()
-    };
-    let bundle = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap();
-
-    let result = bundle.effective_grant(&OperatorPolicy::default());
-
-    assert!(
-        matches!(&result, Err(BundleError::ImportsRefused { undeclared, .. }) if undeclared.len() == 1),
-        "{result:?}"
-    );
-}
-
-#[test]
-fn effective_grant____component_is_not_wasm____invalid_component() {
-    let dir = TempDir::new().unwrap();
-    let spec = Spec {
-        component: b"not a component".to_vec(),
-        ..Spec::default()
-    };
-    let bundle = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap();
-
-    let result = bundle.effective_grant(&OperatorPolicy::default());
-
-    assert!(
-        matches!(result, Err(BundleError::InvalidComponent(_))),
-        "{result:?}"
-    );
-}
-
-#[test]
-fn open____checksum_recorded____matches_component_bytes() {
+fn open____checksum_recorded____matches_program_bytes() {
     let dir = TempDir::new().unwrap();
     let spec = Spec::default();
     let path = spec.write(&dir);
@@ -605,8 +394,8 @@ fn open____checksum_recorded____matches_component_bytes() {
     let bundle = VerifiedBundle::open(&path, &[spec.public_key()]).unwrap();
 
     assert_eq!(
-        bundle.manifest.component.checksum,
-        format!("sha256:{}", compute_sha256(&spec.component))
+        bundle.manifest.program.checksum,
+        format!("sha256:{}", compute_sha256(&spec.program))
     );
 }
 

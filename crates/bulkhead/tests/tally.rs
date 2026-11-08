@@ -2,9 +2,6 @@
 //! deployed under policy, with a `[datasources.main]` on a scratch Postgres
 //! this test starts; its count lives in the database, so it outlives the
 //! app. Skipped, saying so, when no Postgres is installed.
-//!
-//! The app is the example built as a native program (Linux; its manifest
-//! with `kind = "native-process"` added).
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -28,19 +25,9 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The manifest: a copy in `into` that runs the program as a native
-/// process.
-fn manifest(into: &Path) -> PathBuf {
-    let base = std::fs::read_to_string(root().join("examples/tally/bulkhead.toml")).unwrap();
-    let native = into.join("native-bulkhead.toml");
-    std::fs::write(
-        &native,
-        format!(
-            "{base}\n[appserver]\nkind = \"native-process\"\nnative = {{ program = \"executable\" }}\n"
-        ),
-    )
-    .unwrap();
-    native
+/// The manifest.
+fn manifest() -> PathBuf {
+    root().join("examples/tally/bulkhead.toml")
 }
 
 /// Node config for the native program: its runner.
@@ -64,13 +51,7 @@ fn build_native() -> Option<PathBuf> {
                 let ok = StdCommand::new(cargo)
                     .current_dir(root())
                     .args(["build", "--release", "-p", "example-tally"])
-                    .args([
-                        "--features",
-                        "native",
-                        "--bin",
-                        "example-tally",
-                        "--target-dir",
-                    ])
+                    .args(["--bin", "example-tally", "--target-dir"])
                     .arg(&target)
                     .status()
                     .unwrap()
@@ -145,7 +126,7 @@ async fn tally____on_postgres____counts_in_transactions_and_outlives_the_app() {
     let (ok, public, err) = bulkhead(&socket, &["keygen", "--no-password", s(&d.join("k"))]).await;
     assert!(ok, "{err}");
     let bundle = d.join("tally.rbp");
-    let manifest = manifest(d);
+    let manifest = manifest();
     let (ok, _, err) = bulkhead(
         &socket,
         &[

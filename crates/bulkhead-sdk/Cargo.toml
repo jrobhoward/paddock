@@ -14,7 +14,7 @@ publish = false
 config = []
 # `bulkhead_sdk::kv`: keyvalue buckets (`wasi:keyvalue`).
 keyvalue = []
-# `bulkhead_sdk::connection`: connection handlers (`bulkhead:connection`).
+# `bulkhead_sdk::connection`: connection handlers.
 connection = []
 # `bulkhead_sdk::groups`: process groups and publish (`bulkhead:groups`).
 groups = []
@@ -22,10 +22,10 @@ groups = []
 http = []
 # `bulkhead_sdk::http_client`: HTTP requests from the app
 # (`wasi:http/outgoing-handler`).
-http-client = ["dep:wasip2"]
+http-client = []
 # `bulkhead_sdk::net`: TCP from the app (`wasi:sockets`), with readiness as
 # messages (`bulkhead:io`).
-net = ["dep:wasip2"]
+net = []
 # `bulkhead_sdk::secrets`: secrets the operator binds (`bulkhead:secrets`).
 secrets = []
 # `bulkhead_sdk::metrics`: counters, gauges and histograms (`bulkhead:metrics`).
@@ -38,15 +38,10 @@ watch = []
 
 [dependencies]
 ciborium = { workspace = true }
+bulkhead-native = { workspace = true, features = ["app"] }
 bulkhead-sdk-macros = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-wit-bindgen = { workspace = true }
-wasip2 = { workspace = true, optional = true }
-
-# A native program (Unix): the same API over the native protocol.
-[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
-bulkhead-native = { workspace = true, features = ["app"] }
 
 [dev-dependencies]
 rstest = { workspace = true }

@@ -9,8 +9,7 @@ killed, with a witness deciding the promotion. Three
 examples/failover/demo.sh        # from the repository root
 ```
 
-The script builds `bulkhead` and the counter example (needs the
-`wasm32-wasip2` target), makes a cluster key per node and a peers file, and
+The script builds `bulkhead` and the counter example, makes a cluster key per node and a peers file, and
 deploys the counter to both members with `placement.mode = "singleton"`.
 Then it:
 

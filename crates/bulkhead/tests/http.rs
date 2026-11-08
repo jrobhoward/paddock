@@ -30,13 +30,7 @@ fn build() -> PathBuf {
     let ok = StdCommand::new(cargo)
         .current_dir(root())
         .args(["build", "--release", "-p", "example-http-counter"])
-        .args([
-            "--features",
-            "native",
-            "--bin",
-            "example-http-counter",
-            "--target-dir",
-        ])
+        .args(["--bin", "example-http-counter", "--target-dir"])
         .arg(&target)
         .status()
         .unwrap()

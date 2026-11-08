@@ -9,21 +9,11 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-# The same app as a native program (`bulkhead`'s node tests).
-[[bin]]
-name = "bulkhead-fixture-counter"
-path = "src/main.rs"
-required-features = ["native"]
-
-# Exactly one of v1 (default), v2 or v3; `native` builds the program.
+# Exactly one of v1 (default), v2 or v3.
 [features]
 default = []
 v2 = []
 v3 = []
-native = []
 
 [dependencies]
 bulkhead-sdk = { workspace = true }

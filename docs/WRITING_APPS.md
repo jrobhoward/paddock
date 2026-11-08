@@ -68,8 +68,8 @@ memory_max = "16MiB"
 Build, bundle and deploy:
 
 ```sh
-cargo build --target wasm32-wasip2 --release
-bulkhead bundle bulkhead.toml target/wasm32-wasip2/release/greeter.wasm --key signer.key
+cargo build --release
+bulkhead bundle bulkhead.toml target/release/greeter --key signer.key
 bulkhead deploy greeter-0.1.0.rbp
 bulkhead call greeter world          # hello, world (#1)
 ```
@@ -398,19 +398,6 @@ Native code runs as a process the node spawns and supervises like an instance, a
 
 An app written with `bulkhead-sdk` builds both ways from one source. The crate keeps its `app!` line; it adds `"rlib"` to its `crate-type`, a binary that calls the `bulkhead_main()` `app!` generates on Unix, and a feature that gates the binary, so a `wasm32-wasip2` build skips it:
 
-```toml
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[[bin]]
-name = "my-app"
-path = "src/main.rs"
-required-features = ["native"]
-
-[features]
-native = []
-```
-
 ```rust
 // src/main.rs
 fn main() -> std::process::ExitCode {
@@ -418,7 +405,7 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
-`cargo build --release --features native --bin my-app` builds the program, bundled with `native.program = "executable"`; every Rust example is built both ways (`examples/board`'s `bulkhead.toml` has the native lines), their node tests (`examples.rs`, `board.rs`, `tally.rs`, `scada.rs`, the greeter's) run each case against both, and `BOARD=native` runs [the tutorial](../examples/tutorial/README.md) with native programs. The SDK's calls go over the native protocol there, with these differences from a component: each host call is a request to the node (about 5 µs, against about 1.2 µs for a component's bucket read), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...` where a component's trap reads `crashed: trap: ...`; `save_snapshot` and `load_snapshot` work as for a component, each load in a new process (an upgrade starts the new version's process beside the old until it has loaded, and passivation ends the process until a message wakes it); a watch notice carries the key's value (`watch::Change::current` reads it either way); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite runs the same reference app both ways (`BULKHEAD_CONFORMANCE_NATIVE=1`).
+`cargo build --release --bin my-app` builds the program, bundled with `native.program = "executable"`; every Rust example is built both ways (`examples/board`'s `bulkhead.toml` has the native lines), their node tests (`examples.rs`, `board.rs`, `tally.rs`, `scada.rs`, the greeter's) run each case against both, and `BOARD=native` runs [the tutorial](../examples/tutorial/README.md) with native programs. The SDK's calls go over the native protocol there, with these differences from a component: each host call is a request to the node (about 5 µs, against about 1.2 µs for a component's bucket read), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...` where a component's trap reads `crashed: trap: ...`; `save_snapshot` and `load_snapshot` work as for a component, each load in a new process (an upgrade starts the new version's process beside the old until it has loaded, and passivation ends the process until a message wakes it); a watch notice carries the key's value (`watch::Change::current` reads it either way); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite runs the same reference app both ways (`BULKHEAD_CONFORMANCE_NATIVE=1`).
 
 Two shapes, chosen by `native.program`:
 
@@ -460,7 +447,7 @@ Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent
 - Cross-building for a Raspberry Pi from an x86-64 machine needs the target and a cross linker:
   - `rustup target add aarch64-unknown-linux-gnu`;
   - a cross linker, such as Ubuntu's `gcc-aarch64-linux-gnu`;
-  - `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu --features native`.
+  - `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu`.
 
   The program lands under `target/aarch64-unknown-linux-gnu/release/`. It needs a glibc no newer than the nodes'. Built on Ubuntu 24.04, `examples/board` asks for glibc 2.34 and ran on a Raspberry Pi 5 (2026-11-01). Building on a machine of each architecture works as well.
 - `--priv <dir>` adds a directory's files, which a component reads at `/priv` and a native app at `bulkhead_sdk::files::path("/priv/...")` (the directory `BULKHEAD_PRIV` names), when the manifest declares `wasi:filesystem`.
@@ -472,7 +459,7 @@ Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent
 Three levels, from fastest to most complete:
 
 - **The logic, natively.** Keep message handling in plain functions over plain types, and the `App` impl a thin shell that decodes the envelope, calls them and encodes the reply. `cargo test` runs them on the host target. The `Ctx` methods and the service wrappers call host imports, which only a node provides, so test code does not call them.
-- **The component, in a runtime.** A test can build the component (`cargo build --target wasm32-wasip2`, as [`crates/bulkhead/tests/board.rs`](../crates/bulkhead/tests/board.rs) does from its `build()`) and run it in a `bulkhead_host::Runtime`: `Runtime::new(RuntimeConfig::default())`, `rt.load(&bytes)`, `rt.spawn(&app, InstanceSpec::new("name", "1.0.0"))`, then `handle.call(Envelope::new("text/plain", "inc"), timeout)`. That covers the callbacks, snapshots (`handle.upgrade`), traps and limits, with no services beyond the always-available ones. [`crates/bulkhead-host/examples/app_cost.rs`](../crates/bulkhead-host/examples/app_cost.rs) is a short example of the calls.
+- **The component, in a runtime.** A test can build the component (`cargo build`, as [`crates/bulkhead/tests/board.rs`](../crates/bulkhead/tests/board.rs) does from its `build()`) and run it in a `bulkhead_host::Runtime`: `Runtime::new(RuntimeConfig::default())`, `rt.load(&bytes)`, `rt.spawn(&app, InstanceSpec::new("name", "1.0.0"))`, then `handle.call(Envelope::new("text/plain", "inc"), timeout)`. That covers the callbacks, snapshots (`handle.upgrade`), traps and limits, with no services beyond the always-available ones. [`crates/bulkhead-host/examples/app_cost.rs`](../crates/bulkhead-host/examples/app_cost.rs) is a short example of the calls.
 - **The app on a node.** For services, manifests and policy, start a `bulkhead::node::Node` in a temporary directory with a node config written by the test, bundle the app with the CLI and drive it through `bulkhead::api::Client`, as `board.rs` (HTTP, a shared bucket, a node restart) and [`scada.rs`](../crates/bulkhead/tests/scada.rs) (an HA pair and a witness in one process) do.
 
 While debugging, `bulkhead state <pid>` shows an SDK app's state through its `save_snapshot`; an instance whose `save_snapshot` traps is restarted. `bulkhead logs <app> -f` follows its records, and `bulkhead events` shows exits and restarts as they happen.

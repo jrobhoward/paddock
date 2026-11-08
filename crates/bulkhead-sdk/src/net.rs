@@ -6,8 +6,11 @@
 //! listener has a connection ([`TcpListener::notify_acceptable`]), returns,
 //! and handles the host event in `handle_info` ([`ready_tag`]), reading
 //! without blocking. A notice comes once per request; ask again after
-//! reading. Connecting and writing block within the callback, as host time
-//! (not counted against the callback deadline).
+//! reading. Connecting blocks within the callback, as time in the node (not
+//! counted against the callback deadline). The node makes each socket on
+//! the manifest's rules, passes a stream to the app and watches readiness
+//! itself; reading and writing are the app's own system calls, counted
+//! against the callback deadline as its code is.
 //!
 //! The manifest declares `wasi:sockets` with the addresses the app may
 //! connect to, bind and listen on; anything else fails with
@@ -30,28 +33,14 @@
 //! # }
 //! ```
 //!
-//! The same calls work in a native build (ROADMAP Z8e), where the node
-//! makes each socket on the same rules and passes a stream to the app, and
-//! watches readiness itself. Natively, writing and reading are the app's
-//! own system calls, counted against the callback deadline as its code is.
-//!
-//! In a component, UDP and lower-level use go through `wasip2::sockets`
-//! directly, with `notify` on any pollable (both component only). A native
-//! app uses UDP through the node, with `bulkhead_native::app::Ctx::net`.
+//! UDP goes through the node, with `bulkhead_native::app::Ctx::net`.
 
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-mod wasi;
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-pub use wasi::{TcpListener, TcpStream, bindings, cancel, notify, wasip2};
-
-#[cfg(all(unix, not(target_arch = "wasm32")))]
-mod native;
-#[cfg(all(unix, not(target_arch = "wasm32")))]
-pub use native::{TcpListener, TcpStream};
+mod tcp;
+pub use tcp::{TcpListener, TcpStream};
 
 use crate::Info;
 
-/// The host event a ready pollable sends.
+/// The host event a ready socket sends.
 pub const READY_EVENT: &str = "io-ready";
 
 /// Why a socket operation failed.
@@ -62,7 +51,7 @@ pub enum NetError {
     /// in the manifest's rules.
     Denied,
     /// The app already holds `max_sockets` sockets, or the instance waits
-    /// on as many pollables as it may.
+    /// on as many sockets as it may.
     Limited,
     /// The peer closed the stream.
     Closed,

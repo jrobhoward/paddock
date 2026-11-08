@@ -1,23 +1,18 @@
 //! Bulkhead bundles: the app manifest model ([`manifest`]) and loading
-//! rustbridge `.rbp` files (format 1.2) carrying a `wasm32-wasip2` component,
-//! or a native-process app's platform variant, and an `appserver` section.
-//!
-//! This crate has no wasmtime dependency, so bundle tooling can use it
-//! without the runtime.
+//! rustbridge `.rbp` files (format 1.2) carrying a native program per
+//! platform and an `appserver` section.
 //!
 //! Deploy-time checks, in order:
 //!
-//! 1. The manifest and component signatures verify against an
+//! 1. The manifest and program signatures verify against an
 //!    operator-trusted key, and checksums match ([`VerifiedBundle::open`]).
 //!    The key inside the bundle proves integrity, not authorship, so it is
 //!    never used.
-//! 2. The component targets a supported world and the `appserver` section is
-//!    valid.
-//! 3. Every component import is implicit or covered by a declared capability
-//!    ([`VerifiedBundle::effective_grant`]).
-//! 4. Declared capabilities are intersected with the operator's
+//! 2. The `appserver` section is valid, and the program is for this node's
+//!    platform.
+//! 3. Declared capabilities are intersected with the operator's
 //!    [`OperatorPolicy`]; the result is an [`EffectiveGrant`] to record with
-//!    the deployment.
+//!    the deployment ([`VerifiedBundle::effective_grant`]).
 //!
 //! ```no_run
 //! use bulkhead_bundle::{OperatorPolicy, VerifiedBundle};
@@ -25,7 +20,7 @@
 //! let trusted = vec!["RWQ...".to_string()];
 //! let bundle = VerifiedBundle::open("orders-1.4.0.rbp", &trusted)?;
 //! let policy = OperatorPolicy::from_file("/etc/bulkhead/policy.toml")?;
-//! let grant = bundle.effective_grant(&policy)?;
+//! let grant = bundle.effective_grant(&policy);
 //! for field in bundle.manifest.spec.unenforced_fields() {
 //!     eprintln!("warning: {field}");
 //! }
@@ -34,7 +29,6 @@
 
 mod error;
 mod grant;
-mod imports;
 mod key_file;
 mod load;
 pub mod manifest;
@@ -42,11 +36,8 @@ mod policy;
 mod program;
 
 pub use error::BundleError;
-pub use grant::{EffectiveGrant, ImportLink, effective_grant};
-pub use imports::{component_imports, component_world};
+pub use grant::{EffectiveGrant, effective_grant};
 pub use key_file::check_key_permissions;
-pub use load::{
-    APP_WORLD, CONNECTION_WORLD, HTTP_HANDLER_WORLD, PRIV_DIR, SUPPORTED_WORLDS, VerifiedBundle,
-};
+pub use load::{PRIV_DIR, VerifiedBundle};
 pub use policy::{Granted, Grants, OperatorPolicy, SignerGrants};
 pub use program::{NATIVE_PLATFORMS, check_program};

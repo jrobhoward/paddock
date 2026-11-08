@@ -36,13 +36,7 @@ fn native_conn() -> &'static PathBuf {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let ok = Command::new(cargo)
             .current_dir(&root)
-            .args([
-                "build",
-                "-p",
-                "bulkhead-fixture-conn",
-                "--features",
-                "native",
-            ])
+            .args(["build", "-p", "bulkhead-fixture-conn"])
             .args(["--bin", "bulkhead-fixture-conn", "--target-dir"])
             .arg(&target)
             .status()

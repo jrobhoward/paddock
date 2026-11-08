@@ -120,13 +120,7 @@ fn native_sdk() -> &'static PathBuf {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let ok = std::process::Command::new(cargo)
             .current_dir(&root)
-            .args([
-                "build",
-                "-p",
-                "bulkhead-fixture-sdk",
-                "--features",
-                "native",
-            ])
+            .args(["build", "-p", "bulkhead-fixture-sdk"])
             .args(["--bin", "bulkhead-fixture-sdk", "--target-dir"])
             .arg(&target)
             .status()

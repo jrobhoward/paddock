@@ -17,12 +17,14 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 DEMO_DIR=${DEMO_DIR:-$(mktemp -d -t bulkhead-failover-XXXXXX)}
 BASE_PORT=${BASE_PORT:-7401}
 BULKHEAD="$ROOT/target/release/bulkhead"
-WASM="$ROOT/target/wasm32-wasip2/release/example_counter.wasm"
+PROGRAM="$ROOT/target/release/example-counter"
 
 echo "building (release)..."
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead
+# The node runs apps through the bulkhead-runner beside it.
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead-native --bin bulkhead-runner
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
-  --target wasm32-wasip2 -p example-counter
+  -p example-counter
 
 cd "$DEMO_DIR"
 "$BULKHEAD" keygen signer --no-password >/dev/null
@@ -114,7 +116,7 @@ start 2
 # The counter, made a singleton: one instance, on the primary only.
 cp "$ROOT/examples/counter/bulkhead.toml" counter.toml
 printf '\n[appserver.placement]\nmode = "singleton"\n' >> counter.toml
-"$BULKHEAD" bundle counter.toml "$WASM" --key signer.key --out counter.rbp >/dev/null
+"$BULKHEAD" bundle counter.toml "$PROGRAM" --key signer.key --out counter.rbp >/dev/null
 p 1 deploy counter.rbp >/dev/null
 p 2 deploy counter.rbp >/dev/null
 

@@ -12,7 +12,8 @@
 
 use std::fmt;
 
-use crate::host::secrets_store as store;
+use bulkhead_native::app::Ctx;
+use bulkhead_native::protocol as p;
 
 /// Why a secret could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,12 +42,12 @@ impl fmt::Display for SecretError {
 
 impl std::error::Error for SecretError {}
 
-impl From<store::Error> for SecretError {
-    fn from(e: store::Error) -> Self {
+impl From<p::SecretError> for SecretError {
+    fn from(e: p::SecretError) -> Self {
         match e {
-            store::Error::AccessDenied => Self::AccessDenied,
-            store::Error::NotFound => Self::NotFound,
-            store::Error::Unavailable(why) => Self::Unavailable(why),
+            p::SecretError::AccessDenied => Self::AccessDenied,
+            p::SecretError::NotFound => Self::NotFound,
+            p::SecretError::Unavailable(why) => Self::Unavailable(why),
         }
     }
 }
@@ -57,7 +58,7 @@ impl From<store::Error> for SecretError {
 ///
 /// As [`SecretError`] lists.
 pub fn get(name: &str) -> Result<Vec<u8>, SecretError> {
-    Ok(store::get(name)?)
+    Ok(Ctx::current().secret(name)?)
 }
 
 /// The secret `name` as text, with one trailing newline removed (files

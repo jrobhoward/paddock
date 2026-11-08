@@ -54,12 +54,3 @@ fn Request____builder____fields_set() {
     assert_eq!(r.body, b"hi");
     assert_eq!(r.timeout, Some(Duration::from_secs(2)));
 }
-
-#[test]
-fn body_error_text____timeout_or_other____classified() {
-    assert_eq!(
-        body_error_text("connection read timeout"),
-        HttpError::Timeout
-    );
-    assert!(matches!(body_error_text("reset"), HttpError::Other(_)));
-}

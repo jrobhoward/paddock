@@ -1,33 +1,22 @@
-//! Extensions from a native program (ROADMAP Z8h): calls to the host
-//! services a node is built with from outside Bulkhead.
+//! Extensions: calls to the host services a node is built with from
+//! outside Bulkhead.
 //!
-//! A component imports an extension's WIT package through bindings of its
-//! own (`wit_bindgen::generate!`). A native program calls the same
-//! functions through the node: [`call`] names the package and the
-//! function (by convention the WIT interface and function,
-//! `greet#hello`), and carries the arguments and the result in CBOR (an
-//! array of the WIT parameters in order; the WIT result as serde encodes
-//! it). The app declares the extension in its manifest and the operator
-//! grants it, as for a component, and the extension reads the same scope.
+//! [`call`] names the package and the function (by convention
+//! `interface#function`, `greet#hello`), and carries the arguments and the
+//! result in CBOR (an array of the parameters in order; the result as serde
+//! encodes it). The app declares the extension in its manifest and the
+//! operator grants it.
 //!
-//! One source builds both ways with a small client module: the generated
-//! bindings, with serde's traits derived on their types
-//! (`additional_derives`), on both targets, and natively functions of the
-//! same names over [`call`]:
+//! A small client module gives an extension's functions their names and
+//! types:
 //!
 //! ```ignore
-//! mod bindings {
-//!     wit_bindgen::generate!({
-//!         path: "../wit",
-//!         world: "example:greeting/client",
-//!         additional_derives: [serde::Serialize, serde::Deserialize],
-//!     });
+//! #[derive(serde::Serialize, serde::Deserialize)]
+//! pub enum Error {
+//!     AccessDenied,
+//!     Other(String),
 //! }
-//! pub use bindings::example::greeting::greet::Error;
-//! #[cfg(target_arch = "wasm32")]
-//! pub use bindings::example::greeting::greet::hello;
 //!
-//! #[cfg(not(target_arch = "wasm32"))]
 //! pub fn hello(name: &str) -> Result<String, Error> {
 //!     bulkhead_sdk::extension::call("example:greeting", "greet#hello", &(name,))
 //!         .unwrap_or_else(|e| Err(Error::Other(e.to_string())))
@@ -41,10 +30,9 @@ use serde::de::DeserializeOwned;
 /// denied grant, an unknown device) are in its result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// The node runs no extension serving this package (a component would
-    /// get the node's deny stubs: access denied).
+    /// The node runs no extension serving this package.
     NoSuchExtension,
-    /// The extension serves no such function to native apps.
+    /// The extension serves no such function.
     NoSuchFunction(String),
     /// The extension cannot read the arguments.
     BadArguments(String),
@@ -66,10 +54,9 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// Call `function` of the extension serving `package` with `args`
-/// (by convention a tuple of the WIT parameters), decoding its result as
-/// `R` (by convention the WIT result, `Result<T, E>`). Only during a
-/// callback, as every request.
+/// Call `function` of the extension serving `package` with `args` (by
+/// convention a tuple of the parameters), decoding its result as `R` (by
+/// convention `Result<T, E>`). Only during a callback, as every request.
 ///
 /// # Errors
 ///

@@ -27,12 +27,9 @@ write and acknowledged, the upgrade to version 2 and the rollback, and a
 device going offline. A second test runs them on a pair and a witness: the
 standby does not poll, its table comes from the primary, and an
 acknowledged alarm is still acknowledged after a planned switchover. Both
-tests run the apps as components and, from the same source, as native
-programs (each crate's `native` feature, and `kind = "native-process"` in
-the manifest). `control` reaches the Modbus extension through
-`bulkhead-modbus-client`, whose functions are the same in both builds.
-`scripts/soak.sh --only scada --native` runs the release cycle under
-faults with the native programs.
+tests run the apps as programs. `control` reaches the Modbus extension
+through `bulkhead-modbus-client`. `scripts/soak.sh --only scada` runs the
+release cycle under faults.
 
 ## The release drill
 

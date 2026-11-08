@@ -3,85 +3,14 @@
 use std::path::{Component, Path};
 
 use crate::manifest::{
-    AppInfo, AppManifest, AppSpec, ComponentRef, Kind, ManifestError, PlacementMode, Provenance,
-    SECTION, ValidationError,
+    AppInfo, AppManifest, AppSpec, ManifestError, ProgramRef, Provenance, SECTION,
 };
 use rustbridge_bundle::{BundleLoader, Platform};
 
 use crate::error::BundleError;
 use crate::grant::{EffectiveGrant, effective_grant};
-use crate::imports::component_imports;
 use crate::policy::OperatorPolicy;
 use crate::program::check_program;
-
-/// The world of an app: callbacks driven one message at a time.
-pub const APP_WORLD: &str = "bulkhead:runtime/app@0.1.0";
-
-/// The world of a connection handler: one instance per connection accepted
-/// on the app's listeners.
-pub const CONNECTION_WORLD: &str = "bulkhead:connection/connection-handler@0.1.0";
-
-/// The world of an HTTP handler: an unmodified `wasi:http` component, one
-/// instance per request on the app's routes. Any 0.2 version of
-/// `wasi:http/incoming-handler` is this world.
-pub const HTTP_HANDLER_WORLD: &str = "wasi:http/proxy@0.2.0";
-
-/// The WIT worlds this node can run.
-pub const SUPPORTED_WORLDS: &[&str] = &[APP_WORLD, CONNECTION_WORLD, HTTP_HANDLER_WORLD];
-
-/// Refuse sections that make no sense for `world`: listeners outside a
-/// connection handler, and for an HTTP handler (an instance per request)
-/// no routes, group membership, or placement other than `any`. The error
-/// is the field's path under the section, and why.
-fn check_world(world: &str, spec: &AppSpec) -> Result<(), (&'static str, String)> {
-    let connection = world == CONNECTION_WORLD;
-    if connection == spec.listeners.is_empty() {
-        return Err((
-            "listeners",
-            if connection {
-                "a connection handler must declare at least one listener".into()
-            } else {
-                "only a connection handler (bulkhead:connection) declares listeners".into()
-            },
-        ));
-    }
-    if world != HTTP_HANDLER_WORLD {
-        return Ok(());
-    }
-    let caps = &spec.capabilities;
-    if caps
-        .http_incoming
-        .as_ref()
-        .is_none_or(|s| s.routes.is_empty())
-    {
-        return Err((
-            "capabilities",
-            "an HTTP handler (wasi:http/incoming-handler) must declare at least one route \
-             under wasi:http/incoming-handler"
-                .into(),
-        ));
-    }
-    if caps.groups.is_some() {
-        return Err((
-            "capabilities",
-            "an HTTP handler lives for one request and cannot join or publish to groups \
-             (bulkhead:groups)"
-                .into(),
-        ));
-    }
-    if spec
-        .placement
-        .as_ref()
-        .is_some_and(|p| p.mode != PlacementMode::Any)
-    {
-        return Err((
-            "placement",
-            "an HTTP handler runs on every node it is deployed to; placement.mode must be `any`"
-                .into(),
-        ));
-    }
-    Ok(())
-}
 
 /// The variant a node deploys.
 const VARIANT: &str = "release";
@@ -94,9 +23,9 @@ pub const PRIV_DIR: &str = "priv/";
 pub struct VerifiedBundle {
     /// The app manifest.
     pub manifest: AppManifest,
-    /// The component bytes, or for a `native-process` app its program for
-    /// this node's platform; checksum- and signature-verified.
-    pub component: Vec<u8>,
+    /// The app's program for this node's platform; checksum- and
+    /// signature-verified.
+    pub program: Vec<u8>,
     /// The files under `priv/`, by path relative to it, each checked against
     /// the signed manifest's `files` checksums.
     pub priv_files: Vec<(String, Vec<u8>)>,
@@ -106,25 +35,23 @@ impl VerifiedBundle {
     /// Open a `.rbp` bundle and verify it.
     ///
     /// Checks, in order: the manifest signature against `trusted_keys` (the
-    /// key inside the bundle is ignored), the `appserver` section, the
-    /// release variant's checksum and signature (`wasm32-wasip2`, or for a
-    /// `native-process` app this node's platform), and a component's world
-    /// or that a native program is an ELF file for this node's
-    /// architecture.
+    /// key inside the bundle is ignored), the `appserver` section, this
+    /// node's platform's release variant's checksum and signature, and
+    /// that the program is an ELF file for this node's architecture.
     ///
     /// # Errors
     ///
     /// [`BundleError::Untrusted`] if no trusted key signed the bundle,
-    /// [`BundleError::Corrupt`] on a checksum mismatch, and the other
-    /// [`BundleError`] variants for a bundle that is not a valid Bulkhead app.
+    /// [`BundleError::Corrupt`] on a checksum mismatch,
+    /// [`BundleError::Component`] for a bundle holding a WebAssembly
+    /// component, and the other [`BundleError`] variants for a bundle that
+    /// is not a valid Bulkhead app.
     pub fn open(path: impl AsRef<Path>, trusted_keys: &[String]) -> Result<Self, BundleError> {
         Self::open_as(path, trusted_keys, Platform::current())
     }
 
-    /// Open and verify a bundle as a node on `platform` would: a
-    /// `native-process` app's program for that platform, for checking a
-    /// bundle built for another machine. A component's bundle opens as
-    /// with [`open`](Self::open).
+    /// Open and verify a bundle as a node on `platform` would: its program
+    /// for that platform, for checking a bundle built for another machine.
     ///
     /// # Errors
     ///
@@ -149,13 +76,13 @@ impl VerifiedBundle {
         let rb = loader.manifest().clone();
         let section = rb.extension(SECTION).ok_or(BundleError::NoAppSection)?;
         let spec = AppSpec::from_json_value(section).map_err(prefix_section)?;
-        // A component for every node, or a native program for this one's
-        // platform.
+        if rb.supported_platforms().contains(&Platform::Wasm32Wasip2) {
+            return Err(BundleError::Component);
+        }
         let no_native = |platform: String| {
             let present: Vec<&str> = rb
                 .supported_platforms()
                 .into_iter()
-                .filter(|p| *p != Platform::Wasm32Wasip2)
                 .map(|p| p.as_str())
                 .collect();
             BundleError::NoNativeVariant {
@@ -167,29 +94,20 @@ impl VerifiedBundle {
                 },
             }
         };
-        let platform = if spec.kind == Kind::NativeProcess {
-            native.ok_or_else(|| {
-                no_native(format!(
-                    "{}-{}",
-                    std::env::consts::OS,
-                    std::env::consts::ARCH
-                ))
-            })?
-        } else {
-            Platform::Wasm32Wasip2
-        };
+        let platform = native.ok_or_else(|| {
+            no_native(format!(
+                "{}-{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ))
+        })?;
         let variant = rb
             .get_variant(platform, Some(VARIANT))
-            .ok_or_else(|| match platform {
-                Platform::Wasm32Wasip2 => BundleError::NoComponent,
-                other => no_native(other.as_str().to_string()),
-            })?;
-        let component = loader.read_variant_verified(platform, VARIANT, &keys)?;
+            .ok_or_else(|| no_native(platform.as_str().to_string()))?;
+        let program = loader.read_variant_verified(platform, VARIANT, &keys)?;
         // A program filed under the wrong platform would fail only when
         // the runner executes it.
-        if spec.kind == Kind::NativeProcess {
-            check_program(platform, &component)?;
-        }
+        check_program(platform, &program)?;
         let mut priv_files = Vec::new();
         for path in loader.list_files() {
             let Some(relative) = path.strip_prefix(PRIV_DIR) else {
@@ -205,27 +123,6 @@ impl VerifiedBundle {
             priv_files.push((relative.to_string(), bytes));
         }
         priv_files.sort();
-
-        // A native program has no world.
-        let world = variant
-            .component
-            .as_ref()
-            .map(|c| c.world.clone())
-            .unwrap_or_default();
-        if spec.kind != Kind::NativeProcess {
-            if !SUPPORTED_WORLDS.contains(&world.as_str()) {
-                return Err(BundleError::UnsupportedWorld {
-                    world,
-                    supported: SUPPORTED_WORLDS.join(", "),
-                });
-            }
-            check_world(&world, &spec).map_err(|(path, message)| {
-                ManifestError::Invalid(vec![ValidationError {
-                    path: format!("{SECTION}.{path}"),
-                    message,
-                }])
-            })?;
-        }
 
         let version =
             rb.plugin
@@ -244,10 +141,9 @@ impl VerifiedBundle {
                 license: rb.plugin.license.clone(),
                 repository: rb.plugin.repository.clone(),
             },
-            component: ComponentRef {
+            program: ProgramRef {
                 path: variant.library.clone(),
                 checksum: variant.checksum.clone(),
-                world,
             },
             provenance: Provenance {
                 signer_key: trusted_keys[key_index].clone(),
@@ -260,7 +156,7 @@ impl VerifiedBundle {
 
         Ok(Self {
             manifest,
-            component,
+            program,
             priv_files,
         })
     }
@@ -301,34 +197,15 @@ impl VerifiedBundle {
         Ok(())
     }
 
-    /// The component's top-level imports; none for a native program.
-    ///
-    /// # Errors
-    ///
-    /// [`BundleError::InvalidComponent`] if the bytes are not a component.
-    pub fn imports(&self) -> Result<Vec<String>, BundleError> {
-        if self.manifest.spec.kind == Kind::NativeProcess {
-            // A native program imports nothing: it asks the node over its
-            // pipe, for what its manifest declares.
-            return Ok(Vec::new());
-        }
-        component_imports(&self.component)
-    }
-
-    /// Check the component's imports against the manifest and compute the
-    /// effective grant under `policy`.
-    ///
-    /// # Errors
-    ///
-    /// [`BundleError::InvalidComponent`] if the bytes are not a component,
-    /// and [`BundleError::ImportsRefused`] if any import is undeclared or
-    /// unknown.
-    pub fn effective_grant(&self, policy: &OperatorPolicy) -> Result<EffectiveGrant, BundleError> {
+    /// The effective grant under `policy`: what the manifest declares and
+    /// the operator grants.
+    #[must_use]
+    pub fn effective_grant(&self, policy: &OperatorPolicy) -> EffectiveGrant {
         let granted = policy.granted(
             &self.manifest.app.name,
             &self.manifest.provenance.signer_key,
         );
-        effective_grant(&self.imports()?, &self.manifest.spec, &granted)
+        effective_grant(&self.manifest.spec, &granted)
     }
 }
 

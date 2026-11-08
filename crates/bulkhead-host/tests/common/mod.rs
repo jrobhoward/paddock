@@ -1,4 +1,4 @@
-//! Builds guest fixtures and sets up runtimes for tests.
+//! Native fixtures, and runtimes for tests.
 
 #![allow(dead_code)]
 #![allow(clippy::unwrap_used)]
@@ -11,60 +11,11 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, ComponentRef, Provenance};
+use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, ProgramRef, Provenance};
 use bulkhead_host::{Envelope, InstanceSpec, LoadedApp, Runtime, RuntimeConfig};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-/// The fixture component `name` (`bulkhead_fixture_chaos`), built for
-/// `wasm32-wasip2` on first use. Builds into `target/fixtures`, because the
-/// `cargo test` that runs this holds the lock on the main target directory.
-pub fn fixture(name: &str) -> Vec<u8> {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    let root = workspace_root();
-    let target_dir = root.join("target/fixtures");
-    BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = Command::new(cargo)
-            .current_dir(&root)
-            .args([
-                "build",
-                "--release",
-                "--target",
-                "wasm32-wasip2",
-                "-p",
-                "bulkhead-fixture-chaos",
-                "-p",
-                "bulkhead-fixture-echo",
-                "-p",
-                "bulkhead-fixture-sdk",
-                "-p",
-                "bulkhead-fixture-conn",
-                "-p",
-                "bulkhead-fixture-conformance",
-                "-p",
-                "bulkhead-fixture-http",
-                "-p",
-                "bulkhead-fixture-net",
-                "-p",
-                "bulkhead-fixture-services",
-                "--features",
-                "bulkhead-fixture-services/denied",
-                "--target-dir",
-            ])
-            .arg(&target_dir)
-            .status()
-            .expect("run cargo to build guest fixtures");
-        assert!(
-            status.success(),
-            "building guest fixtures failed; is the target installed? \
-             `rustup target add wasm32-wasip2`"
-        );
-    });
-    let path = target_dir.join(format!("wasm32-wasip2/release/{name}.wasm"));
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 /// A runtime and the chaos app (in-process, ROADMAP Z9d), shared by every
@@ -132,38 +83,6 @@ pub async fn ask_until(
     }
 }
 
-/// The counter fixture at `version` (1, 2 or 3), each built with its own
-/// feature into its own target directory, since features unify within one
-/// build.
-pub fn counter(version: u8) -> Vec<u8> {
-    static BUILT: [OnceLock<()>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
-    let root = workspace_root();
-    let target_dir = root.join(format!("target/fixtures/counter-v{version}"));
-    BUILT[usize::from(version - 1)].get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut cmd = Command::new(cargo);
-        cmd.current_dir(&root).args([
-            "build",
-            "--release",
-            "--target",
-            "wasm32-wasip2",
-            "-p",
-            "bulkhead-fixture-counter",
-            "--target-dir",
-        ]);
-        cmd.arg(&target_dir);
-        if version > 1 {
-            cmd.args(["--features", &format!("v{version}")]);
-        }
-        let status = cmd
-            .status()
-            .expect("run cargo to build the counter fixture");
-        assert!(status.success(), "building counter v{version} failed");
-    });
-    let path = target_dir.join("wasm32-wasip2/release/bulkhead_fixture_counter.wasm");
-    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
-
 /// A manifest for app `name` with this `appserver` section, unsigned (for
 /// app sets built directly on a runtime).
 pub fn app_manifest(name: &str, appserver: serde_json::Value) -> AppManifest {
@@ -176,10 +95,9 @@ pub fn app_manifest(name: &str, appserver: serde_json::Value) -> AppManifest {
             license: None,
             repository: None,
         },
-        component: ComponentRef {
+        program: ProgramRef {
             path: String::new(),
             checksum: String::new(),
-            world: "bulkhead:runtime/app@0.1.0".into(),
         },
         provenance: Provenance {
             signer_key: String::new(),
@@ -204,8 +122,6 @@ pub fn native_conformance() -> &'static PathBuf {
                 "build",
                 "-p",
                 "bulkhead-fixture-conformance",
-                "--features",
-                "native",
                 "--bin",
                 "bulkhead-fixture-conformance",
                 "--target-dir",
@@ -266,13 +182,7 @@ pub fn native_sdk() -> &'static PathBuf {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let ok = Command::new(cargo)
             .current_dir(&root)
-            .args([
-                "build",
-                "-p",
-                "bulkhead-fixture-sdk",
-                "--features",
-                "native",
-            ])
+            .args(["build", "-p", "bulkhead-fixture-sdk"])
             .args(["--bin", "bulkhead-fixture-sdk", "--target-dir"])
             .arg(&target)
             .status()

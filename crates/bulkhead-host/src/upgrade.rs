@@ -75,12 +75,6 @@ pub fn validate_upgrade(
             old.app.name, old.app.version
         ));
     }
-    if old.component.world != new.component.world {
-        return invalid(format!(
-            "world changes from {} to {}",
-            old.component.world, new.component.world
-        ));
-    }
     let from = &new.spec.upgrade.from_versions;
     if !from.is_empty() && !from.iter().any(|req| req.matches(&old.app.version)) {
         return invalid(format!(

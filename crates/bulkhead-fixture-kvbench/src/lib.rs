@@ -1,9 +1,9 @@
-//! Test fixture: keyvalue loops timed inside the guest, for `bulkhead-host`'s
+//! Test fixture: keyvalue loops timed inside the app, for `bulkhead-host`'s
 //! `kv_cost` benchmark, which runs the same loops as
 //! `scripts/beam_ets.escript` does against ETS.
 //!
 //! Text calls; each loop replies the nanoseconds it took, read from the
-//! guest's monotonic clock before and after:
+//! app's monotonic clock before and after:
 //! - `fill:<bucket>:<prefix>:<n>:<size>`: keys `<prefix>000000` to
 //!   `<prefix><n-1>` (six digits), each a value of `<size>` bytes, in
 //!   batches of up to 1,000 keys and about 4 MiB; replies `ok`.
@@ -29,8 +29,6 @@
 //!     of a trie or a graph.
 //! - `fillchain:<bucket>:<n>`: keys `c000000` to `c<n-1>`, each holding the
 //!   next key of the chain `i -> (7919 i + 1) mod n`; replies `ok`.
-//!
-//! Built for `wasm32-wasip2`.
 
 use std::time::Instant;
 

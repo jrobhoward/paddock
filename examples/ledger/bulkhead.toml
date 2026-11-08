@@ -14,8 +14,8 @@
 #   buckets = ["ledger"]
 #
 # Bundle with:
-#   cargo build -p example-ledger --target wasm32-wasip2 --release
-#   bulkhead bundle examples/ledger/bulkhead.toml target/wasm32-wasip2/release/example_ledger.wasm --key bulkhead.key
+#   cargo build -p example-ledger --release
+#   bulkhead bundle examples/ledger/bulkhead.toml target/release/example-ledger --key bulkhead.key
 # then `bulkhead call ledger "put a 1"`, `bulkhead call ledger "get a"`.
 [app]
 name = "ledger"

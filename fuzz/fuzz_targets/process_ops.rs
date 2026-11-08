@@ -1,11 +1,8 @@
 //! Arbitrary sequences of messages, process operations and pids against live
-//! instances of the chaos fixture: calls and casts with arbitrary
+//! in-process instances of the chaos app: calls and casts with arbitrary
 //! envelopes, links, monitors, exit signals, registration and timers between
 //! instances, kills, and messages to made-up pids. Afterwards every instance
 //! must die when killed, and a fresh instance must still answer.
-//!
-//! Needs the fixture built first (or `BULKHEAD_FUZZ_COMPONENT` set):
-//! `cargo build --release --target wasm32-wasip2 -p bulkhead-fixture-chaos --target-dir target/fixtures`
 
 #![no_main]
 
@@ -69,14 +66,6 @@ enum Op {
 fn runtime() -> &'static (tokio::runtime::Runtime, Runtime, LoadedApp) {
     static RT: OnceLock<(tokio::runtime::Runtime, Runtime, LoadedApp)> = OnceLock::new();
     RT.get_or_init(|| {
-        let path = std::env::var("BULKHEAD_FUZZ_COMPONENT").unwrap_or_else(|_| {
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../target/fixtures/wasm32-wasip2/release/bulkhead_fixture_chaos.wasm"
-            )
-            .to_string()
-        });
-        let component = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let tokio = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -85,7 +74,7 @@ fn runtime() -> &'static (tokio::runtime::Runtime, Runtime, LoadedApp) {
         let rt = tokio.block_on(async {
             Runtime::new(RuntimeConfig { max_instances: 64, ..RuntimeConfig::default() }).unwrap()
         });
-        let app = rt.load(&component).unwrap();
+        let app = rt.load_in_process::<bulkhead_host::in_process::chaos::Chaos>();
         (tokio, rt, app)
     })
 }

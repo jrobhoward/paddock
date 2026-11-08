@@ -34,16 +34,18 @@ HTTP_PORT=${HTTP_PORT:-8091}
 BASE_PORT=${BASE_PORT:-7501}
 DEVICE_PORT=${DEVICE_PORT:-5021}
 BULKHEAD="$ROOT/target/release/bulkhead"
-WASM="$ROOT/target/wasm32-wasip2/release"
-WASM_V2="$ROOT/target/fixtures/scada-drill-v2/wasm32-wasip2/release"
+PROGRAMS="$ROOT/target/release"
+PROGRAMS_V2="$ROOT/target/fixtures/scada-drill-v2/release"
 
 echo "building (release; the first build takes a few minutes)..."
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead --features modbus
+# The node runs apps through the bulkhead-runner beside it.
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" -p bulkhead-native --bin bulkhead-runner
 cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
   -p bulkhead-modbus --example fake_device
-cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" --target wasm32-wasip2 \
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
   -p example-scada-points -p example-scada-hmi -p example-scada-control
-cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" --target wasm32-wasip2 \
+cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
   -p example-scada-control --features v2 --target-dir "$ROOT/target/fixtures/scada-drill-v2"
 
 cd "$DRILL_DIR"
@@ -178,10 +180,10 @@ TOML
 bundle() {
   "$BULKHEAD" bundle "$ROOT/examples/scada/$1" "$2" --key signer.key --out "$3" >/dev/null
 }
-bundle points/bulkhead.toml "$WASM/example_scada_points.wasm" points.rbp
-bundle hmi/bulkhead.toml "$WASM/example_scada_hmi.wasm" hmi.rbp
-bundle control/bulkhead.toml "$WASM/example_scada_control.wasm" control.rbp
-bundle control/bulkhead-v2.toml "$WASM_V2/example_scada_control.wasm" control-v2.rbp
+bundle points/bulkhead.toml "$PROGRAMS/example-scada-points" points.rbp
+bundle hmi/bulkhead.toml "$PROGRAMS/example-scada-hmi" hmi.rbp
+bundle control/bulkhead.toml "$PROGRAMS/example-scada-control" control.rbp
+bundle control/bulkhead-v2.toml "$PROGRAMS_V2/example-scada-control" control-v2.rbp
 
 "$ROOT/target/release/examples/fake_device" \
   "127.0.0.1:$DEVICE_PORT" "127.0.0.1:$((DEVICE_PORT + 1))" > devices.log 2>&1 &

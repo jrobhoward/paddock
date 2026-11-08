@@ -4,9 +4,7 @@
 //! lists in `capabilities."wasi:http/outgoing-handler".allow`, and refuses
 //! the rest with [`HttpError::Denied`]. Waiting for the response does not
 //! count against the callback deadline, but the instance handles no other
-//! message meanwhile; a pool of instances keeps an app responsive. The
-//! same calls work in a native program, where the node sends each request
-//! on the same rules (ROADMAP Z8f).
+//! message meanwhile; a pool of instances keeps an app responsive.
 //!
 //! ```ignore
 //! use bulkhead_sdk::http_client;
@@ -18,15 +16,6 @@
 //! ```
 
 use std::time::Duration;
-
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-use wasip2::http::outgoing_handler;
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-use wasip2::http::types::{
-    ErrorCode, Fields, IncomingBody, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
-};
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-use wasip2::io::streams::StreamError;
 
 /// A request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,35 +131,6 @@ impl std::fmt::Display for HttpError {
 
 impl std::error::Error for HttpError {}
 
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-impl From<ErrorCode> for HttpError {
-    fn from(e: ErrorCode) -> Self {
-        match e {
-            ErrorCode::HttpRequestDenied => Self::Denied,
-            ErrorCode::ConnectionLimitReached => Self::Limited,
-            ErrorCode::DestinationIpProhibited => Self::Prohibited,
-            ErrorCode::ConnectionReadTimeout
-            | ErrorCode::ConnectionTimeout
-            | ErrorCode::ConnectionWriteTimeout
-            | ErrorCode::HttpResponseTimeout => Self::Timeout,
-            ErrorCode::ConnectionRefused
-            | ErrorCode::DestinationNotFound
-            | ErrorCode::DestinationUnavailable
-            | ErrorCode::DestinationIpUnroutable
-            | ErrorCode::DnsTimeout
-            | ErrorCode::DnsError(_)
-            | ErrorCode::ConnectionTerminated => Self::Unreachable(format!("{e:?}")),
-            ErrorCode::TlsProtocolError
-            | ErrorCode::TlsCertificateError
-            | ErrorCode::TlsAlertReceived(_) => Self::Tls(format!("{e:?}")),
-            ErrorCode::HttpRequestMethodInvalid | ErrorCode::HttpRequestUriInvalid => {
-                Self::Invalid(format!("{e:?}"))
-            }
-            other => Self::Other(format!("{other:?}")),
-        }
-    }
-}
-
 /// `GET url`.
 ///
 /// # Errors
@@ -197,7 +157,7 @@ pub fn post(
     )
 }
 
-/// The parts of a URL wasi:http takes.
+/// The parts of a URL.
 #[derive(Debug, PartialEq, Eq)]
 struct Url<'a> {
     https: bool,
@@ -233,118 +193,13 @@ fn parse_url(url: &str) -> Result<Url<'_>, HttpError> {
     })
 }
 
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-/// Send a request and read the whole response.
-///
-/// # Errors
-///
-/// An [`HttpError`]; a response with any status is `Ok`.
-pub fn send(request: &Request) -> Result<Response, HttpError> {
-    let url = parse_url(&request.url)?;
-    let headers: Vec<(String, Vec<u8>)> = request.headers.clone();
-    let fields =
-        Fields::from_list(&headers).map_err(|e| HttpError::Invalid(format!("headers: {e:?}")))?;
-    let outgoing = OutgoingRequest::new(fields);
-    let method = match request.method.as_str() {
-        "GET" => Method::Get,
-        "HEAD" => Method::Head,
-        "POST" => Method::Post,
-        "PUT" => Method::Put,
-        "DELETE" => Method::Delete,
-        "OPTIONS" => Method::Options,
-        "PATCH" => Method::Patch,
-        other => Method::Other(other.to_string()),
-    };
-    let invalid = |what: &str| HttpError::Invalid(format!("{what}: {}", request.url));
-    outgoing
-        .set_method(&method)
-        .map_err(|()| invalid("method"))?;
-    let scheme = if url.https {
-        Scheme::Https
-    } else {
-        Scheme::Http
-    };
-    outgoing
-        .set_scheme(Some(&scheme))
-        .map_err(|()| invalid("scheme"))?;
-    outgoing
-        .set_authority(Some(url.authority))
-        .map_err(|()| invalid("host"))?;
-    outgoing
-        .set_path_with_query(Some(url.path_with_query))
-        .map_err(|()| invalid("path"))?;
-    let options = request.timeout.map(|t| {
-        let options = RequestOptions::new();
-        let nanos = u64::try_from(t.as_nanos()).unwrap_or(u64::MAX);
-        let _ = options.set_first_byte_timeout(Some(nanos));
-        let _ = options.set_between_bytes_timeout(Some(nanos));
-        options
-    });
-    let body = outgoing.body().map_err(|()| invalid("body"))?;
-    let pending = outgoing_handler::handle(outgoing, options)?;
-    // A refused request closes the body stream: report the refusal rather
-    // than the failed write.
-    let mut written = Ok(());
-    {
-        let out = body.write().map_err(|()| invalid("body"))?;
-        for chunk in request.body.chunks(4096) {
-            if let Err(e) = out.blocking_write_and_flush(chunk) {
-                written = Err(HttpError::Other(format!("request body: {e:?}")));
-                break;
-            }
-        }
-    }
-    if written.is_ok() {
-        OutgoingBody::finish(body, None)?;
-    } else {
-        drop(body);
-    }
-    pending.subscribe().block();
-    let response = match pending.get() {
-        Some(Ok(Ok(r))) => r,
-        Some(Ok(Err(e))) => return Err(e.into()),
-        Some(Err(())) | None => return Err(HttpError::Other("no response".into())),
-    };
-    written?;
-    let status = response.status();
-    let headers = response.headers().entries();
-    let incoming = response
-        .consume()
-        .map_err(|()| HttpError::Other("response body taken".into()))?;
-    let mut bytes = Vec::new();
-    {
-        let stream = incoming
-            .stream()
-            .map_err(|()| HttpError::Other("response body taken".into()))?;
-        loop {
-            match stream.blocking_read(64 * 1024) {
-                Ok(chunk) => bytes.extend_from_slice(&chunk),
-                Err(StreamError::Closed) => break,
-                Err(StreamError::LastOperationFailed(e)) => return Err(body_error(&e)),
-            }
-        }
-    }
-    drop(IncomingBody::finish(incoming));
-    Ok(Response {
-        status,
-        headers,
-        body: bytes,
-    })
-}
-
-/// The error a response body's stream failed with. wasmtime 49 and 50
-/// hand the guest no error code for a failure inside a response body (the
-/// host's `http-error-code` answers none), so a timeout is recognised by its
-/// text.
-/// Send `request` and wait for the whole response: in a native program,
-/// the node sends it through its egress client on the manifest's rules
-/// (ROADMAP Z8f), as for a component, and answers with the response, whose
-/// body may be up to 16 MiB.
+/// Send `request` and wait for the whole response: the node sends it
+/// through its egress client on the manifest's rules, and answers with the
+/// response, whose body may be up to 16 MiB.
 ///
 /// # Errors
 ///
 /// As [`HttpError`] lists.
-#[cfg(all(unix, not(target_arch = "wasm32")))]
 pub fn send(request: &Request) -> Result<Response, HttpError> {
     use bulkhead_native::protocol as p;
     parse_url(&request.url)?;
@@ -377,23 +232,6 @@ pub fn send(request: &Request) -> Result<Response, HttpError> {
             p::HttpError::Invalid(why) => HttpError::Invalid(why),
             p::HttpError::Other(why) => HttpError::Other(why),
         }),
-    }
-}
-
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
-fn body_error(e: &wasip2::io::error::Error) -> HttpError {
-    if let Some(code) = wasip2::http::types::http_error_code(e) {
-        return code.into();
-    }
-    body_error_text(&e.to_debug_string())
-}
-
-#[cfg_attr(all(unix, not(target_arch = "wasm32")), allow(dead_code))]
-fn body_error_text(text: &str) -> HttpError {
-    if text.contains("timeout") {
-        HttpError::Timeout
-    } else {
-        HttpError::Other(format!("response body: {text}"))
     }
 }
 

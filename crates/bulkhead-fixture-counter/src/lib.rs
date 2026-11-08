@@ -14,8 +14,6 @@
 //! `trap-link:<name>` (trap exits and link to the instance registered as
 //! `<name>`; its exit adds one), `hold` (no reply until `release`) and
 //! `release`.
-//!
-//! Built for `wasm32-wasip2`, or as a native program with feature `native`.
 
 use std::time::Duration;
 

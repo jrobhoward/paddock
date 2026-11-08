@@ -9,22 +9,9 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-# The same app as a native program (`kind = "native-process"`).
-[[bin]]
-name = "example-greeter-app"
-path = "src/main.rs"
-required-features = ["native"]
-
-[features]
-native = []
-
 [dependencies]
 bulkhead-sdk = { workspace = true }
 serde = { workspace = true }
-wit-bindgen = { workspace = true }
 
 [lints]
 workspace = true

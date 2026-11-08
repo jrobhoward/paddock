@@ -1,6 +1,6 @@
 # Bundle with:
-#   cargo build -p example-counter --target wasm32-wasip2 --release --features v3
-#   bulkhead bundle examples/counter/bulkhead-v3.toml target/wasm32-wasip2/release/example_counter.wasm --key bulkhead.key
+#   cargo build -p example-counter --release --features v3
+#   bulkhead bundle examples/counter/bulkhead-v3.toml target/release/example-counter --key bulkhead.key
 [app]
 name = "counter"
 version = "3.0.0"
