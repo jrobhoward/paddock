@@ -307,9 +307,7 @@ impl Node {
             .bundle
             .extract_priv(&self.store.priv_dir(name, &new.version))
             .map_err(internal)?;
-        let super::deploy::Runnable::App(deployment) = built.run else {
-            return Err(internal("the new version is not an app"));
-        };
+        let deployment = built.run;
         // Approved when it was first started.
         self.apps
             .start_new(name, deployment, true)

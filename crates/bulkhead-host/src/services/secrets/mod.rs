@@ -12,36 +12,10 @@ use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
 use bulkhead_native::protocol::SecretError;
-use wasmtime::Result;
-use wasmtime::component::Linker;
 
-use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use super::{InstanceInfo, Service};
 use crate::config::{RuntimeConfig, SecretSource};
 use crate::error::HostError;
-
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    wasmtime::component::bindgen!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:host/secrets",
-        imports: { default: async | trappable },
-    });
-}
-
-use bindings::bulkhead::secrets::store;
 
 /// The secrets service.
 pub(crate) struct Secrets;
@@ -64,7 +38,6 @@ pub(crate) struct Instance {
 
 impl Service for Secrets {
     const CAPABILITY: Capability = Capability::Secrets;
-    const INTERFACES: &'static [&'static str] = &["bulkhead:secrets/store"];
     type Spec = SecretsSpec;
     type Shared = BTreeMap<String, SecretSource>;
     type Instance = Instance;
@@ -94,10 +67,6 @@ impl Service for Secrets {
             names: spec.names.clone(),
             granted: info.granted,
         }
-    }
-
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
-        store::add_to_linker::<T, Ctx<Self>>(linker, T::service)
     }
 }
 
@@ -133,16 +102,5 @@ impl Instance {
             return Err(SecretError::NotFound);
         };
         read(name, &source).await
-    }
-}
-
-/// A component's `bulkhead:secrets` import, on the WIT's types.
-impl store::Host for ServiceCtx<'_, Instance> {
-    async fn get(&mut self, name: String) -> Result<std::result::Result<Vec<u8>, store::Error>> {
-        Ok(self.state.get_secret(&name).await.map_err(|e| match e {
-            SecretError::AccessDenied => store::Error::AccessDenied,
-            SecretError::NotFound => store::Error::NotFound,
-            SecretError::Unavailable(why) => store::Error::Unavailable(why),
-        }))
     }
 }

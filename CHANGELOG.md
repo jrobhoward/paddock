@@ -6,6 +6,20 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- WebAssembly components from the node (ROADMAP Z9e): wasmtime, the
+  component instance path, deny stubs, the compile cache, the pooling
+  allocator, the epoch ticker, connection handlers and HTTP handlers as
+  components. Deploying a component is refused, naming what to do. A
+  node config with `max_core_instances_per_component`, `keep_resident`,
+  `release_idle_after_s` or `epoch_tick_ms` is refused with a message.
+  The metrics `bulkhead_slot_timeouts_total`,
+  `bulkhead_http_handler_failures_total` and `bulkhead_pool_*`, `ps`'s
+  listener `CRASHED` column, and `stubbed` in `status` are gone with
+  what they counted. `Extension::link`, `ExtensionCtx` and the wasmtime
+  re-export are gone: an extension is `Extension::call`.
+
 ### Security
 
 - A native app whose manifest declares `wasi:filesystem` no longer gets

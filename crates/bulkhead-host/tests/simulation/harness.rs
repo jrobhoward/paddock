@@ -67,7 +67,6 @@ impl SimNode {
             creation,
             role,
             max_instances: 32,
-            epoch_tick: Duration::from_secs(3600),
             heartbeat_interval: HEARTBEAT,
             node_timeout: NODE_TIMEOUT,
             ..RuntimeConfig::default()

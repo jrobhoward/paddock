@@ -887,39 +887,20 @@ async fn registered_names____listed_by_another_app____deploy_and_upgrade_refused
     assert!(own.is_ok(), "{own:?}");
 }
 
-/// Passivation for apps: with `max_processes` above `max_instances` (32 here), apps
-/// that passivate fit beyond the Store slots; one whose instances never
-/// passivate is refused when they would not fit.
+/// Instances that passivate go passive, and a call wakes them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn deploy____instances_that_never_passivate_past_max_instances____refused_passivating_ones_fit()
- {
+async fn deploy____passivating_instances____go_passive_and_a_call_wakes_one() {
     let mut n = TestNode::start_native("max_processes = 64\n").await;
-    let app = |name: &str, instances: serde_json::Value| {
-        app_bundle(
+    n.client
+        .deploy(app_bundle(
             &n.key,
-            name,
+            "sleepy",
             "1.0.0",
             &native_counter(1),
-            fast(json!({ "instances": instances })),
-        )
-    };
-    n.client
-        .deploy(app("big", json!({ "count": 30 })))
+            fast(json!({ "instances": { "count": 5, "passivate_after_ms": 50 } })),
+        ))
         .await
         .unwrap();
-
-    let refused = n
-        .client
-        .deploy(app("more", json!({ "count": 5 })))
-        .await
-        .unwrap_err();
-    let passivating = n
-        .client
-        .deploy(app(
-            "sleepy",
-            json!({ "count": 5, "passivate_after_ms": 50 }),
-        ))
-        .await;
     for _ in 0..5 {
         call(&n, "sleepy", "inc").await;
     }
@@ -935,14 +916,9 @@ async fn deploy____instances_that_never_passivate_past_max_instances____refused_
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+
     let woken = call(&n, "sleepy", "get").await;
 
-    assert_eq!(kind(&refused), "invalid");
-    assert!(
-        refused.to_string().contains("would need 35 Store slots"),
-        "{refused}"
-    );
-    assert!(passivating.is_ok(), "{passivating:?}");
     assert_eq!(passive, 5, "every sleepy instance passivated");
     assert!(woken.starts_with("1.0.0 count="), "{woken}");
     n.shutdown().await;

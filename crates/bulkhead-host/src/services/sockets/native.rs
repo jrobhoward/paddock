@@ -28,17 +28,19 @@ use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::os::fd::OwnedFd;
 use std::time::Duration;
 
+use super::policy::SocketAddrUse;
 use bulkhead_native::protocol as p;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
-use wasmtime_wasi::sockets::SocketAddrUse;
 
 use super::policy::Policy;
 use super::{Held, Instance};
 use crate::instance::InstanceHandle;
 use crate::listener::Tie;
 use crate::message::{Envelope, Info};
-use crate::ready::EVENT;
+
+/// The host event that tells an app a socket is readable.
+const EVENT: &str = "io-ready";
 
 /// The largest datagram received.
 const MAX_DATAGRAM: usize = 64 << 10;
@@ -254,7 +256,6 @@ impl Instance {
         deadline: Duration,
     ) -> Result<Reply, p::NetError> {
         if !self.native.policy.as_ref().is_some_and(Policy::name_lookup) {
-            // As wasmtime-wasi reports a lookup it does not allow.
             return Err(p::NetError::Other("permanent-resolver-failure".into()));
         }
         let found: Vec<SocketAddr> =

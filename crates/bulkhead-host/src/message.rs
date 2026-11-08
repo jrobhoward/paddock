@@ -4,7 +4,6 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::bindings::bulkhead::runtime::types as wit;
 use crate::pid::Pid;
 
 /// A message: opaque bytes plus how to decode them.
@@ -101,74 +100,6 @@ pub enum CallError {
     Exited(ExitReason),
 }
 
-impl From<Envelope> for wit::Envelope {
-    fn from(e: Envelope) -> Self {
-        Self {
-            content_type: e.content_type,
-            schema: e.schema,
-            body: e.body,
-        }
-    }
-}
-
-impl From<wit::Envelope> for Envelope {
-    fn from(e: wit::Envelope) -> Self {
-        Self {
-            content_type: e.content_type,
-            schema: e.schema,
-            body: e.body,
-        }
-    }
-}
-
-impl From<&ExitReason> for wit::ExitReason {
-    fn from(r: &ExitReason) -> Self {
-        match r {
-            ExitReason::Normal => Self::Normal,
-            ExitReason::Shutdown => Self::Shutdown,
-            ExitReason::Killed => Self::Killed,
-            ExitReason::Noproc => Self::Noproc,
-            ExitReason::Noconnection => Self::Noconnection,
-            ExitReason::Timeout => Self::Timeout,
-            ExitReason::Crashed(why) => Self::Crashed(why.clone()),
-        }
-    }
-}
-
-impl From<Pid> for wit::Pid {
-    fn from(p: Pid) -> Self {
-        Self {
-            node: p.node,
-            id: p.id,
-            incarnation: p.incarnation,
-        }
-    }
-}
-
-impl From<wit::Pid> for Pid {
-    fn from(p: wit::Pid) -> Self {
-        Self {
-            node: p.node,
-            id: p.id,
-            incarnation: p.incarnation,
-        }
-    }
-}
-
-impl From<&CallError> for wit::CallError {
-    fn from(e: &CallError) -> Self {
-        match e {
-            CallError::Noproc => Self::Noproc,
-            CallError::Noconnection => Self::Noconnection,
-            CallError::Timeout => Self::Timeout,
-            CallError::Overloaded => Self::Overloaded,
-            CallError::TooLarge => Self::TooLarge,
-            CallError::AccessDenied => Self::AccessDenied,
-            CallError::Exited(reason) => Self::Exited(reason.into()),
-        }
-    }
-}
-
 /// Something the host delivers to `handle-info`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Info {
@@ -237,41 +168,6 @@ impl Info {
                 late.take().map(|(name, msg)| Self::HostEvent { name, msg })
             }
             other => Some(other),
-        }
-    }
-}
-
-impl From<Info> for wit::Info {
-    fn from(info: Info) -> Self {
-        match info {
-            Info::Exit { from, reason } => Self::Exit((from.into(), (&reason).into())),
-            Info::Down {
-                reference,
-                pid,
-                reason,
-            } => Self::Down((reference, pid.into(), (&reason).into())),
-            Info::Timer { reference, msg } => Self::Timer((reference, msg.into())),
-            Info::HostEvent { name, msg } => Self::HostEvent((name, msg.into())),
-            // Resolved before delivery (`Info::resolve`); an unresolved one
-            // carries what it would resolve to now.
-            Info::Late(LateEvent(late)) => match late.take() {
-                Some((name, msg)) => Self::HostEvent((name, msg.into())),
-                None => Self::HostEvent((String::new(), Envelope::new("", "").into())),
-            },
-        }
-    }
-}
-
-impl From<wit::ExitReason> for ExitReason {
-    fn from(r: wit::ExitReason) -> Self {
-        match r {
-            wit::ExitReason::Normal => Self::Normal,
-            wit::ExitReason::Shutdown => Self::Shutdown,
-            wit::ExitReason::Killed => Self::Killed,
-            wit::ExitReason::Noproc => Self::Noproc,
-            wit::ExitReason::Noconnection => Self::Noconnection,
-            wit::ExitReason::Timeout => Self::Timeout,
-            wit::ExitReason::Crashed(why) => Self::Crashed(why),
         }
     }
 }

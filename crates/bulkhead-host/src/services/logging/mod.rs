@@ -18,39 +18,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use bulkhead_bundle::manifest::{AppSpec, Capability, LogLevel};
-use wasmtime::Result;
-use wasmtime::component::Linker;
 
-use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use super::{InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 use crate::message::Envelope;
 use crate::output::{Tags, escape_control};
 use limits::{Admit, LogLimits};
-
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    wasmtime::component::bindgen!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:host/logging",
-        imports: { default: async | trappable },
-    });
-}
-
-use bindings::wasi::logging::logging;
 
 /// The logging service.
 pub(crate) struct Logging;
@@ -142,7 +116,6 @@ pub(crate) struct Instance {
 
 impl Service for Logging {
     const CAPABILITY: Capability = Capability::Logging;
-    const INTERFACES: &'static [&'static str] = &["wasi:logging/logging"];
     type Spec = LoggingSpec;
     type Shared = Shared;
     type Instance = Instance;
@@ -168,10 +141,6 @@ impl Service for Logging {
             spec: spec.clone(),
             granted: info.granted,
         }
-    }
-
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
-        logging::add_to_linker::<T, Ctx<Self>>(linker, T::service)
     }
 
     /// `log-level` with the effective level (`trace` to `critical`), so the
@@ -206,85 +175,66 @@ fn level_name(level: LogLevel) -> &'static str {
     }
 }
 
-fn level_of(level: logging::Level) -> LogLevel {
-    match level {
-        logging::Level::Trace => LogLevel::Trace,
-        logging::Level::Debug => LogLevel::Debug,
-        logging::Level::Info => LogLevel::Info,
-        logging::Level::Warn => LogLevel::Warn,
-        logging::Level::Error => LogLevel::Error,
-        logging::Level::Critical => LogLevel::Critical,
-    }
-}
-
-impl logging::Host for ServiceCtx<'_, Instance> {
-    async fn log(&mut self, level: logging::Level, context: String, message: String) -> Result<()> {
-        let me = &*self.state;
-        if !me.granted {
-            return Ok(());
-        }
-        let level = level_of(level);
-        let t = self.tags;
-        let cap = me.shared.override_for(&t.app).unwrap_or(me.spec.level);
-        if level < cap {
-            return Ok(());
-        }
-        match me
-            .shared
-            .limits
-            .admit(&t.app, me.shared.rate(me.spec.rate_limit))
-        {
-            Admit::Drop => return Ok(()),
-            Admit::Emit { dropped: 0 } => {}
-            Admit::Emit { dropped } => {
-                tracing::warn!(target: "bulkhead::guest", app = %t.app, version = %t.version, pid = %t.pid, dropped, "log records dropped by the rate limit");
-            }
-        }
-        let (context, message) = (escape_control(&context), escape_control(&message));
-        let context = context.as_ref();
-        let pid = t.pid.to_string();
-        let (app, version) = (t.app.as_str(), t.version.as_str());
-        match level {
-            LogLevel::Trace => {
-                tracing::trace!(target: "bulkhead::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Debug => {
-                tracing::debug!(target: "bulkhead::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Info => {
-                tracing::info!(target: "bulkhead::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Warn => {
-                tracing::warn!(target: "bulkhead::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Error => {
-                tracing::error!(target: "bulkhead::guest", app, version, pid, context, "{message}")
-            }
-            LogLevel::Critical => {
-                tracing::error!(target: "bulkhead::guest", app, version, pid, context, critical = true, "{message}")
-            }
-        }
-        Ok(())
-    }
-}
-
-/// A native app's log record, through the same level and rate
-/// checks as a component's `wasi:logging` records.
-pub(crate) async fn record(
+/// A native app's log record, through the app's level and rate.
+pub(crate) fn record(
     ctx: &mut ServiceCtx<'_, Instance>,
     level: bulkhead_native::protocol::Level,
-    message: String,
+    message: &str,
 ) {
     use bulkhead_native::protocol::Level;
     let level = match level {
-        Level::Trace => logging::Level::Trace,
-        Level::Debug => logging::Level::Debug,
-        Level::Info => logging::Level::Info,
-        Level::Warn => logging::Level::Warn,
-        Level::Error => logging::Level::Error,
-        Level::Critical => logging::Level::Critical,
+        Level::Trace => LogLevel::Trace,
+        Level::Debug => LogLevel::Debug,
+        Level::Info => LogLevel::Info,
+        Level::Warn => LogLevel::Warn,
+        Level::Error => LogLevel::Error,
+        Level::Critical => LogLevel::Critical,
     };
-    let _ = logging::Host::log(ctx, level, String::new(), message).await;
+    let me = &*ctx.state;
+    if !me.granted {
+        return;
+    }
+    let t = ctx.tags;
+    let cap = me.shared.override_for(&t.app).unwrap_or(me.spec.level);
+    if level < cap {
+        return;
+    }
+    match me
+        .shared
+        .limits
+        .admit(&t.app, me.shared.rate(me.spec.rate_limit))
+    {
+        Admit::Drop => return,
+        Admit::Emit { dropped: 0 } => {}
+        Admit::Emit { dropped } => {
+            tracing::warn!(target: "bulkhead::guest", app = %t.app, version = %t.version, pid = %t.pid, dropped, "log records dropped by the rate limit");
+        }
+    }
+    let message = escape_control(message);
+    // The protocol's records carry no context.
+    let context = "";
+    let pid = t.pid.to_string();
+    let (app, version) = (t.app.as_str(), t.version.as_str());
+    match level {
+        LogLevel::Trace => {
+            tracing::trace!(target: "bulkhead::guest", app, version, pid, context, "{message}")
+        }
+        LogLevel::Debug => {
+            tracing::debug!(target: "bulkhead::guest", app, version, pid, context, "{message}")
+        }
+        LogLevel::Info => {
+            tracing::info!(target: "bulkhead::guest", app, version, pid, context, "{message}")
+        }
+        LogLevel::Warn => {
+            tracing::warn!(target: "bulkhead::guest", app, version, pid, context, "{message}")
+        }
+        LogLevel::Error => {
+            tracing::error!(target: "bulkhead::guest", app, version, pid, context, "{message}")
+        }
+        LogLevel::Critical => {
+            tracing::error!(target: "bulkhead::guest", app, version, pid, context, critical = true, "{message}")
+        }
+    }
 }
 
 #[cfg(test)]

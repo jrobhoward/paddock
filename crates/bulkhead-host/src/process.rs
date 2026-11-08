@@ -1,6 +1,5 @@
-//! The `bulkhead:runtime/process` host functions (pids, call and cast,
-//! links, monitors, registered names, timers, exit signals), on an
-//! instance's [`InstanceState`].
+//! The process functions (pids, call and cast, links, monitors, registered
+//! names, timers, exit signals), on an instance's [`InstanceState`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,9 +8,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
-use wasmtime::{Error, Result};
 
-use crate::bindings::bulkhead::runtime::{process, types};
 use crate::delivery::{self, Origin};
 use crate::instance::Message;
 use crate::mailbox;
@@ -96,12 +93,9 @@ impl Drop for Timers {
     }
 }
 
-impl types::Host for InstanceState {}
-
 impl InstanceState {
     /// Send a cast from this instance. The error says why it was dropped
-    /// ([`delivery::cast`]); a native app's cast is answered with it, a
-    /// component's is not.
+    /// ([`delivery::cast`]).
     pub(crate) fn try_cast(&self, to: Pid, msg: Envelope) -> Result<(), CallError> {
         let sent = delivery::cast(&self.ctx.rt, Origin::Local(&self.ctx.me), to, msg);
         if let Err(err) = &sent {
@@ -141,10 +135,9 @@ pub(crate) enum RegisterRefused {
     Taken(Pid),
 }
 
-/// The process functions on the host's own types: what a component's
-/// `process` imports and a native app's requests both run (ROADMAP Z9b).
-/// An `Err(String)` is a fault that ends the instance, as a trap does a
-/// component's: over a host-object limit, or a call to itself.
+/// The process functions a native app's requests run. An `Err(String)` is
+/// a fault that ends the instance: over a host-object limit, or a call to
+/// itself.
 impl InstanceState {
     /// This instance's pid.
     pub(crate) fn self_pid(&self) -> Pid {
@@ -157,7 +150,7 @@ impl InstanceState {
         to: Pid,
         msg: Envelope,
         timeout: Duration,
-    ) -> std::result::Result<std::result::Result<Envelope, CallError>, String> {
+    ) -> Result<Result<Envelope, CallError>, String> {
         if to == self.pid {
             // The call would wait on this instance's own mailbox, which it
             // cannot read until this callback returns.
@@ -175,7 +168,7 @@ impl InstanceState {
     }
 
     /// Link to `other`.
-    pub(crate) fn link_to(&mut self, other: Pid) -> std::result::Result<(), String> {
+    pub(crate) fn link_to(&mut self, other: Pid) -> Result<(), String> {
         if other == self.pid {
             return Ok(());
         }
@@ -202,7 +195,7 @@ impl InstanceState {
     }
 
     /// Monitor `other`: its reference.
-    pub(crate) fn monitor_pid(&mut self, other: Pid) -> std::result::Result<u64, String> {
+    pub(crate) fn monitor_pid(&mut self, other: Pid) -> Result<u64, String> {
         if self.ctx.rt.links.monitors_held(self.pid) >= limit(self.host_objects.monitors) {
             return Err(MONITOR_LIMIT.into());
         }
@@ -223,7 +216,7 @@ impl InstanceState {
     }
 
     /// Register this instance as `name`, which the manifest must list.
-    pub(crate) fn register_name(&mut self, name: &str) -> std::result::Result<(), RegisterRefused> {
+    pub(crate) fn register_name(&mut self, name: &str) -> Result<(), RegisterRefused> {
         if !self.registered_names.iter().any(|n| n == name) {
             return Err(RegisterRefused::AccessDenied);
         }
@@ -240,11 +233,7 @@ impl InstanceState {
     }
 
     /// Send `msg` to this instance after `ms`: the timer's reference.
-    pub(crate) fn send_after_ms(
-        &mut self,
-        ms: u32,
-        msg: Envelope,
-    ) -> std::result::Result<u64, String> {
+    pub(crate) fn send_after_ms(&mut self, ms: u32, msg: Envelope) -> Result<u64, String> {
         if !self.timers.has_room(limit(self.host_objects.timers)) {
             return Err(TIMER_LIMIT.into());
         }
@@ -285,92 +274,5 @@ impl InstanceState {
                 untrappable,
             );
         }
-    }
-}
-
-/// A component's `process` imports: [`InstanceState`]'s process functions
-/// on the WIT's types.
-impl process::Host for InstanceState {
-    async fn self_(&mut self) -> Result<types::Pid> {
-        Ok(self.self_pid().into())
-    }
-
-    async fn cast(&mut self, to: types::Pid, msg: types::Envelope) -> Result<()> {
-        // At most once: a component is not told why a cast was dropped.
-        let _ = self.try_cast(Pid::from(to), msg.into());
-        Ok(())
-    }
-
-    async fn call(
-        &mut self,
-        to: types::Pid,
-        msg: types::Envelope,
-        timeout_ms: u32,
-    ) -> Result<std::result::Result<types::Envelope, types::CallError>> {
-        let result = self
-            .call_to(
-                Pid::from(to),
-                msg.into(),
-                Duration::from_millis(timeout_ms.into()),
-            )
-            .await
-            .map_err(Error::msg)?;
-        Ok(result.map(Into::into).map_err(|e| (&e).into()))
-    }
-
-    async fn reply(&mut self, to: types::CallRef, msg: types::Envelope) -> Result<()> {
-        self.reply_to(to, msg.into());
-        Ok(())
-    }
-
-    async fn link(&mut self, other: types::Pid) -> Result<()> {
-        self.link_to(other.into()).map_err(Error::msg)
-    }
-
-    async fn unlink(&mut self, other: types::Pid) -> Result<()> {
-        self.unlink_from(other.into());
-        Ok(())
-    }
-
-    async fn trap_exits(&mut self, on: bool) -> Result<()> {
-        self.set_trapping_exits(on);
-        Ok(())
-    }
-
-    async fn monitor(&mut self, other: types::Pid) -> Result<u64> {
-        self.monitor_pid(other.into()).map_err(Error::msg)
-    }
-
-    async fn demonitor(&mut self, monitor_ref: u64) -> Result<()> {
-        self.demonitor_ref(monitor_ref);
-        Ok(())
-    }
-
-    async fn register(
-        &mut self,
-        name: String,
-    ) -> Result<std::result::Result<(), types::RegisterError>> {
-        Ok(self.register_name(&name).map_err(|e| match e {
-            RegisterRefused::AccessDenied => types::RegisterError::AccessDenied,
-            RegisterRefused::Taken(holder) => types::RegisterError::Taken(holder.into()),
-        }))
-    }
-
-    async fn whereis(&mut self, name: String) -> Result<Option<types::Pid>> {
-        Ok(self.whereis_name(&name).map(Into::into))
-    }
-
-    async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
-        self.send_after_ms(ms, msg.into()).map_err(Error::msg)
-    }
-
-    async fn cancel_timer(&mut self, timer_ref: u64) -> Result<()> {
-        self.cancel_timer_ref(timer_ref);
-        Ok(())
-    }
-
-    async fn exit(&mut self, other: types::Pid, reason: types::ExitReason) -> Result<()> {
-        self.exit_to(other.into(), ExitReason::from(reason));
-        Ok(())
     }
 }

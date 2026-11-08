@@ -121,7 +121,7 @@ The app's root supervisor, with OTP semantics.
 | `count` | `1` | Instances to run. |
 | `min`, `max` | none | Autoscaling bounds; *not enforced*. |
 | `routing` | `"round-robin"` | How calls and casts to the app pick an instance: `"round-robin"`, or `"hash:<field>"`. With hash routing, messages whose JSON or CBOR body has the same top-level `<field>` value go to the same instance. Other bodies fall back to round robin. |
-| `passivate_after_ms` | none | Passivate an instance after this long with nothing to do: `save-snapshot`, then its Store is dropped and its pid, mailbox, links, monitors, names, timers, watches and group memberships kept. The next message, signal or operation wakes it with `load-snapshot` of its own version (about 50 to 100 µs). The app's `load-snapshot` must read its own snapshots: the SDK's default refuses them, and a wake that fails ends the instance. An instance stays live while a caller waits on a deferred reply or its guest holds a host resource (a bucket handle, a stream). Each health check wakes it. Lets a node hold more instances than Store slots (`max_processes` in node config). |
+| `passivate_after_ms` | none | Passivate an instance after this long with nothing to do: `save-snapshot`, then its process ends and its pid, mailbox, links, monitors, names, timers, watches and group memberships kept. The next message, signal or operation wakes it with `load-snapshot` of its own version (about 50 to 100 µs). The app's `load-snapshot` must read its own snapshots: the SDK's default refuses them, and a wake that fails ends the instance. An instance stays live while a caller waits on a deferred reply or its guest holds a host resource (a bucket handle, a stream). Each health check wakes it. Lets a node hold more instances than Store slots (`max_processes` in node config). |
 
 ### `limits`
 
@@ -193,7 +193,7 @@ Always available, with no declaration: `bulkhead:runtime/process` and `types`, `
 salutation = "Howdy"
 ```
 
-A node built without the extension links deny stubs for the package, as for any declared interface no host provides. A native-process app declares extensions the same way and calls them through the node (below, "Native-process apps").
+A node built without the extension answers that it has none. A native-process app declares extensions the same way and calls them through the node (below, "Native-process apps").
 
 ### Capabilities at a glance
 
@@ -255,17 +255,6 @@ max_connections = 256     # default 1024: more are refused
 ```
 
 Names are unique within an app and follow the app-name rules. Upgrades keep the same listener names.
-
-### HTTP handlers
-
-A component exporting `wasi:http/incoming-handler` (any 0.2 version; the `wasi:http/proxy` world, as `wasmtime serve` runs) is an HTTP handler: each request on its routes gets a new instance, with streaming bodies, instead of a call to a running app. The world is read from the component; nothing in the manifest selects it.
-
-- `wasi:http/incoming-handler` must declare at least one route; `max_body` bounds the request body as it is read (a declared length over it is 413; past it the guest's body stream fails), and `timeout_ms` runs until the response headers (504), then again as an idle timer while either body moves (the stream is cut).
-- `limits.callback_deadline_ms` bounds the instance's guest execution; `memory_max` and the other limits apply as for any instance.
-- `listeners`, `bulkhead:groups` and a `placement.mode` other than `any` are refused. `instances` is not used.
-- Imports follow the rules above; `bulkhead:runtime/process` is available, so a handler can call apps by registered name.
-- Each request holds one of the node's `max_instances` Store slots; none free answers 503 with `Retry-After`. Upgrades apply to new requests.
-- Needs `[http]` in node config and a node built with the `http` and `egress` features (both default).
 
 ### Native-process apps
 
@@ -331,11 +320,7 @@ trusted_keys = ["RWQ..."]              # minisign public keys whose bundles are 
 policy = "/etc/bulkhead/policy.toml"    # without one, only the always-available interfaces are granted
 max_instances = 1000                   # instances holding a Store at once (each reserves address space)
 max_processes = 20000                  # all instances, passivated ones too; default max_instances
-max_core_instances_per_component = 8   # the pooling allocator's limit; 14 for componentize-py apps, which fail to load otherwise
 memory_profile = "standard"            # or "dense": 128 MiB cap per instance, many more instances
-keep_resident = "16MiB"                # per free Store slot: pages kept, zeroed, for the next instance; default 16MiB, 0 with "dense"; Linux only
-release_idle_after_s = 300             # with no instance start this long, free slots give those pages back; 0: never; Linux only
-epoch_tick_ms = 2                      # granularity of callback deadlines and preemption
 log_format = "text"                    # the node's own log on stderr; or "json", one object per line
 
 [volumes]

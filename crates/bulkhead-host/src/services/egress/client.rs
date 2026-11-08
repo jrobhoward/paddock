@@ -1,5 +1,5 @@
 //! The node's HTTP client for egress: one connection pool for every app
-//! (spike S15: wasmtime's own sender opened a connection per request),
+//! (spike S15),
 //! TLS through rustls with the system's roots and node config's CA file,
 //! and a resolver that refuses names resolving to loopback or link-local
 //! addresses.
@@ -23,10 +23,47 @@ use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::Sleep;
-use wasmtime_wasi_http::{Error, WasiBody};
 
 use super::policy::guarded;
 use crate::config::Egress;
+
+/// Why an outgoing request failed.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Error {
+    #[error("no response or body chunk in time")]
+    ConnectionReadTimeout,
+    #[error("the connection timed out")]
+    ConnectionTimeout,
+    #[error("the connection was refused")]
+    ConnectionRefused,
+    #[error("the connection ended")]
+    ConnectionTerminated,
+    #[error("the name resolves only to loopback or link-local addresses")]
+    DestinationIpProhibited,
+    #[error("the destination could not be reached")]
+    DestinationUnavailable,
+    #[error("the name could not be resolved")]
+    Dns,
+    #[error("the certificate was not accepted")]
+    TlsCertificate,
+    #[error("TLS alert: {0}")]
+    TlsAlertReceived(String),
+    #[error("TLS failed")]
+    TlsProtocol,
+    #[error("HTTP protocol error")]
+    HttpProtocol,
+    #[error("the response body is too large")]
+    HttpResponseBodySize,
+}
+
+impl From<hyper::Error> for Error {
+    fn from(_: hyper::Error) -> Self {
+        Self::HttpProtocol
+    }
+}
+
+/// A request or response body.
+pub(crate) type WasiBody = http_body_util::combinators::UnsyncBoxBody<Bytes, Error>;
 
 /// The pool every app's requests go through.
 pub(crate) struct Pool {
@@ -118,7 +155,7 @@ impl Pool {
     }
 }
 
-/// The wasi:http error for a client error, from what caused it.
+/// The error for a client error, from what caused it.
 fn classify(e: &hyper_util::client::legacy::Error) -> Error {
     let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(e);
     let mut dns = false;
@@ -139,12 +176,9 @@ fn classify(e: &hyper_util::client::legacy::Error) -> Error {
             }
             if let Some(tls) = err.downcast_ref::<rustls::Error>() {
                 return match tls {
-                    rustls::Error::InvalidCertificate(_) => Error::TlsCertificateError,
-                    rustls::Error::AlertReceived(_) => Error::TlsAlertReceived {
-                        alert_id: None,
-                        alert_message: Some(tls.to_string()),
-                    },
-                    _ => Error::TlsProtocolError,
+                    rustls::Error::InvalidCertificate(_) => Error::TlsCertificate,
+                    rustls::Error::AlertReceived(_) => Error::TlsAlertReceived(tls.to_string()),
+                    _ => Error::TlsProtocol,
                 };
             }
             if let Some(io) = err.downcast_ref::<std::io::Error>() {
@@ -165,15 +199,12 @@ fn classify(e: &hyper_util::client::legacy::Error) -> Error {
         cause = c.source();
     }
     if dns {
-        return Error::DnsError {
-            rcode: None,
-            info_code: None,
-        };
+        return Error::Dns;
     }
     if e.is_connect() {
         Error::DestinationUnavailable
     } else {
-        Error::HttpProtocolError
+        Error::HttpProtocol
     }
 }
 

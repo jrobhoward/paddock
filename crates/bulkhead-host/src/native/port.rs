@@ -883,7 +883,6 @@ mod linux {
 
     /// The app's stdout and stderr, as log lines.
     async fn copy_log(mut log: pipe::Receiver, output: CapturedOutput) {
-        use wasmtime_wasi::cli::StdoutStream;
         let mut lines = std::pin::Pin::from(output.async_stream());
         let _ = tokio::io::copy(&mut log, &mut lines).await;
         let _ = lines.shutdown().await;

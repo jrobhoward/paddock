@@ -1,14 +1,18 @@
-//! The Bulkhead host runtime: a wasmtime engine with a pooling allocator, an
-//! epoch ticker, and instances that each own a Store, resource limits and a
-//! bounded mailbox, driven one callback at a time by a tokio task.
+//! The Bulkhead host runtime: instances that each run a native process (or,
+//! for tests, an in-process app) with resource limits and a bounded mailbox,
+//! driven one callback at a time by a tokio task.
 //!
 //! ```no_run
 //! use std::time::Duration;
-//! use bulkhead_host::{Envelope, InstanceSpec, Runtime, RuntimeConfig};
+//! use bulkhead_bundle::manifest::NativeProgram;
+//! use bulkhead_host::{Envelope, InstanceSpec, NativeCode, Runtime, RuntimeConfig};
 //!
-//! # async fn demo(component: &[u8], spec: InstanceSpec) -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn demo(spec: InstanceSpec) -> Result<(), Box<dyn std::error::Error>> {
 //! let runtime = Runtime::new(RuntimeConfig::default())?;
-//! let app = runtime.load(component)?;
+//! let app = runtime.load_native(NativeCode {
+//!     path: "/usr/local/lib/orders".into(),
+//!     kind: NativeProgram::Executable,
+//! });
 //! let instance = runtime.spawn(&app, spec)?;
 //! let reply = instance
 //!     .call(Envelope::new("text/plain", "ping"), Duration::from_secs(1))
@@ -20,11 +24,8 @@
 
 pub mod acl;
 mod apps;
-mod bindings;
-mod compiled;
 mod config;
 mod delivery;
-mod deny;
 mod error;
 pub mod failover;
 mod formats;
@@ -45,10 +46,8 @@ mod native;
 mod output;
 pub mod pid;
 mod pool;
-mod pool_memory;
 mod probe;
 mod process;
-mod ready;
 mod registry;
 mod replication;
 mod runtime;
@@ -76,7 +75,7 @@ pub use handover::Handover;
 pub use instance::{InstanceEvent, InstanceHandle, SnapshotError};
 pub use lifecycle::LifecycleState;
 pub use links::LinkInfo;
-pub use listener::{CONNECTION_WORLD, Listener, ListenerSpec, ListenerStats, LoadedConnection};
+pub use listener::{Listener, ListenerSpec, ListenerStats};
 pub use message::{CallError, Envelope, ExitReason};
 pub use native::NativeCode;
 pub use pid::Pid;
@@ -92,6 +91,3 @@ pub use supervisor::{
 };
 pub use transport::membership::{Member, Role};
 pub use upgrade::{UpgradeError, validate_blue_green, validate_upgrade};
-/// The wasmtime this crate links against, for extensions' bindings
-/// ([`services::extension`]).
-pub use wasmtime;

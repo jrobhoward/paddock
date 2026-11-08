@@ -184,7 +184,7 @@ async fn between_callbacks(
 ) -> Result<(), ExitReason> {
     match incoming {
         Some(Incoming::Frame(FromApp::Log { level, message })) => {
-            log(state, level, message).await;
+            log(state, level, &message);
             Ok(())
         }
         Some(Incoming::Frame(FromApp::Pong { id })) => {
@@ -270,8 +270,8 @@ async fn lease_changed(lease: Option<&mut watch::Receiver<RunUntil>>) {
 }
 
 /// Log a record from the app.
-async fn log(state: &mut InstanceState, level: p::Level, message: String) {
-    logging::record(&mut HostState::<Logging>::service(state), level, message).await;
+fn log(state: &mut InstanceState, level: p::Level, message: &str) {
+    logging::record(&mut HostState::<Logging>::service(state), level, message);
 }
 
 /// A cast's answer: `Unit` once queued, or why it was not.
@@ -750,7 +750,7 @@ impl InstanceTask {
             return Some(stop);
         }
         // Set once started; the version running when it passivated.
-        let Some(code) = self.app.as_ref().and_then(LoadedApp::native).cloned() else {
+        let Some(code) = self.app.as_ref().map(LoadedApp::native).cloned() else {
             return Some(ExitReason::Crashed("no_code".into()));
         };
         let rt = state.ctx.rt.clone();
@@ -800,14 +800,12 @@ impl InstanceTask {
         from_version: &str,
     ) -> Result<Duration, UpgradeError> {
         let started = std::time::Instant::now();
-        let Some(code) = app
-            .native()
-            .filter(|code| code.kind() == NativeProgram::Executable)
-        else {
+        let code = app.native();
+        if code.kind() != NativeProgram::Executable {
             return Err(UpgradeError::Invalid(
                 "a native executable upgrades in snapshot mode to a native executable only".into(),
             ));
-        };
+        }
         self.set_state(LifecycleState::Upgrading);
         let snapshot = self
             .native_save(state, port, spec)
@@ -886,7 +884,7 @@ impl InstanceTask {
     async fn native_hello(&mut self, port: &mut Port, timeout: Duration) -> Result<(), ExitReason> {
         let hello = tokio::time::timeout(timeout, port.recv());
         let crashed = |why: String| Err(ExitReason::Crashed(why));
-        match super::killable(&self.kill, &self.control, None, hello).await? {
+        match super::killable(&self.kill, &self.control, hello).await? {
             Err(_elapsed) => {
                 port.kill();
                 crashed("init_timeout".into())
@@ -942,7 +940,7 @@ impl InstanceTask {
             // worker, in its LIFO slot where nobody steals it: yield to it
             // rather than watch the rings (ROADMAP T9, B15).
             let watch = !self.me.take_woke();
-            let step = super::killable(&self.kill, &self.control, None, async {
+            let step = super::killable(&self.kill, &self.control, async {
                 tokio::select! {
                     biased;
                     () = timer.as_mut() => Step::Timer,
@@ -980,7 +978,7 @@ impl InstanceTask {
                     let asked_for = HostState::<Sockets>::service(state)
                         .state
                         .native(request, budget);
-                    match super::killable(&self.kill, &self.control, None, asked_for).await {
+                    match super::killable(&self.kill, &self.control, asked_for).await {
                         Ok(reply) => {
                             let answer = Answer::Net(pass_socket(port, reply));
                             port.send(&ToApp::Answer { id, answer });
@@ -994,13 +992,8 @@ impl InstanceTask {
                 }
                 Some(Incoming::Frame(FromApp::Request { id, request })) => {
                     let asked = Instant::now();
-                    match super::killable(
-                        &self.kill,
-                        &self.control,
-                        None,
-                        answer(state, request, budget),
-                    )
-                    .await
+                    match super::killable(&self.kill, &self.control, answer(state, request, budget))
+                        .await
                     {
                         Ok(Ok(answer)) => port.send(&ToApp::Answer { id, answer }),
                         Ok(Err(why)) => {
@@ -1017,9 +1010,7 @@ impl InstanceTask {
                 Some(Incoming::Kv(call)) => {
                     let asked = Instant::now();
                     let id = call.id;
-                    match super::killable(&self.kill, &self.control, None, kv_hot(state, call))
-                        .await
-                    {
+                    match super::killable(&self.kill, &self.control, kv_hot(state, call)).await {
                         Ok(Ok(outcome)) => send_kv(port, id, outcome),
                         Ok(Err(e)) => port.send(&ToApp::Answer {
                             id,
@@ -1033,7 +1024,7 @@ impl InstanceTask {
                     host += asked.elapsed();
                 }
                 Some(Incoming::Frame(FromApp::Log { level, message })) => {
-                    log(state, level, message).await;
+                    log(state, level, &message);
                 }
                 Some(Incoming::Frame(FromApp::Pong { .. })) => {}
                 Some(Incoming::Frame(FromApp::Metrics(updates))) => {
@@ -1044,9 +1035,8 @@ impl InstanceTask {
                         log(
                             state,
                             p::Level::Warn,
-                            format!("metric updates refused: {e:?}"),
-                        )
-                        .await;
+                            &format!("metric updates refused: {e:?}"),
+                        );
                     }
                 }
                 Some(Incoming::Frame(FromApp::Failed(why))) => {
@@ -1364,7 +1354,7 @@ impl InstanceTask {
         let snapshots = self
             .app
             .as_ref()
-            .and_then(LoadedApp::native)
+            .map(LoadedApp::native)
             .is_some_and(|code| code.kind() == NativeProgram::Executable);
         match op {
             Op::Upgrade { reply, .. } if !snapshots => {

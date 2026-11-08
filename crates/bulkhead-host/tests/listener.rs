@@ -210,7 +210,7 @@ async fn connection____line_protocol____served_and_closed_by_quit() {
     assert_ne!(pid_a, pid_b, "each on its own instance");
     assert_eq!(quit, None);
     let stats = listener.stats();
-    assert_eq!((stats.accepted, stats.active, stats.crashed), (2, 1, 0));
+    assert_eq!((stats.accepted, stats.active), (2, 1));
     listener.stop();
 }
 

@@ -160,9 +160,6 @@ pub fn detail(d: &AppDetail) -> String {
     ));
     out.push(format!("granted:   {}", list(&d.granted)));
     out.push(format!("denied:    {}", list(&d.denied)));
-    if !d.stubbed.is_empty() {
-        out.push(format!("stubbed:   {}", list(&d.stubbed)));
-    }
     for w in &d.warnings {
         out.push(format!("warning:   {w}"));
     }
@@ -181,7 +178,6 @@ pub fn detail(d: &AppDetail) -> String {
                     l.active.to_string(),
                     l.accepted.to_string(),
                     l.refused.to_string(),
-                    l.crashed.to_string(),
                     l.idle_closed.to_string(),
                 ]
             })
@@ -194,7 +190,6 @@ pub fn detail(d: &AppDetail) -> String {
                 "ACTIVE",
                 "ACCEPTED",
                 "REFUSED",
-                "CRASHED",
                 "IDLE CLOSED",
             ],
             &rows,

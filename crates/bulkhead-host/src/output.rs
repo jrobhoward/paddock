@@ -1,7 +1,7 @@
-//! Guest stdout and stderr, captured as tagged log records.
+//! An app's stdout and stderr, captured as tagged log records.
 //!
-//! wasmtime writes guest output from its own task, outside the instance's
-//! tracing span, so each record carries its app, version and pid itself.
+//! The log pipe is read by a task of its own, outside the instance's tracing
+//! span, so each record carries its app, version and pid itself.
 //!
 //! Every line counts against the app's log rate ([`LogRate`]), the same
 //! budget `wasi:logging` records use. Control characters in guest text are
@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tokio::io::AsyncWrite;
-use wasmtime_wasi::cli::{IsTerminal, StdoutStream};
 
 use crate::pid::Pid;
 use crate::services::logging::LogRate;
@@ -60,16 +59,9 @@ impl CapturedOutput {
     pub(crate) fn new(tags: Arc<Tags>, stream: &'static str, rate: LogRate) -> Self {
         Self { tags, stream, rate }
     }
-}
 
-impl IsTerminal for CapturedOutput {
-    fn is_terminal(&self) -> bool {
-        false
-    }
-}
-
-impl StdoutStream for CapturedOutput {
-    fn async_stream(&self) -> Box<dyn AsyncWrite + Send + Sync> {
+    /// A writer turning what it is given into log records, line by line.
+    pub(crate) fn async_stream(&self) -> Box<dyn AsyncWrite + Send + Sync> {
         Box::new(LineWriter {
             output: self.clone(),
             buffer: Vec::new(),

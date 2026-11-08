@@ -6,13 +6,9 @@
 //! # admin_socket = "/var/lib/bulkhead/admin.sock"   (the default)
 //! trusted_keys = ["RWQ..."]
 //! policy = "/etc/bulkhead/policy.toml"
-//! max_instances = 1000           # instances holding a Store at once
+//! max_instances = 1000           # instances on the node
 //! max_processes = 20000          # all instances, passivated ones too
-//! max_core_instances_per_component = 8   # 14 for componentize-py apps
 //! memory_profile = "standard"   # or "dense"
-//! keep_resident = "16MiB"       # per free instance slot; profile's default
-//! release_idle_after_s = 300    # give those pages back after this long with no
-//!                               # instance start; 0: never
 //!
 //! [volumes]
 //! orders-data = "/srv/bulkhead/volumes/orders-data"
@@ -153,26 +149,9 @@ pub struct NodeConfig {
     /// `max_instances`.
     #[serde(default)]
     pub max_processes: Option<u32>,
-    /// Most core module instances one component may contain (the pooling
-    /// allocator's limit); at least 1. Python components built with
-    /// componentize-py need 14.
-    #[serde(default = "default_max_core_instances_per_component")]
-    pub max_core_instances_per_component: u32,
     /// Address-space profile.
     #[serde(default)]
     pub memory_profile: MemoryProfile,
-    /// Memory a free instance slot keeps resident for the next instance;
-    /// unset: 16 MiB with the standard profile, none with dense.
-    #[serde(default)]
-    pub keep_resident: Option<ByteSize>,
-    /// Seconds with no Store taken (a start, wake, upgrade, connection or
-    /// HTTP handler request) after which free slots' kept pages go back to
-    /// the kernel; 0 never.
-    #[serde(default = "default_release_idle_after_s")]
-    pub release_idle_after_s: u64,
-    /// Epoch tick, in milliseconds.
-    #[serde(default = "default_tick")]
-    pub epoch_tick_ms: u64,
     /// How the node writes its log to stderr.
     #[serde(default)]
     pub log_format: LogFormat,
@@ -519,10 +498,6 @@ impl Default for ClusterConfig {
             send_buffer_bytes: default_send_buffer_bytes(),
         }
     }
-}
-
-fn default_release_idle_after_s() -> u64 {
-    300
 }
 
 fn default_heartbeat_ms() -> u64 {
@@ -991,12 +966,26 @@ fn default_max_instances() -> u32 {
     1_000
 }
 
-fn default_max_core_instances_per_component() -> u32 {
-    8
-}
+/// Keys that only WebAssembly components read, gone with them.
+const REMOVED_KEYS: [&str; 4] = [
+    "max_core_instances_per_component",
+    "keep_resident",
+    "release_idle_after_s",
+    "epoch_tick_ms",
+];
 
-fn default_tick() -> u64 {
-    2
+/// Refuse a config naming a key that went with components, saying so.
+fn refuse_removed_keys(text: &str) -> Result<(), NodeError> {
+    let Ok(table) = text.parse::<toml::Table>() else {
+        // The full parse reports it.
+        return Ok(());
+    };
+    match REMOVED_KEYS.iter().find(|key| table.contains_key(**key)) {
+        Some(key) => Err(NodeError::Invalid(format!(
+            "node config: {key} was removed with WebAssembly components; delete it"
+        ))),
+        None => Ok(()),
+    }
 }
 
 impl NodeConfig {
@@ -1089,6 +1078,7 @@ impl NodeConfig {
     ///
     /// [`NodeError::Invalid`] with the location of the problem.
     pub fn from_toml_str(text: &str) -> Result<Self, NodeError> {
+        refuse_removed_keys(text)?;
         let config: Self =
             toml::from_str(text).map_err(|e| NodeError::Invalid(format!("node config: {e}")))?;
         let cluster = &config.cluster;
@@ -1208,11 +1198,6 @@ impl NodeConfig {
         {
             return Err(NodeError::Invalid(
                 "node config: max_processes must be at least max_instances".into(),
-            ));
-        }
-        if config.max_core_instances_per_component == 0 {
-            return Err(NodeError::Invalid(
-                "node config: max_core_instances_per_component must be at least 1".into(),
             ));
         }
         for (name, value) in [

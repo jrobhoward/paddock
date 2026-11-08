@@ -51,7 +51,6 @@ fn detail____failed_app____shows_reason_and_denied() {
         signer: "RWQ".into(),
         granted: vec!["wasi:logging".into()],
         denied: vec!["wasi:keyvalue".into()],
-        stubbed: vec![],
         warnings: vec!["observability.metrics is not enforced".into()],
         restarts: 3,
         instance_list: vec![],
@@ -127,7 +126,6 @@ fn detail____connection_handler____lists_listeners() {
         signer: "RWQ".into(),
         granted: vec![],
         denied: vec![],
-        stubbed: vec![],
         warnings: vec![],
         restarts: 0,
         instance_list: vec![],
@@ -137,7 +135,6 @@ fn detail____connection_handler____lists_listeners() {
             active: 3,
             accepted: 40,
             refused: 1,
-            crashed: 2,
             idle_closed: 5,
         }],
     };

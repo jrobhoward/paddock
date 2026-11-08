@@ -1,26 +1,18 @@
-//! The engine, the epoch ticker and instance spawning.
+//! The node's runtime: instance spawning and the node-wide tables.
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
-
-use wasmtime::component::{HasSelf, Linker};
-use wasmtime::{Config, Enabled, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
+use std::time::Duration;
 
 use crate::apps::{self, AppDeployment, Apps};
-use crate::bindings::{BulkheadApp, BulkheadAppPre};
-use crate::compiled;
-use crate::config::{HostObjects, MemoryProfile, NativeConfig, RuntimeConfig};
+use crate::config::{HostObjects, NativeConfig, RuntimeConfig};
 use crate::delivery::{self, Origin};
-use crate::deny;
-use crate::error::{HostError, describe};
+use crate::error::HostError;
 use crate::instance::{self, InstanceEvent, InstanceHandle};
 use crate::links::{LinkInfo, LinkTable};
-use crate::listener::{self, Listener, ListenerSpec, LoadedConnection};
+use crate::listener::{self, Listener, ListenerSpec};
 use crate::message::{CallError, Envelope};
 use crate::metrics::Metrics;
 use crate::native::{NativeCode, Program};
@@ -29,7 +21,6 @@ use crate::pool::Pool;
 use crate::registry::Registry;
 use crate::services::{self, Extension};
 use crate::spec::InstanceSpec;
-use crate::state::InstanceState;
 use crate::supervisor::{self, SupervisorHandle, SupervisorSpec};
 use crate::table::ProcessTable;
 use crate::transport::liveness::{HeartbeatPath, Liveness, NodeEvent, PeerStatus};
@@ -39,16 +30,14 @@ use bulkhead_bundle::manifest::LogLevel;
 
 /// Hosts instances on one node.
 ///
-/// Must be used from a multi-threaded tokio runtime: with `current_thread`,
-/// timers and other tasks starve while a guest yields every epoch tick
-/// (spike S1).
+/// Must be used from a multi-threaded tokio runtime: native instances'
+/// waits spin on it (spike S32).
 #[derive(Debug, Clone)]
 pub struct Runtime {
     inner: Arc<RuntimeInner>,
 }
 
 pub(crate) struct RuntimeInner {
-    pub(crate) engine: Engine,
     pub(crate) table: ProcessTable,
     pub(crate) registry: Registry,
     pub(crate) links: LinkTable,
@@ -70,22 +59,11 @@ pub(crate) struct RuntimeInner {
     /// A pair's version newer than this build, once replication applied
     /// one ([`Runtime::formats_outrun`]).
     pub(crate) formats_outrun: tokio::sync::watch::Sender<Option<u16>>,
-    /// One permit per Store the pooling allocator has room for, held by
-    /// each instance while it has a Store (not while passivated).
-    pub(crate) slots: Arc<tokio::sync::Semaphore>,
-    /// Signalled once for each instance that waits for a slot: one idle
-    /// instance that may be passivated is, at once. Waiters are woken in
-    /// the order they began waiting, so the one idle longest goes first.
-    pub(crate) slot_wanted: tokio::sync::Notify,
-    /// When Store slots were last taken, and their memory released
-    /// ([`crate::pool_memory`]).
-    pub(crate) pool_memory: crate::pool_memory::PoolMemory,
     /// Instance exits and supervisor restarts, for whoever listens
     /// ([`Runtime::instance_events`]).
     pub(crate) instance_events: tokio::sync::broadcast::Sender<InstanceEvent>,
     next_id: AtomicU64,
     config: RuntimeConfig,
-    _ticker: Ticker,
 }
 
 impl RuntimeInner {
@@ -117,19 +95,9 @@ impl RuntimeInner {
         &self.config.native
     }
 
-    /// The runtime's configuration.
-    pub(crate) fn config(&self) -> &RuntimeConfig {
-        &self.config
-    }
-
     /// The transport to other nodes, once set.
     pub(crate) fn transport(&self) -> Option<&Arc<dyn Transport>> {
         self.transport.get()
-    }
-
-    /// A fresh instance id.
-    pub(crate) fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// The instance of the running app called `name` that `msg` routes to
@@ -167,73 +135,31 @@ impl fmt::Debug for RuntimeInner {
     }
 }
 
-/// A compiled component, linked against the host and ready to instantiate,
-/// or a native-process app's program.
+/// A native-process app's program, or an in-process test app.
 #[derive(Clone)]
 pub struct LoadedApp {
-    code: Code,
-    stubbed: Arc<Vec<String>>,
-}
-
-/// What a loaded app runs.
-#[derive(Clone)]
-enum Code {
-    Component(BulkheadAppPre<InstanceState>),
-    Native(Arc<Program>),
+    code: Arc<Program>,
 }
 
 impl LoadedApp {
-    /// The component, ready to instantiate.
-    ///
-    /// # Errors
-    ///
-    /// A native-process app has none.
-    pub(crate) fn component(&self) -> wasmtime::Result<&BulkheadAppPre<InstanceState>> {
-        match &self.code {
-            Code::Component(pre) => Ok(pre),
-            Code::Native(_) => Err(wasmtime::Error::msg(
-                "a native-process app has no component",
-            )),
-        }
-    }
-
-    /// A native-process app's program.
-    pub(crate) fn native(&self) -> Option<&Arc<Program>> {
-        match &self.code {
-            Code::Native(program) => Some(program),
-            Code::Component(_) => None,
-        }
-    }
-
-    /// Whether this is a native-process app.
-    #[must_use]
-    pub fn is_native(&self) -> bool {
-        self.native().is_some()
-    }
-
-    /// Imported interfaces no host here provides, linked to deny stubs.
-    #[must_use]
-    pub fn stubbed_imports(&self) -> &[String] {
-        &self.stubbed
+    /// The app's program.
+    pub(crate) fn native(&self) -> &Arc<Program> {
+        &self.code
     }
 }
 
 impl fmt::Debug for LoadedApp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LoadedApp")
-            .field("stubbed", &self.stubbed)
-            .finish_non_exhaustive()
+        f.debug_struct("LoadedApp").finish_non_exhaustive()
     }
 }
 
 impl Runtime {
-    /// Create the engine and start the epoch ticker.
+    /// Create the runtime.
     ///
     /// # Errors
     ///
-    /// [`HostError::Engine`] if wasmtime rejects the configuration (for
-    /// example when the pool cannot reserve its address space) or the epoch
-    /// thread cannot start, and [`HostError::NativeCgroup`] if
+    /// [`HostError::NativeCgroup`] if
     /// `native.cgroup` is set but the node cannot move itself into it.
     pub fn new(config: RuntimeConfig) -> Result<Self, HostError> {
         Self::with_extensions(config, Vec::new())
@@ -245,8 +171,7 @@ impl Runtime {
     /// # Errors
     ///
     /// As for [`Runtime::new`], and [`HostError::Engine`] for an extension
-    /// whose package is not a valid extension key, is served twice, or
-    /// cannot link.
+    /// whose package is not a valid extension key or is served twice.
     pub fn with_extensions(
         config: RuntimeConfig,
         extensions: Vec<Arc<dyn Extension>>,
@@ -276,15 +201,8 @@ impl Runtime {
                 )));
             }
         }
-        let engine =
-            Engine::new(&engine_config(&config)).map_err(|e| HostError::Engine(describe(&e)))?;
-        // Fail now, not at the first load, if the host interfaces cannot link.
-        base_linker(&engine, &extensions).map_err(|e| HostError::Engine(describe(&e)))?;
         let services = services::Shared::new(&config)?;
-        let ticker = Ticker::start(engine.clone(), config.epoch_tick)
-            .map_err(|e| HostError::Engine(format!("cannot start the epoch thread: {e}")))?;
         let inner = Arc::new(RuntimeInner {
-            engine,
             table: ProcessTable::default(),
             registry: Registry::default(),
             links: LinkTable::new(config.node),
@@ -306,55 +224,12 @@ impl Runtime {
             failover: crate::failover::Shared::default(),
             handovers: crate::handover::Pending::default(),
             formats_outrun: tokio::sync::watch::channel(None).0,
-            slots: Arc::new(tokio::sync::Semaphore::new(
-                usize::try_from(config.max_instances).unwrap_or(usize::MAX),
-            )),
-            slot_wanted: tokio::sync::Notify::new(),
-            pool_memory: crate::pool_memory::PoolMemory::default(),
             instance_events: tokio::sync::broadcast::channel(1024).0,
             next_id: AtomicU64::new(crate::pid::instance_id(config.creation, 1)),
             config,
-            _ticker: ticker,
         });
         inner.services.groups().attach(&inner);
         Ok(Self { inner })
-    }
-
-    /// Compile a component and link it against the host. Imported
-    /// interfaces the host does not provide are linked to deny stubs (see
-    /// [`LoadedApp::stubbed_imports`]).
-    ///
-    /// # Errors
-    ///
-    /// [`HostError::Load`] if the bytes are not a valid component or it
-    /// cannot link, for example a provided interface at an incompatible
-    /// version.
-    pub fn load(&self, component: &[u8]) -> Result<LoadedApp, HostError> {
-        self.load_with(component, None)
-    }
-
-    /// [`Runtime::load`], keeping the compiled code in the file `cache`: a
-    /// later load with the same `cache` (after a restart) reads it instead
-    /// of compiling again. The caller names the file after the component's
-    /// contents, so a different component never reads it. A file group or
-    /// others can write, or one from another wasmtime version or engine
-    /// configuration, is compiled again and replaced.
-    ///
-    /// # Errors
-    ///
-    /// As for [`Runtime::load`]; a cache that cannot be read or written is
-    /// logged and skipped, not an error.
-    pub fn load_cached(&self, component: &[u8], cache: &Path) -> Result<LoadedApp, HostError> {
-        self.load_with(component, Some(cache))
-    }
-
-    fn load_with(&self, component: &[u8], cache: Option<&Path>) -> Result<LoadedApp, HostError> {
-        let load = |e: wasmtime::Error| HostError::Load(describe(&e));
-        let (pre, stubbed) = self.link(component, cache).map_err(load)?;
-        Ok(LoadedApp {
-            code: Code::Component(BulkheadAppPre::new(pre).map_err(load)?),
-            stubbed: Arc::new(stubbed),
-        })
     }
 
     /// A native-process app whose program is `program`: its
@@ -363,8 +238,7 @@ impl Runtime {
     #[must_use]
     pub fn load_native(&self, program: NativeCode) -> LoadedApp {
         LoadedApp {
-            code: Code::Native(Arc::new(Program::Process(program))),
-            stubbed: Arc::new(Vec::new()),
+            code: Arc::new(Program::Process(program)),
         }
     }
 
@@ -375,112 +249,10 @@ impl Runtime {
     #[must_use]
     pub fn load_in_process<A: crate::in_process::TestApp>(&self) -> LoadedApp {
         LoadedApp {
-            code: Code::Native(Arc::new(Program::InProcess(
+            code: Arc::new(Program::InProcess(
                 crate::in_process::InProcessApp::of::<A>(),
-            ))),
-            stubbed: Arc::new(Vec::new()),
+            )),
         }
-    }
-
-    /// Compile a connection-handler component
-    /// (`bulkhead:connection/connection-handler`) and link it, as
-    /// [`Runtime::load`] does for apps.
-    ///
-    /// # Errors
-    ///
-    /// As for [`Runtime::load`], including a component that does not export
-    /// the connection handler.
-    pub fn load_connection(&self, component: &[u8]) -> Result<LoadedConnection, HostError> {
-        self.load_connection_with(component, None)
-    }
-
-    /// [`Runtime::load_connection`], keeping the compiled code in `cache`
-    /// as [`Runtime::load_cached`] does.
-    ///
-    /// # Errors
-    ///
-    /// As for [`Runtime::load_connection`].
-    pub fn load_connection_cached(
-        &self,
-        component: &[u8],
-        cache: &Path,
-    ) -> Result<LoadedConnection, HostError> {
-        self.load_connection_with(component, Some(cache))
-    }
-
-    fn load_connection_with(
-        &self,
-        component: &[u8],
-        cache: Option<&Path>,
-    ) -> Result<LoadedConnection, HostError> {
-        let load = |e: wasmtime::Error| HostError::Load(describe(&e));
-        let (pre, stubbed) = self.link(component, cache).map_err(load)?;
-        LoadedConnection::new(pre, stubbed).map_err(load)
-    }
-
-    /// Compile an HTTP-handler component (`wasi:http/proxy`, exporting
-    /// `wasi:http/incoming-handler`) and link it, as [`Runtime::load`] does
-    /// for apps, keeping the compiled code in `cache` when given (see
-    /// [`Runtime::load_cached`]).
-    ///
-    /// # Errors
-    ///
-    /// As for [`Runtime::load`], including a component that does not export
-    /// `wasi:http/incoming-handler` at a 0.2 version; [`HostError::Load`]
-    /// in a build without the `egress` feature, which links no `wasi:http`.
-    #[cfg(feature = "http")]
-    pub fn load_handler(
-        &self,
-        component: &[u8],
-        cache: Option<&Path>,
-    ) -> Result<crate::http::LoadedHandler, HostError> {
-        #[cfg(feature = "egress")]
-        {
-            let load = |e: wasmtime::Error| HostError::Load(describe(&e));
-            let (pre, stubbed) = self.link(component, cache).map_err(load)?;
-            Ok(crate::http::LoadedHandler {
-                pre: wasmtime_wasi_http::p2::bindings::ProxyPre::new(pre).map_err(load)?,
-                stubbed: Arc::new(stubbed),
-            })
-        }
-        #[cfg(not(feature = "egress"))]
-        {
-            let _ = (component, cache);
-            Err(HostError::Load(
-                "this build has no wasi:http, which HTTP handlers need (cargo feature `egress`)"
-                    .into(),
-            ))
-        }
-    }
-
-    fn link(
-        &self,
-        component: &[u8],
-        cache: Option<&Path>,
-    ) -> wasmtime::Result<(wasmtime::component::InstancePre<InstanceState>, Vec<String>)> {
-        let engine = &self.inner.engine;
-        let component = compiled::component(engine, component, cache)?;
-        let extensions = &self.inner.extensions;
-        let mut linker = base_linker(engine, extensions)?;
-        let served: Vec<&str> = extensions.iter().map(|e| e.package()).collect();
-        let stubbed = deny::link_stubs(&mut linker, engine, &component, &served)?;
-        Ok((linker.instantiate_pre(&component)?, stubbed))
-    }
-
-    /// Bind a listener and hand each accepted connection to a new instance
-    /// of `connection`, run with `spec`'s limits and services
-    /// ([`crate::listener`]). Must be called inside the tokio runtime.
-    ///
-    /// # Errors
-    ///
-    /// [`HostError::Listen`] if the address cannot be bound.
-    pub fn listen(
-        &self,
-        listener: ListenerSpec,
-        connection: LoadedConnection,
-        spec: InstanceSpec,
-    ) -> Result<Listener, HostError> {
-        listener::listen(&self.inner, listener, connection, spec)
     }
 
     /// Bind a listener and hand each accepted connection to an instance of
@@ -827,30 +599,13 @@ impl Runtime {
     /// Every app's metrics and the host's, in the Prometheus text format.
     #[must_use]
     pub fn render_metrics(&self) -> String {
-        let mut out = self.inner.metrics.render(&self.instances());
-        crate::pool_memory::render(&self.inner, &mut out);
-        out
-    }
-
-    /// Give free Store slots' kept pages back to the kernel now, as
-    /// [`RuntimeConfig::release_idle_after`] does once starts are quiet.
-    /// Starts wait while it runs. Returns the bytes released (0 if a slot
-    /// was taken or freed as it began).
-    pub async fn release_idle_memory(&self) -> u64 {
-        crate::pool_memory::release(&self.inner).await
+        self.inner.metrics.render(&self.instances())
     }
 
     /// Number of live instances, passivated or not.
     #[must_use]
     pub fn instance_count(&self) -> usize {
         self.inner.table.len()
-    }
-
-    /// Number of instances holding a Store now: those not passivated.
-    #[must_use]
-    pub fn store_count(&self) -> usize {
-        let slots = usize::try_from(self.inner.config.max_instances).unwrap_or(usize::MAX);
-        slots.saturating_sub(self.inner.slots.available_permits())
     }
 
     fn start(
@@ -895,110 +650,7 @@ impl Runtime {
                 Some(pid) => HostError::StillRunning(pid),
                 None => HostError::InstanceLimit(processes),
             })?;
-        crate::pool_memory::start_once(&self.inner);
         tokio::spawn(task.run(self.inner.clone(), app.clone(), spec));
         Ok(handle)
-    }
-}
-
-/// The host interfaces every app is linked against.
-fn base_linker(
-    engine: &Engine,
-    extensions: &[Arc<dyn Extension>],
-) -> wasmtime::Result<Linker<InstanceState>> {
-    let mut linker = Linker::new(engine);
-    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-    services::sockets::shadow(&mut linker)?;
-    crate::ready::link(&mut linker)?;
-    BulkheadApp::add_to_linker::<_, HasSelf<_>>(&mut linker, |s| s)?;
-    services::link(&mut linker)?;
-    for ext in extensions {
-        ext.link(&mut linker)?;
-    }
-    Ok(linker)
-}
-
-fn engine_config(config: &RuntimeConfig) -> Config {
-    let n = config.max_instances;
-    let core = config.max_core_instances_per_component;
-    let mut pool = PoolingAllocationConfig::default();
-    // Per-component counts from S2's Rust guests, with headroom; core
-    // instances from the node config (S22: componentize-py needs 14).
-    pool.total_component_instances(n)
-        .total_core_instances(n.saturating_mul(core))
-        .total_memories(n.saturating_mul(2))
-        .total_tables(n.saturating_mul(4))
-        .max_core_instances_per_component(core)
-        .max_memories_per_component(4)
-        .max_tables_per_component(8)
-        // Each live Store holds a fiber stack (S2).
-        .total_stacks(n)
-        .max_memory_size(usize::try_from(config.memory_profile.memory_max()).unwrap_or(usize::MAX));
-    let keep = config
-        .keep_resident
-        .unwrap_or_else(|| config.memory_profile.keep_resident());
-    if keep > 0 {
-        // Zero only the pages the guest wrote (Linux 6.7's PAGEMAP_SCAN,
-        // where the kernel has it), so a slot holds what its last instance
-        // used rather than `keep` bytes of its memory.
-        pool.linear_memory_keep_resident(usize::try_from(keep).unwrap_or(usize::MAX))
-            .pagemap_scan(Enabled::Auto);
-    }
-    let mut wasm = Config::new();
-    wasm.epoch_interruption(true)
-        .allocation_strategy(InstanceAllocationStrategy::Pooling(pool));
-    if config.memory_profile == MemoryProfile::Dense {
-        wasm.memory_reservation(128 << 20)
-            .memory_guard_size(64 << 10)
-            .memory_reservation_for_growth(0);
-    }
-    wasm
-}
-
-/// Advances the engine's epoch on a dedicated OS thread.
-///
-/// Not a tokio task: guests yield only when the epoch advances, so if every
-/// worker were running a spinning guest, a ticker task would never be
-/// scheduled and nothing would yield again.
-#[derive(Debug)]
-struct Ticker {
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Ticker {
-    fn start(engine: Engine, tick: Duration) -> std::io::Result<Self> {
-        let stop = Arc::new(AtomicBool::new(false));
-        let flag = stop.clone();
-        let thread = std::thread::Builder::new()
-            .name("bulkhead-epoch".into())
-            .spawn(move || {
-                let mut next = Instant::now() + tick;
-                while !flag.load(Ordering::Relaxed) {
-                    // Parked rather than asleep, so `drop` wakes it at once
-                    // even with a long tick.
-                    let now = Instant::now();
-                    if now < next {
-                        std::thread::park_timeout(next - now);
-                        continue;
-                    }
-                    engine.increment_epoch();
-                    next = now + tick;
-                }
-            })?;
-        Ok(Self {
-            stop,
-            thread: Some(thread),
-        })
-    }
-}
-
-impl Drop for Ticker {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            thread.thread().unpark();
-            let _ = thread.join();
-        }
     }
 }

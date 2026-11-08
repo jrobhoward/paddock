@@ -61,11 +61,9 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
 use bulkhead_host::services::{
-    Extension, ExtensionApp, ExtensionCtx, ExtensionNode, NativeCall, NativeReply, ServiceCtx,
-    StoreData, extension_ctx, reply,
+    Extension, ExtensionApp, ExtensionNode, NativeCall, NativeReply, StoreData, extension_ctx,
+    reply,
 };
-use bulkhead_host::wasmtime;
-use bulkhead_host::wasmtime::component::Linker;
 use serde::Deserialize;
 
 pub use config::{Config, DeviceConfig, Range, ServerConfig};
@@ -75,21 +73,29 @@ use device::{DeviceError, DeviceHandle, Reply, Request};
 use points::Table;
 use server::{Served, Tables};
 
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    bulkhead_host::wasmtime::component::bindgen!({
-        path: "wit",
-        world: "bulkhead-modbus:modbus/modbus",
-        imports: { default: async | trappable },
-        // Serde for native programs' calls, whose results travel in CBOR.
-        additional_derives: [PartialEq, Eq, serde::Serialize, serde::Deserialize],
-        wasmtime_crate: bulkhead_host::wasmtime,
-    });
+/// The `client` functions' errors, in CBOR to apps.
+mod client {
+    /// Why a device request failed.
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub(crate) enum Error {
+        AccessDenied,
+        NoSuchDevice,
+        Offline(String),
+        Exception(u8),
+        Invalid(String),
+    }
 }
 
-use bindings::bulkhead_modbus::modbus::{client, server as served};
+/// The `server` functions' errors, in CBOR to apps.
+mod served {
+    /// Why a served register request failed.
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub(crate) enum Error {
+        AccessDenied,
+        NotServing,
+        OutOfRange,
+    }
+}
 
 /// The package apps declare and operators grant.
 pub const PACKAGE: &str = "bulkhead-modbus:modbus";
@@ -139,11 +145,6 @@ impl Extension for Modbus {
         PACKAGE
     }
 
-    fn link(&self, linker: &mut Linker<StoreData>) -> wasmtime::Result<()> {
-        client::add_to_linker::<StoreData, ExtensionCtx<State>>(linker, extension_ctx::<State>)?;
-        served::add_to_linker::<StoreData, ExtensionCtx<State>>(linker, extension_ctx::<State>)
-    }
-
     fn instance(&self, app: &ExtensionApp<'_>) -> Result<Box<dyn Any + Send>, String> {
         let scope = if app.scope.is_null() {
             Scope::default()
@@ -180,60 +181,71 @@ impl Extension for Modbus {
         Ok(())
     }
 
-    /// The `client` and `server` functions for native programs, through
-    /// the `Host` methods components reach.
+    /// The `client` and `server` functions.
     fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a> {
         Box::pin(async move {
             let mut ctx = extension_ctx::<State>(data);
-            let ctx = &mut ctx;
+            let state = ctx.state();
             match call.function() {
                 "client#read-holding" => {
-                    let (device, address, count) = call.args()?;
-                    reply(&client::Host::read_holding(ctx, device, address, count).await?)
+                    let (device, address, count): (String, u16, u16) = call.args()?;
+                    reply(
+                        &state
+                            .read_words(&device, Table::Holding, address, count)
+                            .await,
+                    )
                 }
                 "client#read-input" => {
-                    let (device, address, count) = call.args()?;
-                    reply(&client::Host::read_input(ctx, device, address, count).await?)
+                    let (device, address, count): (String, u16, u16) = call.args()?;
+                    reply(
+                        &state
+                            .read_words(&device, Table::Input, address, count)
+                            .await,
+                    )
                 }
                 "client#read-coils" => {
-                    let (device, address, count) = call.args()?;
-                    reply(&client::Host::read_coils(ctx, device, address, count).await?)
+                    let (device, address, count): (String, u16, u16) = call.args()?;
+                    reply(&state.read_bits(&device, Table::Coil, address, count).await)
                 }
                 "client#read-discrete" => {
-                    let (device, address, count) = call.args()?;
-                    reply(&client::Host::read_discrete(ctx, device, address, count).await?)
+                    let (device, address, count): (String, u16, u16) = call.args()?;
+                    reply(
+                        &state
+                            .read_bits(&device, Table::Discrete, address, count)
+                            .await,
+                    )
                 }
                 "client#write-holding" => {
-                    let (device, address, values) = call.args()?;
-                    reply(&client::Host::write_holding(ctx, device, address, values).await?)
+                    let (device, address, values): (String, u16, Vec<u16>) = call.args()?;
+                    reply(&state.write_words(&device, address, values).await)
                 }
                 "client#write-coils" => {
-                    let (device, address, values) = call.args()?;
-                    reply(&client::Host::write_coils(ctx, device, address, values).await?)
+                    let (device, address, values): (String, u16, Vec<bool>) = call.args()?;
+                    reply(&state.write_bits(&device, address, values).await)
                 }
                 "server#set-holding" => {
-                    let (address, values) = call.args()?;
-                    reply(&served::Host::set_holding(ctx, address, values).await?)
+                    let (address, values): (u16, Vec<u16>) = call.args()?;
+                    reply(&state.set(|t| &mut t.holding, address, &values))
                 }
                 "server#set-input" => {
-                    let (address, values) = call.args()?;
-                    reply(&served::Host::set_input(ctx, address, values).await?)
+                    let (address, values): (u16, Vec<u16>) = call.args()?;
+                    reply(&state.set(|t| &mut t.input, address, &values))
                 }
                 "server#set-coils" => {
-                    let (address, values) = call.args()?;
-                    reply(&served::Host::set_coils(ctx, address, values).await?)
+                    let (address, values): (u16, Vec<bool>) = call.args()?;
+                    reply(&state.set(|t| &mut t.coils, address, &values))
                 }
                 "server#set-discrete" => {
-                    let (address, values) = call.args()?;
-                    reply(&served::Host::set_discrete(ctx, address, values).await?)
+                    let (address, values): (u16, Vec<bool>) = call.args()?;
+                    reply(&state.set(|t| &mut t.discrete, address, &values))
                 }
                 "server#get-holding" => {
-                    let (address, count) = call.args()?;
-                    reply(&served::Host::get_holding(ctx, address, count).await?)
+                    let (address, count): (u16, u16) = call.args()?;
+                    reply(&state.get(|t| &t.holding, address, count))
                 }
                 "server#get-coils" => {
-                    let (address, count) = call.args()?;
-                    reply(&served::Host::get_coils(ctx, address, count).await?)
+                    let (address, count): (u16, u16) = call.args()?;
+                    reply(&state.get(|t| &t.coils, address, count))
                 }
                 _ => Err(call.no_such_function()),
             }
@@ -395,124 +407,6 @@ fn check_len(len: usize, max: usize) -> Result<(), client::Error> {
 
 fn range(_: server::OutOfRange) -> served::Error {
     served::Error::OutOfRange
-}
-
-impl client::Host for ServiceCtx<'_, State> {
-    async fn read_holding(
-        &mut self,
-        device: String,
-        address: u16,
-        count: u16,
-    ) -> wasmtime::Result<Result<Vec<u16>, client::Error>> {
-        Ok(self
-            .state()
-            .read_words(&device, Table::Holding, address, count)
-            .await)
-    }
-
-    async fn read_input(
-        &mut self,
-        device: String,
-        address: u16,
-        count: u16,
-    ) -> wasmtime::Result<Result<Vec<u16>, client::Error>> {
-        Ok(self
-            .state()
-            .read_words(&device, Table::Input, address, count)
-            .await)
-    }
-
-    async fn read_coils(
-        &mut self,
-        device: String,
-        address: u16,
-        count: u16,
-    ) -> wasmtime::Result<Result<Vec<bool>, client::Error>> {
-        Ok(self
-            .state()
-            .read_bits(&device, Table::Coil, address, count)
-            .await)
-    }
-
-    async fn read_discrete(
-        &mut self,
-        device: String,
-        address: u16,
-        count: u16,
-    ) -> wasmtime::Result<Result<Vec<bool>, client::Error>> {
-        Ok(self
-            .state()
-            .read_bits(&device, Table::Discrete, address, count)
-            .await)
-    }
-
-    async fn write_holding(
-        &mut self,
-        device: String,
-        address: u16,
-        values: Vec<u16>,
-    ) -> wasmtime::Result<Result<(), client::Error>> {
-        Ok(self.state().write_words(&device, address, values).await)
-    }
-
-    async fn write_coils(
-        &mut self,
-        device: String,
-        address: u16,
-        values: Vec<bool>,
-    ) -> wasmtime::Result<Result<(), client::Error>> {
-        Ok(self.state().write_bits(&device, address, values).await)
-    }
-}
-
-impl served::Host for ServiceCtx<'_, State> {
-    async fn set_holding(
-        &mut self,
-        address: u16,
-        values: Vec<u16>,
-    ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self.state().set(|t| &mut t.holding, address, &values))
-    }
-
-    async fn set_input(
-        &mut self,
-        address: u16,
-        values: Vec<u16>,
-    ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self.state().set(|t| &mut t.input, address, &values))
-    }
-
-    async fn set_coils(
-        &mut self,
-        address: u16,
-        values: Vec<bool>,
-    ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self.state().set(|t| &mut t.coils, address, &values))
-    }
-
-    async fn set_discrete(
-        &mut self,
-        address: u16,
-        values: Vec<bool>,
-    ) -> wasmtime::Result<Result<(), served::Error>> {
-        Ok(self.state().set(|t| &mut t.discrete, address, &values))
-    }
-
-    async fn get_holding(
-        &mut self,
-        address: u16,
-        count: u16,
-    ) -> wasmtime::Result<Result<Vec<u16>, served::Error>> {
-        Ok(self.state().get(|t| &t.holding, address, count))
-    }
-
-    async fn get_coils(
-        &mut self,
-        address: u16,
-        count: u16,
-    ) -> wasmtime::Result<Result<Vec<bool>, served::Error>> {
-        Ok(self.state().get(|t| &t.coils, address, count))
-    }
 }
 
 #[cfg(test)]

@@ -79,19 +79,17 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `bulkhead_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
 | `bulkhead_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no Store, state in a snapshot. |
 | `bulkhead_passivations_total` | counter | | Instances passivated. |
-| `bulkhead_wake_seconds` | histogram | | Time to wake a passivated instance: a Store slot, a Store and `load-snapshot` (10 µs to 1 s buckets). |
+| `bulkhead_wake_seconds` | histogram | | Time to wake a passivated instance: a new process and `load-snapshot` (10 µs to 1 s buckets). |
 | `bulkhead_egress_requests_total` | counter | `outcome` (`sent`: a response came; `denied`; `limited`: over `max_concurrent`; `failed`: connection, TLS or timeout) | Outgoing HTTP requests (`wasi:http/outgoing-handler`); listed once an app has made one. |
 | `bulkhead_sockets_open` | gauge | | Sockets the app's instances hold open (`wasi:sockets`), TCP and UDP, accepted ones included; listed once an app has opened or been refused one. |
 | `bulkhead_sockets_refused_total` | counter | | Socket addresses the app's policy refused (bind, listen, connect, send, receive) and sockets refused over `max_sockets`. |
-| `bulkhead_slot_timeouts_total` | counter | | Starts, wakes and upgrades that found no Store slot within `init_timeout_ms`; a start or wake then ends the instance as `crashed: no_slot`, an upgrade reverts. |
 
-With an HTTP ingress, also (no labels): `bulkhead_http_requests_total`, `bulkhead_http_server_errors_total`, `bulkhead_http_not_found_total`, `bulkhead_http_redirected_total` and `bulkhead_http_forwarded_total` (requests a standby redirected or forwarded to its failover partner), `bulkhead_http_handler_failures_total` (HTTP handler instances that trapped, ran out of time or set no response), `bulkhead_http_refused_connections_total`.
+With an HTTP ingress, also (no labels): `bulkhead_http_requests_total`, `bulkhead_http_server_errors_total`, `bulkhead_http_not_found_total`, `bulkhead_http_redirected_total` and `bulkhead_http_forwarded_total` (requests a standby redirected or forwarded to its failover partner), ran out of time or set no response), `bulkhead_http_refused_connections_total`.
 
 With a cluster transport, also, labelled `node` (the other node): `bulkhead_cluster_send_queue_bytes` (gauge: bytes of casts, calls and replies queued for it) and `bulkhead_cluster_send_refused_total` (counter: messages refused past `[cluster] send_buffer_bytes`, and notices refused past the frame cap, since the node started).
 
 On a pair node with `cluster` buckets, gauges for the replicated log: `bulkhead_replication_commit_index` (the last entry applied to this node's copy) and `bulkhead_replication_last_index` (the last entry in its log); on the primary, `bulkhead_replication_partner_lag_entries` (entries the standby has not acknowledged) and `bulkhead_replication_alone` (1 while it commits without the standby, which the witness has recorded out of date).
 
-The Store slot pool, node-wide (no labels): `bulkhead_pool_live_memories` (gauge: linear memories in use, one per instance holding a Store), `bulkhead_pool_warm_slots` (gauge: free slots keeping pages resident for the next instance, `keep_resident`), `bulkhead_pool_resident_bytes` (gauge: the bytes they keep) and `bulkhead_pool_released_bytes_total` (counter: bytes given back to the kernel, by `release_idle_after_s` or `Runtime::release_idle_memory`). Slots keep pages on Linux only; elsewhere the last three stay at 0.
 
 Gauges are read when the metrics are rendered; counters are kept per app from the node's start, and a counter's series starts once the app's first instance starts.
 

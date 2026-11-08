@@ -5,7 +5,6 @@ mod blue_green;
 mod cluster;
 mod connections;
 mod deploy;
-mod handlers;
 mod ingress;
 mod queries;
 #[cfg(feature = "tls")]
@@ -20,7 +19,7 @@ use std::time::Duration;
 
 use crate::api::Done;
 use bulkhead_bundle::OperatorPolicy;
-use bulkhead_bundle::manifest::{ByteSize, Durability};
+use bulkhead_bundle::manifest::Durability;
 use bulkhead_host::failover::FailoverHandle;
 use bulkhead_host::services::{Extension, StartedExtensions};
 use bulkhead_host::transport::quic::QuicTransport;
@@ -38,8 +37,6 @@ use super::gate::Gate;
 use super::logring::LogRing;
 use super::store::{State, Store};
 
-use connections::ConnectionApp;
-use handlers::HandlerApp;
 use ingress::Ingress;
 
 /// A running Bulkhead node.
@@ -61,15 +58,10 @@ pub struct Node {
     /// never across an await, so reads (`list`, `status`) never wait behind
     /// a change; a change commits to it when it is done.
     state: std::sync::Mutex<NodeState>,
-    /// Running connection-handler apps, by name. Locked only briefly,
-    /// never across an await.
-    connections: std::sync::Mutex<HashMap<String, ConnectionApp>>,
     /// Native apps' listeners, by app: each hands connections to the app's
     /// instances (ROADMAP Z8g). Locked only briefly, never across an
     /// await.
     native_listeners: std::sync::Mutex<HashMap<String, Vec<bulkhead_host::Listener>>>,
-    /// HTTP-handler apps (`wasi:http/proxy`), served by the ingress.
-    handlers: std::sync::Mutex<HashMap<String, HandlerApp>>,
     /// Extensions' node-level work, stopped on shutdown.
     extensions: std::sync::Mutex<Option<StartedExtensions>>,
     /// HTTP ingress, if node config has `[http]` addresses.
@@ -108,7 +100,6 @@ struct DeployInfo {
     signer: String,
     granted: Vec<String>,
     denied: Vec<String>,
-    stubbed: Vec<String>,
     warnings: Vec<String>,
     /// The registered names the manifest lists, reserved for this app.
     names: Vec<String>,
@@ -184,15 +175,10 @@ impl Node {
                 node: config.node,
                 max_instances: config.max_instances,
                 max_processes: config.max_processes,
-                max_core_instances_per_component: config.max_core_instances_per_component,
                 memory_profile: match config.memory_profile {
                     MemoryProfile::Standard => HostProfile::Standard,
                     MemoryProfile::Dense => HostProfile::Dense,
                 },
-                keep_resident: config.keep_resident.map(ByteSize::bytes),
-                release_idle_after: (config.release_idle_after_s > 0)
-                    .then(|| Duration::from_secs(config.release_idle_after_s)),
-                epoch_tick: Duration::from_millis(config.epoch_tick_ms.max(1)),
                 data_dir: Some(store.kv_dir()),
                 heartbeat_interval: Duration::from_millis(config.cluster.heartbeat_interval_ms),
                 node_timeout: Duration::from_millis(config.cluster.node_timeout_ms),
@@ -287,9 +273,7 @@ impl Node {
                 desired,
                 ..NodeState::default()
             }),
-            connections: std::sync::Mutex::default(),
             native_listeners: std::sync::Mutex::default(),
-            handlers: std::sync::Mutex::default(),
             extensions: std::sync::Mutex::default(),
             ingress,
             stop,
@@ -365,17 +349,9 @@ impl Node {
             quic.shutdown_gracefully().await;
         }
         self.ingress.stop();
-        let names: Vec<String> = self.connection_apps().keys().cloned().collect();
-        for name in names {
-            self.stop_connections(&name);
-        }
         let names: Vec<String> = self.native_listener_map().keys().cloned().collect();
         for name in names {
             self.stop_native_listeners(&name);
-        }
-        let names: Vec<String> = self.handler_apps().keys().cloned().collect();
-        for name in names {
-            self.stop_handler(&name);
         }
         self.apps.stop().await;
     }

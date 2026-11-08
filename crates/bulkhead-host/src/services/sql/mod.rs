@@ -32,39 +32,10 @@ use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
 use bulkhead_native::protocol as p;
-use wasmtime::Result;
-use wasmtime::component::{Linker, Resource};
 
-use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use super::{InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
-
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    wasmtime::component::bindgen!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:host/sql",
-        imports: { default: async | trappable },
-        with: {
-            "bulkhead:sql/sql.transaction": super::Transaction,
-        },
-    });
-}
-
-use bindings::bulkhead::sql::sql;
 
 /// The SQL service.
 pub(crate) struct Sql;
@@ -122,7 +93,6 @@ impl Drop for Transaction {
 
 impl Service for Sql {
     const CAPABILITY: Capability = Capability::Sql;
-    const INTERFACES: &'static [&'static str] = &["bulkhead:sql/sql"];
     type Spec = SqlSpec;
     type Shared = Shared;
     type Instance = Instance;
@@ -167,17 +137,10 @@ impl Service for Sql {
             next_tx: 0,
         }
     }
-
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
-        sql::add_to_linker::<T, Ctx<Self>>(linker, T::service)
-    }
 }
 
-/// A SQL operation's outcome, on the protocol's error: what a native app
-/// is answered, and a component's import converts (ROADMAP Z9b).
+/// A SQL operation's outcome, on the protocol's error.
 type Answer<T> = std::result::Result<T, p::SqlError>;
-/// The same on the WIT's error, for a component's import.
-type WitAnswer<T> = std::result::Result<T, sql::Error>;
 
 #[cfg(not(feature = "sql"))]
 fn not_built<T>() -> Answer<T> {
@@ -192,7 +155,7 @@ mod run {
 
     use super::pool::{self, Fault};
     use super::values::Value;
-    use super::{Answer, Instance, ServiceCtx, Transaction, p, sql};
+    use super::{Answer, Instance, ServiceCtx, Transaction, p};
 
     impl From<Fault> for p::SqlError {
         fn from(f: Fault) -> Self {
@@ -205,43 +168,6 @@ mod run {
                 Fault::Query { code, message } => Self::Query { code, message },
             }
         }
-    }
-
-    fn value_in(v: sql::Value) -> Value {
-        match v {
-            sql::Value::Null => Value::Null,
-            sql::Value::Boolean(b) => Value::Bool(b),
-            sql::Value::Int(i) => Value::Int(i),
-            sql::Value::Float(f) => Value::Float(f),
-            sql::Value::Text(s) => Value::Text(s),
-            sql::Value::Bytes(b) => Value::Bytes(b),
-        }
-    }
-
-    fn value_out(v: Value) -> sql::Value {
-        match v {
-            Value::Null => sql::Value::Null,
-            Value::Bool(b) => sql::Value::Boolean(b),
-            Value::Int(i) => sql::Value::Int(i),
-            Value::Float(f) => sql::Value::Float(f),
-            Value::Text(s) => sql::Value::Text(s),
-            Value::Bytes(b) => sql::Value::Bytes(b),
-        }
-    }
-
-    pub(super) fn rows_out(rows: pool::Rows) -> sql::Rows {
-        sql::Rows {
-            columns: rows.columns,
-            rows: rows
-                .rows
-                .into_iter()
-                .map(|r| r.into_iter().map(value_out).collect())
-                .collect(),
-        }
-    }
-
-    pub(super) fn values_in(params: Vec<sql::Value>) -> Vec<Value> {
-        params.into_iter().map(value_in).collect()
     }
 
     impl ServiceCtx<'_, Instance> {
@@ -427,199 +353,6 @@ impl ServiceCtx<'_, Instance> {
         #[cfg(feature = "sql")]
         {
             self.native_run(request).await
-        }
-    }
-}
-
-/// The protocol's SQL error as `bulkhead:sql`'s.
-fn wit_error(e: p::SqlError) -> sql::Error {
-    match e {
-        p::SqlError::AccessDenied => sql::Error::AccessDenied,
-        p::SqlError::NotFound => sql::Error::NotFound,
-        p::SqlError::LimitReached => sql::Error::LimitReached,
-        p::SqlError::Unavailable(why) => sql::Error::Unavailable(why),
-        p::SqlError::Timeout => sql::Error::Timeout,
-        p::SqlError::TooLarge => sql::Error::TooLarge,
-        p::SqlError::Unsupported(why) => sql::Error::Unsupported(why),
-        p::SqlError::Query { code, message } => sql::Error::Query(sql::DbError { code, message }),
-    }
-}
-
-impl sql::Host for ServiceCtx<'_, Instance> {
-    async fn query(
-        &mut self,
-        datasource: String,
-        statement: String,
-        params: Vec<sql::Value>,
-    ) -> Result<WitAnswer<sql::Rows>> {
-        let answer: Result<Answer<sql::Rows>> = async move {
-            #[cfg(not(feature = "sql"))]
-            {
-                let _ = (datasource, statement, params);
-                Ok(not_built())
-            }
-            #[cfg(feature = "sql")]
-            {
-                let (conn, max) = match self.connect(&datasource).await {
-                    Ok(c) => c,
-                    Err(e) => return Ok(Err(e)),
-                };
-                let values = run::values_in(params);
-                let rows = pool::query(conn.client(), &statement, &values, max).await;
-                Ok(rows.map(run::rows_out).map_err(Into::into))
-            }
-        }
-        .await;
-        Ok(answer?.map_err(wit_error))
-    }
-
-    async fn execute(
-        &mut self,
-        datasource: String,
-        statement: String,
-        params: Vec<sql::Value>,
-    ) -> Result<WitAnswer<u64>> {
-        let answer: Result<Answer<u64>> = async move {
-            #[cfg(not(feature = "sql"))]
-            {
-                let _ = (datasource, statement, params);
-                Ok(not_built())
-            }
-            #[cfg(feature = "sql")]
-            {
-                let (conn, _) = match self.connect(&datasource).await {
-                    Ok(c) => c,
-                    Err(e) => return Ok(Err(e)),
-                };
-                let values = run::values_in(params);
-                let changed = pool::execute(conn.client(), &statement, &values).await;
-                Ok(changed.map_err(Into::into))
-            }
-        }
-        .await;
-        Ok(answer?.map_err(wit_error))
-    }
-
-    async fn begin(&mut self, datasource: String) -> Result<WitAnswer<Resource<Transaction>>> {
-        let answer: Result<Answer<Resource<Transaction>>> = async move {
-            #[cfg(not(feature = "sql"))]
-            {
-                let _ = datasource;
-                Ok(not_built())
-            }
-            #[cfg(feature = "sql")]
-            {
-                let (conn, max) = match self.connect(&datasource).await {
-                    Ok(c) => c,
-                    Err(e) => return Ok(Err(e)),
-                };
-                if let Err(e) = conn.simple("BEGIN").await {
-                    return Ok(Err(e.into()));
-                }
-                Ok(Ok(self.table.push(Transaction::new(conn, max))?))
-            }
-        }
-        .await;
-        Ok(answer?.map_err(wit_error))
-    }
-}
-
-impl sql::HostTransaction for ServiceCtx<'_, Instance> {
-    async fn query(
-        &mut self,
-        tx: Resource<Transaction>,
-        statement: String,
-        params: Vec<sql::Value>,
-    ) -> Result<WitAnswer<sql::Rows>> {
-        let answer: Result<Answer<sql::Rows>> = async move {
-            #[cfg(not(feature = "sql"))]
-            {
-                let _ = (tx, statement, params);
-                Ok(not_built())
-            }
-            #[cfg(feature = "sql")]
-            {
-                // The connection stays in the transaction while the statement
-                // runs: if the instance is killed meanwhile, dropping the
-                // transaction rolls it back.
-                let t = self.table.get(&tx)?;
-                let conn = match t.conn() {
-                    Ok(c) => c,
-                    Err(e) => return Ok(Err(e)),
-                };
-                let values = run::values_in(params);
-                let rows =
-                    pool::query(conn.client(), &statement, &values, t.max_result_bytes()).await;
-                Ok(rows.map(run::rows_out).map_err(Into::into))
-            }
-        }
-        .await;
-        Ok(answer?.map_err(wit_error))
-    }
-
-    async fn execute(
-        &mut self,
-        tx: Resource<Transaction>,
-        statement: String,
-        params: Vec<sql::Value>,
-    ) -> Result<WitAnswer<u64>> {
-        let answer: Result<Answer<u64>> = async move {
-            #[cfg(not(feature = "sql"))]
-            {
-                let _ = (tx, statement, params);
-                Ok(not_built())
-            }
-            #[cfg(feature = "sql")]
-            {
-                let t = self.table.get(&tx)?;
-                let conn = match t.conn() {
-                    Ok(c) => c,
-                    Err(e) => return Ok(Err(e)),
-                };
-                let values = run::values_in(params);
-                let changed = pool::execute(conn.client(), &statement, &values).await;
-                Ok(changed.map_err(Into::into))
-            }
-        }
-        .await;
-        Ok(answer?.map_err(wit_error))
-    }
-
-    async fn commit(&mut self, tx: Resource<Transaction>) -> Result<WitAnswer<()>> {
-        Ok(self.end(tx, "COMMIT").await?.map_err(wit_error))
-    }
-
-    async fn rollback(&mut self, tx: Resource<Transaction>) -> Result<WitAnswer<()>> {
-        Ok(self.end(tx, "ROLLBACK").await?.map_err(wit_error))
-    }
-
-    async fn drop(&mut self, tx: Resource<Transaction>) -> Result<()> {
-        // `Transaction`'s own drop rolls back a transaction still open.
-        self.table.delete(tx)?;
-        Ok(())
-    }
-}
-
-impl ServiceCtx<'_, Instance> {
-    /// End `tx` with `sql` (`COMMIT` or `ROLLBACK`) and give its connection
-    /// back.
-    async fn end(&mut self, tx: Resource<Transaction>, sql_text: &str) -> Result<Answer<()>> {
-        #[cfg_attr(not(feature = "sql"), allow(unused_mut, unused_variables))]
-        let mut t = self.table.delete(tx)?;
-        #[cfg(not(feature = "sql"))]
-        {
-            let _ = sql_text;
-            Ok(not_built())
-        }
-        #[cfg(feature = "sql")]
-        {
-            let Some(conn) = t.take() else {
-                return Ok(Err(p::SqlError::Unavailable(
-                    "the transaction has ended".into(),
-                )));
-            };
-            let ended = conn.simple(sql_text).await;
-            Ok(ended.map_err(Into::into))
         }
     }
 }

@@ -6,26 +6,14 @@ use std::path::Path;
 use crate::api::{DeployResponse, Done};
 use bulkhead_bundle::manifest::{AppManifest, Durability};
 use bulkhead_bundle::{BundleError, VerifiedBundle};
-use bulkhead_host::{AppDeployment, AppHandle, InstanceSpec, LoadedConnection};
+use bulkhead_host::{AppDeployment, AppHandle, InstanceSpec};
 use serde_json::json;
 
-use super::connections::{ConnectionApp, ConnectionBuild};
-use super::handlers::{Compiled, HandlerBuild};
 use super::{DeployInfo, Node, NodeState};
 use crate::node::config::ClusterRole;
 use crate::node::error::{NodeError, internal};
 use crate::node::gate;
 use crate::node::store::AppState;
-
-/// What a bundle runs as.
-pub(super) enum Runnable {
-    /// Callbacks under a root supervisor.
-    App(AppDeployment),
-    /// An instance per connection on the app's listeners.
-    Connection(ConnectionBuild),
-    /// An instance per request on the app's HTTP routes.
-    Handler(HandlerBuild),
-}
 
 /// Refuse `app` listing a registered name another deployed app lists,
 /// running or stopped: names are node-wide, and whichever instance
@@ -44,17 +32,13 @@ pub(super) fn check_names(st: &NodeState, app: &str, names: &[String]) -> Result
 /// A verified, compiled bundle ready to run.
 pub(super) struct Built {
     pub(super) bundle: VerifiedBundle,
-    pub(super) run: Runnable,
+    pub(super) run: AppDeployment,
     pub(super) info: DeployInfo,
 }
 
 impl Built {
     fn manifest(&self) -> &AppManifest {
-        match &self.run {
-            Runnable::App(d) => &d.manifest,
-            Runnable::Connection(c) => &c.manifest,
-            Runnable::Handler(h) => &h.manifest,
-        }
+        &self.run.manifest
     }
 
     pub(super) fn name(&self) -> String {
@@ -68,15 +52,6 @@ impl Built {
 
 pub(super) fn refused(e: BundleError) -> NodeError {
     NodeError::Refused(e.to_string())
-}
-
-/// What a bundle's component compiled to.
-// Without the `http` feature no HTTP handler compiles.
-#[cfg_attr(not(feature = "http"), allow(dead_code))]
-pub(super) enum Loaded {
-    App(bulkhead_host::LoadedApp),
-    Connection(LoadedConnection),
-    Handler(Compiled),
 }
 
 impl Node {
@@ -121,26 +96,13 @@ impl Node {
         self.st().info.insert(name.to_string(), built.info);
         if let Some(previous) = &app.previous {
             let prev = self.build(&self.store.bundle_path(name, previous)).await?;
-            match (handle, prev.run) {
-                (Some(handle), Runnable::App(d)) => handle.set_previous(Some(d)),
-                (None, Runnable::App(d)) => {
+            match handle {
+                Some(handle) => handle.set_previous(Some(prev.run)),
+                None => {
                     if let Some(gate) = &self.gate {
-                        gate.set_previous(name, d);
+                        gate.set_previous(name, prev.run);
                     }
                 }
-                (None, Runnable::Connection(c)) => {
-                    if let Some(app) = self.connection_apps().get_mut(name) {
-                        app.previous = Some(c);
-                    }
-                }
-                (None, Runnable::Handler(h)) => {
-                    if let Some(app) = self.handler_apps().get_mut(name) {
-                        app.previous = Some(h);
-                    }
-                }
-                // A previous version of the other kind cannot be rolled back
-                // to (the world changed); keep none.
-                _ => {}
             }
             self.st().previous_info.insert(name.to_string(), prev.info);
         }
@@ -173,36 +135,24 @@ impl Node {
         let grant = bundle.effective_grant(&self.policy).map_err(refused)?;
         let manifest = bundle.manifest.clone();
         let (name, version) = (manifest.app.name.clone(), manifest.app.version.to_string());
+        if manifest.spec.kind != bulkhead_bundle::manifest::Kind::NativeProcess {
+            return Err(NodeError::Refused(format!(
+                "{name} is a WebAssembly component, which this node does not run: \
+                 build it as a native program (kind = \"native-process\")"
+            )));
+        }
         let rt = self.rt.clone();
         let component = bundle.component.clone();
-        let world = manifest.component.world.clone();
-        let cache = self
+        // A program is written where only the node can change it.
+        let path = self
             .store
-            .compiled_path(&name, &version, &manifest.component.checksum);
-        let native = manifest.spec.native.unwrap_or_default().program;
-        let is_native = manifest.spec.kind == bulkhead_bundle::manifest::Kind::NativeProcess;
-        let loaded = tokio::task::spawn_blocking(move || match world.as_str() {
-            // A native program is written beside the compiled components,
-            // where only the node can change it.
-            _ if is_native => {
-                let path = cache.with_extension("native");
-                write_program(&path, &component)
-                    .map(|()| {
-                        Loaded::App(
-                            rt.load_native(bulkhead_host::NativeCode { path, kind: native }),
-                        )
-                    })
-                    .map_err(|e| format!("writing the native program: {e}"))
-            }
-            bulkhead_bundle::CONNECTION_WORLD => rt
-                .load_connection_cached(&component, &cache)
-                .map(Loaded::Connection)
-                .map_err(|e| e.to_string()),
-            bulkhead_bundle::HTTP_HANDLER_WORLD => load_handler(&rt, &component, &cache),
-            _ => rt
-                .load_cached(&component, &cache)
-                .map(Loaded::App)
-                .map_err(|e| e.to_string()),
+            .compiled_path(&name, &version, &manifest.component.checksum)
+            .with_extension("native");
+        let kind = manifest.spec.native.unwrap_or_default().program;
+        let app = tokio::task::spawn_blocking(move || {
+            write_program(&path, &component)
+                .map(|()| rt.load_native(bulkhead_host::NativeCode { path, kind }))
+                .map_err(|e| format!("writing the native program: {e}"))
         })
         .await
         .map_err(internal)?
@@ -326,11 +276,6 @@ impl Node {
                         .map(|d| format!("datasource:{d}")),
                 )
                 .collect(),
-            stubbed: match &loaded {
-                Loaded::App(app) => app.stubbed_imports().to_vec(),
-                Loaded::Connection(c) => c.stubbed_imports().to_vec(),
-                Loaded::Handler(h) => h.stubbed_imports().to_vec(),
-            },
             warnings: manifest
                 .spec
                 .unenforced_fields()
@@ -338,31 +283,23 @@ impl Node {
                 .map(ToString::to_string)
                 .collect(),
         };
-        let run = match loaded {
-            Loaded::App(app) => Runnable::App(AppDeployment {
-                manifest,
-                app,
-                spec,
-            }),
-            Loaded::Connection(connection) => Runnable::Connection(ConnectionBuild {
-                manifest,
-                connection,
-                spec,
-            }),
-            Loaded::Handler(handler) => Runnable::Handler(HandlerBuild {
-                manifest,
-                handler,
-                spec,
-            }),
+        let run = AppDeployment {
+            manifest,
+            app,
+            spec,
         };
         Ok(Built { bundle, run, info })
     }
 
-    /// Start a built app: under a supervisor, or on its listeners. Returns
-    /// the supervised app's handle.
-    async fn run(&self, name: &str, run: Runnable) -> Result<Option<AppHandle>, NodeError> {
-        match run {
-            Runnable::App(deployment) => {
+    /// Start a built app under a supervisor. Returns its handle, or `None`
+    /// for a singleton the node holds until it may run.
+    async fn run(
+        &self,
+        name: &str,
+        deployment: AppDeployment,
+    ) -> Result<Option<AppHandle>, NodeError> {
+        {
+            {
                 if let Some(gate) = &self.gate
                     && !gate::is_singleton(&deployment)
                     && let Some(dep) = deployment
@@ -378,7 +315,6 @@ impl Node {
                         dep.app
                     )));
                 }
-                self.check_slots(name, &deployment)?;
                 self.ingress.set_routes(name, &deployment)?;
                 let manifest = deployment.manifest.clone();
                 let added = match &self.gate {
@@ -407,71 +343,12 @@ impl Node {
                 }
                 added
             }
-            Runnable::Connection(build) => {
-                let listeners = self.listen(&build)?;
-                self.connection_apps().insert(
-                    name.to_string(),
-                    ConnectionApp {
-                        listeners,
-                        current: build,
-                        previous: None,
-                    },
-                );
-                Ok(None)
-            }
-            Runnable::Handler(build) => {
-                self.serve_handler(name, build)?;
-                Ok(None)
-            }
         }
     }
 
-    /// Refuse `deployment` (as `name`) if the instances that never
-    /// passivate, its own with the running apps' and the held singletons',
-    /// would need more Store slots than `max_instances`: they would hold
-    /// every slot, and an instance needing one would never get it.
-    fn check_slots(&self, name: &str, deployment: &AppDeployment) -> Result<(), NodeError> {
-        let live = |d: &AppDeployment| {
-            let i = &d.manifest.spec.instances;
-            if i.passivate_after_ms.is_some() {
-                0
-            } else {
-                u64::from(i.initial())
-            }
-        };
-        // Each app once: a running singleton is in the set and held too.
-        let mut by_name: std::collections::BTreeMap<String, u64> = self
-            .apps
-            .names()
-            .iter()
-            .filter_map(|n| self.apps.app(n))
-            .map(|a| (a.name().to_string(), live(&a.deployment())))
-            .collect();
-        for d in self.gate.iter().flat_map(|g| g.deployments()) {
-            by_name
-                .entry(d.manifest.app.name.clone())
-                .or_insert_with(|| live(&d));
-        }
-        by_name.remove(name);
-        let others: u64 = by_name.values().sum();
-        let wanted = others + live(deployment);
-        let slots = u64::from(self.config.max_instances);
-        if wanted > slots {
-            return Err(NodeError::Invalid(format!(
-                "{name}: the instances that never passivate would need {wanted} Store slots, and \
-                 this node has {slots} (max_instances); passivate some (instances.passivate_after_ms) \
-                 or raise max_instances"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Whether `name` runs now, under a supervisor or on listeners.
+    /// Whether `name` runs now, or is a singleton this node holds.
     fn running(&self, name: &str) -> bool {
-        self.apps.app(name).is_some()
-            || self.connection_apps().contains_key(name)
-            || self.handler_apps().contains_key(name)
-            || self.held(name)
+        self.apps.app(name).is_some() || self.held(name)
     }
 
     /// Whether `name` is a singleton this node holds, running or not.
@@ -479,8 +356,7 @@ impl Node {
         self.gate.as_ref().is_some_and(|g| g.holds(name))
     }
 
-    /// Stop running `name`, if it runs: a singleton, a supervised app or a
-    /// connection handler.
+    /// Stop running `name`, if it runs: a singleton or a supervised app.
     async fn stop_running(&self, name: &str) -> Result<(), NodeError> {
         if let Some(gate) = &self.gate
             && gate
@@ -491,8 +367,7 @@ impl Node {
             return Ok(());
         }
         self.stop_native_listeners(name);
-        if !self.stop_connections(name) && !self.stop_handler(name) && self.apps.app(name).is_some()
-        {
+        if self.apps.app(name).is_some() {
             self.apps
                 .remove(name)
                 .await
@@ -668,28 +543,6 @@ impl Node {
             message: format!("{name} removed"),
         })
     }
-}
-
-/// Compile an HTTP handler; refused in a build without the HTTP ingress.
-#[cfg(feature = "http")]
-fn load_handler(
-    rt: &bulkhead_host::Runtime,
-    component: &[u8],
-    cache: &Path,
-) -> Result<Loaded, String> {
-    rt.load_handler(component, Some(cache))
-        .map(Loaded::Handler)
-        .map_err(|e| e.to_string())
-}
-
-/// Compile an HTTP handler; refused in a build without the HTTP ingress.
-#[cfg(not(feature = "http"))]
-fn load_handler(
-    _rt: &bulkhead_host::Runtime,
-    _component: &[u8],
-    _cache: &Path,
-) -> Result<Loaded, String> {
-    Err("an HTTP handler needs the HTTP ingress, and this build of bulkhead has none (cargo feature `http`)".into())
 }
 
 /// Write a native program to `path`, readable and executable by the node's

@@ -10,38 +10,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
-use wasmtime::Result;
-use wasmtime::component::Linker;
 
-use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use super::{InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
-
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    wasmtime::component::bindgen!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:host/config",
-        imports: { default: async | trappable },
-    });
-}
-
-use bindings::wasi::config::store;
-
-const DENIED: &str = "access-denied";
 
 /// The config service.
 pub(crate) struct Config;
@@ -63,7 +35,6 @@ pub(crate) struct Instance {
 
 impl Service for Config {
     const CAPABILITY: Capability = Capability::Config;
-    const INTERFACES: &'static [&'static str] = &["wasi:config/store"];
     type Spec = ConfigSpec;
     type Shared = ();
     type Instance = Instance;
@@ -83,36 +54,6 @@ impl Service for Config {
             values: spec.values.clone(),
             granted: info.granted,
         }
-    }
-
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
-        store::add_to_linker::<T, Ctx<Self>>(linker, T::service)
-    }
-}
-
-impl store::Host for ServiceCtx<'_, Instance> {
-    async fn get(
-        &mut self,
-        key: String,
-    ) -> Result<std::result::Result<Option<String>, store::Error>> {
-        if !self.state.granted {
-            return Ok(Err(store::Error::Io(DENIED.into())));
-        }
-        Ok(Ok(self.state.values.get(&key).cloned()))
-    }
-
-    async fn get_all(
-        &mut self,
-    ) -> Result<std::result::Result<Vec<(String, String)>, store::Error>> {
-        if !self.state.granted {
-            return Ok(Err(store::Error::Io(DENIED.into())));
-        }
-        Ok(Ok(self
-            .state
-            .values
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()))
     }
 }
 

@@ -1,17 +1,11 @@
-//! Per-instance store data: WASI context, resource limits and deadline
-//! accounting. The `bulkhead:runtime/process` host functions are in
+//! Per-instance state on the node. The process functions are in
 //! `process.rs`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::AtomicU64;
 
-use bulkhead_bundle::manifest::Capability;
 use tokio::sync::{oneshot, watch};
-use wasmtime::component::ResourceTable;
-use wasmtime::{Error, ResourceLimiter, Result};
-use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
 
 use crate::config::HostObjects;
 use crate::failover::RunUntil;
@@ -19,19 +13,18 @@ use crate::instance::InstanceHandle;
 use crate::mailbox;
 use crate::message::Envelope;
 use crate::metrics::AppStats;
-use crate::output::{CapturedOutput, Tags};
+use crate::output::Tags;
 use crate::pid::Pid;
 use crate::process::{Timers, limit};
-use crate::ready::Waits;
 use crate::runtime::RuntimeInner;
 use crate::services::config::Config;
 use crate::services::egress::Egress;
 use crate::services::groups::Groups;
 use crate::services::keyvalue::KeyValue;
-use crate::services::logging::{LogRate, Logging};
+use crate::services::logging::Logging;
 use crate::services::metrics::MetricsService;
 use crate::services::secrets::Secrets;
-use crate::services::sockets::{self, Sockets};
+use crate::services::sockets::Sockets;
 use crate::services::sql::Sql;
 use crate::services::{HostState, Service, ServiceCtx, States};
 use crate::spec::InstanceSpec;
@@ -50,15 +43,11 @@ pub(crate) struct ProcessContext {
     pub(crate) stats: Arc<AppStats>,
 }
 
-/// Store data for one instance. Public only as the opaque
-/// [`StoreData`](crate::services::StoreData) extensions link against.
+/// The node's state for one instance. Public only as the opaque
+/// [`StoreData`](crate::services::StoreData) extensions take.
 pub struct InstanceState {
     pub(crate) pid: Pid,
     tags: Arc<Tags>,
-    wasi: WasiCtx,
-    table: ResourceTable,
-    pub(crate) limiter: Limiter,
-    pub(crate) clock: CallbackClock,
     pub(crate) ctx: ProcessContext,
     pub(crate) registered_names: Vec<String>,
     /// The caller of the call being handled, by call reference: set before
@@ -79,8 +68,6 @@ pub struct InstanceState {
     /// The lease ended while guest code ran, and the epoch callback
     /// interrupted it.
     pub(crate) lease_ended: bool,
-    /// Pollables the guest asked to hear about (`bulkhead:io/ready`).
-    pub(crate) ready: Waits,
     services: States,
 }
 
@@ -94,27 +81,6 @@ impl InstanceState {
             version: spec.version.clone(),
             pid,
         });
-        // No environment; stdout and stderr become logs; sockets as the
-        // app's policy allows.
-        let mut wasi = WasiCtx::builder();
-        sockets::configure(&mut wasi, spec, ctx.rt.metrics.stats(&spec.app));
-        let rate = LogRate::new(
-            ctx.rt.services.logging.clone(),
-            spec.services.logging.rate_limit,
-        );
-        wasi.stdout(CapturedOutput::new(tags.clone(), "stdout", rate.clone()))
-            .stderr(CapturedOutput::new(tags.clone(), "stderr", rate));
-        if spec.granted.contains(&Capability::Filesystem) {
-            for p in &spec.preopens {
-                let perms = if p.writable {
-                    FsPerms::ReadWrite
-                } else {
-                    FsPerms::ReadOnly
-                };
-                wasi.preopened_dir(&p.host, &p.guest, perms)
-                    .map_err(|e| format!("preopen {} -> {}: {e}", p.host.display(), p.guest))?;
-            }
-        }
         let host_objects = ctx.rt.host_objects().grant(&spec.host_objects)?;
         let lease = spec.bound_to_lease.then(|| ctx.rt.failover.run_until());
         let services = States::new(
@@ -128,10 +94,6 @@ impl InstanceState {
         Ok(Self {
             pid,
             tags,
-            wasi: wasi.build(),
-            table: ResourceTable::new(),
-            limiter: Limiter::new(spec.memory_max, spec.table_max, ctx.me.memory_counter()),
-            clock: CallbackClock::default(),
             ctx,
             registered_names: spec.registered_names.clone(),
             current: None,
@@ -141,7 +103,6 @@ impl InstanceState {
             announce_role: spec.announce_role,
             lease,
             lease_ended: false,
-            ready: Waits::default(),
             services,
         })
     }
@@ -157,17 +118,7 @@ impl InstanceState {
     /// The context for an extension whose state is `S`, if one made it.
     pub(crate) fn extension_ctx<S: 'static>(&mut self) -> Option<ServiceCtx<'_, S>> {
         let state = self.services.extensions.get_mut::<S>()?;
-        Some(ServiceCtx::new(state, &self.tags, &mut self.table))
-    }
-
-    /// Resources handed to the guest.
-    pub(crate) fn table_mut(&mut self) -> &mut ResourceTable {
-        &mut self.table
-    }
-
-    /// The pollables the guest waits on and the table they live in.
-    pub(crate) fn ready_parts(&mut self) -> (&mut Waits, &mut ResourceTable) {
-        (&mut self.ready, &mut self.table)
+        Some(ServiceCtx::new(state, &self.tags))
     }
 
     /// The host events the services want this instance to see now.
@@ -209,7 +160,7 @@ impl InstanceState {
     /// guest could not name.
     pub(crate) fn passivable(&mut self) -> bool {
         self.pending.retain(|_, waiting| !waiting.is_closed());
-        self.current.is_none() && self.pending.is_empty() && self.table.is_empty()
+        self.current.is_none() && self.pending.is_empty()
     }
 
     /// Remember the caller of the call about to be handled until its reply
@@ -247,9 +198,9 @@ impl InstanceState {
 
     /// After `handle-call` returned `noreply`: an error if the instance now
     /// holds more unanswered calls than `pending_calls_max`.
-    pub(crate) fn check_pending(&self) -> Result<()> {
+    pub(crate) fn check_pending(&self) -> Result<(), String> {
         if self.pending.len() > limit(self.host_objects.pending_calls) {
-            return Err(Error::msg(PENDING_CALL_LIMIT));
+            return Err(PENDING_CALL_LIMIT.to_string());
         }
         Ok(())
     }
@@ -269,7 +220,7 @@ macro_rules! host_state {
     ($service:ty, $field:ident) => {
         impl HostState<$service> for InstanceState {
             fn service(&mut self) -> ServiceCtx<'_, <$service as Service>::Instance> {
-                ServiceCtx::new(&mut self.services.$field, &self.tags, &mut self.table)
+                ServiceCtx::new(&mut self.services.$field, &self.tags)
             }
         }
     };
@@ -284,168 +235,6 @@ host_state!(Secrets, secrets);
 host_state!(MetricsService, metrics);
 host_state!(Sql, sql);
 host_state!(Sockets, sockets);
-
-impl WasiView for InstanceState {
-    fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView {
-            ctx: &mut self.wasi,
-            table: &mut self.table,
-        }
-    }
-}
-
-/// Enforces `limits.memory_max` and `limits.table_max`, and remembers which
-/// one was hit so the exit reason can say so.
-pub(crate) struct Limiter {
-    memory_max: usize,
-    table_max: Option<usize>,
-    pub(crate) memory_exceeded: bool,
-    pub(crate) table_exceeded: bool,
-    /// Linear memory size as last allowed to grow, for `ps`.
-    memory: Arc<AtomicU64>,
-}
-
-impl Limiter {
-    fn new(memory_max: u64, table_max: Option<u32>, memory: Arc<AtomicU64>) -> Self {
-        Self {
-            memory_max: usize::try_from(memory_max).unwrap_or(usize::MAX),
-            table_max: table_max.map(|t| usize::try_from(t).unwrap_or(usize::MAX)),
-            memory_exceeded: false,
-            table_exceeded: false,
-            memory,
-        }
-    }
-}
-
-impl ResourceLimiter for Limiter {
-    fn memory_growing(
-        &mut self,
-        _current: usize,
-        desired: usize,
-        _maximum: Option<usize>,
-    ) -> Result<bool> {
-        if desired > self.memory_max {
-            self.memory_exceeded = true;
-            return Err(Error::msg("memory_limit"));
-        }
-        self.memory.store(
-            u64::try_from(desired).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
-        Ok(true)
-    }
-
-    fn table_growing(
-        &mut self,
-        _current: usize,
-        desired: usize,
-        _maximum: Option<usize>,
-    ) -> Result<bool> {
-        if self.table_max.is_some_and(|max| desired > max) {
-            self.table_exceeded = true;
-            return Err(Error::msg("table_limit"));
-        }
-        Ok(true)
-    }
-}
-
-/// Guest execution time of the current callback.
-///
-/// The time the instance's task spends polling the callback
-/// ([`PollTime::poll`], from `killable`): guest code, and host functions until they
-/// wait. Waiting does not count, so an instance waiting on another, on a
-/// timer, on I/O or for a worker after an epoch yield is not runaway code
-/// (spike S1). Timing polls rather than each host call leaves wasmtime's
-/// call hook off, which cost about 5% of an empty call (ROADMAP B12).
-#[derive(Debug)]
-pub(crate) struct CallbackClock {
-    polls: Arc<PollTime>,
-    limit: Duration,
-    pub(crate) timed_out: bool,
-}
-
-/// Shared between the Store's data, read by the epoch callback during a
-/// poll, and the task that polls.
-#[derive(Debug)]
-pub(crate) struct PollTime {
-    /// Origin of `since`.
-    base: Instant,
-    /// Guest time of the callback's finished polls, in nanoseconds.
-    done: AtomicU64,
-    /// When the poll running now started, nanoseconds after `base`, or
-    /// `NOT_POLLING`.
-    since: AtomicU64,
-}
-
-const NOT_POLLING: u64 = u64::MAX;
-
-impl PollTime {
-    fn now(&self) -> u64 {
-        u64::try_from(self.base.elapsed().as_nanos()).unwrap_or(NOT_POLLING - 1)
-    }
-
-    /// Poll `fut`, counting the time as guest time.
-    pub(crate) fn poll<F: Future>(
-        &self,
-        fut: std::pin::Pin<&mut F>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<F::Output> {
-        let started = self.now();
-        self.since.store(started, Ordering::Relaxed);
-        let out = fut.poll(cx);
-        let spent = self.now().saturating_sub(started);
-        self.since.store(NOT_POLLING, Ordering::Relaxed);
-        self.done.fetch_add(spent, Ordering::Relaxed);
-        out
-    }
-
-    fn total(&self) -> Duration {
-        let mut ns = self.done.load(Ordering::Relaxed);
-        let since = self.since.load(Ordering::Relaxed);
-        if since != NOT_POLLING {
-            ns += self.now().saturating_sub(since);
-        }
-        Duration::from_nanos(ns)
-    }
-}
-
-impl Default for CallbackClock {
-    fn default() -> Self {
-        Self {
-            polls: Arc::new(PollTime {
-                base: Instant::now(),
-                done: AtomicU64::new(0),
-                since: AtomicU64::new(NOT_POLLING),
-            }),
-            limit: Duration::MAX,
-            timed_out: false,
-        }
-    }
-}
-
-impl CallbackClock {
-    /// Start timing a callback allowed `limit` of guest execution; its
-    /// future is polled through [`PollTime::poll`] of what this returns.
-    pub(crate) fn start(&mut self, limit: Duration) -> Arc<PollTime> {
-        self.polls.done.store(0, Ordering::Relaxed);
-        self.limit = limit;
-        self.polls.clone()
-    }
-
-    /// Whether the callback has used up its guest execution time; records a
-    /// timeout if so.
-    pub(crate) fn expired(&mut self) -> bool {
-        if self.polls.total() > self.limit {
-            self.timed_out = true;
-        }
-        self.timed_out
-    }
-
-    /// Guest execution time of the current callback so far.
-    pub(crate) fn guest_time(&self) -> Duration {
-        self.polls.total()
-    }
-}
 
 /// Exit reason (`crashed`) for an instance over its pending-call limit.
 const PENDING_CALL_LIMIT: &str = "pending_call_limit";

@@ -1,29 +1,22 @@
 //! Host services from outside `bulkhead-host`: extensions.
 //!
-//! An extension serves one WIT package outside the reserved `wasi` and
+//! An extension serves one package outside the reserved `wasi` and
 //! `bulkhead` namespaces (`example:greeting`). Apps declare it under
 //! `capabilities.extensions."<package>"` with a scope table the extension
 //! reads, and the operator grants it by package name in the policy's
-//! `grant` lists, like a built-in capability. A node built without the
-//! extension links deny stubs for the package instead.
+//! `grant` lists, like a built-in capability.
 //!
-//! An extension crate depends on `bulkhead-host` alone:
-//!
-//! 1. Generate host bindings for its package with
-//!    `bulkhead_host::wasmtime::component::bindgen!`.
-//! 2. Implement the generated `Host` traits for `ServiceCtx<'_, MyState>`,
-//!    where `MyState` is the per-instance state [`Extension::instance`]
-//!    returns. Return the interface's access-denied error when
-//!    [`ExtensionApp::granted`] was false.
-//! 3. In [`Extension::link`], call the generated
-//!    `add_to_linker::<StoreData, ExtensionCtx<MyState>>(linker, extension_ctx::<MyState>)`.
-//! 4. Pass the extension to [`Runtime::with_extensions`](crate::Runtime::with_extensions)
-//!    (or to the `bulkhead` crate's node builder).
+//! An extension crate depends on `bulkhead-host` alone. Native apps reach
+//! it through [`Extension::call`]: a function named by a string
+//! (`greet#hello` by convention), with its arguments and result in CBOR.
+//! It decodes the arguments with [`NativeCall::args`], reaches its
+//! per-instance state with [`extension_ctx`], and encodes the result with
+//! [`reply`]. Its state comes from [`Extension::instance`], where
+//! [`ExtensionApp::granted`] says whether to answer access-denied.
 //!
 //! Extensions follow the rules of the built-in services
 //! ([`crate::services`]): fail softly when not granted, and read named
-//! resources from the scope rather than host paths. Time spent in their
-//! host functions is host time without their doing anything.
+//! resources from the scope rather than host paths.
 //!
 //! An extension that works on its own schedule (polling devices, serving a
 //! port) does it from [`Extension::start`], which runs once the node's apps
@@ -32,23 +25,10 @@
 //! [`ExtensionNode::stopped`] completes. Work that only one node of an HA
 //! pair should do (polling a device whose values the pair replicates)
 //! checks [`ExtensionNode::runs_singletons`] first.
-//!
-//! Native apps (ROADMAP Z8h) reach an extension through
-//! [`Extension::call`]: a function named by a string, by convention the
-//! WIT interface and function (`greet#hello`), with its arguments and
-//! result in CBOR (an array of the WIT parameters in order; the WIT
-//! result as serde encodes it). An extension that serves them decodes the
-//! arguments with [`NativeCall::args`], calls its generated `Host` trait's
-//! method on the same [`ServiceCtx`], and encodes the result with
-//! [`reply`]; deriving serde's traits on the bindings' types
-//! (`additional_derives` in `bindgen!`) makes both sides one definition.
-//! Every extension implements it; one that serves components only answers
-//! each call with [`NativeCall::no_such_function`].
 
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -56,7 +36,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use tokio::sync::watch;
-use wasmtime::component::{HasData, Linker};
 
 use super::ServiceCtx;
 use crate::apps::Apps;
@@ -65,24 +44,16 @@ use crate::failover::RunUntil;
 use crate::message::{CallError, Envelope};
 use crate::state::InstanceState;
 
-/// The data every instance's Store holds. Opaque: an extension reaches its
-/// own state through [`extension_ctx`].
+/// The node's data for an instance. Opaque: an extension reaches its own
+/// state through [`extension_ctx`].
 pub type StoreData = InstanceState;
 
-/// A host service for one WIT package, provided from outside
+/// A host service for one package, provided from outside
 /// `bulkhead-host`. See the module documentation.
 pub trait Extension: Send + Sync + 'static {
-    /// The WIT package served, `namespace:package` (`example:greeting`): the
+    /// The package served, `namespace:package` (`example:greeting`): the
     /// key apps declare under `capabilities.extensions` and operators grant.
     fn package(&self) -> &str;
-
-    /// Link the package's interfaces. Host functions reach their state with
-    /// [`extension_ctx`].
-    ///
-    /// # Errors
-    ///
-    /// A wasmtime error if an interface cannot be linked.
-    fn link(&self, linker: &mut Linker<StoreData>) -> wasmtime::Result<()>;
 
     /// State for a new instance. Every instance gets one, including apps
     /// that do not declare the extension (with a null scope and `granted`
@@ -106,13 +77,10 @@ pub trait Extension: Send + Sync + 'static {
         Ok(())
     }
 
-    /// Serve a native app's call of a function (see the module
-    /// documentation), with the calling instance's data: reach this
-    /// extension's state with [`extension_ctx`], as the linked functions
-    /// do. [`NativeCall::no_such_function`] for a function it does not
-    /// serve. Required: native apps reach an extension only through it
-    /// (ROADMAP Z9b), and once components go (Z9e) it is the extension's
-    /// whole interface to apps.
+    /// Serve an app's call of a function (see the module documentation),
+    /// with the calling instance's data: reach this extension's state with
+    /// [`extension_ctx`]. [`NativeCall::no_such_function`] for a function
+    /// it does not serve.
     fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a>;
 }
 
@@ -183,16 +151,8 @@ pub enum NativeCallError {
     /// The arguments are not what the function takes; the app gets an
     /// error.
     BadArguments(String),
-    /// What a trap is to a component: the calling instance crashes with
-    /// this reason.
+    /// The calling instance crashes with this reason.
     Crash(String),
-}
-
-impl From<wasmtime::Error> for NativeCallError {
-    /// A trap from a generated `Host` method.
-    fn from(e: wasmtime::Error) -> Self {
-        Self::Crash(crate::error::describe(&e))
-    }
 }
 
 impl std::fmt::Display for NativeCallError {
@@ -349,23 +309,13 @@ impl ExtensionSpec {
     }
 }
 
-/// The [`HasData`] projection for an extension whose per-instance state is
-/// `S`; pass it to the generated `add_to_linker`.
-#[derive(Debug)]
-pub struct ExtensionCtx<S>(PhantomData<fn() -> S>);
-
-impl<S: Send + 'static> HasData for ExtensionCtx<S> {
-    type Data<'a> = ServiceCtx<'a, S>;
-}
-
-/// The context an extension's host function runs with: its state of type
-/// `S` and the instance's shared facilities. Pass as the getter to the
-/// generated `add_to_linker`.
+/// The context an extension's function runs with: its state of type `S`
+/// and the instance's shared facilities.
 ///
 /// # Panics
 ///
 /// If no extension created state of type `S` for this instance, which
-/// means `link` and `instance` of one extension disagree about the type.
+/// means `call` and `instance` of one extension disagree about the type.
 // The getter has no error channel, and a mismatch is a bug in the extension.
 #[allow(clippy::expect_used)]
 pub fn extension_ctx<S: Send + 'static>(data: &mut StoreData) -> ServiceCtx<'_, S> {

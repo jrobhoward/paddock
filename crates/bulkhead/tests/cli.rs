@@ -1,62 +1,33 @@
 //! The `bulkhead` binary against an in-process node.
 
-#![cfg(unix)]
+// Native apps run on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use bulkhead::node::{LogRing, Node, NodeConfig};
 use minisign::KeyPair;
-use rustbridge_bundle::{BundleBuilder, Manifest, Platform};
 use tempfile::TempDir;
 
-fn chaos() -> Vec<u8> {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let target = root.join("target/fixtures/chaos-plain");
-    BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let ok = StdCommand::new(cargo)
-            .current_dir(&root)
-            .args([
-                "build",
-                "--release",
-                "--target",
-                "wasm32-wasip2",
-                "-p",
-                "bulkhead-fixture-chaos",
-                "--target-dir",
-            ])
-            .arg(&target)
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok);
-    });
-    std::fs::read(target.join("wasm32-wasip2/release/bulkhead_fixture_chaos.wasm")).unwrap()
-}
-
 fn write_bundle(dir: &Path, key: &KeyPair, name: &str) -> PathBuf {
-    let wasm = dir.join("app.wasm");
-    std::fs::write(&wasm, chaos()).unwrap();
     let out = dir.join(format!("{name}.rbp"));
-    BundleBuilder::new(Manifest::new(name, "1.0.0"))
-        .add_component(Platform::Wasm32Wasip2, &wasm, "bulkhead:runtime/app@0.1.0")
-        .unwrap()
-        .with_extension(
-            "appserver",
-            serde_json::json!({
-                "lifecycle": { "shutdown_timeout_ms": 300 },
-                "registered_names": ["demo-name"]
-            }),
-        )
-        .with_signing_key(key.pk.to_base64(), key.sk.clone())
-        .write(&out)
-        .unwrap();
+    let bytes = common::app_bundle(
+        key,
+        name,
+        "1.0.0",
+        &common::native_conformance(),
+        serde_json::json!({
+            "lifecycle": { "shutdown_timeout_ms": 300 },
+            "registered_names": ["demo-name"]
+        }),
+    );
+    std::fs::write(&out, bytes).unwrap();
     out
 }
 
@@ -86,9 +57,10 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
     let dir = TempDir::new().unwrap();
     let key = KeyPair::generate_unencrypted_keypair().unwrap();
     let toml = format!(
-        "data_dir = {:?}\nmax_instances = 8\ntrusted_keys = [{:?}]\n",
+        "data_dir = {:?}\nmax_instances = 8\ntrusted_keys = [{:?}]\n[native]\nrunner = {:?}\n",
         dir.path().join("data"),
-        key.pk.to_base64()
+        key.pk.to_base64(),
+        common::native_fixtures().0
     );
     let node = Arc::new(
         Node::open(NodeConfig::from_toml_str(&toml).unwrap(), LogRing::new(100))
@@ -170,10 +142,14 @@ async fn cli____full_cycle____deploy_list_status_call_kill_stop_start_remove() {
         "{}",
         ps_table.stdout
     );
-    assert_eq!(
-        state.stdout,
-        format!("{} (raw, 8 bytes)\n0200000000000000\n", ps[0].pid)
+    assert!(
+        state
+            .stdout
+            .starts_with(&format!("{} (bulkhead-sdk, ", ps[0].pid)),
+        "{}",
+        state.stdout
     );
+    assert!(state.stdout.contains("\"count\": 2"), "{}", state.stdout);
     assert_eq!(by_pid.stdout.trim(), "by-pid");
     assert_eq!(registered.stdout.trim(), "ok");
     assert_eq!(by_name.stdout.trim(), "by-name");
@@ -269,9 +245,10 @@ async fn shell____lines_on_stdin____each_runs_and_errors_do_not_end_the_session(
     let dir = TempDir::new().unwrap();
     let key = KeyPair::generate_unencrypted_keypair().unwrap();
     let toml = format!(
-        "data_dir = {:?}\nmax_instances = 8\ntrusted_keys = [{:?}]\n",
+        "data_dir = {:?}\nmax_instances = 8\ntrusted_keys = [{:?}]\n[native]\nrunner = {:?}\n",
         dir.path().join("data"),
-        key.pk.to_base64()
+        key.pk.to_base64(),
+        common::native_fixtures().0
     );
     let node = Arc::new(
         Node::open(NodeConfig::from_toml_str(&toml).unwrap(), LogRing::new(100))

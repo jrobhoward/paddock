@@ -15,7 +15,6 @@ use bulkhead_host::http::{IngressTls, TlsCertificate};
 use bulkhead_host::{AppDeployment, Apps, InstanceSpec};
 use tokio::sync::watch;
 
-use super::handlers::HandlerBuild;
 use crate::node::config::NodeConfig;
 #[cfg(feature = "http")]
 use crate::node::config::StandbyMode;
@@ -180,50 +179,6 @@ impl Ingress {
         }
     }
 
-    /// Serve `name`'s routes with an instance of `build`'s HTTP handler per
-    /// request: its routes (if granted), then its handler. A failure leaves
-    /// what was served before.
-    #[cfg(feature = "http")]
-    pub(super) fn set_handler(&self, name: &str, build: &HandlerBuild) -> Result<(), NodeError> {
-        let Some(http) = &self.http else {
-            return Err(NodeError::Invalid(format!(
-                "{name} is an HTTP handler, and this node has no HTTP ingress ([http.<name>] in node config)"
-            )));
-        };
-        self.set_routes_of(name, &build.manifest, &build.spec)?;
-        http.set_handler(name, build.handler.clone(), build.spec.clone());
-        Ok(())
-    }
-
-    /// No ingress in this build: no handler was ever compiled.
-    #[cfg(not(feature = "http"))]
-    pub(super) fn set_handler(&self, _name: &str, build: &HandlerBuild) -> Result<(), NodeError> {
-        match build.handler {}
-    }
-
-    /// Stop serving `name`'s HTTP handler and withdraw its routes; requests
-    /// in flight finish.
-    pub(super) fn remove_handler(&self, name: &str) {
-        #[cfg(feature = "http")]
-        if let Some(http) = &self.http {
-            http.remove_handler(name);
-            http.remove_routes(name);
-        }
-        #[cfg(not(feature = "http"))]
-        let _ = name;
-    }
-
-    /// Requests `name`'s HTTP handler is serving now.
-    pub(super) fn handler_requests(&self, name: &str) -> Option<usize> {
-        #[cfg(feature = "http")]
-        return self.http.as_ref().and_then(|h| h.handler_requests(name));
-        #[cfg(not(feature = "http"))]
-        {
-            let _ = name;
-            None
-        }
-    }
-
     /// No ingress in this build: refuse an app granted routes.
     #[cfg(not(feature = "http"))]
     pub(super) fn set_routes(
@@ -321,11 +276,6 @@ impl Ingress {
                     "bulkhead_http_forwarded_total",
                     "HTTP requests forwarded to the failover partner.",
                     s.forwarded,
-                ),
-                (
-                    "bulkhead_http_handler_failures_total",
-                    "HTTP handler instances that trapped, ran out of time or set no response.",
-                    s.handler_failures,
                 ),
                 (
                     "bulkhead_http_refused_connections_total",

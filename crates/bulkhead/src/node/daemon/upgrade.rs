@@ -9,7 +9,7 @@ use bulkhead_host::{AppDeployment, UpgradeError, UpgradeOptions, UpgradeReport};
 use serde_json::json;
 
 use super::Node;
-use super::deploy::{Runnable, check_names};
+use super::deploy::check_names;
 use crate::node::error::{NodeError, internal};
 
 pub(super) fn upgrade_error(e: UpgradeError) -> NodeError {
@@ -133,9 +133,8 @@ impl Node {
         check_names(&self.st(), name, &built.info.names)?;
         // A native app's listeners stay bound across its upgrades, as they
         // were declared.
-        if let Runnable::App(deployment) = &built.run
-            && let Some(running) = self.apps.app(name)
-            && running.deployment().manifest.spec.listeners != deployment.manifest.spec.listeners
+        if let Some(running) = self.apps.app(name)
+            && running.deployment().manifest.spec.listeners != built.run.manifest.spec.listeners
         {
             return Err(NodeError::Invalid(format!(
                 "{name}'s listeners change between versions; remove and deploy it instead"
@@ -147,12 +146,9 @@ impl Node {
             .map_err(internal)?;
         self.store.keep_upload(upload, name, &version)?;
         let info = built.info.clone();
-        if let Runnable::App(deployment) = &built.run
-            && deployment.manifest.spec.upgrade.mode == UpgradeMode::BlueGreen
-            && !params.restart
-        {
+        if built.run.manifest.spec.upgrade.mode == UpgradeMode::BlueGreen && !params.restart {
             let result = self
-                .upgrade_blue_green(name, deployment.clone(), info, params)
+                .upgrade_blue_green(name, built.run.clone(), info, params)
                 .await;
             if result.is_err()
                 && current.previous.as_deref() != Some(version.as_str())
@@ -168,17 +164,12 @@ impl Node {
             }
             return result;
         }
-        let result = match built.run {
-            Runnable::Connection(build) => self
-                .upgrade_connections(name, build, params)
-                .map_err(|e| (e, false)),
-            Runnable::Handler(build) => self
-                .upgrade_handler(name, build, params)
-                .map_err(|e| (e, false)),
-            Runnable::App(deployment) if self.held(name) && self.apps.app(name).is_none() => {
+        let deployment = built.run;
+        let result = match deployment {
+            deployment if self.held(name) && self.apps.app(name).is_none() => {
                 self.upgrade_held(name, deployment, params)
             }
-            Runnable::App(deployment) => {
+            deployment => {
                 let snapshot = deployment.manifest.spec.upgrade.mode == UpgradeMode::Snapshot;
                 let before = self.ingress.save_routes(name);
                 match self.ingress.set_routes(name, &deployment) {
@@ -316,13 +307,9 @@ impl Node {
             }
             return result;
         }
-        let result = match self
-            .rollback_connections(name)
-            .or_else(|| self.rollback_handler(name))
-        {
-            Some(result) => result,
-            None if self.held(name) && self.apps.app(name).is_none() => self.rollback_held(name),
-            None => {
+        let result = match () {
+            () if self.held(name) && self.apps.app(name).is_none() => self.rollback_held(name),
+            () => {
                 let snapshot = self.apps.app(name).and_then(|a| a.rollback_mode())
                     == Some(UpgradeMode::Snapshot);
                 let rolled = self

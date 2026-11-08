@@ -10,9 +10,7 @@ fn NodeConfig____minimal____defaults_filled_in() {
 
     assert_eq!(config.node, 0);
     assert_eq!(config.max_instances, 1_000);
-    assert_eq!(config.max_core_instances_per_component, 8);
     assert_eq!(config.memory_profile, MemoryProfile::Standard);
-    assert_eq!(config.keep_resident, None);
     assert_eq!(
         config.socket(),
         PathBuf::from("/var/lib/bulkhead/admin.sock")
@@ -30,7 +28,6 @@ admin_socket = "/run/p.sock"
 trusted_keys = ["RWQ1"]
 policy = "/etc/p.toml"
 memory_profile = "dense"
-keep_resident = "2MiB"
 
 [volumes]
 orders-data = "/srv/v/orders"
@@ -44,7 +41,6 @@ orders-data = "/srv/v/orders"
     assert_eq!(config.node, 3);
     assert_eq!(config.socket(), PathBuf::from("/run/p.sock"));
     assert_eq!(config.memory_profile, MemoryProfile::Dense);
-    assert_eq!(config.keep_resident, Some(ByteSize::mib(2)));
     assert_eq!(
         config.volumes["orders-data"],
         PathBuf::from("/srv/v/orders")
@@ -755,19 +751,17 @@ fn native____zero____refused(#[case] line: &str, #[case] path: &str) {
     assert!(err.contains(path), "{err}");
 }
 
-#[test]
-fn NodeConfig____max_core_instances_per_component____read_or_refused_at_zero() {
-    let read =
-        NodeConfig::from_toml_str("data_dir = \"/d\"\nmax_core_instances_per_component = 16\n")
-            .unwrap();
-    let zero =
-        NodeConfig::from_toml_str("data_dir = \"/d\"\nmax_core_instances_per_component = 0\n")
-            .unwrap_err();
+#[rstest::rstest]
+#[case::max_core_instances("max_core_instances_per_component = 16\n")]
+#[case::keep_resident("keep_resident = \"2MiB\"\n")]
+#[case::release_idle("release_idle_after_s = 300\n")]
+#[case::epoch_tick("epoch_tick_ms = 2\n")]
+fn NodeConfig____key_only_components_read____refused_saying_so(#[case] line: &str) {
+    let err = NodeConfig::from_toml_str(&format!("data_dir = \"/d\"\n{line}")).unwrap_err();
 
-    assert_eq!(read.max_core_instances_per_component, 16);
     assert!(
-        zero.to_string()
-            .contains("max_core_instances_per_component must be at least 1"),
-        "{zero}"
+        err.to_string()
+            .contains("was removed with WebAssembly components"),
+        "{err}"
     );
 }

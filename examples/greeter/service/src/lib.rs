@@ -12,39 +12,25 @@
 //! ["example:greeting"]`). A node runs it with
 //! `bulkhead::node::run(&config, vec![Arc::new(Greeter::default())])`.
 //!
-//! Components import the package; native programs call the same functions
-//! through the node ([`Extension::call`]), named `greet#hello` and
-//! `greet#count`, with arguments and results in CBOR.
+//! Native programs call its functions through the node
+//! ([`Extension::call`]), named `greet#hello` and `greet#count`, with
+//! arguments and results in CBOR.
 
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bulkhead_host::services::{
-    Extension, ExtensionApp, ExtensionCtx, NativeCall, NativeReply, ServiceCtx, StoreData,
-    extension_ctx, reply,
+    Extension, ExtensionApp, NativeCall, NativeReply, StoreData, extension_ctx, reply,
 };
-use bulkhead_host::wasmtime;
-use bulkhead_host::wasmtime::component::Linker;
+use serde::{Deserialize, Serialize};
 
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    bulkhead_host::wasmtime::component::bindgen!({
-        path: "../wit",
-        world: "example:greeting/client",
-        imports: { default: async | trappable },
-        // The error travels in CBOR to native programs (`Extension::call`);
-        // their client derives the same traits on its bindings.
-        additional_derives: [serde::Serialize, serde::Deserialize],
-        // The wasmtime bulkhead-host links against; no wasmtime dependency
-        // of this crate's own, so the versions cannot drift.
-        wasmtime_crate: bulkhead_host::wasmtime,
-    });
+/// Why a greeting was refused, in CBOR to apps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum Error {
+    /// The operator did not grant the package.
+    AccessDenied,
 }
-
-use bindings::example::greeting::greet;
 
 /// The greeter service. One per node: its count covers every app.
 #[derive(Debug, Default)]
@@ -65,10 +51,6 @@ impl Extension for Greeter {
         "example:greeting"
     }
 
-    fn link(&self, linker: &mut Linker<StoreData>) -> wasmtime::Result<()> {
-        greet::add_to_linker::<StoreData, ExtensionCtx<State>>(linker, extension_ctx::<State>)
-    }
-
     fn instance(&self, app: &ExtensionApp<'_>) -> Result<Box<dyn Any + Send>, String> {
         let salutation = match app.scope.get("salutation") {
             None => "Hello".to_string(),
@@ -82,39 +64,37 @@ impl Extension for Greeter {
         }))
     }
 
-    /// The same functions for native programs, through the `Host` methods
-    /// components reach.
+    /// `greet#hello` and `greet#count`.
     fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a> {
         Box::pin(async move {
             let mut ctx = extension_ctx::<State>(data);
+            let app = ctx.app().to_string();
+            let state = ctx.state();
             match call.function() {
                 "greet#hello" => {
                     let (name,): (String,) = call.args()?;
-                    reply(&greet::Host::hello(&mut ctx, name).await?)
+                    reply(&state.hello(&app, &name))
                 }
-                "greet#count" => reply(&greet::Host::count(&mut ctx).await?),
+                "greet#count" => reply(&state.count()),
                 _ => Err(call.no_such_function()),
             }
         })
     }
 }
 
-impl greet::Host for ServiceCtx<'_, State> {
-    async fn hello(&mut self, name: String) -> wasmtime::Result<Result<String, greet::Error>> {
-        let app = self.app().to_string();
-        let state = self.state();
-        if !state.granted {
-            return Ok(Err(greet::Error::AccessDenied));
+impl State {
+    fn hello(&self, app: &str, name: &str) -> Result<String, Error> {
+        if !self.granted {
+            return Err(Error::AccessDenied);
         }
-        state.greetings.fetch_add(1, Ordering::Relaxed);
-        Ok(Ok(format!("{}, {name} (from {app})", state.salutation)))
+        self.greetings.fetch_add(1, Ordering::Relaxed);
+        Ok(format!("{}, {name} (from {app})", self.salutation))
     }
 
-    async fn count(&mut self) -> wasmtime::Result<Result<u64, greet::Error>> {
-        let state = self.state();
-        if !state.granted {
-            return Ok(Err(greet::Error::AccessDenied));
+    fn count(&self) -> Result<u64, Error> {
+        if !self.granted {
+            return Err(Error::AccessDenied);
         }
-        Ok(Ok(state.greetings.load(Ordering::Relaxed)))
+        Ok(self.greetings.load(Ordering::Relaxed))
     }
 }

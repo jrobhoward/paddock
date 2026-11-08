@@ -4,9 +4,8 @@
 
 use bulkhead_bundle::manifest::{SocketRule, SocketsScope};
 use rstest::rstest;
-use wasmtime_wasi::sockets::SocketAddrUse;
 
-use super::{Policy, within};
+use super::{Policy, SocketAddrUse, within};
 
 fn rule(cidr: &str, ports: Option<&str>) -> SocketRule {
     SocketRule {

@@ -19,7 +19,6 @@ use bulkhead_host::services::{
     Extension, ExtensionApp, ExtensionSpec, NativeCall, NativeCallError, NativeReply, StoreData,
     extension_ctx, reply,
 };
-use bulkhead_host::wasmtime::component::Linker;
 use bulkhead_host::{
     ExitReason, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, NativeConfig, Runtime,
     RuntimeConfig,
@@ -42,10 +41,6 @@ struct Seen {
 impl Extension for Probe {
     fn package(&self) -> &str {
         "test:probe"
-    }
-
-    fn link(&self, _linker: &mut Linker<StoreData>) -> bulkhead_host::wasmtime::Result<()> {
-        Ok(())
     }
 
     fn instance(&self, app: &ExtensionApp<'_>) -> Result<Box<dyn Any + Send>, String> {
@@ -84,10 +79,6 @@ struct Silent;
 impl Extension for Silent {
     fn package(&self) -> &str {
         "test:silent"
-    }
-
-    fn link(&self, _linker: &mut Linker<StoreData>) -> bulkhead_host::wasmtime::Result<()> {
-        Ok(())
     }
 
     fn instance(&self, _app: &ExtensionApp<'_>) -> Result<Box<dyn Any + Send>, String> {

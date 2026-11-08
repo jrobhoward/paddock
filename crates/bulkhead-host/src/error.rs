@@ -73,8 +73,3 @@ pub enum HostError {
     #[error("cannot set up native apps' cgroup: {0}")]
     NativeCgroup(String),
 }
-
-/// Render a wasmtime error with its causes on one line.
-pub(crate) fn describe(err: &wasmtime::Error) -> String {
-    format!("{err:#}")
-}

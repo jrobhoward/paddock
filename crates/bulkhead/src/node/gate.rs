@@ -162,11 +162,6 @@ impl Gate {
         self.held().iter().any(|h| h.name == name)
     }
 
-    /// The held singletons' current deployments, in deploy order.
-    pub(super) fn deployments(&self) -> Vec<AppDeployment> {
-        self.held().iter().map(|h| h.current.clone()).collect()
-    }
-
     /// The held singletons, in deploy order.
     pub(super) fn names(&self) -> Vec<String> {
         self.held().iter().map(|h| h.name.clone()).collect()

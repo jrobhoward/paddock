@@ -75,33 +75,21 @@ impl Node {
         restore_error: Option<&String>,
     ) -> AppSummary {
         let handle = self.apps.app(name);
-        // A connection handler's open connections, or an HTTP handler's
-        // requests in flight: its instances now.
-        let connections = self
-            .connection_apps()
-            .get(name)
-            .map(|c| c.listeners.iter().map(|l| l.stats().active).sum::<usize>())
-            .or_else(|| {
-                self.handler_apps()
-                    .contains_key(name)
-                    .then(|| self.ingress.handler_requests(name).unwrap_or(0))
-            });
-        let (status, reason) = match (&handle, connections, restore_error) {
-            (Some(h), _, _) => status_text(&h.status()),
-            (None, Some(_), _) => ("running".into(), None),
-            (None, None, _) if self.held(name) => (
+        let (status, reason) = match (&handle, restore_error) {
+            (Some(h), _) => status_text(&h.status()),
+            (None, _) if self.held(name) => (
                 "standby".into(),
                 Some("a singleton; runs while this node is primary".into()),
             ),
-            (None, None, Some(e)) => ("failed".into(), Some(e.clone())),
-            (None, None, None) => ("stopped".into(), None),
+            (None, Some(e)) => ("failed".into(), Some(e.clone())),
+            (None, None) => ("stopped".into(), None),
         };
         AppSummary {
             name: name.to_string(),
             version: app.current.clone(),
             status,
             reason,
-            instances: handle.map_or(connections.unwrap_or(0), |h| h.instances().len()),
+            instances: handle.map_or(0, |h| h.instances().len()),
             previous: app.previous.clone(),
             new_version: app.new_side.as_ref().map(|n| n.version.clone()),
             new_traffic: app.new_side.as_ref().map(|n| n.percent),
@@ -173,7 +161,6 @@ impl Node {
             signer: info.signer,
             granted: info.granted,
             denied: info.denied,
-            stubbed: info.stubbed,
             warnings: info.warnings,
             restarts: handle
                 .as_ref()

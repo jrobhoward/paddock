@@ -27,55 +27,14 @@ use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AccessMode, AppSpec, Bucket, Capability, Durability};
 use bulkhead_native::protocol::KvError;
-use wasmtime::Result;
-use wasmtime::component::{Linker, Resource};
 
-use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use super::{InstanceInfo, Service, ServiceCtx};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 use crate::instance::InstanceHandle;
 use crate::pid::Pid;
 
 use storage::{BucketHandle, KvStore, Op, Outcome, SHARED, ScanQuery, StoreError};
-
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    wasmtime::component::bindgen!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:host/keyvalue",
-        // Reads are bound synchronously: they never wait, and an async host
-        // function costs about a tenth of a read (spike S25).
-        imports: {
-            "wasi:keyvalue/store.[method]bucket.get": trappable,
-            "wasi:keyvalue/store.[method]bucket.exists": trappable,
-            "wasi:keyvalue/store.[method]bucket.list-keys": trappable,
-            "wasi:keyvalue/batch.get-many": trappable,
-            "bulkhead:watch/watch.get": trappable,
-            "bulkhead:watch/watch.revision": trappable,
-            "bulkhead:watch/watch.scan": trappable,
-            default: async | trappable,
-        },
-        with: {
-            "wasi:keyvalue/store.bucket": super::storage::BucketHandle,
-        },
-    });
-}
-
-use bindings::bulkhead::watch::watch;
-use bindings::wasi::keyvalue::{atomics, batch, store};
 
 /// The keyvalue service.
 pub(crate) struct KeyValue;
@@ -196,12 +155,6 @@ impl ServiceCtx<'_, Instance> {
 
 impl Service for KeyValue {
     const CAPABILITY: Capability = Capability::KeyValue;
-    const INTERFACES: &'static [&'static str] = &[
-        "wasi:keyvalue/store",
-        "wasi:keyvalue/atomics",
-        "wasi:keyvalue/batch",
-        "bulkhead:watch/watch",
-    ];
     type Spec = KeyValueSpec;
     type Shared = KvStore;
     type Instance = Instance;
@@ -231,54 +184,12 @@ impl Service for KeyValue {
         }
     }
 
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
-        store::add_to_linker::<T, Ctx<Self>>(linker, T::service)?;
-        atomics::add_to_linker::<T, Ctx<Self>>(linker, T::service)?;
-        batch::add_to_linker::<T, Ctx<Self>>(linker, T::service)?;
-        watch::add_to_linker::<T, Ctx<Self>>(linker, T::service)
-    }
-
     fn exited(shared: &KvStore, pid: Pid) {
         shared.watches.exited(pid);
     }
 }
 
 impl ServiceCtx<'_, Instance> {
-    /// Run one storage operation, counting the time as host time.
-    async fn run(
-        &mut self,
-        bucket: &Resource<BucketHandle>,
-        op: Op,
-    ) -> Result<std::result::Result<Outcome, store::Error>> {
-        // Borrowed, not cloned: the table and the service state are
-        // separate fields.
-        let handle = self.table.get(bucket)?;
-        if !handle.writable && !op.read_only() {
-            return Ok(Err(store::Error::AccessDenied));
-        }
-        Ok(self
-            .state
-            .store
-            .run(handle, op)
-            .await
-            .map_err(|e| store::Error::Other(e.to_string())))
-    }
-
-    /// Run a read now, without waiting; for host functions bound
-    /// synchronously.
-    fn read(
-        &mut self,
-        bucket: &Resource<BucketHandle>,
-        op: Op,
-    ) -> Result<std::result::Result<Outcome, store::Error>> {
-        let handle = self.table.get(bucket)?;
-        Ok(self
-            .state
-            .store
-            .read(handle, op)
-            .map_err(|e| store::Error::Other(e.to_string())))
-    }
-
     /// Run a `bulkhead:watch` read on `bucket` now.
     fn watch_read(&mut self, bucket: &str, op: Op) -> std::result::Result<Outcome, KvError> {
         let handle = self.watch_bucket(bucket, false)?;
@@ -331,136 +242,7 @@ fn unexpected_kv(outcome: &Outcome) -> KvError {
     KvError::Other(format!("unexpected storage outcome {outcome:?}"))
 }
 
-fn unexpected(outcome: &Outcome) -> store::Error {
-    store::Error::Other(format!("unexpected storage outcome {outcome:?}"))
-}
-
-impl store::Host for ServiceCtx<'_, Instance> {
-    async fn open(
-        &mut self,
-        identifier: String,
-    ) -> Result<std::result::Result<Resource<BucketHandle>, store::Error>> {
-        // Only buckets the manifest lists (and, for shared ones, the grant
-        // includes).
-        match self.state.resolve(&identifier, &self.tags.app) {
-            Ok(handle) => Ok(Ok(self.table.push(handle)?)),
-            Err(Refused::AccessDenied) => Ok(Err(store::Error::AccessDenied)),
-            Err(Refused::NoSuchStore) => Ok(Err(store::Error::NoSuchStore)),
-        }
-    }
-}
-
-impl store::HostBucket for ServiceCtx<'_, Instance> {
-    fn get(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        key: String,
-    ) -> Result<std::result::Result<Option<Vec<u8>>, store::Error>> {
-        Ok(self.read(&bucket, Op::Get(key))?.and_then(|o| match o {
-            Outcome::Value(v) => Ok(v),
-            other => Err(unexpected(&other)),
-        }))
-    }
-
-    async fn set(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        key: String,
-        value: Vec<u8>,
-    ) -> Result<std::result::Result<(), store::Error>> {
-        Ok(self.run(&bucket, Op::Set(key, value)).await?.map(|_| ()))
-    }
-
-    async fn delete(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        key: String,
-    ) -> Result<std::result::Result<(), store::Error>> {
-        Ok(self.run(&bucket, Op::Delete(key)).await?.map(|_| ()))
-    }
-
-    fn exists(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        key: String,
-    ) -> Result<std::result::Result<bool, store::Error>> {
-        Ok(self.read(&bucket, Op::Exists(key))?.and_then(|o| match o {
-            Outcome::Exists(e) => Ok(e),
-            other => Err(unexpected(&other)),
-        }))
-    }
-
-    fn list_keys(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        cursor: Option<u64>,
-    ) -> Result<std::result::Result<store::KeyResponse, store::Error>> {
-        Ok(self.read(&bucket, Op::Keys(cursor))?.and_then(|o| match o {
-            Outcome::Keys(keys, cursor) => Ok(store::KeyResponse { keys, cursor }),
-            other => Err(unexpected(&other)),
-        }))
-    }
-
-    async fn drop(&mut self, bucket: Resource<BucketHandle>) -> Result<()> {
-        self.table.delete(bucket)?;
-        Ok(())
-    }
-}
-
-impl atomics::Host for ServiceCtx<'_, Instance> {
-    async fn increment(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        key: String,
-        delta: u64,
-    ) -> Result<std::result::Result<u64, store::Error>> {
-        Ok(self
-            .run(&bucket, Op::Increment(key, delta))
-            .await?
-            .and_then(|o| match o {
-                Outcome::Count(n) => Ok(n),
-                other => Err(unexpected(&other)),
-            }))
-    }
-}
-
-impl batch::Host for ServiceCtx<'_, Instance> {
-    fn get_many(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        keys: Vec<String>,
-    ) -> Result<std::result::Result<Vec<Option<(String, Vec<u8>)>>, store::Error>> {
-        Ok(self
-            .read(&bucket, Op::GetMany(keys))?
-            .and_then(|o| match o {
-                Outcome::Values(v) => Ok(v),
-                other => Err(unexpected(&other)),
-            }))
-    }
-
-    async fn set_many(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        key_values: Vec<(String, Vec<u8>)>,
-    ) -> Result<std::result::Result<(), store::Error>> {
-        Ok(self
-            .run(&bucket, Op::SetMany(key_values))
-            .await?
-            .map(|_| ()))
-    }
-
-    async fn delete_many(
-        &mut self,
-        bucket: Resource<BucketHandle>,
-        keys: Vec<String>,
-    ) -> Result<std::result::Result<(), store::Error>> {
-        Ok(self.run(&bucket, Op::DeleteMany(keys)).await?.map(|_| ()))
-    }
-}
-
-/// The `bulkhead:watch` functions on the host's own and the protocol's
-/// types: what a component's import and a native app's requests both run
-/// (ROADMAP Z9b).
+/// The `bulkhead:watch` functions, on the protocol's types.
 impl ServiceCtx<'_, Instance> {
     /// Watch `key` (or every key under it, with `prefix`) in `bucket`:
     /// the watch's id and the bucket's revision it starts from, after
@@ -624,126 +406,5 @@ fn swapped(outcome: std::result::Result<Outcome, KvError>) -> std::result::Resul
         Outcome::Swapped(revision) => Ok(revision),
         Outcome::Conflict(found) => Err(KvError::Conflict(found)),
         other => Err(unexpected_kv(&other)),
-    }
-}
-
-fn to_watch(e: KvError) -> watch::Error {
-    match e {
-        KvError::AccessDenied => watch::Error::AccessDenied,
-        KvError::NoSuchBucket => watch::Error::NoSuchBucket,
-        KvError::LimitReached => watch::Error::LimitReached,
-        KvError::TooOld(now) => watch::Error::TooOld(now),
-        KvError::Conflict(found) => watch::Error::Conflict(found),
-        KvError::Unavailable => watch::Error::Unavailable,
-        KvError::Other(why) => watch::Error::Other(why),
-    }
-}
-
-fn watch_entry(e: Option<(Vec<u8>, u64)>) -> Option<watch::Entry> {
-    e.map(|(value, revision)| watch::Entry { value, revision })
-}
-
-/// A component's `bulkhead:watch` import, on the WIT's types.
-impl watch::Host for ServiceCtx<'_, Instance> {
-    async fn watch(
-        &mut self,
-        bucket: String,
-        key: String,
-        prefix: bool,
-        after: Option<u64>,
-    ) -> Result<std::result::Result<watch::Started, watch::Error>> {
-        Ok(self
-            .kv_watch(&bucket, key, prefix, after)
-            .await
-            .map(|(id, revision)| watch::Started { id, revision })
-            .map_err(to_watch))
-    }
-
-    async fn unwatch(&mut self, id: u64) -> Result<std::result::Result<(), watch::Error>> {
-        self.kv_unwatch(id);
-        Ok(Ok(()))
-    }
-
-    fn get(
-        &mut self,
-        bucket: String,
-        key: String,
-    ) -> Result<std::result::Result<Option<watch::Entry>, watch::Error>> {
-        Ok(self
-            .kv_entry(&bucket, key)
-            .map(watch_entry)
-            .map_err(to_watch))
-    }
-
-    async fn get_linearizable(
-        &mut self,
-        bucket: String,
-        key: String,
-    ) -> Result<std::result::Result<Option<watch::Entry>, watch::Error>> {
-        Ok(self
-            .kv_entry_linearizable(&bucket, key)
-            .await
-            .map(watch_entry)
-            .map_err(to_watch))
-    }
-
-    fn revision(&mut self, bucket: String) -> Result<std::result::Result<u64, watch::Error>> {
-        Ok(self.kv_revision(&bucket).map_err(to_watch))
-    }
-
-    fn scan(
-        &mut self,
-        bucket: String,
-        query: watch::ScanQuery,
-    ) -> Result<std::result::Result<watch::ScanPage, watch::Error>> {
-        let query = ScanQuery {
-            prefix: query.prefix,
-            start: query.start,
-            end: query.end,
-            reverse: query.reverse,
-            limit: query.limit,
-            cursor: query.cursor,
-        };
-        Ok(self
-            .kv_scan(&bucket, query)
-            .map(|page| watch::ScanPage {
-                entries: page
-                    .entries
-                    .into_iter()
-                    .map(|(key, value, revision)| watch::KeyedEntry {
-                        key,
-                        value: value.0,
-                        revision,
-                    })
-                    .collect(),
-                next: page.next,
-                revision: page.revision,
-            })
-            .map_err(to_watch))
-    }
-
-    async fn compare_and_swap(
-        &mut self,
-        bucket: String,
-        key: String,
-        expected: Option<u64>,
-        value: Vec<u8>,
-    ) -> Result<std::result::Result<u64, watch::Error>> {
-        Ok(self
-            .kv_swap(&bucket, key, expected, value)
-            .await
-            .map_err(to_watch))
-    }
-
-    async fn compare_and_delete(
-        &mut self,
-        bucket: String,
-        key: String,
-        expected: u64,
-    ) -> Result<std::result::Result<u64, watch::Error>> {
-        Ok(self
-            .kv_swap_delete(&bucket, key, expected)
-            .await
-            .map_err(to_watch))
     }
 }

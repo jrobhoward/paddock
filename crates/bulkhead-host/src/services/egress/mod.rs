@@ -33,9 +33,8 @@ pub use policy::within;
 use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
-use wasmtime::component::Linker;
 
-use super::{HostState, InstanceInfo, Service};
+use super::{InstanceInfo, Service};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 
@@ -69,17 +68,11 @@ pub(crate) struct Shared {
 /// Egress state for one instance.
 pub(crate) struct Instance {
     #[cfg(feature = "egress")]
-    ctx: wasmtime_wasi_http::WasiHttpCtx,
-    #[cfg(feature = "egress")]
     hooks: hooks::Hooks,
 }
 
 impl Service for Egress {
     const CAPABILITY: Capability = Capability::HttpOutgoing;
-    #[cfg(feature = "egress")]
-    const INTERFACES: &'static [&'static str] = &["wasi:http/outgoing-handler", "wasi:http/types"];
-    #[cfg(not(feature = "egress"))]
-    const INTERFACES: &'static [&'static str] = &[];
     type Spec = EgressSpec;
     type Shared = Shared;
     type Instance = Instance;
@@ -114,25 +107,8 @@ impl Service for Egress {
     fn instance(shared: &Arc<Shared>, spec: &EgressSpec, info: &InstanceInfo<'_>) -> Instance {
         Instance {
             #[cfg(feature = "egress")]
-            ctx: wasmtime_wasi_http::WasiHttpCtx::new(),
-            #[cfg(feature = "egress")]
             hooks: hooks::Hooks::new(shared, spec, info),
         }
-    }
-
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> wasmtime::Result<()> {
-        #[cfg(feature = "egress")]
-        {
-            use wasmtime_wasi_http::WasiHttp;
-            use wasmtime_wasi_http::p2::bindings::LinkOptions;
-            use wasmtime_wasi_http::p2::bindings::http::{outgoing_handler, types};
-
-            outgoing_handler::add_to_linker::<T, WasiHttp>(linker, view::<T>)?;
-            types::add_to_linker::<T, WasiHttp>(linker, &LinkOptions::default().into(), view::<T>)?;
-        }
-        #[cfg(not(feature = "egress"))]
-        let _ = linker;
-        Ok(())
     }
 }
 
@@ -156,35 +132,12 @@ impl Instance {
     }
 }
 
-/// wasi:http's view of an instance: the egress state and the instance's
-/// resource table, which `wasi:io` streams share.
-#[cfg(feature = "egress")]
-fn view<T: HostState<Egress>>(t: &mut T) -> wasmtime_wasi_http::WasiHttpCtxView<'_> {
-    let super::ServiceCtx { state, table, .. } = t.service();
-    wasmtime_wasi_http::WasiHttpCtxView {
-        ctx: &mut state.ctx,
-        table,
-        hooks: &mut state.hooks,
-    }
-}
-
-/// wasi:http's view of an instance, for the HTTP ingress to hand an HTTP
-/// handler its request (`crate::http`): the same state the guest's
-/// `wasi:http/types` calls reach.
-#[cfg(feature = "egress")]
-pub(crate) fn incoming_view(
-    state: &mut crate::state::InstanceState,
-) -> wasmtime_wasi_http::WasiHttpCtxView<'_> {
-    view(state)
-}
-
 #[cfg(feature = "egress")]
 mod hooks {
-    use std::future::Future;
     use std::sync::{Arc, PoisonError};
 
+    use super::client::{Error, WasiBody};
     use tokio::sync::Semaphore;
-    use wasmtime_wasi_http::{Error, RequestOptions, WasiBody, WasiHttpHooks};
 
     use bulkhead_native::protocol as p;
 
@@ -196,18 +149,6 @@ mod hooks {
     const DENIED: usize = 1;
     const LIMITED: usize = 2;
     const FAILED: usize = 3;
-
-    type Sent = Box<
-        dyn Future<
-                Output = Result<
-                    (
-                        hyper::Response<WasiBody>,
-                        Box<dyn Future<Output = Result<(), Error>> + Send>,
-                    ),
-                    Error,
-                >,
-            > + Send,
-    >;
 
     /// The filter for one instance.
     pub(crate) struct Hooks {
@@ -312,7 +253,7 @@ mod hooks {
             for (name, value) in &request.headers {
                 let name = hyper::header::HeaderName::from_bytes(name.as_bytes())
                     .map_err(|e| invalid("header", &e))?;
-                if wasmtime_wasi_http::DEFAULT_FORBIDDEN_HEADERS.contains(&name) {
+                if forbidden(&name) {
                     return Err(p::HttpError::Invalid(format!("header {name} is forbidden")));
                 }
                 let value = hyper::header::HeaderValue::from_bytes(&value.0)
@@ -349,7 +290,7 @@ mod hooks {
                 let headers = response
                     .headers()
                     .iter()
-                    .filter(|(n, _)| !wasmtime_wasi_http::DEFAULT_FORBIDDEN_HEADERS.contains(n))
+                    .filter(|(n, _)| !forbidden(n))
                     .map(|(n, v)| (n.as_str().to_string(), p::Bytes(v.as_bytes().to_vec())))
                     .collect();
                 let mut body = response.into_body();
@@ -357,7 +298,7 @@ mod hooks {
                 while let Some(frame) = body.frame().await {
                     if let Ok(data) = frame?.into_data() {
                         if bytes.len() + data.len() > MAX_NATIVE_BODY {
-                            return Err(Error::HttpResponseBodySize(None));
+                            return Err(Error::HttpResponseBodySize);
                         }
                         bytes.extend_from_slice(&data);
                     }
@@ -379,73 +320,37 @@ mod hooks {
     /// component's.
     fn native_error(e: &Error) -> p::HttpError {
         match e {
-            Error::HttpRequestDenied => p::HttpError::Denied,
-            Error::ConnectionLimitReached => p::HttpError::Limited,
             Error::DestinationIpProhibited => p::HttpError::Prohibited,
-            Error::ConnectionReadTimeout
-            | Error::ConnectionTimeout
-            | Error::ConnectionWriteTimeout
-            | Error::HttpResponseTimeout => p::HttpError::Timeout,
+            Error::ConnectionReadTimeout | Error::ConnectionTimeout => p::HttpError::Timeout,
             Error::ConnectionRefused
-            | Error::DestinationNotFound
             | Error::DestinationUnavailable
-            | Error::DestinationIpUnroutable
-            | Error::DnsTimeout
-            | Error::DnsError { .. }
+            | Error::Dns
             | Error::ConnectionTerminated => p::HttpError::Unreachable(format!("{e:?}")),
-            Error::TlsProtocolError
-            | Error::TlsCertificateError
-            | Error::TlsAlertReceived { .. } => p::HttpError::Tls(format!("{e:?}")),
-            Error::HttpRequestMethodInvalid | Error::HttpRequestUriInvalid => {
-                p::HttpError::Invalid(format!("{e:?}"))
+            Error::TlsProtocol | Error::TlsCertificate | Error::TlsAlertReceived(_) => {
+                p::HttpError::Tls(format!("{e:?}"))
             }
-            Error::HttpResponseBodySize(_) => {
+            Error::HttpResponseBodySize => {
                 p::HttpError::Other(format!("response body over {MAX_NATIVE_BODY} bytes"))
             }
-            other => p::HttpError::Other(format!("{other:?}")),
+            Error::HttpProtocol => p::HttpError::Other(format!("{e:?}")),
         }
     }
 
-    fn fail(error: Error) -> Sent {
-        Box::new(async move { Err(error) })
-    }
-
-    impl WasiHttpHooks for Hooks {
-        fn send_request(
-            &mut self,
-            request: hyper::Request<WasiBody>,
-            options: Option<RequestOptions>,
-            _fut: Box<dyn Future<Output = Result<(), Error>> + Send>,
-        ) -> Sent {
-            if let Some(why) = self.refuse(&request) {
-                tracing::debug!(app = %self.app, uri = %request.uri(), why, "egress request denied");
-                self.stats.egress(DENIED);
-                return fail(Error::HttpRequestDenied);
-            }
-            let Ok(permit) = self.limit.clone().try_acquire_owned() else {
-                self.stats.egress(LIMITED);
-                return fail(Error::ConnectionLimitReached);
-            };
-            let config = &self.shared.config;
-            let shorter =
-                |guest: Option<std::time::Duration>, node| guest.map_or(node, |g| g.min(node));
-            let first_byte = shorter(
-                options.and_then(|o| o.first_byte_timeout),
-                config.first_byte_timeout,
-            );
-            let between = shorter(
-                options.and_then(|o| o.between_bytes_timeout),
-                config.between_bytes_timeout,
-            );
-            let sent = self.shared.pool.send(request, first_byte, between, permit);
-            let stats = self.stats.clone();
-            Box::new(async move {
-                let response = sent.await;
-                stats.egress(if response.is_ok() { SENT } else { FAILED });
-                let io: Box<dyn Future<Output = Result<(), Error>> + Send> =
-                    Box::new(async { Ok(()) });
-                Ok((response?, io))
-            })
-        }
+    /// Whether `name` is a header an app may not set or see (hop-by-hop
+    /// headers and `host`).
+    fn forbidden(name: &hyper::header::HeaderName) -> bool {
+        use hyper::header;
+        matches!(
+            *name,
+            header::CONNECTION
+                | header::PROXY_AUTHENTICATE
+                | header::PROXY_AUTHORIZATION
+                | header::TRANSFER_ENCODING
+                | header::UPGRADE
+                | header::HOST
+        ) || matches!(
+            name.as_str(),
+            "keep-alive" | "proxy-connection" | "http2-settings"
+        )
     }
 }

@@ -357,7 +357,6 @@ pub(crate) struct AppStats {
     passivations: AtomicU64,
     wake_time: Histogram,
     /// Starts, wakes and upgrades that found no Store slot in time.
-    slot_timeouts: AtomicU64,
     /// Outgoing HTTP requests by outcome ([`EGRESS_OUTCOMES`]).
     egress: [AtomicU64; 4],
     /// Sockets the app's instances hold open (`wasi:sockets`).
@@ -382,7 +381,6 @@ impl Default for AppStats {
             exits: Mutex::default(),
             passivations: AtomicU64::new(0),
             wake_time: Histogram::new(&CALLBACK_BUCKETS),
-            slot_timeouts: AtomicU64::new(0),
             egress: Default::default(),
             sockets_open: AtomicU64::new(0),
             sockets_refused: AtomicU64::new(0),
@@ -416,11 +414,6 @@ impl AppStats {
     /// `load-snapshot`).
     pub(crate) fn woke(&self, took: Duration) {
         self.wake_time.record(took.as_secs_f64());
-    }
-
-    /// A start, wake or upgrade found no Store slot in time.
-    pub(crate) fn slot_timeout(&self) {
-        self.slot_timeouts.fetch_add(1, Ordering::Relaxed);
     }
 
     /// An outgoing HTTP request ended with `outcome`, an index into
@@ -630,20 +623,6 @@ impl Metrics {
                 &mut out,
                 "bulkhead_wake_seconds",
                 &format!("app=\"{}\"", escape(app)),
-            );
-        }
-        header(
-            &mut out,
-            "bulkhead_slot_timeouts_total",
-            "counter",
-            "Starts, wakes and upgrades that found no Store slot within init_timeout.",
-        );
-        for (app, (_, s)) in &apps {
-            let _ = writeln!(
-                out,
-                "bulkhead_slot_timeouts_total{{app=\"{}\"}} {}",
-                escape(app),
-                s.slot_timeouts.load(Ordering::Relaxed)
             );
         }
         header(

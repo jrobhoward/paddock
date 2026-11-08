@@ -16,7 +16,7 @@ A node reads its configuration, keys and policy from wherever its config file na
 | `failover-epoch` | A pair node's highest failover epoch | never restore an older one |
 | `witness-state` | A witness's epoch, the node it last promoted, and `outdated` while that node's partner lacks replicated writes | never restore an older one |
 | `priv/<app>/<version>/` | Each bundle's `priv/` files, extracted again on every start | no |
-| `compiled/<app>/<version>/` | Compiled components, so a restart does not compile again; only files owned by the node's user and not writable by group or others are read. A native-process app's program is written here too (`.native`), executable by the node's user only | no |
+| `compiled/<app>/<version>/` | Each version's native program, written from its bundle; only the node can change it. Rebuilt from the bundle if missing. |
 | `tmp/` | Uploads being verified | no |
 | `node.lock` | Held while the node runs; a second node on the same `data_dir` is refused | no |
 | `admin.sock` | The admin API (mode 0600), unless `admin_socket` names another path | no |

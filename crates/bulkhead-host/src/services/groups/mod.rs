@@ -28,10 +28,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use bulkhead_bundle::manifest::{AppSpec, Capability, GroupsScope};
 use bulkhead_native::protocol::{GroupsAnswer, GroupsError, GroupsRequest};
-use wasmtime::Result;
-use wasmtime::component::Linker;
 
-use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use super::{InstanceInfo, Service};
 use crate::acl::{self, Stamp};
 use crate::config::RuntimeConfig;
 use crate::delivery::{self, Origin};
@@ -41,31 +39,6 @@ use crate::message::Envelope;
 use crate::pid::Pid;
 use crate::runtime::RuntimeInner;
 use crate::transport::{self, Frame};
-
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    wasmtime::component::bindgen!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:host/groups",
-        imports: { default: async | trappable },
-        with: { "bulkhead:runtime/types": crate::bindings::bulkhead::runtime::types },
-    });
-}
-
-use bindings::bulkhead::groups::groups;
 
 /// The groups service.
 pub(crate) struct Groups;
@@ -392,7 +365,6 @@ impl Instance {
 
 impl Service for Groups {
     const CAPABILITY: Capability = Capability::Groups;
-    const INTERFACES: &'static [&'static str] = &["bulkhead:groups/groups"];
     type Spec = GroupsSpec;
     type Shared = Shared;
     type Instance = Instance;
@@ -415,10 +387,6 @@ impl Service for Groups {
             me: info.handle.clone(),
             max: usize::try_from(info.host_objects.groups).unwrap_or(usize::MAX),
         }
-    }
-
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
-        groups::add_to_linker::<T, Ctx<Self>>(linker, T::service)
     }
 
     fn exited(shared: &Shared, pid: Pid) {
@@ -496,45 +464,5 @@ impl Instance {
                 .publish_to(&group, &crate::native::convert::host_envelope(msg))
                 .map(GroupsAnswer::Delivered),
         }
-    }
-}
-
-fn wit_error(e: GroupsError) -> groups::Error {
-    match e {
-        GroupsError::AccessDenied => groups::Error::AccessDenied,
-        GroupsError::LimitReached => groups::Error::LimitReached,
-    }
-}
-
-/// A component's `bulkhead:groups` import, on the WIT's types.
-impl groups::Host for ServiceCtx<'_, Instance> {
-    async fn join(&mut self, group: String) -> Result<std::result::Result<(), groups::Error>> {
-        Ok(self.state.join_group(&group).map_err(wit_error))
-    }
-
-    async fn leave(&mut self, group: String) -> Result<std::result::Result<(), groups::Error>> {
-        Ok(self.state.leave_group(&group).map_err(wit_error))
-    }
-
-    async fn members(
-        &mut self,
-        group: String,
-    ) -> Result<std::result::Result<Vec<groups::Pid>, groups::Error>> {
-        Ok(self
-            .state
-            .group_members(&group)
-            .map(|pids| pids.into_iter().map(Into::into).collect())
-            .map_err(wit_error))
-    }
-
-    async fn publish(
-        &mut self,
-        group: String,
-        msg: groups::Envelope,
-    ) -> Result<std::result::Result<u32, groups::Error>> {
-        Ok(self
-            .state
-            .publish_to(&group, &Envelope::from(msg))
-            .map_err(wit_error))
     }
 }

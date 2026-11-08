@@ -33,18 +33,6 @@ impl MemoryProfile {
             Self::Dense => 128 << 20,
         }
     }
-
-    /// Bytes of a freed Store slot's linear memory kept resident, zeroed,
-    /// for the next instance when [`RuntimeConfig::keep_resident`] is
-    /// unset: 16 MiB for `Standard`, none for `Dense`, where many small
-    /// instances would each hold it.
-    #[must_use]
-    pub const fn keep_resident(self) -> u64 {
-        match self {
-            Self::Standard => 16 << 20,
-            Self::Dense => 0,
-        }
-    }
 }
 
 /// Most host objects one instance may hold. These live in host memory,
@@ -249,36 +237,8 @@ pub struct RuntimeConfig {
     /// instance starting or waking while every Store slot is taken waits
     /// for one (spike S11).
     pub max_processes: Option<u32>,
-    /// Most core module instances one component may contain; a component
-    /// with more fails to load. Rust components have 3, TinyGo 3,
-    /// componentize-js 4 and componentize-py 14 (spikes S21 to S23). The
-    /// pool's total is this times `max_instances`, so the total never
-    /// refuses an instance this limit allows. Both are counters in
-    /// wasmtime's pooling allocator, reserving no memory.
-    pub max_core_instances_per_component: u32,
     /// Address-space reservation per linear memory.
     pub memory_profile: MemoryProfile,
-    /// Bytes of a freed Store slot's linear memory kept resident for the
-    /// next instance; `None` is the profile's
-    /// ([`MemoryProfile::keep_resident`]). A free slot holds the pages its
-    /// last instance wrote, up to this, zeroed; pages past it are returned
-    /// to the kernel. An instance starting, waking or upgrading on the slot
-    /// then takes no page fault for them, which is most of a wake's cost
-    /// (about 1 ms per MiB of state without it, `docs/BASELINE.md`,
-    /// 2026-10-24).
-    pub keep_resident: Option<u64>,
-    /// Give free Store slots' kept pages back to the kernel once no Store
-    /// has been taken (a start, wake, upgrade, connection or HTTP handler
-    /// request) for this long; `None` never does. The next instance on such
-    /// a slot takes page faults again, about 1 ms per MiB it touches. Five
-    /// minutes by default, so a node whose instances wake every minute or
-    /// so keeps them.
-    pub release_idle_after: Option<Duration>,
-    /// Epoch tick: the granularity of deadlines and of preemption between
-    /// instances. A busy instance can keep its tokio worker for up to one
-    /// tick, so the tick also bounds how long other tasks on that worker
-    /// wait (`docs/BASELINE.md`, 2026-10-07).
-    pub epoch_tick: Duration,
     /// Where node state lives (`disk` keyvalue buckets). `None` disables
     /// disk buckets.
     pub data_dir: Option<PathBuf>,
@@ -425,11 +385,7 @@ impl Default for RuntimeConfig {
             node: 0,
             max_instances: 1_000,
             max_processes: None,
-            max_core_instances_per_component: 8,
             memory_profile: MemoryProfile::Standard,
-            keep_resident: None,
-            release_idle_after: Some(Duration::from_secs(300)),
-            epoch_tick: Duration::from_millis(2),
             data_dir: None,
             heartbeat_interval: Duration::from_secs(1),
             node_timeout: Duration::from_secs(5),

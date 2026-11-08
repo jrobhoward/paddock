@@ -365,56 +365,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 Each of these was measured; the spike README has the evidence. Don't undo one
 without re-running its spike.
 
-**Host instances on tokio's multi-threaded runtime, never `current_thread` +
-`LocalSet`.** In that configuration timers and the top-level future starve
-while a guest yields every epoch tick (S1). That includes tests: async tests that
-run instances use `#[tokio::test(flavor = "multi_thread")]`, never the
-default. The one exception is `bulkhead-host`'s `tests/simulation`, which
-needs tokio's paused clock (`current_thread` only): it runs no spinning
-guest and sets an hour-long epoch tick, and a guest that spins there would
-hang the run.
-
-**The epoch ticker is an OS thread, not a tokio task.** Guests yield only when
-the epoch advances; if every worker ran a spinning guest, a ticker task would
-never be scheduled and nothing would yield again.
-
-**A Store whose call future was dropped, or that trapped, is poisoned.** The
-next entry traps with `cannot enter component instance`. Killing an instance
-means dropping the future and discarding the Store; supervisors rebuild from
-`init`, never resume (S1).
-
-**`callback_deadline_ms` counts the time a callback runs, not the time it
-waits.** The callback clock (`PollTime`, in `state.rs`) times the instance
-task's polls of the callback from `killable()`, and the epoch callback
-checks that total against the deadline. Waiting on another instance, a
-timer or I/O, or for a worker after an epoch yield, is not runaway code;
-host work that does not wait counts with the guest's. Host functions do
-not time themselves, and there is no Store call hook: it cost about 5% of
-an empty call (B12, BASELINE.md, 2026-10-24). The epoch callback yields
-every tick for fairness (S1).
-
-**The epoch tick bounds how long a busy instance holds a worker.** Receiving
-from a non-empty mailbox never suspends, so an instance draining a full
-mailbox gives up its tokio worker only at an epoch tick (or when tokio's
-cooperative budget runs out). Tasks queued on that worker wait up to a tick:
-at 10 ms, p99 under oversubscription was 10.7 ms; at the 2 ms default it is
-3.4 ms with the same throughput. A `yield_now` per callback instead costs
-over half the throughput. Rerun `pool_load` and `baseline` before changing
-the tick or the instance loop (0.5, `docs/BASELINE.md`).
-
-**A task an instance wakes is moved off its worker's LIFO slot.** tokio
-puts a task woken by a running task in that worker's LIFO slot, which idle
-workers do not steal from, so a caller woken by a reply, or an instance
-woken by a cast, waited up to an epoch tick behind an instance with more
-messages queued. After a callback that woke another task, with messages
-queued, the instance spawns an empty task that takes the slot (not with one
-worker). Every way a callback wakes another task calls
-`InstanceHandle::woke_others` (casts and exit signals in `delivery`,
-replies in `take_reply`, publishes in `groups`); a new one must too.
-Yielding instead cost a busy instance half its throughput, and tokio's
-`disable_lifo_slot` is unstable and slowed sequential calls by a third
-(B15, `docs/BASELINE.md`, 2026-10-30). `tests/messaging.rs` guards it;
-rerun `wake_cost` after a tokio upgrade.
+**Host instances on tokio's multi-threaded runtime, never `current_thread`
++ `LocalSet`.** That includes tests: async tests that run instances use
+`#[tokio::test(flavor = "multi_thread")]`, never the default. The one
+exception is `bulkhead-host`'s `tests/simulation`, which needs tokio's paused
+clock (`current_thread` only) and runs in-process apps, none of which spin.
 
 **A native instance's waits spin, then sleep, except after an idle
 callback.** The node hints a callback idle (a word in the ring to the
@@ -472,13 +427,6 @@ exception is a host function that never waits: keyvalue and watch reads
 cost about a fifth of a read (S25). A sync host function must not block;
 its time counts against the callback deadline.
 
-**Ungranted capabilities get typed deny stubs built with `func_new`, not
-`Linker::define_unknown_imports_as_traps`.** A typed stub returns
-`access-denied` as a value; a trap stub kills the instance on the first
-call. On wasmtime 49.0.2 the trap stubs also broke instantiation next to the
-WASI linker (re-exported WASI resources redefined), fixed in 50 (S4, rerun
-2026-10-25).
-
 **Capability functions return `result<T, error>` with an `access-denied`
 case.** That is what lets a generic deny stub return an error instead of
 trapping. The stub also accepts `permission-denied` and `access` for WASI and
@@ -487,11 +435,6 @@ older interfaces (S4, S7).
 **Socket policy has separate bind and connect rules.** Rust std binds
 `0.0.0.0:0` before every connect, so a destination-only rule blocks every
 connection (S4).
-
-**Pooling allocator: `total_stacks` equals the instance limit.** Each live
-Store holds a fiber stack. Virtual address space, not RAM, limits instance
-count: default reservations cost about 4 to 8 GiB of address space per
-instance (S2).
 
 **Bundles are verified against operator-trusted keys only.**
 `rustbridge-bundle` defaults to the key inside the bundle, which proves
@@ -516,10 +459,6 @@ test binaries that build the same set share a directory.
 **Unix socket paths are short.** About 107 bytes on Linux and 103 on macOS;
 the node refuses a longer `admin_socket` with a message saying so, and tests
 keep data directories short.
-
-**wasmtime 50 has its own `wasmtime::Error`, not `anyhow::Error`.** Use
-`wasmtime::Result` at the wasmtime boundary and convert into this crate's
-`thiserror` types (S1).
 
 ## Licensing is a design constraint
 

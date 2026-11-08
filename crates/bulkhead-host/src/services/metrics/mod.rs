@@ -11,37 +11,11 @@ use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
 use bulkhead_native::protocol::{MetricError, MetricKind, MetricUpdate};
-use wasmtime::Result;
-use wasmtime::component::Linker;
 
-use super::{Ctx, HostState, InstanceInfo, Service, ServiceCtx};
+use super::{InstanceInfo, Service};
 use crate::config::RuntimeConfig;
 use crate::error::HostError;
 use crate::metrics::{AppMetrics, Kind, Refused, RegisterError, Series};
-
-mod bindings {
-    // Generated code carries no doc comments.
-    #![allow(missing_docs)]
-
-    wasmtime::component::bindgen!({
-        path: [
-            "../../wit",
-            "../../wit/vendor/wasi-logging",
-            "../../wit/vendor/wasi-config",
-            "../../wit/vendor/wasi-keyvalue",
-            "../../wit/groups",
-            "../../wit/watch",
-            "../../wit/secrets",
-            "../../wit/metrics",
-            "../../wit/sql",
-            "wit",
-        ],
-        world: "bulkhead:host/metrics",
-        imports: { default: async | trappable },
-    });
-}
-
-use bindings::bulkhead::metrics::metrics as wit;
 
 /// Series an app may hold when its manifest sets no `max_series`.
 pub const DEFAULT_MAX_SERIES: u32 = 1_000;
@@ -71,7 +45,6 @@ pub(crate) struct Instance {
 
 impl Service for MetricsService {
     const CAPABILITY: Capability = Capability::Metrics;
-    const INTERFACES: &'static [&'static str] = &["bulkhead:metrics/metrics"];
     type Spec = MetricsSpec;
     type Shared = ();
     type Instance = Instance;
@@ -98,10 +71,6 @@ impl Service for MetricsService {
             held: Vec::new(),
             ids: HashMap::new(),
         }
-    }
-
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> Result<()> {
-        wit::add_to_linker::<T, Ctx<Self>>(linker, T::service)
     }
 }
 
@@ -209,60 +178,5 @@ impl Instance {
             }
         }
         first
-    }
-}
-
-fn wit_error(e: MetricError) -> wit::Error {
-    match e {
-        MetricError::AccessDenied => wit::Error::AccessDenied,
-        MetricError::Invalid(why) => wit::Error::Invalid(why),
-        MetricError::LimitReached => wit::Error::LimitReached,
-        MetricError::UnknownMetric => wit::Error::UnknownMetric,
-    }
-}
-
-/// A component's `bulkhead:metrics` import, on the WIT's types.
-impl wit::Host for ServiceCtx<'_, Instance> {
-    async fn register(
-        &mut self,
-        kind: wit::Kind,
-        name: String,
-        help: String,
-        labels: Vec<(String, String)>,
-        buckets: Vec<f64>,
-    ) -> Result<std::result::Result<u32, wit::Error>> {
-        let kind = match kind {
-            wit::Kind::Counter => Kind::Counter,
-            wit::Kind::Gauge => Kind::Gauge,
-            wit::Kind::Histogram => Kind::Histogram,
-        };
-        Ok(self
-            .state
-            .register_metric(kind, &name, &help, &labels, &buckets)
-            .map_err(wit_error))
-    }
-
-    async fn add(
-        &mut self,
-        metric: u32,
-        delta: f64,
-    ) -> Result<std::result::Result<(), wit::Error>> {
-        Ok(self.state.metric_add(metric, delta).map_err(wit_error))
-    }
-
-    async fn set(
-        &mut self,
-        metric: u32,
-        value: f64,
-    ) -> Result<std::result::Result<(), wit::Error>> {
-        Ok(self.state.metric_set(metric, value).map_err(wit_error))
-    }
-
-    async fn observe(
-        &mut self,
-        metric: u32,
-        value: f64,
-    ) -> Result<std::result::Result<(), wit::Error>> {
-        Ok(self.state.metric_observe(metric, value).map_err(wit_error))
     }
 }

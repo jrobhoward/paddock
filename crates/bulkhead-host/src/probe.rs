@@ -189,14 +189,6 @@ pub(crate) fn upgrade_done(app: &str, to: &str, ok: bool) {
     anyprobe::fire!(upgrade__done(app, to, ok));
 }
 
-/// A listener started a connection handler.
-#[inline]
-#[allow(unused_variables)]
-pub(crate) fn connection_open(pid: Pid, listener: &str) {
-    #[cfg(feature = "probes")]
-    anyprobe::fire!(connection__open(pid.id, listener));
-}
-
 /// A full mailbox dropped a message.
 #[inline]
 #[allow(unused_variables)]

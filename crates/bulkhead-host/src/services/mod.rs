@@ -1,31 +1,22 @@
-//! Host services: the guest-facing interfaces apps import beside `process`.
+//! Host services: what apps reach beside the process functions.
 //!
 //! Each service is a module with a fixed shape, described by the crate-private `Service` trait:
 //!
-//! - the capability that grants it, and the WIT interfaces it links;
+//! - the capability that grants it;
 //! - a `Spec`: what the manifest asks of the service for one app, carried in
 //!   [`InstanceSpec::services`](crate::InstanceSpec::services);
 //! - `Shared` state, one per [`Runtime`](crate::Runtime): pools, limits,
 //!   operator overrides;
 //! - `Instance` state, one per instance, built from the spec and the shared
-//!   state;
-//! - `link`: its own `bindgen!` world, linked with the per-interface
-//!   `add_to_linker` and a getter that hands each host function a
-//!   `ServiceCtx`.
+//!   state.
 //!
-//! Host functions see only their own state and the instance facilities every
-//! service shares (tags, the resource table), never the
-//! rest of the instance. Linking happens once per engine, so a host call is a
-//! direct call on the service's state.
+//! A service's functions see only their own state and who the instance is,
+//! never the rest of the instance.
 //!
 //! Every service follows the same rules:
 //!
-//! - A capability the operator did not grant is still linked and fails
-//!   softly: an `access-denied` error value where the interface has one,
-//!   never a trap.
-//! - Time spent in a host function is host time, not counted against the
-//!   callback deadline: the Store's call hook measures every host import,
-//!   so services do not time themselves.
+//! - A capability the operator did not grant fails softly: an
+//!   `access-denied` answer, never a crash.
 //! - Named resources (buckets, datasources) are declared in the manifest and
 //!   bound in node configuration, so an app does not name host paths or
 //!   addresses.
@@ -35,7 +26,8 @@
 //!
 //! Adding a service is a new module here and one line in each of the
 //! registries below ([`ServiceSpecs`], `Shared`, `States` and its
-//! `announce`, `link`, `INTERFACES`); the process core and orchestration do not change.
+//! `announce`), and a request in the native protocol; the process core and
+//! orchestration do not change.
 
 pub mod config;
 pub mod egress;
@@ -49,15 +41,14 @@ pub mod sockets;
 pub mod sql;
 
 pub use extension::{
-    Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ExtensionSpec, NativeCall,
-    NativeCallError, NativeReply, StartedExtensions, StoreData, extension_ctx, reply,
+    Extension, ExtensionApp, ExtensionNode, ExtensionSpec, NativeCall, NativeCallError,
+    NativeReply, StartedExtensions, StoreData, extension_ctx, reply,
 };
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
-use wasmtime::component::{HasData, Linker, ResourceTable};
 
 use crate::config::{HostObjects, RuntimeConfig};
 use crate::error::HostError;
@@ -71,9 +62,6 @@ use crate::spec::InstanceSpec;
 pub(crate) trait Service: Sized + 'static {
     /// The capability that grants the service.
     const CAPABILITY: Capability;
-    /// The interfaces the service links, as `package/interface` without a
-    /// version. Imports of these are never deny-stubbed.
-    const INTERFACES: &'static [&'static str];
     /// What the manifest asks of the service for one app.
     type Spec;
     /// Node-wide state, one per runtime.
@@ -98,13 +86,6 @@ pub(crate) trait Service: Sized + 'static {
         spec: &Self::Spec,
         info: &InstanceInfo<'_>,
     ) -> Self::Instance;
-
-    /// Link the service's interfaces, reaching its state through `T`.
-    ///
-    /// # Errors
-    ///
-    /// A wasmtime error if an interface is already linked.
-    fn link<T: HostState<Self>>(linker: &mut Linker<T>) -> wasmtime::Result<()>;
 
     /// Host events to send the instance as `info.host-event`: after `init`,
     /// after a snapshot upgrade (the new guest starts fresh), and when the
@@ -131,15 +112,13 @@ pub(crate) struct InstanceInfo<'a> {
     pub(crate) metrics: &'a crate::metrics::Metrics,
 }
 
-/// What a service's host functions see: the service's own per-instance
+/// What a service's functions see: the service's own per-instance
 /// state and the facilities every service shares.
 pub struct ServiceCtx<'a, I> {
     /// The service's own per-instance state.
     pub(crate) state: &'a mut I,
     /// Who the instance is, for log records and errors.
     pub(crate) tags: &'a Tags,
-    /// Resources handed to the guest.
-    pub(crate) table: &'a mut ResourceTable,
 }
 
 impl<I> std::fmt::Debug for ServiceCtx<'_, I> {
@@ -175,13 +154,8 @@ impl<'a, I> ServiceCtx<'a, I> {
         self.tags.pid
     }
 
-    /// The instance's resource table, for resources handed to the guest.
-    pub fn table(&mut self) -> &mut ResourceTable {
-        self.table
-    }
-
-    pub(crate) fn new(state: &'a mut I, tags: &'a Tags, table: &'a mut ResourceTable) -> Self {
-        Self { state, tags, table }
+    pub(crate) fn new(state: &'a mut I, tags: &'a Tags) -> Self {
+        Self { state, tags }
     }
 }
 
@@ -189,13 +163,6 @@ impl<'a, I> ServiceCtx<'a, I> {
 pub(crate) trait HostState<S: Service>: Send + 'static {
     /// The context `S`'s host functions run with.
     fn service(&mut self) -> ServiceCtx<'_, S::Instance>;
-}
-
-/// The [`HasData`] projection from store data to [`ServiceCtx`].
-pub(crate) struct Ctx<S>(std::marker::PhantomData<S>);
-
-impl<S: Service> HasData for Ctx<S> {
-    type Data<'a> = ServiceCtx<'a, S::Instance>;
 }
 
 /// What the manifest asks of each service, for one instance.
@@ -406,41 +373,3 @@ impl States {
         })
     }
 }
-
-/// Link every service.
-pub(crate) fn link<T>(linker: &mut Linker<T>) -> wasmtime::Result<()>
-where
-    T: HostState<config::Config>
-        + HostState<egress::Egress>
-        + HostState<groups::Groups>
-        + HostState<keyvalue::KeyValue>
-        + HostState<logging::Logging>
-        + HostState<secrets::Secrets>
-        + HostState<metrics::MetricsService>
-        + HostState<sql::Sql>
-        + HostState<sockets::Sockets>,
-{
-    config::Config::link(linker)?;
-    egress::Egress::link(linker)?;
-    groups::Groups::link(linker)?;
-    keyvalue::KeyValue::link(linker)?;
-    logging::Logging::link(linker)?;
-    secrets::Secrets::link(linker)?;
-    metrics::MetricsService::link(linker)?;
-    sql::Sql::link(linker)?;
-    sockets::Sockets::link(linker)?;
-    Ok(())
-}
-
-/// The interfaces the services link, `package/interface`.
-pub(crate) const INTERFACES: &[&[&str]] = &[
-    config::Config::INTERFACES,
-    egress::Egress::INTERFACES,
-    groups::Groups::INTERFACES,
-    keyvalue::KeyValue::INTERFACES,
-    logging::Logging::INTERFACES,
-    secrets::Secrets::INTERFACES,
-    metrics::MetricsService::INTERFACES,
-    sql::Sql::INTERFACES,
-    sockets::Sockets::INTERFACES,
-];

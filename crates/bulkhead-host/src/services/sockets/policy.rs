@@ -19,7 +19,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use bulkhead_bundle::manifest::{PortRange, SocketRule, SocketsScope, cidr_contains, parse_cidr};
-use wasmtime_wasi::sockets::SocketAddrUse;
 
 /// Blocks reached only by a rule inside them.
 const GUARDED: &[(IpAddr, u8)] = &[
@@ -64,6 +63,18 @@ impl Rule {
 /// Whether block `inner` lies inside block `outer`.
 fn net_inside(inner: (IpAddr, u8), outer: (IpAddr, u8)) -> bool {
     inner.1 >= outer.1 && cidr_contains(outer, inner.0)
+}
+
+/// What an address is being checked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SocketAddrUse {
+    TcpBind,
+    TcpListen,
+    TcpAccept,
+    TcpConnect,
+    UdpBind,
+    UdpSend,
+    UdpReceive,
 }
 
 /// What one app's sockets may do.

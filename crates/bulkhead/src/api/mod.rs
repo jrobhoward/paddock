@@ -80,8 +80,6 @@ pub struct AppDetail {
     pub granted: Vec<String>,
     /// Capabilities declared but not granted (linked to deny stubs).
     pub denied: Vec<String>,
-    /// Imported interfaces no host provides (deny stubs).
-    pub stubbed: Vec<String>,
     /// Manifest fields this node does not enforce yet.
     pub warnings: Vec<String>,
     /// Restarts by the app's root supervisor since it started.
@@ -106,8 +104,6 @@ pub struct ListenerInfo {
     pub accepted: u64,
     /// Connections refused because `max_connections` were open.
     pub refused: u64,
-    /// Connections whose handler failed.
-    pub crashed: u64,
     /// Connections closed by the idle timeout.
     pub idle_closed: u64,
 }
