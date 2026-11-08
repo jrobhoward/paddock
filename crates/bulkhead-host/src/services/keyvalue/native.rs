@@ -1,6 +1,6 @@
 //! Keyvalue for native-process apps: each [`KvRequest`] from the app's
-//! protocol, answered with the code a component's `wasi:keyvalue` and
-//! `bulkhead:watch` imports run, on the same terms (the manifest's
+//! protocol, answered with the functions a component's `wasi:keyvalue`
+//! and `bulkhead:watch` imports run too (ROADMAP Z9b), on the same terms (the manifest's
 //! buckets, the grant, read-only shared buckets, quotas, watch limits).
 //! A watch notice is delivered with the key's value and revision, read
 //! when the notice is taken, so a native app keeping a copy needs no
@@ -10,61 +10,37 @@ use bulkhead_native::hot::KvOp;
 use bulkhead_native::protocol::{self as p, Bytes, KvAnswer, KvError, KvRequest};
 use serde::Deserialize;
 
-use super::bindings::bulkhead::watch::watch;
-use super::storage::{Op, Outcome, StoreError};
+use super::storage::{Op, Outcome, ScanQuery};
 use super::{Instance, watch_error};
 use crate::message::Envelope;
 use crate::services::ServiceCtx;
-
-fn from_watch(e: watch::Error) -> KvError {
-    match e {
-        watch::Error::AccessDenied => KvError::AccessDenied,
-        watch::Error::NoSuchBucket => KvError::NoSuchBucket,
-        watch::Error::LimitReached => KvError::LimitReached,
-        watch::Error::TooOld(now) => KvError::TooOld(now),
-        watch::Error::Conflict(found) => KvError::Conflict(found),
-        watch::Error::Unavailable => KvError::Unavailable,
-        watch::Error::Other(why) => KvError::Other(why),
-    }
-}
 
 fn unexpected(outcome: &Outcome) -> KvError {
     KvError::Other(format!("unexpected storage outcome {outcome:?}"))
 }
 
-/// A host function's own result: its trap (a resource-table failure,
-/// never expected here) becomes an error value.
-fn flat<T>(r: wasmtime::Result<Result<T, watch::Error>>) -> Result<T, KvError> {
-    match r {
-        Ok(inner) => inner.map_err(from_watch),
-        Err(e) => Err(KvError::Other(e.to_string())),
-    }
-}
-
-fn entry(e: Option<watch::Entry>) -> KvAnswer {
-    KvAnswer::Entry(e.map(|e| (Bytes(e.value), e.revision)))
+fn entry(e: Option<(Vec<u8>, u64)>) -> KvAnswer {
+    KvAnswer::Entry(e.map(|(value, revision)| (Bytes(value), revision)))
 }
 
 impl ServiceCtx<'_, Instance> {
     /// Run a store operation on `bucket` (resolved and checked as a watch
     /// operation is: a write needs a writable bucket).
     async fn native_op(&mut self, bucket: &str, op: Op) -> Result<Outcome, KvError> {
-        let handle = self
-            .watch_bucket(bucket, !op.read_only())
-            .map_err(from_watch)?;
+        let handle = self.watch_bucket(bucket, !op.read_only())?;
         if op.read_only() {
             self.state.store.read(&handle, op)
         } else {
             self.state.store.run(&handle, op).await
         }
-        .map_err(|e: StoreError| from_watch(watch_error(e)))
+        .map_err(watch_error)
     }
 
     /// Open `bucket` for hot frames: its handle, the index of its entry.
     /// Checked as an operation naming it is, for reading (a write through
     /// the handle checks `writable` then).
     pub(crate) fn native_open(&mut self, bucket: &str) -> Result<u32, KvError> {
-        let handle = self.watch_bucket(bucket, false).map_err(from_watch)?;
+        let handle = self.watch_bucket(bucket, false)?;
         let opened = &mut self.state.opened;
         if let Some(i) = opened.iter().position(|o| o.handle == handle) {
             return u32::try_from(i).map_err(|_| KvError::LimitReached);
@@ -112,12 +88,11 @@ impl ServiceCtx<'_, Instance> {
         } else {
             self.state.store.run(handle, op).await
         }
-        .map_err(|e: StoreError| from_watch(watch_error(e)))
+        .map_err(watch_error)
     }
 
     /// Answer a native app's keyvalue request.
     pub(crate) async fn native(&mut self, request: KvRequest) -> Result<KvAnswer, KvError> {
-        use watch::Host;
         Ok(match request {
             KvRequest::Get { bucket, key } => match self.native_op(&bucket, Op::Get(key)).await? {
                 Outcome::Value(v) => KvAnswer::Value(v.map(Bytes)),
@@ -173,17 +148,15 @@ impl ServiceCtx<'_, Instance> {
                 bucket,
                 key,
                 linearizable: false,
-            } => entry(flat(Host::get(self, bucket, key))?),
+            } => entry(self.kv_entry(&bucket, key)?),
             KvRequest::Entry {
                 bucket,
                 key,
                 linearizable: true,
-            } => entry(flat(Host::get_linearizable(self, bucket, key).await)?),
-            KvRequest::Revision { bucket } => {
-                KvAnswer::Revision(flat(Host::revision(self, bucket))?)
-            }
+            } => entry(self.kv_entry_linearizable(&bucket, key).await?),
+            KvRequest::Revision { bucket } => KvAnswer::Revision(self.kv_revision(&bucket)?),
             KvRequest::Scan { bucket, query } => {
-                let query = watch::ScanQuery {
+                let query = ScanQuery {
                     prefix: query.prefix,
                     start: query.start,
                     end: query.end,
@@ -191,46 +164,30 @@ impl ServiceCtx<'_, Instance> {
                     limit: query.limit,
                     cursor: query.cursor,
                 };
-                let page = flat(Host::scan(self, bucket, query))?;
-                KvAnswer::Page(p::ScanPage {
-                    entries: page
-                        .entries
-                        .into_iter()
-                        .map(|e| (e.key, Bytes(e.value), e.revision))
-                        .collect(),
-                    next: page.next,
-                    revision: page.revision,
-                })
+                KvAnswer::Page(self.kv_scan(&bucket, query)?)
             }
             KvRequest::CompareAndSwap {
                 bucket,
                 key,
                 expected,
                 value,
-            } => KvAnswer::Revision(flat(
-                Host::compare_and_swap(self, bucket, key, expected, value.0).await,
-            )?),
+            } => KvAnswer::Revision(self.kv_swap(&bucket, key, expected, value.0).await?),
             KvRequest::CompareAndDelete {
                 bucket,
                 key,
                 expected,
-            } => KvAnswer::Revision(flat(
-                Host::compare_and_delete(self, bucket, key, expected).await,
-            )?),
+            } => KvAnswer::Revision(self.kv_swap_delete(&bucket, key, expected).await?),
             KvRequest::Watch {
                 bucket,
                 key,
                 prefix,
                 after,
             } => {
-                let started = flat(Host::watch(self, bucket, key, prefix, after).await)?;
-                KvAnswer::Started {
-                    id: started.id,
-                    revision: started.revision,
-                }
+                let (id, revision) = self.kv_watch(&bucket, key, prefix, after).await?;
+                KvAnswer::Started { id, revision }
             }
             KvRequest::Unwatch(id) => {
-                flat(Host::unwatch(self, id).await)?;
+                self.kv_unwatch(id);
                 KvAnswer::Unit
             }
         })

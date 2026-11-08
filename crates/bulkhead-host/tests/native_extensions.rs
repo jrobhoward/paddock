@@ -78,8 +78,7 @@ impl Extension for Probe {
     }
 }
 
-/// `test:silent`: serves components only, so every native call has no
-/// such function.
+/// `test:silent`: serves no function to native apps.
 struct Silent;
 
 impl Extension for Silent {
@@ -93,6 +92,10 @@ impl Extension for Silent {
 
     fn instance(&self, _app: &ExtensionApp<'_>) -> Result<Box<dyn Any + Send>, String> {
         Ok(Box::new(()))
+    }
+
+    fn call<'a>(&'a self, _data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a> {
+        Box::pin(async move { Err(call.no_such_function()) })
     }
 }
 
@@ -194,7 +197,7 @@ async fn ext____arguments_and_result____in_cbor(
 #[rstest]
 #[case::no_extension("test:absent probe#seen", "err:NoSuchExtension")]
 #[case::no_function("test:probe probe#nope", r#"err:NoSuchFunction("probe#nope")"#)]
-#[case::components_only("test:silent quiet#x", r#"err:NoSuchFunction("quiet#x")"#)]
+#[case::serves_none("test:silent quiet#x", r#"err:NoSuchFunction("quiet#x")"#)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ext____nothing_to_call____app_gets_an_error_and_lives_on(
     #[case] target: &str,

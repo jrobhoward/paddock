@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AccessMode, AppSpec, Bucket, Capability, Durability};
+use bulkhead_native::protocol::KvError;
 use wasmtime::Result;
 use wasmtime::component::{Linker, Resource};
 
@@ -279,7 +280,7 @@ impl ServiceCtx<'_, Instance> {
     }
 
     /// Run a `bulkhead:watch` read on `bucket` now.
-    fn watch_read(&mut self, bucket: &str, op: Op) -> std::result::Result<Outcome, watch::Error> {
+    fn watch_read(&mut self, bucket: &str, op: Op) -> std::result::Result<Outcome, KvError> {
         let handle = self.watch_bucket(bucket, false)?;
         self.state.store.read(&handle, op).map_err(watch_error)
     }
@@ -298,36 +299,36 @@ impl ServiceCtx<'_, Instance> {
         &self,
         bucket: &str,
         write: bool,
-    ) -> std::result::Result<BucketHandle, watch::Error> {
+    ) -> std::result::Result<BucketHandle, KvError> {
         let handle = self
             .state
             .resolve(bucket, &self.tags.app)
             .map_err(|r| match r {
-                Refused::AccessDenied => watch::Error::AccessDenied,
-                Refused::NoSuchStore => watch::Error::NoSuchBucket,
+                Refused::AccessDenied => KvError::AccessDenied,
+                Refused::NoSuchStore => KvError::NoSuchBucket,
             })?;
         if write && !handle.writable {
-            return Err(watch::Error::AccessDenied);
+            return Err(KvError::AccessDenied);
         }
         Ok(handle)
     }
 
     /// Run a `bulkhead:watch` operation on `bucket`.
-    async fn watch_op(
-        &mut self,
-        bucket: &str,
-        op: Op,
-    ) -> std::result::Result<Outcome, watch::Error> {
+    async fn watch_op(&mut self, bucket: &str, op: Op) -> std::result::Result<Outcome, KvError> {
         let handle = self.watch_bucket(bucket, !op.read_only())?;
         self.run_on(&handle, op).await.map_err(watch_error)
     }
 }
 
-fn watch_error(e: StoreError) -> watch::Error {
+fn watch_error(e: StoreError) -> KvError {
     match e {
-        StoreError::Unavailable(_) => watch::Error::Unavailable,
-        StoreError::Other(why) => watch::Error::Other(why),
+        StoreError::Unavailable(_) => KvError::Unavailable,
+        StoreError::Other(why) => KvError::Other(why),
     }
+}
+
+fn unexpected_kv(outcome: &Outcome) -> KvError {
+    KvError::Other(format!("unexpected storage outcome {outcome:?}"))
 }
 
 fn unexpected(outcome: &Outcome) -> store::Error {
@@ -457,27 +458,30 @@ impl batch::Host for ServiceCtx<'_, Instance> {
     }
 }
 
-impl watch::Host for ServiceCtx<'_, Instance> {
-    async fn watch(
+/// The `bulkhead:watch` functions on the host's own and the protocol's
+/// types: what a component's import and a native app's requests both run
+/// (ROADMAP Z9b).
+impl ServiceCtx<'_, Instance> {
+    /// Watch `key` (or every key under it, with `prefix`) in `bucket`:
+    /// the watch's id and the bucket's revision it starts from, after
+    /// `after` if given.
+    pub(crate) async fn kv_watch(
         &mut self,
-        bucket: String,
+        bucket: &str,
         key: String,
         prefix: bool,
         after: Option<u64>,
-    ) -> Result<std::result::Result<watch::Started, watch::Error>> {
-        let handle = match self.watch_bucket(&bucket, false) {
-            Ok(h) => h,
-            Err(e) => return Ok(Err(e)),
-        };
+    ) -> std::result::Result<(u64, u64), KvError> {
+        let handle = self.watch_bucket(bucket, false)?;
         let storage = (handle.space.clone(), handle.name.clone());
         let state = &*self.state;
         let Ok(w) =
             state
                 .store
                 .watches
-                .add(storage, &bucket, &key, prefix, &state.me, state.watches_max)
+                .add(storage, bucket, &key, prefix, &state.me, state.watches_max)
         else {
-            return Ok(Err(watch::Error::LimitReached));
+            return Err(KvError::LimitReached);
         };
         // Registered first, so a change from here on is noticed either way.
         let op = match after {
@@ -498,7 +502,7 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             ) => {
                 if after > revision || deleted > after {
                     self.state.store.watches.remove(me, w.id);
-                    return Ok(Err(watch::Error::TooOld(revision)));
+                    return Err(KvError::TooOld(revision));
                 }
                 for (k, r) in changed {
                     w.note(&k, r);
@@ -507,21 +511,156 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             }
             (Ok(other), _) => {
                 self.state.store.watches.remove(me, w.id);
-                return Ok(Err(watch::Error::Other(format!(
-                    "unexpected storage outcome {other:?}"
-                ))));
+                return Err(unexpected_kv(&other));
             }
             (Err(e), _) => {
                 self.state.store.watches.remove(me, w.id);
-                return Ok(Err(watch_error(e)));
+                return Err(watch_error(e));
             }
         };
-        Ok(Ok(watch::Started { id: w.id, revision }))
+        Ok((w.id, revision))
+    }
+
+    /// Stop the watch `id`.
+    pub(crate) fn kv_unwatch(&mut self, id: u64) {
+        let me = self.state.me.pid();
+        self.state.store.watches.remove(me, id);
+    }
+
+    /// `key`'s value and revision in `bucket`, if it has one.
+    pub(crate) fn kv_entry(
+        &mut self,
+        bucket: &str,
+        key: String,
+    ) -> std::result::Result<Option<(Vec<u8>, u64)>, KvError> {
+        match self.watch_read(bucket, Op::Entry(key))? {
+            Outcome::Entry(e) => Ok(e),
+            other => Err(unexpected_kv(&other)),
+        }
+    }
+
+    /// As [`Self::kv_entry`], after every write acknowledged before it
+    /// (a replicated bucket's primary).
+    pub(crate) async fn kv_entry_linearizable(
+        &mut self,
+        bucket: &str,
+        key: String,
+    ) -> std::result::Result<Option<(Vec<u8>, u64)>, KvError> {
+        let handle = self.watch_bucket(bucket, false)?;
+        match self
+            .state
+            .store
+            .run_linearizable(&handle, Op::Entry(key))
+            .await
+            .map_err(watch_error)?
+        {
+            Outcome::Entry(e) => Ok(e),
+            other => Err(unexpected_kv(&other)),
+        }
+    }
+
+    /// `bucket`'s revision.
+    pub(crate) fn kv_revision(&mut self, bucket: &str) -> std::result::Result<u64, KvError> {
+        match self.watch_read(bucket, Op::Revision(String::new()))? {
+            Outcome::Revision { bucket, .. } => Ok(bucket),
+            other => Err(unexpected_kv(&other)),
+        }
+    }
+
+    /// A page of `bucket`'s entries matching `query`.
+    pub(crate) fn kv_scan(
+        &mut self,
+        bucket: &str,
+        query: ScanQuery,
+    ) -> std::result::Result<bulkhead_native::protocol::ScanPage, KvError> {
+        match self.watch_read(bucket, Op::Scan(query))? {
+            Outcome::Page {
+                entries,
+                next,
+                revision,
+            } => Ok(bulkhead_native::protocol::ScanPage {
+                entries: entries
+                    .into_iter()
+                    .map(|(k, v, r)| (k, bulkhead_native::protocol::Bytes(v), r))
+                    .collect(),
+                next,
+                revision,
+            }),
+            other => Err(unexpected_kv(&other)),
+        }
+    }
+
+    /// Set `key` to `value` if its revision is `expected` (absent for
+    /// `None`): the new revision.
+    pub(crate) async fn kv_swap(
+        &mut self,
+        bucket: &str,
+        key: String,
+        expected: Option<u64>,
+        value: Vec<u8>,
+    ) -> std::result::Result<u64, KvError> {
+        let op = Op::Swap {
+            key,
+            expected,
+            value,
+        };
+        swapped(self.watch_op(bucket, op).await)
+    }
+
+    /// Delete `key` if its revision is `expected`: the bucket's revision.
+    pub(crate) async fn kv_swap_delete(
+        &mut self,
+        bucket: &str,
+        key: String,
+        expected: u64,
+    ) -> std::result::Result<u64, KvError> {
+        let op = Op::SwapDelete { key, expected };
+        swapped(self.watch_op(bucket, op).await)
+    }
+}
+
+fn swapped(outcome: std::result::Result<Outcome, KvError>) -> std::result::Result<u64, KvError> {
+    match outcome? {
+        Outcome::Swapped(revision) => Ok(revision),
+        Outcome::Conflict(found) => Err(KvError::Conflict(found)),
+        other => Err(unexpected_kv(&other)),
+    }
+}
+
+fn to_watch(e: KvError) -> watch::Error {
+    match e {
+        KvError::AccessDenied => watch::Error::AccessDenied,
+        KvError::NoSuchBucket => watch::Error::NoSuchBucket,
+        KvError::LimitReached => watch::Error::LimitReached,
+        KvError::TooOld(now) => watch::Error::TooOld(now),
+        KvError::Conflict(found) => watch::Error::Conflict(found),
+        KvError::Unavailable => watch::Error::Unavailable,
+        KvError::Other(why) => watch::Error::Other(why),
+    }
+}
+
+fn watch_entry(e: Option<(Vec<u8>, u64)>) -> Option<watch::Entry> {
+    e.map(|(value, revision)| watch::Entry { value, revision })
+}
+
+/// A component's `bulkhead:watch` import, on the WIT's types.
+impl watch::Host for ServiceCtx<'_, Instance> {
+    async fn watch(
+        &mut self,
+        bucket: String,
+        key: String,
+        prefix: bool,
+        after: Option<u64>,
+    ) -> Result<std::result::Result<watch::Started, watch::Error>> {
+        Ok(self
+            .kv_watch(&bucket, key, prefix, after)
+            .await
+            .map(|(id, revision)| watch::Started { id, revision })
+            .map_err(to_watch))
     }
 
     async fn unwatch(&mut self, id: u64) -> Result<std::result::Result<(), watch::Error>> {
-        let me = self.state.me.pid();
-        self.state.store.watches.remove(me, id);
+        self.kv_unwatch(id);
         Ok(Ok(()))
     }
 
@@ -531,15 +670,9 @@ impl watch::Host for ServiceCtx<'_, Instance> {
         key: String,
     ) -> Result<std::result::Result<Option<watch::Entry>, watch::Error>> {
         Ok(self
-            .watch_read(&bucket, Op::Entry(key))
-            .and_then(|o| match o {
-                Outcome::Entry(e) => {
-                    Ok(e.map(|(value, revision)| watch::Entry { value, revision }))
-                }
-                other => Err(watch::Error::Other(format!(
-                    "unexpected storage outcome {other:?}"
-                ))),
-            }))
+            .kv_entry(&bucket, key)
+            .map(watch_entry)
+            .map_err(to_watch))
     }
 
     async fn get_linearizable(
@@ -547,35 +680,15 @@ impl watch::Host for ServiceCtx<'_, Instance> {
         bucket: String,
         key: String,
     ) -> Result<std::result::Result<Option<watch::Entry>, watch::Error>> {
-        let handle = match self.watch_bucket(&bucket, false) {
-            Ok(h) => h,
-            Err(e) => return Ok(Err(e)),
-        };
         Ok(self
-            .state
-            .store
-            .run_linearizable(&handle, Op::Entry(key))
+            .kv_entry_linearizable(&bucket, key)
             .await
-            .map_err(watch_error)
-            .and_then(|o| match o {
-                Outcome::Entry(e) => {
-                    Ok(e.map(|(value, revision)| watch::Entry { value, revision }))
-                }
-                other => Err(watch::Error::Other(format!(
-                    "unexpected storage outcome {other:?}"
-                ))),
-            }))
+            .map(watch_entry)
+            .map_err(to_watch))
     }
 
     fn revision(&mut self, bucket: String) -> Result<std::result::Result<u64, watch::Error>> {
-        Ok(self
-            .watch_read(&bucket, Op::Revision(String::new()))
-            .and_then(|o| match o {
-                Outcome::Revision { bucket, .. } => Ok(bucket),
-                other => Err(watch::Error::Other(format!(
-                    "unexpected storage outcome {other:?}"
-                ))),
-            }))
+        Ok(self.kv_revision(&bucket).map_err(to_watch))
     }
 
     fn scan(
@@ -592,28 +705,21 @@ impl watch::Host for ServiceCtx<'_, Instance> {
             cursor: query.cursor,
         };
         Ok(self
-            .watch_read(&bucket, Op::Scan(query))
-            .and_then(|o| match o {
-                Outcome::Page {
-                    entries,
-                    next,
-                    revision,
-                } => Ok(watch::ScanPage {
-                    entries: entries
-                        .into_iter()
-                        .map(|(key, value, revision)| watch::KeyedEntry {
-                            key,
-                            value,
-                            revision,
-                        })
-                        .collect(),
-                    next,
-                    revision,
-                }),
-                other => Err(watch::Error::Other(format!(
-                    "unexpected storage outcome {other:?}"
-                ))),
-            }))
+            .kv_scan(&bucket, query)
+            .map(|page| watch::ScanPage {
+                entries: page
+                    .entries
+                    .into_iter()
+                    .map(|(key, value, revision)| watch::KeyedEntry {
+                        key,
+                        value: value.0,
+                        revision,
+                    })
+                    .collect(),
+                next: page.next,
+                revision: page.revision,
+            })
+            .map_err(to_watch))
     }
 
     async fn compare_and_swap(
@@ -623,12 +729,10 @@ impl watch::Host for ServiceCtx<'_, Instance> {
         expected: Option<u64>,
         value: Vec<u8>,
     ) -> Result<std::result::Result<u64, watch::Error>> {
-        let op = Op::Swap {
-            key,
-            expected,
-            value,
-        };
-        Ok(swapped(self.watch_op(&bucket, op).await))
+        Ok(self
+            .kv_swap(&bucket, key, expected, value)
+            .await
+            .map_err(to_watch))
     }
 
     async fn compare_and_delete(
@@ -637,19 +741,9 @@ impl watch::Host for ServiceCtx<'_, Instance> {
         key: String,
         expected: u64,
     ) -> Result<std::result::Result<u64, watch::Error>> {
-        let op = Op::SwapDelete { key, expected };
-        Ok(swapped(self.watch_op(&bucket, op).await))
-    }
-}
-
-fn swapped(
-    outcome: std::result::Result<Outcome, watch::Error>,
-) -> std::result::Result<u64, watch::Error> {
-    match outcome? {
-        Outcome::Swapped(revision) => Ok(revision),
-        Outcome::Conflict(found) => Err(watch::Error::Conflict(found)),
-        other => Err(watch::Error::Other(format!(
-            "unexpected storage outcome {other:?}"
-        ))),
+        Ok(self
+            .kv_swap_delete(&bucket, key, expected)
+            .await
+            .map_err(to_watch))
     }
 }

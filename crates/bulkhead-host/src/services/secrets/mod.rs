@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
+use bulkhead_native::protocol::SecretError;
 use wasmtime::Result;
 use wasmtime::component::Linker;
 
@@ -101,53 +102,47 @@ impl Service for Secrets {
 }
 
 /// Read `source`.
-async fn read(name: &str, source: &SecretSource) -> std::result::Result<Vec<u8>, store::Error> {
+async fn read(name: &str, source: &SecretSource) -> std::result::Result<Vec<u8>, SecretError> {
     match source {
         SecretSource::File(path) => {
             let path = path.clone();
             tokio::task::spawn_blocking(move || std::fs::read(path))
                 .await
-                .map_err(|_| store::Error::Unavailable(format!("secret '{name}': read failed")))?
+                .map_err(|_| SecretError::Unavailable(format!("secret '{name}': read failed")))?
                 .map_err(|e| {
-                    store::Error::Unavailable(format!("secret '{name}': file: {}", e.kind()))
+                    SecretError::Unavailable(format!("secret '{name}': file: {}", e.kind()))
                 })
         }
         SecretSource::Env(var) => std::env::var_os(var)
             .map(|v| v.into_encoded_bytes())
             .ok_or_else(|| {
-                store::Error::Unavailable(format!("secret '{name}': variable {var} is not set"))
+                SecretError::Unavailable(format!("secret '{name}': variable {var} is not set"))
             }),
     }
 }
 
-impl store::Host for ServiceCtx<'_, Instance> {
-    async fn get(&mut self, name: String) -> Result<std::result::Result<Vec<u8>, store::Error>> {
-        let state = &*self.state;
-        if !state.granted || !state.names.contains(&name) {
-            return Ok(Err(store::Error::AccessDenied));
+impl Instance {
+    /// The secret `name`, if the manifest lists it and the operator granted
+    /// it: what a component's `bulkhead:secrets` import and a native app's
+    /// request both read (ROADMAP Z9b).
+    pub(crate) async fn get_secret(&self, name: &str) -> std::result::Result<Vec<u8>, SecretError> {
+        if !self.granted || !self.names.iter().any(|n| n == name) {
+            return Err(SecretError::AccessDenied);
         }
-        let Some(source) = state.sources.get(&name).cloned() else {
-            return Ok(Err(store::Error::NotFound));
+        let Some(source) = self.sources.get(name).cloned() else {
+            return Err(SecretError::NotFound);
         };
-        Ok(read(&name, &source).await)
+        read(name, &source).await
     }
 }
 
-impl ServiceCtx<'_, Instance> {
-    /// A secret for a native app, as a component's `bulkhead:secrets`
-    /// import reads it.
-    pub(crate) async fn native(
-        &mut self,
-        name: String,
-    ) -> std::result::Result<Vec<u8>, bulkhead_native::protocol::SecretError> {
-        use bulkhead_native::protocol::SecretError;
-        use store::Host;
-        match Host::get(self, name).await {
-            Ok(Ok(bytes)) => Ok(bytes),
-            Ok(Err(store::Error::AccessDenied)) => Err(SecretError::AccessDenied),
-            Ok(Err(store::Error::NotFound)) => Err(SecretError::NotFound),
-            Ok(Err(store::Error::Unavailable(why))) => Err(SecretError::Unavailable(why)),
-            Err(e) => Err(SecretError::Unavailable(e.to_string())),
-        }
+/// A component's `bulkhead:secrets` import, on the WIT's types.
+impl store::Host for ServiceCtx<'_, Instance> {
+    async fn get(&mut self, name: String) -> Result<std::result::Result<Vec<u8>, store::Error>> {
+        Ok(self.state.get_secret(&name).await.map_err(|e| match e {
+            SecretError::AccessDenied => store::Error::AccessDenied,
+            SecretError::NotFound => store::Error::NotFound,
+            SecretError::Unavailable(why) => store::Error::Unavailable(why),
+        }))
     }
 }

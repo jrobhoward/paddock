@@ -160,9 +160,9 @@ async fn sql____statements_against_postgres____values_errors_and_limits() {
     assert_eq!(
         row,
         "[\"id\", \"name\", \"ok\", \"score\", \"amount\", \"at\", \"data\", \"note\"]|\
-         [[Value::Int(1), Value::Text(\"héllo\"), Value::Boolean(true), Value::Float(2.5), \
-         Value::Text(\"12.30\"), Value::Text(\"2026-10-15 12:00:00+00\"), \
-         Value::Bytes([0, 255]), Value::Null]]"
+         [[Int(1), Text(\"héllo\"), Boolean(true), Float(2.5), \
+         Text(\"12.30\"), Text(\"2026-10-15 12:00:00+00\"), \
+         Bytes([0, 255]), Null]]"
     );
     assert!(
         duplicate.starts_with("err:Query { code: \"23505\""),
@@ -172,7 +172,7 @@ async fn sql____statements_against_postgres____values_errors_and_limits() {
         interval.starts_with("err:Unsupported(\"column d is of type interval"),
         "{interval}"
     );
-    assert_eq!(cast, "[\"d\"]|[[Value::Text(\"1 day\")]]");
+    assert_eq!(cast, "[\"d\"]|[[Text(\"1 day\")]]");
     assert_eq!(slow, "err:Timeout");
     assert_eq!(big, "err:TooLarge");
     a.kill();
@@ -200,11 +200,11 @@ async fn sql____transactions____commit_seen_rollback_and_drop_not() {
     ask(&a, &sql(&["drop"])).await;
     let after_rollback_and_drop = ask(&a, &count()).await;
 
-    assert_eq!(inside, "[\"c\"]|[[Value::Int(1)]]");
-    assert_eq!(outside_before, "[\"c\"]|[[Value::Int(0)]]");
+    assert_eq!(inside, "[\"c\"]|[[Int(1)]]");
+    assert_eq!(outside_before, "[\"c\"]|[[Int(0)]]");
     assert_eq!(committed, "ok");
-    assert_eq!(after_commit, "[\"c\"]|[[Value::Int(1)]]");
-    assert_eq!(after_rollback_and_drop, "[\"c\"]|[[Value::Int(1)]]");
+    assert_eq!(after_commit, "[\"c\"]|[[Int(1)]]");
+    assert_eq!(after_rollback_and_drop, "[\"c\"]|[[Int(1)]]");
     a.kill();
 }
 
@@ -234,12 +234,9 @@ async fn sql____app_cap_reached____limit_reached_until_the_holder_exits() {
     .await;
 
     assert_eq!(while_held, "err:LimitReached");
+    assert_eq!(other_app, "[\"one\"]|[[Int(1)]]", "the cap is the app's");
     assert_eq!(
-        other_app, "[\"one\"]|[[Value::Int(1)]]",
-        "the cap is the app's"
-    );
-    assert_eq!(
-        after_exit, "[\"c\"]|[[Value::Int(0)]]",
+        after_exit, "[\"c\"]|[[Int(0)]]",
         "the exited instance's transaction rolled back"
     );
 }
@@ -258,7 +255,7 @@ async fn sql____session_state_set_by_one_call____not_seen_by_the_next() {
     // with SQLSTATE 25P01, which shows no transaction carried over.
     let savepoint = ask(&b, &sql(&["exec", "main", "SAVEPOINT probe"])).await;
 
-    assert_eq!(name, "[\"application_name\"]|[[Value::Text(\"bulkhead\")]]");
+    assert_eq!(name, "[\"application_name\"]|[[Text(\"bulkhead\")]]");
     assert!(
         savepoint.starts_with("err:Query { code: \"25P01\""),
         "no transaction carried over: {savepoint}"

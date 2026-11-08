@@ -27,6 +27,14 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- `Extension::call` is required (ROADMAP Z9b): an extension that serves
+  native apps nothing answers each call with `call.no_such_function()`.
+  The node answers native apps' requests with functions on its own and
+  the protocol's types, which components' imports now wrap, rather than
+  through the generated WIT traits; nothing an app sees changes.
+- `bulkhead_sdk::sql::{Rows, Value}` are the SDK's own types rather than
+  re-exported bindings, with the same variants and fields.
+
 - wasmtime and its crates move to 50.0.1 (cranelift 0.137.1), for
   RUSTSEC-2026-0420 to 0424 against 50.0.0, two of them on paths
   Bulkhead uses (borrowed resources passed between components, and

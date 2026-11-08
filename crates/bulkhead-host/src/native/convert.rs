@@ -1,11 +1,10 @@
-//! Between the native protocol's types and the host's (and the WIT
-//! bindings', which the process functions take).
+//! Between the native protocol's types and the host's.
 
 use bulkhead_native::protocol as p;
 
-use crate::bindings::bulkhead::runtime::types as wit;
 use crate::message::{CallError, Envelope, ExitReason, Info, LateEvent};
 use crate::pid::Pid;
+use crate::process::RegisterRefused;
 
 pub(crate) fn pid(pid: Pid) -> p::Pid {
     p::Pid {
@@ -15,25 +14,12 @@ pub(crate) fn pid(pid: Pid) -> p::Pid {
     }
 }
 
-pub(crate) fn wit_pid(pid: p::Pid) -> wit::Pid {
-    Pid {
-        node: pid.node,
-        id: pid.id,
-        incarnation: pid.incarnation,
-    }
-    .into()
-}
-
 pub(crate) fn host_pid(pid: p::Pid) -> Pid {
     Pid {
         node: pid.node,
         id: pid.id,
         incarnation: pid.incarnation,
     }
-}
-
-pub(crate) fn from_wit_pid(pid: wit::Pid) -> p::Pid {
-    self::pid(Pid::from(pid))
 }
 
 pub(crate) fn envelope(env: Envelope) -> p::Envelope {
@@ -50,10 +36,6 @@ pub(crate) fn host_envelope(env: p::Envelope) -> Envelope {
         schema: env.schema,
         body: env.body,
     }
-}
-
-pub(crate) fn wit_envelope(env: p::Envelope) -> wit::Envelope {
-    host_envelope(env).into()
 }
 
 pub(crate) fn exit_reason(reason: &ExitReason) -> p::ExitReason {
@@ -115,17 +97,15 @@ pub(crate) fn info(info: Info) -> Option<p::Info> {
     })
 }
 
-pub(crate) fn call_error(e: wit::CallError) -> p::CallError {
+pub(crate) fn call_error(e: &CallError) -> p::CallError {
     match e {
-        wit::CallError::Noproc => p::CallError::Noproc,
-        wit::CallError::Noconnection => p::CallError::Noconnection,
-        wit::CallError::Timeout => p::CallError::Timeout,
-        wit::CallError::Overloaded => p::CallError::Overloaded,
-        wit::CallError::TooLarge => p::CallError::TooLarge,
-        wit::CallError::AccessDenied => p::CallError::AccessDenied,
-        wit::CallError::Exited(reason) => {
-            p::CallError::Exited(exit_reason(&ExitReason::from(reason)))
-        }
+        CallError::Noproc => p::CallError::Noproc,
+        CallError::Noconnection => p::CallError::Noconnection,
+        CallError::Timeout => p::CallError::Timeout,
+        CallError::Overloaded => p::CallError::Overloaded,
+        CallError::TooLarge => p::CallError::TooLarge,
+        CallError::AccessDenied => p::CallError::AccessDenied,
+        CallError::Exited(reason) => p::CallError::Exited(exit_reason(reason)),
     }
 }
 
@@ -143,9 +123,9 @@ pub(crate) fn cast_error(e: &CallError) -> p::CastError {
     }
 }
 
-pub(crate) fn register_error(e: wit::RegisterError) -> p::RegisterError {
+pub(crate) fn register_error(e: RegisterRefused) -> p::RegisterError {
     match e {
-        wit::RegisterError::AccessDenied => p::RegisterError::AccessDenied,
-        wit::RegisterError::Taken(holder) => p::RegisterError::Taken(from_wit_pid(holder)),
+        RegisterRefused::AccessDenied => p::RegisterError::AccessDenied,
+        RegisterRefused::Taken(holder) => p::RegisterError::Taken(pid(holder)),
     }
 }

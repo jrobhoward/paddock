@@ -34,7 +34,69 @@ use std::fmt;
 
 use crate::host::sql;
 
-pub use crate::bindings::bulkhead::sql::sql::{Rows, Value};
+/// A parameter, or a cell of a row. Text carries what the interface has no
+/// type for (dates, `numeric`, `json`, `uuid`); cast other columns in the
+/// statement (`col::text`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    /// SQL `NULL`.
+    Null,
+    /// A boolean.
+    Boolean(bool),
+    /// An integer, of any width.
+    Int(i64),
+    /// A float.
+    Float(f64),
+    /// Text.
+    Text(String),
+    /// Bytes (`bytea`).
+    Bytes(Vec<u8>),
+}
+
+/// A statement's result: the column names, then each row's values in
+/// column order.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Rows {
+    /// The columns' names.
+    pub columns: Vec<String>,
+    /// The rows, each a value per column.
+    pub rows: Vec<Vec<Value>>,
+}
+
+/// `params` as the host's values.
+fn to_host(params: &[Value]) -> Vec<sql::Value> {
+    params
+        .iter()
+        .map(|v| match v {
+            Value::Null => sql::Value::Null,
+            Value::Boolean(b) => sql::Value::Boolean(*b),
+            Value::Int(i) => sql::Value::Int(*i),
+            Value::Float(f) => sql::Value::Float(*f),
+            Value::Text(t) => sql::Value::Text(t.clone()),
+            Value::Bytes(b) => sql::Value::Bytes(b.clone()),
+        })
+        .collect()
+}
+
+/// The host's rows as this module's.
+fn from_host(rows: sql::Rows) -> Rows {
+    let value = |v: sql::Value| match v {
+        sql::Value::Null => Value::Null,
+        sql::Value::Boolean(b) => Value::Boolean(b),
+        sql::Value::Int(i) => Value::Int(i),
+        sql::Value::Float(f) => Value::Float(f),
+        sql::Value::Text(t) => Value::Text(t),
+        sql::Value::Bytes(b) => Value::Bytes(b),
+    };
+    Rows {
+        columns: rows.columns,
+        rows: rows
+            .rows
+            .into_iter()
+            .map(|row| row.into_iter().map(value).collect())
+            .collect(),
+    }
+}
 
 /// Why a call failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,7 +272,11 @@ impl<T: Into<Value>> From<Option<T>> for Value {
 ///
 /// As [`SqlError`] lists.
 pub fn query(datasource: &str, statement: &str, params: &[Value]) -> Result<Rows, SqlError> {
-    Ok(sql::query(datasource, statement, params)?)
+    Ok(from_host(sql::query(
+        datasource,
+        statement,
+        &to_host(params),
+    )?))
 }
 
 /// Run a statement for its effect on `datasource`; returns the rows it
@@ -220,7 +286,7 @@ pub fn query(datasource: &str, statement: &str, params: &[Value]) -> Result<Rows
 ///
 /// As [`SqlError`] lists.
 pub fn execute(datasource: &str, statement: &str, params: &[Value]) -> Result<u64, SqlError> {
-    Ok(sql::execute(datasource, statement, params)?)
+    Ok(sql::execute(datasource, statement, &to_host(params))?)
 }
 
 /// A transaction on one connection. Dropping it without
@@ -245,7 +311,7 @@ impl Transaction {
     ///
     /// As [`SqlError`] lists.
     pub fn query(&self, statement: &str, params: &[Value]) -> Result<Rows, SqlError> {
-        Ok(self.0.query(statement, params)?)
+        Ok(from_host(self.0.query(statement, &to_host(params))?))
     }
 
     /// As [`execute`], inside the transaction.
@@ -254,7 +320,7 @@ impl Transaction {
     ///
     /// As [`SqlError`] lists.
     pub fn execute(&self, statement: &str, params: &[Value]) -> Result<u64, SqlError> {
-        Ok(self.0.execute(statement, params)?)
+        Ok(self.0.execute(statement, &to_host(params))?)
     }
 
     /// Commit.

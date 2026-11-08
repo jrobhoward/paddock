@@ -173,11 +173,15 @@ impl Service for Sql {
     }
 }
 
-type Answer<T> = std::result::Result<T, sql::Error>;
+/// A SQL operation's outcome, on the protocol's error: what a native app
+/// is answered, and a component's import converts (ROADMAP Z9b).
+type Answer<T> = std::result::Result<T, p::SqlError>;
+/// The same on the WIT's error, for a component's import.
+type WitAnswer<T> = std::result::Result<T, sql::Error>;
 
 #[cfg(not(feature = "sql"))]
 fn not_built<T>() -> Answer<T> {
-    Err(sql::Error::Unavailable(
+    Err(p::SqlError::Unavailable(
         "this node was built without SQL (cargo feature `sql`)".into(),
     ))
 }
@@ -190,7 +194,7 @@ mod run {
     use super::values::Value;
     use super::{Answer, Instance, ServiceCtx, Transaction, p, sql};
 
-    impl From<Fault> for sql::Error {
+    impl From<Fault> for p::SqlError {
         fn from(f: Fault) -> Self {
             match f {
                 Fault::LimitReached => Self::LimitReached,
@@ -198,7 +202,7 @@ mod run {
                 Fault::Timeout => Self::Timeout,
                 Fault::TooLarge => Self::TooLarge,
                 Fault::Unsupported(why) => Self::Unsupported(why),
-                Fault::Query { code, message } => Self::Query(sql::DbError { code, message }),
+                Fault::Query { code, message } => Self::Query { code, message },
             }
         }
     }
@@ -251,14 +255,14 @@ mod run {
                 .copied()
                 .filter(|_| state.granted)
             else {
-                return Err(sql::Error::AccessDenied);
+                return Err(p::SqlError::AccessDenied);
             };
             let ds = state
                 .shared
                 .datasources
                 .get(name)
                 .cloned()
-                .ok_or(sql::Error::NotFound)?;
+                .ok_or(p::SqlError::NotFound)?;
             Ok((ds, cap))
         }
 
@@ -304,8 +308,8 @@ mod run {
         }
     }
 
-    fn ended() -> sql::Error {
-        sql::Error::Unavailable("the transaction has ended".into())
+    fn ended() -> p::SqlError {
+        p::SqlError::Unavailable("the transaction has ended".into())
     }
 
     impl ServiceCtx<'_, Instance> {
@@ -388,7 +392,7 @@ mod run {
         pub(super) fn conn(&self) -> Answer<&pool::Conn> {
             self.conn
                 .as_ref()
-                .ok_or_else(|| sql::Error::Unavailable("the transaction has ended".into()))
+                .ok_or_else(|| p::SqlError::Unavailable("the transaction has ended".into()))
         }
 
         pub(super) fn max_result_bytes(&self) -> u64 {
@@ -418,29 +422,26 @@ impl ServiceCtx<'_, Instance> {
         #[cfg(not(feature = "sql"))]
         {
             let _ = request;
-            not_built().map_err(native_error)
+            not_built()
         }
         #[cfg(feature = "sql")]
         {
-            self.native_run(request).await.map_err(native_error)
+            self.native_run(request).await
         }
     }
 }
 
-/// `bulkhead:sql`'s error as the native protocol's.
-fn native_error(e: sql::Error) -> p::SqlError {
+/// The protocol's SQL error as `bulkhead:sql`'s.
+fn wit_error(e: p::SqlError) -> sql::Error {
     match e {
-        sql::Error::AccessDenied => p::SqlError::AccessDenied,
-        sql::Error::NotFound => p::SqlError::NotFound,
-        sql::Error::LimitReached => p::SqlError::LimitReached,
-        sql::Error::Unavailable(why) => p::SqlError::Unavailable(why),
-        sql::Error::Timeout => p::SqlError::Timeout,
-        sql::Error::TooLarge => p::SqlError::TooLarge,
-        sql::Error::Unsupported(why) => p::SqlError::Unsupported(why),
-        sql::Error::Query(db) => p::SqlError::Query {
-            code: db.code,
-            message: db.message,
-        },
+        p::SqlError::AccessDenied => sql::Error::AccessDenied,
+        p::SqlError::NotFound => sql::Error::NotFound,
+        p::SqlError::LimitReached => sql::Error::LimitReached,
+        p::SqlError::Unavailable(why) => sql::Error::Unavailable(why),
+        p::SqlError::Timeout => sql::Error::Timeout,
+        p::SqlError::TooLarge => sql::Error::TooLarge,
+        p::SqlError::Unsupported(why) => sql::Error::Unsupported(why),
+        p::SqlError::Query { code, message } => sql::Error::Query(sql::DbError { code, message }),
     }
 }
 
@@ -450,22 +451,26 @@ impl sql::Host for ServiceCtx<'_, Instance> {
         datasource: String,
         statement: String,
         params: Vec<sql::Value>,
-    ) -> Result<Answer<sql::Rows>> {
-        #[cfg(not(feature = "sql"))]
-        {
-            let _ = (datasource, statement, params);
-            Ok(not_built())
+    ) -> Result<WitAnswer<sql::Rows>> {
+        let answer: Result<Answer<sql::Rows>> = async move {
+            #[cfg(not(feature = "sql"))]
+            {
+                let _ = (datasource, statement, params);
+                Ok(not_built())
+            }
+            #[cfg(feature = "sql")]
+            {
+                let (conn, max) = match self.connect(&datasource).await {
+                    Ok(c) => c,
+                    Err(e) => return Ok(Err(e)),
+                };
+                let values = run::values_in(params);
+                let rows = pool::query(conn.client(), &statement, &values, max).await;
+                Ok(rows.map(run::rows_out).map_err(Into::into))
+            }
         }
-        #[cfg(feature = "sql")]
-        {
-            let (conn, max) = match self.connect(&datasource).await {
-                Ok(c) => c,
-                Err(e) => return Ok(Err(e)),
-            };
-            let values = run::values_in(params);
-            let rows = pool::query(conn.client(), &statement, &values, max).await;
-            Ok(rows.map(run::rows_out).map_err(Into::into))
-        }
+        .await;
+        Ok(answer?.map_err(wit_error))
     }
 
     async fn execute(
@@ -473,41 +478,49 @@ impl sql::Host for ServiceCtx<'_, Instance> {
         datasource: String,
         statement: String,
         params: Vec<sql::Value>,
-    ) -> Result<Answer<u64>> {
-        #[cfg(not(feature = "sql"))]
-        {
-            let _ = (datasource, statement, params);
-            Ok(not_built())
+    ) -> Result<WitAnswer<u64>> {
+        let answer: Result<Answer<u64>> = async move {
+            #[cfg(not(feature = "sql"))]
+            {
+                let _ = (datasource, statement, params);
+                Ok(not_built())
+            }
+            #[cfg(feature = "sql")]
+            {
+                let (conn, _) = match self.connect(&datasource).await {
+                    Ok(c) => c,
+                    Err(e) => return Ok(Err(e)),
+                };
+                let values = run::values_in(params);
+                let changed = pool::execute(conn.client(), &statement, &values).await;
+                Ok(changed.map_err(Into::into))
+            }
         }
-        #[cfg(feature = "sql")]
-        {
-            let (conn, _) = match self.connect(&datasource).await {
-                Ok(c) => c,
-                Err(e) => return Ok(Err(e)),
-            };
-            let values = run::values_in(params);
-            let changed = pool::execute(conn.client(), &statement, &values).await;
-            Ok(changed.map_err(Into::into))
-        }
+        .await;
+        Ok(answer?.map_err(wit_error))
     }
 
-    async fn begin(&mut self, datasource: String) -> Result<Answer<Resource<Transaction>>> {
-        #[cfg(not(feature = "sql"))]
-        {
-            let _ = datasource;
-            Ok(not_built())
-        }
-        #[cfg(feature = "sql")]
-        {
-            let (conn, max) = match self.connect(&datasource).await {
-                Ok(c) => c,
-                Err(e) => return Ok(Err(e)),
-            };
-            if let Err(e) = conn.simple("BEGIN").await {
-                return Ok(Err(e.into()));
+    async fn begin(&mut self, datasource: String) -> Result<WitAnswer<Resource<Transaction>>> {
+        let answer: Result<Answer<Resource<Transaction>>> = async move {
+            #[cfg(not(feature = "sql"))]
+            {
+                let _ = datasource;
+                Ok(not_built())
             }
-            Ok(Ok(self.table.push(Transaction::new(conn, max))?))
+            #[cfg(feature = "sql")]
+            {
+                let (conn, max) = match self.connect(&datasource).await {
+                    Ok(c) => c,
+                    Err(e) => return Ok(Err(e)),
+                };
+                if let Err(e) = conn.simple("BEGIN").await {
+                    return Ok(Err(e.into()));
+                }
+                Ok(Ok(self.table.push(Transaction::new(conn, max))?))
+            }
         }
+        .await;
+        Ok(answer?.map_err(wit_error))
     }
 }
 
@@ -517,26 +530,31 @@ impl sql::HostTransaction for ServiceCtx<'_, Instance> {
         tx: Resource<Transaction>,
         statement: String,
         params: Vec<sql::Value>,
-    ) -> Result<Answer<sql::Rows>> {
-        #[cfg(not(feature = "sql"))]
-        {
-            let _ = (tx, statement, params);
-            Ok(not_built())
+    ) -> Result<WitAnswer<sql::Rows>> {
+        let answer: Result<Answer<sql::Rows>> = async move {
+            #[cfg(not(feature = "sql"))]
+            {
+                let _ = (tx, statement, params);
+                Ok(not_built())
+            }
+            #[cfg(feature = "sql")]
+            {
+                // The connection stays in the transaction while the statement
+                // runs: if the instance is killed meanwhile, dropping the
+                // transaction rolls it back.
+                let t = self.table.get(&tx)?;
+                let conn = match t.conn() {
+                    Ok(c) => c,
+                    Err(e) => return Ok(Err(e)),
+                };
+                let values = run::values_in(params);
+                let rows =
+                    pool::query(conn.client(), &statement, &values, t.max_result_bytes()).await;
+                Ok(rows.map(run::rows_out).map_err(Into::into))
+            }
         }
-        #[cfg(feature = "sql")]
-        {
-            // The connection stays in the transaction while the statement
-            // runs: if the instance is killed meanwhile, dropping the
-            // transaction rolls it back.
-            let t = self.table.get(&tx)?;
-            let conn = match t.conn() {
-                Ok(c) => c,
-                Err(e) => return Ok(Err(e)),
-            };
-            let values = run::values_in(params);
-            let rows = pool::query(conn.client(), &statement, &values, t.max_result_bytes()).await;
-            Ok(rows.map(run::rows_out).map_err(Into::into))
-        }
+        .await;
+        Ok(answer?.map_err(wit_error))
     }
 
     async fn execute(
@@ -544,31 +562,35 @@ impl sql::HostTransaction for ServiceCtx<'_, Instance> {
         tx: Resource<Transaction>,
         statement: String,
         params: Vec<sql::Value>,
-    ) -> Result<Answer<u64>> {
-        #[cfg(not(feature = "sql"))]
-        {
-            let _ = (tx, statement, params);
-            Ok(not_built())
+    ) -> Result<WitAnswer<u64>> {
+        let answer: Result<Answer<u64>> = async move {
+            #[cfg(not(feature = "sql"))]
+            {
+                let _ = (tx, statement, params);
+                Ok(not_built())
+            }
+            #[cfg(feature = "sql")]
+            {
+                let t = self.table.get(&tx)?;
+                let conn = match t.conn() {
+                    Ok(c) => c,
+                    Err(e) => return Ok(Err(e)),
+                };
+                let values = run::values_in(params);
+                let changed = pool::execute(conn.client(), &statement, &values).await;
+                Ok(changed.map_err(Into::into))
+            }
         }
-        #[cfg(feature = "sql")]
-        {
-            let t = self.table.get(&tx)?;
-            let conn = match t.conn() {
-                Ok(c) => c,
-                Err(e) => return Ok(Err(e)),
-            };
-            let values = run::values_in(params);
-            let changed = pool::execute(conn.client(), &statement, &values).await;
-            Ok(changed.map_err(Into::into))
-        }
+        .await;
+        Ok(answer?.map_err(wit_error))
     }
 
-    async fn commit(&mut self, tx: Resource<Transaction>) -> Result<Answer<()>> {
-        self.end(tx, "COMMIT").await
+    async fn commit(&mut self, tx: Resource<Transaction>) -> Result<WitAnswer<()>> {
+        Ok(self.end(tx, "COMMIT").await?.map_err(wit_error))
     }
 
-    async fn rollback(&mut self, tx: Resource<Transaction>) -> Result<Answer<()>> {
-        self.end(tx, "ROLLBACK").await
+    async fn rollback(&mut self, tx: Resource<Transaction>) -> Result<WitAnswer<()>> {
+        Ok(self.end(tx, "ROLLBACK").await?.map_err(wit_error))
     }
 
     async fn drop(&mut self, tx: Resource<Transaction>) -> Result<()> {
@@ -592,7 +614,7 @@ impl ServiceCtx<'_, Instance> {
         #[cfg(feature = "sql")]
         {
             let Some(conn) = t.take() else {
-                return Ok(Err(sql::Error::Unavailable(
+                return Ok(Err(p::SqlError::Unavailable(
                     "the transaction has ended".into(),
                 )));
             };

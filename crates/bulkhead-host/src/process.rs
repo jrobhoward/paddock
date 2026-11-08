@@ -132,56 +132,56 @@ impl InstanceState {
     }
 }
 
-impl process::Host for InstanceState {
-    async fn self_(&mut self) -> Result<types::Pid> {
-        Ok(self.pid.into())
+/// A registration refused ([`InstanceState::register_name`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RegisterRefused {
+    /// The manifest does not list the name.
+    AccessDenied,
+    /// Another instance holds it.
+    Taken(Pid),
+}
+
+/// The process functions on the host's own types: what a component's
+/// `process` imports and a native app's requests both run (ROADMAP Z9b).
+/// An `Err(String)` is a fault that ends the instance, as a trap does a
+/// component's: over a host-object limit, or a call to itself.
+impl InstanceState {
+    /// This instance's pid.
+    pub(crate) fn self_pid(&self) -> Pid {
+        self.pid
     }
 
-    async fn cast(&mut self, to: types::Pid, msg: types::Envelope) -> Result<()> {
-        // At most once: a component is not told why a cast was dropped.
-        let _ = self.try_cast(Pid::from(to), msg.into());
-        Ok(())
-    }
-
-    async fn call(
+    /// Call `to` and wait up to `timeout` for the reply.
+    pub(crate) async fn call_to(
         &mut self,
-        to: types::Pid,
-        msg: types::Envelope,
-        timeout_ms: u32,
-    ) -> Result<std::result::Result<types::Envelope, types::CallError>> {
-        let to = Pid::from(to);
+        to: Pid,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> std::result::Result<std::result::Result<Envelope, CallError>, String> {
         if to == self.pid {
             // The call would wait on this instance's own mailbox, which it
             // cannot read until this callback returns.
-            return Err(Error::msg("call to self would deadlock"));
+            return Err("call to self would deadlock".into());
         }
-        let result = delivery::call(
-            &self.ctx.rt,
-            Origin::Local(&self.ctx.me),
-            to,
-            msg.into(),
-            Duration::from_millis(timeout_ms.into()),
-        )
-        .await;
-        Ok(result.map(Into::into).map_err(|e| (&e).into()))
+        Ok(delivery::call(&self.ctx.rt, Origin::Local(&self.ctx.me), to, msg, timeout).await)
     }
 
-    async fn reply(&mut self, to: types::CallRef, msg: types::Envelope) -> Result<()> {
-        // An unknown reference is a duplicate reply, or the caller gave up.
-        if let Some(waiting) = self.take_reply(to) {
-            let _ = waiting.send(msg.into());
+    /// Reply to the call `call_ref`; nothing for an unknown reference (a
+    /// duplicate reply, or the caller gave up).
+    pub(crate) fn reply_to(&mut self, call_ref: u64, msg: Envelope) {
+        if let Some(waiting) = self.take_reply(call_ref) {
+            let _ = waiting.send(msg);
         }
-        Ok(())
     }
 
-    async fn link(&mut self, other: types::Pid) -> Result<()> {
-        let other = Pid::from(other);
+    /// Link to `other`.
+    pub(crate) fn link_to(&mut self, other: Pid) -> std::result::Result<(), String> {
         if other == self.pid {
             return Ok(());
         }
         let max = limit(self.host_objects.links);
         if !self.ctx.rt.links.may_link(self.pid, other, max) {
-            return Err(Error::msg(LINK_LIMIT));
+            return Err(LINK_LIMIT.into());
         }
         if let Err(reason) = delivery::link(&self.ctx.rt, &self.ctx.me, other) {
             // Linking to a dead or unreachable pid is an immediate exit
@@ -191,20 +191,20 @@ impl process::Host for InstanceState {
         Ok(())
     }
 
-    async fn unlink(&mut self, other: types::Pid) -> Result<()> {
-        delivery::unlink(&self.ctx.rt, self.pid, other.into());
-        Ok(())
+    /// Remove a link to `other`.
+    pub(crate) fn unlink_from(&mut self, other: Pid) {
+        delivery::unlink(&self.ctx.rt, self.pid, other);
     }
 
-    async fn trap_exits(&mut self, on: bool) -> Result<()> {
+    /// Trap exit signals as messages, or not.
+    pub(crate) fn set_trapping_exits(&mut self, on: bool) {
         self.ctx.me.set_trap_exits(on);
-        Ok(())
     }
 
-    async fn monitor(&mut self, other: types::Pid) -> Result<u64> {
-        let other = Pid::from(other);
+    /// Monitor `other`: its reference.
+    pub(crate) fn monitor_pid(&mut self, other: Pid) -> std::result::Result<u64, String> {
         if self.ctx.rt.links.monitors_held(self.pid) >= limit(self.host_objects.monitors) {
-            return Err(Error::msg(MONITOR_LIMIT));
+            return Err(MONITOR_LIMIT.into());
         }
         let (reference, down) = delivery::monitor(&self.ctx.rt, self.pid, other);
         if let Some(reason) = down {
@@ -217,51 +217,53 @@ impl process::Host for InstanceState {
         Ok(reference)
     }
 
-    async fn demonitor(&mut self, monitor_ref: u64) -> Result<()> {
-        delivery::demonitor(&self.ctx.rt, self.pid, monitor_ref);
-        Ok(())
+    /// Remove the monitor `reference`.
+    pub(crate) fn demonitor_ref(&mut self, reference: u64) {
+        delivery::demonitor(&self.ctx.rt, self.pid, reference);
     }
 
-    async fn register(
-        &mut self,
-        name: String,
-    ) -> Result<std::result::Result<(), types::RegisterError>> {
-        if !self.registered_names.contains(&name) {
-            return Ok(Err(types::RegisterError::AccessDenied));
+    /// Register this instance as `name`, which the manifest must list.
+    pub(crate) fn register_name(&mut self, name: &str) -> std::result::Result<(), RegisterRefused> {
+        if !self.registered_names.iter().any(|n| n == name) {
+            return Err(RegisterRefused::AccessDenied);
         }
-        Ok(self
-            .ctx
+        self.ctx
             .rt
             .registry
-            .register(&name, self.pid)
-            .map_err(|holder| types::RegisterError::Taken(holder.into())))
+            .register(name, self.pid)
+            .map_err(RegisterRefused::Taken)
     }
 
-    async fn whereis(&mut self, name: String) -> Result<Option<types::Pid>> {
-        Ok(delivery::whereis(&self.ctx.rt, &name).map(Into::into))
+    /// The pid registered as `name`, on this node or another.
+    pub(crate) fn whereis_name(&self, name: &str) -> Option<Pid> {
+        delivery::whereis(&self.ctx.rt, name)
     }
 
-    async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
+    /// Send `msg` to this instance after `ms`: the timer's reference.
+    pub(crate) fn send_after_ms(
+        &mut self,
+        ms: u32,
+        msg: Envelope,
+    ) -> std::result::Result<u64, String> {
         if !self.timers.has_room(limit(self.host_objects.timers)) {
-            return Err(Error::msg(TIMER_LIMIT));
+            return Err(TIMER_LIMIT.into());
         }
         Ok(self.timers.start(
             self.pid,
             Duration::from_millis(ms.into()),
-            msg.into(),
+            msg,
             self.ctx.mailbox.clone(),
             self.ctx.dropped.clone(),
         ))
     }
 
-    async fn cancel_timer(&mut self, timer_ref: u64) -> Result<()> {
-        self.timers.cancel(timer_ref);
-        Ok(())
+    /// Cancel the timer `reference`.
+    pub(crate) fn cancel_timer_ref(&mut self, reference: u64) {
+        self.timers.cancel(reference);
     }
 
-    async fn exit(&mut self, other: types::Pid, reason: types::ExitReason) -> Result<()> {
-        let other = Pid::from(other);
-        let reason = ExitReason::from(reason);
+    /// Send an exit signal to `other` (to this instance too, as OTP does).
+    pub(crate) fn exit_to(&mut self, other: Pid, reason: ExitReason) {
         let untrappable = reason == ExitReason::Killed;
         if other == self.pid {
             // As in OTP, an exit signal to oneself stops a non-trapping
@@ -283,6 +285,92 @@ impl process::Host for InstanceState {
                 untrappable,
             );
         }
+    }
+}
+
+/// A component's `process` imports: [`InstanceState`]'s process functions
+/// on the WIT's types.
+impl process::Host for InstanceState {
+    async fn self_(&mut self) -> Result<types::Pid> {
+        Ok(self.self_pid().into())
+    }
+
+    async fn cast(&mut self, to: types::Pid, msg: types::Envelope) -> Result<()> {
+        // At most once: a component is not told why a cast was dropped.
+        let _ = self.try_cast(Pid::from(to), msg.into());
+        Ok(())
+    }
+
+    async fn call(
+        &mut self,
+        to: types::Pid,
+        msg: types::Envelope,
+        timeout_ms: u32,
+    ) -> Result<std::result::Result<types::Envelope, types::CallError>> {
+        let result = self
+            .call_to(
+                Pid::from(to),
+                msg.into(),
+                Duration::from_millis(timeout_ms.into()),
+            )
+            .await
+            .map_err(Error::msg)?;
+        Ok(result.map(Into::into).map_err(|e| (&e).into()))
+    }
+
+    async fn reply(&mut self, to: types::CallRef, msg: types::Envelope) -> Result<()> {
+        self.reply_to(to, msg.into());
+        Ok(())
+    }
+
+    async fn link(&mut self, other: types::Pid) -> Result<()> {
+        self.link_to(other.into()).map_err(Error::msg)
+    }
+
+    async fn unlink(&mut self, other: types::Pid) -> Result<()> {
+        self.unlink_from(other.into());
+        Ok(())
+    }
+
+    async fn trap_exits(&mut self, on: bool) -> Result<()> {
+        self.set_trapping_exits(on);
+        Ok(())
+    }
+
+    async fn monitor(&mut self, other: types::Pid) -> Result<u64> {
+        self.monitor_pid(other.into()).map_err(Error::msg)
+    }
+
+    async fn demonitor(&mut self, monitor_ref: u64) -> Result<()> {
+        self.demonitor_ref(monitor_ref);
+        Ok(())
+    }
+
+    async fn register(
+        &mut self,
+        name: String,
+    ) -> Result<std::result::Result<(), types::RegisterError>> {
+        Ok(self.register_name(&name).map_err(|e| match e {
+            RegisterRefused::AccessDenied => types::RegisterError::AccessDenied,
+            RegisterRefused::Taken(holder) => types::RegisterError::Taken(holder.into()),
+        }))
+    }
+
+    async fn whereis(&mut self, name: String) -> Result<Option<types::Pid>> {
+        Ok(self.whereis_name(&name).map(Into::into))
+    }
+
+    async fn send_after(&mut self, ms: u32, msg: types::Envelope) -> Result<u64> {
+        self.send_after_ms(ms, msg.into()).map_err(Error::msg)
+    }
+
+    async fn cancel_timer(&mut self, timer_ref: u64) -> Result<()> {
+        self.cancel_timer_ref(timer_ref);
+        Ok(())
+    }
+
+    async fn exit(&mut self, other: types::Pid, reason: types::ExitReason) -> Result<()> {
+        self.exit_to(other.into(), ExitReason::from(reason));
         Ok(())
     }
 }

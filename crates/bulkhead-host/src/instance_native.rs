@@ -33,12 +33,11 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use super::{AbortOnDrop, Control, InstanceTask, Message, Op, Served, SnapshotError};
-use crate::bindings::bulkhead::runtime::process;
 use crate::failover::RunUntil;
 use crate::health;
 use crate::lifecycle::LifecycleState;
 use crate::listener::Accepted;
-use crate::message::{CallError, Envelope, ExitReason, Info};
+use crate::message::{CallError, ExitReason, Info};
 use crate::native::NativeCode;
 use crate::native::convert;
 use crate::native::port::{Incoming, KvCall, Port};
@@ -292,10 +291,8 @@ async fn answer(
     request: Request,
     deadline: Duration,
 ) -> Result<Answer, String> {
-    use process::Host;
-    let e = |e: wasmtime::Error| e.to_string();
     Ok(match request {
-        Request::SelfPid => Answer::Pid(convert::from_wit_pid(state.self_().await.map_err(e)?)),
+        Request::SelfPid => Answer::Pid(convert::pid(state.self_pid())),
         Request::Cast { to, msg } => {
             cast_answer(state.try_cast(convert::host_pid(to), convert::host_envelope(msg)))
         }
@@ -316,77 +313,53 @@ async fn answer(
             msg,
             timeout_ms,
         } => {
-            let result = Host::call(
-                state,
-                convert::wit_pid(to),
-                convert::wit_envelope(msg),
-                timeout_ms,
-            )
-            .await
-            .map_err(e)?;
+            let result = state
+                .call_to(
+                    convert::host_pid(to),
+                    convert::host_envelope(msg),
+                    Duration::from_millis(timeout_ms.into()),
+                )
+                .await?;
             Answer::Called(
                 result
-                    .map(|env| convert::envelope(Envelope::from(env)))
-                    .map_err(convert::call_error),
+                    .map(convert::envelope)
+                    .map_err(|e| convert::call_error(&e)),
             )
         }
         Request::Reply { call_ref, msg } => {
-            Host::reply(state, call_ref, convert::wit_envelope(msg))
-                .await
-                .map_err(e)?;
+            state.reply_to(call_ref, convert::host_envelope(msg));
             Answer::Unit
         }
         Request::Link(other) => {
-            Host::link(state, convert::wit_pid(other))
-                .await
-                .map_err(e)?;
+            state.link_to(convert::host_pid(other))?;
             Answer::Unit
         }
         Request::Unlink(other) => {
-            Host::unlink(state, convert::wit_pid(other))
-                .await
-                .map_err(e)?;
+            state.unlink_from(convert::host_pid(other));
             Answer::Unit
         }
         Request::TrapExits(on) => {
-            Host::trap_exits(state, on).await.map_err(e)?;
+            state.set_trapping_exits(on);
             Answer::Unit
         }
-        Request::Monitor(other) => Answer::Ref(
-            Host::monitor(state, convert::wit_pid(other))
-                .await
-                .map_err(e)?,
-        ),
+        Request::Monitor(other) => Answer::Ref(state.monitor_pid(convert::host_pid(other))?),
         Request::Demonitor(reference) => {
-            Host::demonitor(state, reference).await.map_err(e)?;
+            state.demonitor_ref(reference);
             Answer::Unit
         }
-        Request::Register(name) => Answer::Registered(
-            Host::register(state, name)
-                .await
-                .map_err(e)?
-                .map_err(convert::register_error),
-        ),
-        Request::Whereis(name) => Answer::MaybePid(
-            Host::whereis(state, name)
-                .await
-                .map_err(e)?
-                .map(convert::from_wit_pid),
-        ),
-        Request::SendAfter { ms, msg } => Answer::Ref(
-            Host::send_after(state, ms, convert::wit_envelope(msg))
-                .await
-                .map_err(e)?,
-        ),
+        Request::Register(name) => {
+            Answer::Registered(state.register_name(&name).map_err(convert::register_error))
+        }
+        Request::Whereis(name) => Answer::MaybePid(state.whereis_name(&name).map(convert::pid)),
+        Request::SendAfter { ms, msg } => {
+            Answer::Ref(state.send_after_ms(ms, convert::host_envelope(msg))?)
+        }
         Request::CancelTimer(reference) => {
-            Host::cancel_timer(state, reference).await.map_err(e)?;
+            state.cancel_timer_ref(reference);
             Answer::Unit
         }
         Request::Exit { to, reason } => {
-            let reason = convert::host_exit_reason(reason);
-            Host::exit(state, convert::wit_pid(to), (&reason).into())
-                .await
-                .map_err(e)?;
+            state.exit_to(convert::host_pid(to), convert::host_exit_reason(reason));
             Answer::Unit
         }
         services => service_answer(state, services).await?,
@@ -425,7 +398,7 @@ async fn service_answer(state: &mut InstanceState, request: Request) -> Result<A
             Answer::KvOpened(HostState::<KeyValue>::service(state).native_open(&bucket))
         }
         Request::Groups(request) => {
-            Answer::Groups(HostState::<Groups>::service(state).native(request).await)
+            Answer::Groups(HostState::<Groups>::service(state).state.native(request))
         }
         Request::ConfigGet(key) => Answer::Config(
             HostState::<Config>::service(state)
@@ -435,7 +408,8 @@ async fn service_answer(state: &mut InstanceState, request: Request) -> Result<A
         Request::ConfigAll => Answer::ConfigAll(HostState::<Config>::service(state).native(None)),
         Request::Secret(name) => Answer::Secret(
             HostState::<Secrets>::service(state)
-                .native(name)
+                .state
+                .get_secret(&name)
                 .await
                 .map(p::Bytes),
         ),
@@ -447,8 +421,8 @@ async fn service_answer(state: &mut InstanceState, request: Request) -> Result<A
             buckets,
         } => Answer::Metric(
             HostState::<MetricsService>::service(state)
-                .native_register(kind, name, help, labels, buckets)
-                .await,
+                .state
+                .native_register(kind, &name, &help, &labels, &buckets),
         ),
         Request::Sql(request) => {
             Answer::Sql(HostState::<Sql>::service(state).native(request).await)
@@ -1059,8 +1033,9 @@ impl InstanceTask {
                 }
                 Some(Incoming::Frame(FromApp::Pong { .. })) => {}
                 Some(Incoming::Frame(FromApp::Metrics(updates))) => {
-                    let refused =
-                        HostState::<MetricsService>::service(state).native_updates(&updates);
+                    let refused = HostState::<MetricsService>::service(state)
+                        .state
+                        .native_updates(&updates);
                     if let Some(e) = refused {
                         log(
                             state,

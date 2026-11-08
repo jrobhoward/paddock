@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bulkhead_bundle::manifest::{AppSpec, Capability};
+use bulkhead_native::protocol::{MetricError, MetricKind, MetricUpdate};
 use wasmtime::Result;
 use wasmtime::component::Linker;
 
@@ -104,24 +105,123 @@ impl Service for MetricsService {
     }
 }
 
-fn refused(r: Refused) -> wit::Error {
+fn refused(r: Refused) -> MetricError {
     match r {
-        Refused::Invalid(why) => wit::Error::Invalid(why),
+        Refused::Invalid(why) => MetricError::Invalid(why),
     }
 }
 
+/// The metrics functions on the host's own types: what a component's
+/// `bulkhead:metrics` import and a native app's requests both run (ROADMAP
+/// Z9b).
 impl Instance {
-    fn series(&self, id: u32) -> std::result::Result<&Arc<Series>, wit::Error> {
+    fn series(&self, id: u32) -> std::result::Result<&Arc<Series>, MetricError> {
         if !self.granted {
-            return Err(wit::Error::AccessDenied);
+            return Err(MetricError::AccessDenied);
         }
         usize::try_from(id)
             .ok()
             .and_then(|i| self.held.get(i))
-            .ok_or(wit::Error::UnknownMetric)
+            .ok_or(MetricError::UnknownMetric)
+    }
+
+    /// Register a metric, or find the one registered with the same name
+    /// and labels: its id.
+    pub(crate) fn register_metric(
+        &mut self,
+        kind: Kind,
+        name: &str,
+        help: &str,
+        labels: &[(String, String)],
+        buckets: &[f64],
+    ) -> std::result::Result<u32, MetricError> {
+        if !self.granted {
+            return Err(MetricError::AccessDenied);
+        }
+        let full = format!("{}_{name}", self.spec.prefix);
+        let max = usize::try_from(self.spec.max_series).unwrap_or(usize::MAX);
+        let series = match self.app.register(kind, &full, help, labels, buckets, max) {
+            Ok(s) => s,
+            Err(RegisterError::Invalid(why)) => return Err(MetricError::Invalid(why)),
+            Err(RegisterError::LimitReached) => return Err(MetricError::LimitReached),
+        };
+        let key = Arc::as_ptr(&series).addr();
+        if let Some(id) = self.ids.get(&key) {
+            return Ok(*id);
+        }
+        let Ok(id) = u32::try_from(self.held.len()) else {
+            return Err(MetricError::LimitReached);
+        };
+        self.held.push(series);
+        self.ids.insert(key, id);
+        Ok(id)
+    }
+
+    /// Add `delta` to a counter or gauge.
+    pub(crate) fn metric_add(&self, id: u32, delta: f64) -> std::result::Result<(), MetricError> {
+        self.series(id).and_then(|s| s.add(delta).map_err(refused))
+    }
+
+    /// Set a gauge.
+    pub(crate) fn metric_set(&self, id: u32, value: f64) -> std::result::Result<(), MetricError> {
+        self.series(id).and_then(|s| s.set(value).map_err(refused))
+    }
+
+    /// Record a histogram observation.
+    pub(crate) fn metric_observe(
+        &self,
+        id: u32,
+        value: f64,
+    ) -> std::result::Result<(), MetricError> {
+        self.series(id)
+            .and_then(|s| s.record(value).map_err(refused))
+    }
+
+    /// Register a metric for a native app.
+    pub(crate) fn native_register(
+        &mut self,
+        kind: MetricKind,
+        name: &str,
+        help: &str,
+        labels: &[(String, String)],
+        buckets: &[f64],
+    ) -> std::result::Result<u32, MetricError> {
+        let kind = match kind {
+            MetricKind::Counter => Kind::Counter,
+            MetricKind::Gauge => Kind::Gauge,
+            MetricKind::Histogram => Kind::Histogram,
+        };
+        self.register_metric(kind, name, help, labels, buckets)
+    }
+
+    /// Apply a native app's batch of updates; the first it refuses, if
+    /// any (the rest are applied).
+    pub(crate) fn native_updates(&self, updates: &[MetricUpdate]) -> Option<MetricError> {
+        let mut first = None;
+        for update in updates {
+            let outcome = match *update {
+                MetricUpdate::Add(id, delta) => self.metric_add(id, delta),
+                MetricUpdate::Set(id, value) => self.metric_set(id, value),
+                MetricUpdate::Observe(id, value) => self.metric_observe(id, value),
+            };
+            if let Err(e) = outcome {
+                first.get_or_insert(e);
+            }
+        }
+        first
     }
 }
 
+fn wit_error(e: MetricError) -> wit::Error {
+    match e {
+        MetricError::AccessDenied => wit::Error::AccessDenied,
+        MetricError::Invalid(why) => wit::Error::Invalid(why),
+        MetricError::LimitReached => wit::Error::LimitReached,
+        MetricError::UnknownMetric => wit::Error::UnknownMetric,
+    }
+}
+
+/// A component's `bulkhead:metrics` import, on the WIT's types.
 impl wit::Host for ServiceCtx<'_, Instance> {
     async fn register(
         &mut self,
@@ -131,35 +231,15 @@ impl wit::Host for ServiceCtx<'_, Instance> {
         labels: Vec<(String, String)>,
         buckets: Vec<f64>,
     ) -> Result<std::result::Result<u32, wit::Error>> {
-        let state = &mut *self.state;
-        if !state.granted {
-            return Ok(Err(wit::Error::AccessDenied));
-        }
         let kind = match kind {
             wit::Kind::Counter => Kind::Counter,
             wit::Kind::Gauge => Kind::Gauge,
             wit::Kind::Histogram => Kind::Histogram,
         };
-        let full = format!("{}_{name}", state.spec.prefix);
-        let max = usize::try_from(state.spec.max_series).unwrap_or(usize::MAX);
-        let series = match state
-            .app
-            .register(kind, &full, &help, &labels, &buckets, max)
-        {
-            Ok(s) => s,
-            Err(RegisterError::Invalid(why)) => return Ok(Err(wit::Error::Invalid(why))),
-            Err(RegisterError::LimitReached) => return Ok(Err(wit::Error::LimitReached)),
-        };
-        let key = Arc::as_ptr(&series).addr();
-        if let Some(id) = state.ids.get(&key) {
-            return Ok(Ok(*id));
-        }
-        let Ok(id) = u32::try_from(state.held.len()) else {
-            return Ok(Err(wit::Error::LimitReached));
-        };
-        state.held.push(series);
-        state.ids.insert(key, id);
-        Ok(Ok(id))
+        Ok(self
+            .state
+            .register_metric(kind, &name, &help, &labels, &buckets)
+            .map_err(wit_error))
     }
 
     async fn add(
@@ -167,10 +247,7 @@ impl wit::Host for ServiceCtx<'_, Instance> {
         metric: u32,
         delta: f64,
     ) -> Result<std::result::Result<(), wit::Error>> {
-        Ok(self
-            .state
-            .series(metric)
-            .and_then(|s| s.add(delta).map_err(refused)))
+        Ok(self.state.metric_add(metric, delta).map_err(wit_error))
     }
 
     async fn set(
@@ -178,10 +255,7 @@ impl wit::Host for ServiceCtx<'_, Instance> {
         metric: u32,
         value: f64,
     ) -> Result<std::result::Result<(), wit::Error>> {
-        Ok(self
-            .state
-            .series(metric)
-            .and_then(|s| s.set(value).map_err(refused)))
+        Ok(self.state.metric_set(metric, value).map_err(wit_error))
     }
 
     async fn observe(
@@ -189,74 +263,6 @@ impl wit::Host for ServiceCtx<'_, Instance> {
         metric: u32,
         value: f64,
     ) -> Result<std::result::Result<(), wit::Error>> {
-        Ok(self
-            .state
-            .series(metric)
-            .and_then(|s| s.record(value).map_err(refused)))
-    }
-}
-
-fn native_error(e: wit::Error) -> bulkhead_native::protocol::MetricError {
-    use bulkhead_native::protocol::MetricError;
-    match e {
-        wit::Error::AccessDenied => MetricError::AccessDenied,
-        wit::Error::Invalid(why) => MetricError::Invalid(why),
-        wit::Error::LimitReached => MetricError::LimitReached,
-        wit::Error::UnknownMetric => MetricError::UnknownMetric,
-    }
-}
-
-impl ServiceCtx<'_, Instance> {
-    /// Register a metric for a native app, as a component's
-    /// `bulkhead:metrics` import does.
-    pub(crate) async fn native_register(
-        &mut self,
-        kind: bulkhead_native::protocol::MetricKind,
-        name: String,
-        help: String,
-        labels: Vec<(String, String)>,
-        buckets: Vec<f64>,
-    ) -> std::result::Result<u32, bulkhead_native::protocol::MetricError> {
-        use bulkhead_native::protocol::{MetricError, MetricKind};
-        use wit::Host;
-        let kind = match kind {
-            MetricKind::Counter => wit::Kind::Counter,
-            MetricKind::Gauge => wit::Kind::Gauge,
-            MetricKind::Histogram => wit::Kind::Histogram,
-        };
-        match Host::register(self, kind, name, help, labels, buckets).await {
-            Ok(r) => r.map_err(native_error),
-            Err(e) => Err(MetricError::Invalid(e.to_string())),
-        }
-    }
-
-    /// Apply a native app's batch of updates; the first it refuses, if
-    /// any (the rest are applied).
-    pub(crate) fn native_updates(
-        &self,
-        updates: &[bulkhead_native::protocol::MetricUpdate],
-    ) -> Option<bulkhead_native::protocol::MetricError> {
-        use bulkhead_native::protocol::MetricUpdate;
-        let mut first = None;
-        for update in updates {
-            let outcome = match *update {
-                MetricUpdate::Add(id, delta) => self
-                    .state
-                    .series(id)
-                    .and_then(|s| s.add(delta).map_err(refused)),
-                MetricUpdate::Set(id, value) => self
-                    .state
-                    .series(id)
-                    .and_then(|s| s.set(value).map_err(refused)),
-                MetricUpdate::Observe(id, value) => self
-                    .state
-                    .series(id)
-                    .and_then(|s| s.record(value).map_err(refused)),
-            };
-            if let Err(e) = outcome {
-                first.get_or_insert(native_error(e));
-            }
-        }
-        first
+        Ok(self.state.metric_observe(metric, value).map_err(wit_error))
     }
 }

@@ -42,8 +42,8 @@
 //! method on the same [`ServiceCtx`], and encodes the result with
 //! [`reply`]; deriving serde's traits on the bindings' types
 //! (`additional_derives` in `bindgen!`) makes both sides one definition.
-//! An extension without it answers every native call with
-//! [`NativeCallError::NoSuchFunction`].
+//! Every extension implements it; one that serves components only answers
+//! each call with [`NativeCall::no_such_function`].
 
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
@@ -109,12 +109,11 @@ pub trait Extension: Send + Sync + 'static {
     /// Serve a native app's call of a function (see the module
     /// documentation), with the calling instance's data: reach this
     /// extension's state with [`extension_ctx`], as the linked functions
-    /// do. [`NativeCallError::NoSuchFunction`] for every function by
-    /// default.
-    fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a> {
-        let _ = data;
-        Box::pin(async move { Err(call.no_such_function()) })
-    }
+    /// do. [`NativeCall::no_such_function`] for a function it does not
+    /// serve. Required: native apps reach an extension only through it
+    /// (ROADMAP Z9b), and once components go (Z9e) it is the extension's
+    /// whole interface to apps.
+    fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a>;
 }
 
 /// What [`Extension::call`] returns: the result in CBOR, or why there is

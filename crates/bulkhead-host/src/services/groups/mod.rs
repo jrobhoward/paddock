@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use bulkhead_bundle::manifest::{AppSpec, Capability, GroupsScope};
+use bulkhead_native::protocol::{GroupsAnswer, GroupsError, GroupsRequest};
 use wasmtime::Result;
 use wasmtime::component::Linker;
 
@@ -153,7 +154,7 @@ impl Shared {
         }
     }
 
-    fn join(&self, me: &InstanceHandle, group: &str, max: usize) -> Result<(), groups::Error> {
+    fn join(&self, me: &InstanceHandle, group: &str, max: usize) -> Result<(), GroupsError> {
         let mut result = Ok(());
         let pid = me.pid();
         self.change(|t| {
@@ -165,7 +166,7 @@ impl Shared {
                 if joined.is_empty() {
                     t.joined.remove(&pid);
                 }
-                result = Err(groups::Error::LimitReached);
+                result = Err(GroupsError::LimitReached);
                 return Vec::new();
             }
             joined.insert(group.to_string());
@@ -380,11 +381,11 @@ pub(crate) struct Instance {
 }
 
 impl Instance {
-    fn may_join(&self, group: &str) -> Result<(), groups::Error> {
+    fn may_join(&self, group: &str) -> Result<(), GroupsError> {
         if self.granted && self.scope.may_join(group) {
             Ok(())
         } else {
-            Err(groups::Error::AccessDenied)
+            Err(GroupsError::AccessDenied)
         }
     }
 }
@@ -425,53 +426,41 @@ impl Service for Groups {
     }
 }
 
-impl groups::Host for ServiceCtx<'_, Instance> {
-    async fn join(&mut self, group: String) -> Result<std::result::Result<(), groups::Error>> {
-        let state = &*self.state;
-        Ok(state
-            .may_join(&group)
-            .and_then(|()| state.shared.join(&state.me, &group, state.max)))
+/// The groups functions on the host's own types: what a component's
+/// `bulkhead:groups` import and a native app's requests both run (ROADMAP
+/// Z9b).
+impl Instance {
+    /// Join `group`.
+    pub(crate) fn join_group(&self, group: &str) -> Result<(), GroupsError> {
+        self.may_join(group)
+            .and_then(|()| self.shared.join(&self.me, group, self.max))
     }
 
-    async fn leave(&mut self, group: String) -> Result<std::result::Result<(), groups::Error>> {
-        let state = &*self.state;
-        Ok(state
-            .may_join(&group)
-            .map(|()| state.shared.leave(state.me.pid(), &group)))
+    /// Leave `group`.
+    pub(crate) fn leave_group(&self, group: &str) -> Result<(), GroupsError> {
+        self.may_join(group)
+            .map(|()| self.shared.leave(self.me.pid(), group))
     }
 
-    async fn members(
-        &mut self,
-        group: String,
-    ) -> Result<std::result::Result<Vec<groups::Pid>, groups::Error>> {
-        let state = &*self.state;
-        let scope = &state.scope;
-        if !state.granted || !(scope.may_join(&group) || scope.may_publish(&group)) {
-            return Ok(Err(groups::Error::AccessDenied));
+    /// The members of `group`, on every node.
+    pub(crate) fn group_members(&self, group: &str) -> Result<Vec<Pid>, GroupsError> {
+        let scope = &self.scope;
+        if !self.granted || !(scope.may_join(group) || scope.may_publish(group)) {
+            return Err(GroupsError::AccessDenied);
         }
-        Ok(Ok(state
-            .shared
-            .members(&group)
-            .into_iter()
-            .map(Into::into)
-            .collect()))
+        Ok(self.shared.members(group))
     }
 
-    async fn publish(
-        &mut self,
-        group: String,
-        msg: groups::Envelope,
-    ) -> Result<std::result::Result<u32, groups::Error>> {
-        let state = &*self.state;
-        if !state.granted || !state.scope.may_publish(&group) {
-            return Ok(Err(groups::Error::AccessDenied));
+    /// Cast `msg` to every member of `group`: how many it reached.
+    pub(crate) fn publish_to(&self, group: &str, msg: &Envelope) -> Result<u32, GroupsError> {
+        if !self.granted || !self.scope.may_publish(group) {
+            return Err(GroupsError::AccessDenied);
         }
-        let msg = Envelope::from(msg);
-        state.me.woke_others();
-        let me = Origin::Local(&state.me);
-        let mut delivered = state
+        self.me.woke_others();
+        let me = Origin::Local(&self.me);
+        let mut delivered = self
             .shared
-            .local_members(&group)
+            .local_members(group)
             .iter()
             .filter(|member| {
                 delivery::permits(me, member) && member.cast_from(me.pid(), msg.clone()).is_ok()
@@ -479,11 +468,11 @@ impl groups::Host for ServiceCtx<'_, Instance> {
             .count();
         // One copy per other node with members, counted as reaching them
         // all once queued: that node fans it out, under the same ACL.
-        if let Some(rt) = state.shared.runtime() {
-            for (node, count) in state.shared.remote_members(&group) {
+        if let Some(rt) = self.shared.runtime() {
+            for (node, count) in self.shared.remote_members(group) {
                 let frame = Frame::GroupPublish {
-                    group: group.clone(),
-                    from: state.me.pid(),
+                    group: group.to_string(),
+                    from: self.me.pid(),
                     sender: delivery::stamp(me),
                     msg: msg.clone(),
                 };
@@ -492,56 +481,60 @@ impl groups::Host for ServiceCtx<'_, Instance> {
                 }
             }
         }
-        Ok(Ok(u32::try_from(delivered).unwrap_or(u32::MAX)))
+        Ok(u32::try_from(delivered).unwrap_or(u32::MAX))
+    }
+
+    /// Answer a native app's groups request.
+    pub(crate) fn native(&self, request: GroupsRequest) -> Result<GroupsAnswer, GroupsError> {
+        match request {
+            GroupsRequest::Join(group) => self.join_group(&group).map(|()| GroupsAnswer::Unit),
+            GroupsRequest::Leave(group) => self.leave_group(&group).map(|()| GroupsAnswer::Unit),
+            GroupsRequest::Members(group) => self.group_members(&group).map(|pids| {
+                GroupsAnswer::Members(pids.into_iter().map(crate::native::convert::pid).collect())
+            }),
+            GroupsRequest::Publish { group, msg } => self
+                .publish_to(&group, &crate::native::convert::host_envelope(msg))
+                .map(GroupsAnswer::Delivered),
+        }
     }
 }
 
-impl ServiceCtx<'_, Instance> {
-    /// Answer a native app's groups request, with the host functions a
-    /// component's `bulkhead:groups` import runs.
-    pub(crate) async fn native(
+fn wit_error(e: GroupsError) -> groups::Error {
+    match e {
+        GroupsError::AccessDenied => groups::Error::AccessDenied,
+        GroupsError::LimitReached => groups::Error::LimitReached,
+    }
+}
+
+/// A component's `bulkhead:groups` import, on the WIT's types.
+impl groups::Host for ServiceCtx<'_, Instance> {
+    async fn join(&mut self, group: String) -> Result<std::result::Result<(), groups::Error>> {
+        Ok(self.state.join_group(&group).map_err(wit_error))
+    }
+
+    async fn leave(&mut self, group: String) -> Result<std::result::Result<(), groups::Error>> {
+        Ok(self.state.leave_group(&group).map_err(wit_error))
+    }
+
+    async fn members(
         &mut self,
-        request: bulkhead_native::protocol::GroupsRequest,
-    ) -> std::result::Result<
-        bulkhead_native::protocol::GroupsAnswer,
-        bulkhead_native::protocol::GroupsError,
-    > {
-        use bulkhead_native::protocol::{GroupsAnswer, GroupsError, GroupsRequest};
-        use groups::Host;
-        let error = |e: groups::Error| match e {
-            groups::Error::AccessDenied => GroupsError::AccessDenied,
-            groups::Error::LimitReached => GroupsError::LimitReached,
-        };
-        // The host functions return a trap only for a resource-table
-        // failure, which these never touch.
-        let flat = |r: Result<std::result::Result<GroupsAnswer, groups::Error>>| {
-            r.unwrap_or(Err(groups::Error::AccessDenied)).map_err(error)
-        };
-        match request {
-            GroupsRequest::Join(group) => flat(
-                Host::join(self, group)
-                    .await
-                    .map(|r| r.map(|()| GroupsAnswer::Unit)),
-            ),
-            GroupsRequest::Leave(group) => flat(
-                Host::leave(self, group)
-                    .await
-                    .map(|r| r.map(|()| GroupsAnswer::Unit)),
-            ),
-            GroupsRequest::Members(group) => flat(Host::members(self, group).await.map(|r| {
-                r.map(|pids| {
-                    GroupsAnswer::Members(
-                        pids.into_iter()
-                            .map(crate::native::convert::from_wit_pid)
-                            .collect(),
-                    )
-                })
-            })),
-            GroupsRequest::Publish { group, msg } => flat(
-                Host::publish(self, group, crate::native::convert::wit_envelope(msg))
-                    .await
-                    .map(|r| r.map(GroupsAnswer::Delivered)),
-            ),
-        }
+        group: String,
+    ) -> Result<std::result::Result<Vec<groups::Pid>, groups::Error>> {
+        Ok(self
+            .state
+            .group_members(&group)
+            .map(|pids| pids.into_iter().map(Into::into).collect())
+            .map_err(wit_error))
+    }
+
+    async fn publish(
+        &mut self,
+        group: String,
+        msg: groups::Envelope,
+    ) -> Result<std::result::Result<u32, groups::Error>> {
+        Ok(self
+            .state
+            .publish_to(&group, &Envelope::from(msg))
+            .map_err(wit_error))
     }
 }
