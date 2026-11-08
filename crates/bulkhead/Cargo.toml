@@ -89,10 +89,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "pr
 wat = { workspace = true }
 wit-parser = { workspace = true }
 
-[[example]]
-name = "admin_latency"
-required-features = ["node"]
-
 [[test]]
 name = "cli"
 required-features = ["node"]
@@ -128,10 +124,6 @@ required-features = ["node"]
 [[test]]
 name = "board"
 required-features = ["http"]
-
-[[test]]
-name = "http_handler"
-required-features = ["http", "egress"]
 
 [[test]]
 name = "tally"

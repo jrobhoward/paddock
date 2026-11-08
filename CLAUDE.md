@@ -50,7 +50,7 @@ scripts/check.sh clippy guests
 # each failure keeps a run directory under target/soak/ with its seed and
 # logs.
 scripts/soak.sh --hours 1
-scripts/soak.sh --hours 1 --only scada --scada-minutes 60 --native   # SCADA apps natively
+scripts/soak.sh --hours 1 --only scada --scada-minutes 60
 
 # Coverage per file (cargo install cargo-llvm-cov once). Tests that start
 # `bulkhead node` as its own process are not counted.
@@ -346,7 +346,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   task's `failover lease ended` (`ended_ms_ago`) and `failover lease
   extended` (debug, target `bulkhead::lease`: `until_ms`, `slack_ms`), and an
   instance's `crashed: lease_ended` exit (not `killed_at_lease_end`, the
-  runner's watchdog's kill at the lease's end; `scada --native` counts a
+  runner's watchdog's kill at the lease's end; a soak counts a
   stopped node's time, since its native apps run on); changing their wording breaks the
   check (its tests hold sample lines).
 - `scripts/`: `check.sh` (every check; `--help`), `check-secrets.sh` (run

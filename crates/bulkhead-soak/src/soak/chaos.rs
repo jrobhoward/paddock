@@ -64,10 +64,9 @@ pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
         manifest != source,
         "examples/chaos/bulkhead.toml has no `intensity = 3` to raise"
     );
-    let wasm = args
-        .root
-        .join("target/wasm32-wasip2/release/example_chaos.wasm");
-    let (app, signer) = bundle(&args.bulkhead, dir, APP, &manifest, &wasm)?;
+    let manifest = super::node::native_manifest(&manifest)?;
+    let program = args.root.join("target/release/example-chaos");
+    let (app, signer) = bundle(&args.bulkhead, dir, APP, &manifest, &program)?;
     let mut node = Node::new(1, &args.bulkhead, dir, socket_path("c", 1), events.clone());
     std::fs::write(
         node.config_path(),

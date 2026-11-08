@@ -9,12 +9,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use std::sync::OnceLock;
-
-use bulkhead_host::{
-    CallError, Envelope, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, Pid, Runtime,
-    RuntimeConfig,
-};
+use bulkhead_host::{CallError, Envelope, ExitReason, InstanceSpec, Pid};
 use common::{LONG, body, pid_text, shared, spec, text};
 
 async fn ask(instance: &bulkhead_host::InstanceHandle, command: &str) -> String {
@@ -353,82 +348,4 @@ async fn runtime_call____stale_pid____noproc() {
 
     assert_eq!(call, Err(CallError::Noproc));
     assert_eq!(cast, Err(CallError::Noproc));
-}
-
-// --- a woken task is not held behind the instance that woke it (B15) -------
-
-/// A runtime whose epoch tick is longer than any test, so an instance
-/// yields only between messages: a woken task left in the worker's LIFO
-/// slot would wait for all the work queued behind its message. Components
-/// only: their guest work runs on the worker, where a native app's runs in
-/// its process. These go with components (ROADMAP Z9e).
-fn slow_tick() -> &'static (Runtime, LoadedApp) {
-    static SLOW: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
-    SLOW.get_or_init(|| {
-        let rt = Runtime::new(RuntimeConfig {
-            max_instances: 8,
-            epoch_tick: Duration::from_secs(10),
-            ..RuntimeConfig::default()
-        })
-        .unwrap();
-        let app = rt.load(&common::fixture("bulkhead_fixture_chaos")).unwrap();
-        (rt, app)
-    })
-}
-
-/// About 300 ms of guest work on the machine BASELINE.md describes.
-const QUEUED_WORK: &str = "busy:200000000";
-
-async fn slow_tick_instance() -> InstanceHandle {
-    let (rt, app) = slow_tick();
-    let mut s = spec("");
-    s.callback_deadline = Duration::from_secs(30);
-    let h = rt.spawn(app, s).unwrap();
-    ask(&h, "echo:up").await;
-    h
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn reply____work_queued_behind_the_call____caller_answered_before_it_runs() {
-    let h = slow_tick_instance().await;
-    let started = Instant::now();
-
-    // The caller on a worker, as instances and the ingress are: the test's
-    // own body runs outside the workers.
-    let (result, took) = tokio::spawn({
-        let h = h.clone();
-        async move {
-            let (reply, ()) = tokio::join!(
-                async {
-                    let r = h.call(text("echo:x"), LONG).await;
-                    (r, started.elapsed())
-                },
-                async { h.cast(text(QUEUED_WORK)).unwrap() }
-            );
-            reply
-        }
-    })
-    .await
-    .unwrap();
-
-    assert_eq!(body(&result.unwrap()), "x");
-    assert!(took < Duration::from_millis(100), "answered after {took:?}");
-    h.kill();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn guest_cast____sender_has_work_queued____receiver_runs_before_it() {
-    let sender = slow_tick_instance().await;
-    let receiver = slow_tick_instance().await;
-    let started = Instant::now();
-
-    sender
-        .cast(text(&format!("cast:{}:trap", pid_text(receiver.pid()))))
-        .unwrap();
-    sender.cast(text(QUEUED_WORK)).unwrap();
-    receiver.wait().await;
-    let took = started.elapsed();
-
-    assert!(took < Duration::from_millis(100), "handled after {took:?}");
-    sender.kill();
 }

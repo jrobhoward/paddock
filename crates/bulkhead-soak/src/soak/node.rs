@@ -237,14 +237,33 @@ pub(crate) fn socket_path(tag: &str, n: u32) -> PathBuf {
     std::env::temp_dir().join(format!("pdsoak-{}-{tag}{n}.sock", std::process::id()))
 }
 
-/// Sign `manifest` and `wasm` into `dir/<name>.rbp` with a new signer key;
+/// `manifest` running the program as a native process.
+pub(crate) fn native_manifest(manifest: &str) -> anyhow::Result<String> {
+    let mut doc: toml::Table = manifest.parse()?;
+    let appserver = doc
+        .entry("appserver")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("appserver is not a table"))?;
+    appserver.insert("kind".into(), "native-process".into());
+    appserver.insert(
+        "native".into(),
+        toml::Value::Table(toml::Table::from_iter([(
+            "program".to_string(),
+            toml::Value::from("executable"),
+        )])),
+    );
+    Ok(toml::to_string(&doc)?)
+}
+
+/// Sign `manifest` and `program` into `dir/<name>.rbp` with a new signer key;
 /// returns the bundle and the signer's public key for `trusted_keys`.
 pub(crate) fn bundle(
     bulkhead_bin: &Path,
     dir: &Path,
     name: &str,
     manifest: &str,
-    wasm: &Path,
+    program: &Path,
 ) -> anyhow::Result<(Vec<u8>, String)> {
     if !dir.join("signer.key").exists() {
         bulkhead(bulkhead_bin, dir, &["keygen", "signer", "--no-password"])?;
@@ -255,16 +274,16 @@ pub(crate) fn bundle(
         .unwrap_or_default()
         .to_string();
     std::fs::write(dir.join(format!("{name}.toml")), manifest)?;
-    let wasm = wasm
+    let program = program
         .to_str()
-        .ok_or_else(|| anyhow::anyhow!("not UTF-8: {}", wasm.display()))?;
+        .ok_or_else(|| anyhow::anyhow!("not UTF-8: {}", program.display()))?;
     bulkhead(
         bulkhead_bin,
         dir,
         &[
             "bundle",
             &format!("{name}.toml"),
-            wasm,
+            program,
             "--key",
             "signer.key",
             "--out",

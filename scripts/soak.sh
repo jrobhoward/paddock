@@ -49,9 +49,6 @@
 #   --sim-seeds N         random scenarios per sim run (default 200)
 #   --only KIND           run only sim, failover, replication, scada,
 #                         cluster or chaos
-#   --native              run scada's apps as native programs (Linux),
-#                         built from the same source with their `native`
-#                         feature, through bulkhead-runner
 #   --keep                keep the directories of runs that passed
 #
 # Each run gets a directory named <round>-<kind>-<seed> with its seed, logs
@@ -93,7 +90,6 @@ chaos_minutes=5
 sim_seeds=200
 only=""
 keep=0
-native=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --hours) hours=${2:-}; shift ;;
@@ -108,7 +104,6 @@ while [ "$#" -gt 0 ]; do
         --sim-seeds) sim_seeds=${2:-}; shift ;;
         --only) only=${2:-}; shift ;;
         --keep) keep=1 ;;
-        --native) native=1 ;;
         -h | --help) usage; exit 0 ;;
         *) echo "soak: unknown option $1" >&2; exit 2 ;;
     esac
@@ -133,22 +128,17 @@ echo "soak: building (release)"
 # bulkhead with Modbus, for the scada runs.
 cargo build --release --locked -p bulkhead -p bulkhead-soak --features bulkhead/modbus || exit 1
 cargo build --release --locked -p bulkhead-modbus --example fake_device || exit 1
-cargo build --release --locked --target wasm32-wasip2 -p example-counter -p example-chaos -p example-ledger \
-    -p bulkhead-fixture-chaos -p example-scada-points -p example-scada-hmi -p example-scada-control || exit 1
-# control's version 2, where examples/scada/drill.sh builds it too.
-cargo build --release --locked --target wasm32-wasip2 -p example-scada-control --features v2 \
-    --target-dir target/fixtures/scada-drill-v2 || exit 1
-scada_native=""
-if [ "$native" = 1 ]; then
-    scada_native=--native
-    # The same apps as native programs, and the runner beside bulkhead.
-    cargo build --release --locked -p bulkhead-native --bin bulkhead-runner || exit 1
-    cargo build --release --locked -p example-scada-points -p example-scada-hmi -p example-scada-control \
-        --features example-scada-points/native,example-scada-hmi/native,example-scada-control/native \
-        || exit 1
-    cargo build --release --locked -p example-scada-control --features native,v2 \
-        --target-dir target/fixtures/scada-drill-v2-native || exit 1
-fi
+# The apps as native programs, and the runner beside bulkhead.
+cargo build --release --locked -p bulkhead-native --bin bulkhead-runner || exit 1
+cargo build --release --locked -p example-counter -p example-chaos -p example-ledger \
+    -p bulkhead-fixture-conformance -p example-scada-points -p example-scada-hmi -p example-scada-control \
+    --features example-counter/native,example-chaos/native,example-ledger/native \
+    --features bulkhead-fixture-conformance/native \
+    --features example-scada-points/native,example-scada-hmi/native,example-scada-control/native \
+    || exit 1
+# control's version 2.
+cargo build --release --locked -p example-scada-control --features native,v2 \
+    --target-dir target/fixtures/scada-drill-v2-native || exit 1
 
 now() { date +%s; }
 deadline=$(awk -v h="$hours" -v t="$(now)" 'BEGIN { printf "%d", t + h * 3600 }')
@@ -184,7 +174,7 @@ while [ "$(now)" -lt "$deadline" ]; do
                 ;;
             scada)
                 target/release/bulkhead-soak scada --dir "$run" --seed "$seed" \
-                    --minutes "$(fit "$scada_minutes")" $scada_native > "$run/output.txt" 2>&1
+                    --minutes "$(fit "$scada_minutes")" > "$run/output.txt" 2>&1
                 ;;
             cluster)
                 target/release/bulkhead-soak cluster --dir "$run" --seed "$seed" \

@@ -134,17 +134,18 @@ impl Cluster {
 
         let manifest = format!(
             "[app]\nname = \"{APP}\"\nversion = \"1.0.0\"\n\
-             description = \"Links and monitors on command (bulkhead-fixture-chaos)\"\n\
+             description = \"Links and monitors on command (bulkhead-fixture-conformance)\"\n\
              license = \"MIT OR Apache-2.0\"\n\
              [appserver.instances]\ncount = {POOL}\n\
              [appserver.limits]\nmemory_max = \"32MiB\"\ncallback_deadline_ms = 500\n\
              [appserver.supervision]\nintensity = 1000\nperiod_ms = 10000\n\
              backoff = {{ initial_ms = 10, max_ms = 200, jitter = true }}\n"
         );
-        let wasm = args
+        let manifest = super::node::native_manifest(&manifest)?;
+        let program = args
             .root
-            .join("target/wasm32-wasip2/release/bulkhead_fixture_chaos.wasm");
-        let (app, signer) = bundle(&args.bulkhead, dir, APP, &manifest, &wasm)?;
+            .join("target/release/bulkhead-fixture-conformance");
+        let (app, signer) = bundle(&args.bulkhead, dir, APP, &manifest, &program)?;
 
         let bound: Vec<_> = (0..NODES).map(|_| free_udp()).collect::<Result<_, _>>()?;
         let names: std::collections::HashMap<_, _> = bound.iter().copied().zip(1..=NODES).collect();

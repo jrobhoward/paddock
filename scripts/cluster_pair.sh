@@ -3,8 +3,7 @@
 # node 2 served at 127.0.0.1:7400, node 1 connecting from 127.0.0.1:7401.
 # The benchmark's output is node 1's; node 2 is stopped at the end.
 #
-#   scripts/cluster_pair.sh [WORKERS]                    # components
-#   CLUSTER_NATIVE=1 scripts/cluster_pair.sh [WORKERS]   # native programs
+#   scripts/cluster_pair.sh [WORKERS]
 #
 # Needs target/release/examples/cluster_throughput and its fixtures
 # (scripts/bench.sh builds them; the example's header lists the commands).

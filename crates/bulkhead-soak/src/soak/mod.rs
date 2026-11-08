@@ -98,11 +98,6 @@ enum Command {
         lease_ms: u64,
         #[arg(long, default_value_t = 300)]
         margin_ms: u64,
-        /// Run the apps as native programs (Linux): `target/release`'s,
-        /// built with each app's `native` feature, and `bulkhead-runner`
-        /// beside the bulkhead binary.
-        #[arg(long)]
-        native: bool,
     },
     /// Three member nodes behind UDP proxies, their instances linking and
     /// monitoring each other at random, under link and node faults; fails
@@ -133,10 +128,6 @@ enum Command {
         /// The singleton's app: `control` for a scada run.
         #[arg(long, default_value = failover::APP)]
         app: String,
-        /// The singleton was a native app, which runs on while its node
-        /// is stopped (a `scada --native` run).
-        #[arg(long)]
-        native: bool,
     },
 }
 
@@ -245,32 +236,23 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
             node_timeout_ms,
             lease_ms,
             margin_ms,
-            native,
         } => {
             let (dir, root, bulkhead, seed, minutes) = prepare(run)?;
-            let build = if native {
-                scada::Build::Native
-            } else {
-                scada::Build::Component
-            };
-            scada::run(
-                build,
-                &failover::Args {
-                    dir,
-                    root,
-                    bulkhead,
-                    seed,
-                    minutes,
-                    episode: Duration::from_secs(episode_s),
-                    timings: failover::Timings {
-                        heartbeat_ms,
-                        node_timeout_ms,
-                        lease_ms,
-                        margin_ms,
-                    },
-                    serial: None,
+            scada::run(&failover::Args {
+                dir,
+                root,
+                bulkhead,
+                seed,
+                minutes,
+                episode: Duration::from_secs(episode_s),
+                timings: failover::Timings {
+                    heartbeat_ms,
+                    node_timeout_ms,
+                    lease_ms,
+                    margin_ms,
                 },
-            )
+                serial: None,
+            })
             .await
         }
         Command::Cluster {
@@ -307,8 +289,8 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
             })
             .await
         }
-        Command::Check { dir, app, native } => {
-            let report = check::check_dir(&dir, &app, native)?;
+        Command::Check { dir, app } => {
+            let report = check::check_dir(&dir, &app, true)?;
             print!("{}", report.render());
             Ok(report.passed())
         }

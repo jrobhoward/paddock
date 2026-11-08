@@ -9,13 +9,6 @@
 //! case, snapshots and upgrades included, on the SDK and the real channel.
 //! The cases that need a process to hold memory return early in-process.
 //!
-//! `BULKHEAD_CONFORMANCE_APP=<component.wasm>` runs it against a component:
-//!
-//! ```text
-//! BULKHEAD_CONFORMANCE_APP=sdks/go/conformance/app.wasm \
-//!     cargo test -p bulkhead-host --test conformance
-//! ```
-//!
 //! Each test is one case; the case names are the rows of WRITING_APPS.md's
 //! table of SDKs.
 
@@ -47,42 +40,20 @@ fn native() -> bool {
     std::env::var_os("BULKHEAD_CONFORMANCE_NATIVE").is_some_and(|v| v == "1")
 }
 
-/// The component mode: `BULKHEAD_CONFORMANCE_APP`.
-fn component() -> bool {
-    std::env::var_os("BULKHEAD_CONFORMANCE_APP").is_some()
-}
-
 /// The in-process mode, the default.
 fn in_process() -> bool {
-    !native() && !component()
+    !native()
 }
 
-/// Whether a crash's reason is the app's own failure: a trap in a
-/// component, a panic in a native app. An in-process app's `init` reports
-/// its panic as an error.
+/// Whether a crash's reason is the app's own failure: a panic. An
+/// in-process app's `init` reports its panic as an error.
 fn crashed_in_app(why: &str) -> bool {
-    if component() {
-        why.starts_with("trap:")
-    } else {
-        why.starts_with("panic:") || (in_process() && why.starts_with("init failed: panic:"))
-    }
+    why.starts_with("panic:") || (in_process() && why.starts_with("init failed: panic:"))
 }
 
 use serde_json::json;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
-
-/// The component under test: `BULKHEAD_CONFORMANCE_APP`, a relative path
-/// from the workspace root.
-fn component_bytes() -> Vec<u8> {
-    let path = std::env::var_os("BULKHEAD_CONFORMANCE_APP").unwrap();
-    std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(&path),
-    )
-    .unwrap_or_else(|e| panic!("BULKHEAD_CONFORMANCE_APP {}: {e}", path.display()))
-}
 
 /// The secret `token` the runtime binds, from a file written by `echo`.
 const TOKEN: &str = "s3cr3t";
@@ -104,8 +75,6 @@ fn shared() -> &'static (Runtime, LoadedApp) {
         let dir = secrets_dir();
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 64,
-            // componentize-py's apps hold 14 core instances.
-            max_core_instances_per_component: 16,
             secrets: BTreeMap::from([
                 ("token".to_string(), SecretSource::File(dir.join("token"))),
                 (
@@ -130,8 +99,6 @@ fn shared() -> &'static (Runtime, LoadedApp) {
         .unwrap();
         let app = if native() {
             native_app(&rt)
-        } else if component() {
-            rt.load(&component_bytes()).unwrap()
         } else {
             rt.load_in_process::<Conformance>()
         };
@@ -380,10 +347,6 @@ fn start_with(app: &str, change: impl FnOnce(&mut InstanceSpec)) -> InstanceHand
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_cast____each_outcome____says_whether_it_was_queued() {
-    // A component's cast is not told (ROADMAP I1).
-    if component() {
-        return;
-    }
     let a = up("c-try-cast", "").await;
     let b = up("c-try-cast", "").await;
     let small = start_with("c-try-cast-small", |s| s.message_max_bytes = 4);
@@ -454,9 +417,6 @@ fn filler(bytes: usize) -> Envelope {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____room_comes____queued_after_waiting() {
-    if component() {
-        return;
-    }
     let a = up("c-wait-room", "").await;
     let stuck = up("c-wait-room", "").await;
     let b = start_small("c-wait-room-b");
@@ -478,9 +438,6 @@ async fn cast_wait____room_comes____queued_after_waiting() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____no_room____times_out_capped_at_the_deadline() {
-    if component() {
-        return;
-    }
     let a = up("c-wait-none", "").await;
     let stuck = up("c-wait-none", "").await;
     let b = start_small("c-wait-none-b");
@@ -507,9 +464,6 @@ async fn cast_wait____no_room____times_out_capped_at_the_deadline() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____to_its_own_full_mailbox____overloaded_at_once() {
-    if component() {
-        return;
-    }
     let stuck = up("c-wait-self", "").await;
     let a = start_small("c-wait-self-a");
     busy(&a, &stuck, 300).await;
@@ -531,9 +485,6 @@ async fn cast_wait____to_its_own_full_mailbox____overloaded_at_once() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cast_wait____two_waiting_on_each_other____first_timeout_frees_the_other() {
-    if component() {
-        return;
-    }
     let stuck = up("c-wait-cycle", "").await;
     let a = start_small("c-wait-cycle-a");
     let b = start_small("c-wait-cycle-b");
@@ -635,12 +586,8 @@ async fn link____partner_crashes____trapping_instance_gets_an_exit_info() {
     let _ = b.call(text("trap"), LONG).await;
     let infos = ask_until(&a, "infos", |i| !i.is_empty()).await;
 
-    let prefix = format!("exit:{}:crashed(trap:", pid(&b));
-    let native_prefix = format!("exit:{}:crashed(panic:", pid(&b));
-    assert!(
-        infos.starts_with(&prefix) || (!component() && infos.starts_with(&native_prefix)),
-        "{infos}"
-    );
+    let prefix = format!("exit:{}:crashed(panic:", pid(&b));
+    assert!(infos.starts_with(&prefix), "{infos}");
     a.kill();
 }
 
@@ -856,15 +803,12 @@ async fn memory_max____allocation_beyond____crashes_with_memory_limit() {
 
     // A native app without a cgroup is held to `memory_max` by
     // `RLIMIT_DATA`: the failed allocation aborts it (MANIFEST.md).
-    let reason = if native() {
-        "killed by signal 6"
-    } else {
-        "memory_limit"
-    };
     assert_eq!(small, "ok");
     assert_eq!(
         big,
-        Err(CallError::Exited(ExitReason::Crashed(reason.into())))
+        Err(CallError::Exited(ExitReason::Crashed(
+            "killed by signal 6".into()
+        )))
     );
 }
 

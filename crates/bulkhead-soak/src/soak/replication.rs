@@ -101,10 +101,10 @@ pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
     let setup = Setup {
         apps: vec![SetupApp {
             name: APP,
-            manifest: std::fs::read_to_string(args.root.join("examples/ledger/bulkhead.toml"))?,
-            wasm: args
-                .root
-                .join("target/wasm32-wasip2/release/example_ledger.wasm"),
+            manifest: super::node::native_manifest(&std::fs::read_to_string(
+                args.root.join("examples/ledger/bulkhead.toml"),
+            )?)?,
+            program: args.root.join("target/release/example-ledger"),
         }],
         pair_config: [bucket.clone(), bucket],
         failover_config: String::new(),

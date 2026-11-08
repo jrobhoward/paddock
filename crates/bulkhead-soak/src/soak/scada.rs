@@ -355,65 +355,21 @@ async fn probe(probes: Arc<Probes>, node: u32, port: u16, ask: Ask) {
     }
 }
 
-/// Which build of the apps a run deploys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Build {
-    /// Components, `target/wasm32-wasip2/release`'s.
-    Component,
-    /// Native programs, `target/release`'s (each app's `native` feature),
-    /// run through the `bulkhead-runner` beside the bulkhead binary.
-    Native,
+/// The app `name`'s native program, `target/release`'s (each app's
+/// `native` feature), run through the `bulkhead-runner` beside the
+/// bulkhead binary.
+fn program(root: &Path, name: &str) -> PathBuf {
+    root.join(format!("target/release/example-scada-{name}"))
 }
 
-impl Build {
-    /// The app `name`'s component or program.
-    fn program(self, root: &Path, name: &str) -> PathBuf {
-        match self {
-            Self::Component => root.join(format!(
-                "target/wasm32-wasip2/release/example_scada_{name}.wasm"
-            )),
-            Self::Native => root.join(format!("target/release/example-scada-{name}")),
-        }
-    }
-
-    /// Control's version 2 (`examples/scada/drill.sh` and `scripts/soak.sh`
-    /// build it into its own target directory).
-    fn control_v2(self, root: &Path) -> PathBuf {
-        match self {
-            Self::Component => root.join(
-                "target/fixtures/scada-drill-v2/wasm32-wasip2/release/example_scada_control.wasm",
-            ),
-            Self::Native => {
-                root.join("target/fixtures/scada-drill-v2-native/release/example-scada-control")
-            }
-        }
-    }
-
-    /// `manifest` for this build: natively with `kind = "native-process"`.
-    pub(crate) fn manifest(self, manifest: &str) -> anyhow::Result<String> {
-        if self == Self::Component {
-            return Ok(manifest.to_string());
-        }
-        let mut doc: toml::Table = manifest.parse()?;
-        let appserver = doc
-            .entry("appserver")
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-            .as_table_mut()
-            .ok_or_else(|| anyhow::anyhow!("appserver is not a table"))?;
-        appserver.insert("kind".into(), "native-process".into());
-        appserver.insert(
-            "native".into(),
-            toml::Value::Table(toml::Table::from_iter([(
-                "program".to_string(),
-                toml::Value::from("executable"),
-            )])),
-        );
-        Ok(toml::to_string(&doc)?)
-    }
+/// Control's version 2 (`scripts/soak.sh` builds it into its own target
+/// directory).
+fn control_v2(root: &Path) -> PathBuf {
+    root.join("target/fixtures/scada-drill-v2-native/release/example-scada-control")
 }
 
 /// Run, check, and return whether the run passed.
-pub(crate) async fn run(build: Build, args: &Args) -> anyhow::Result<bool> {
+pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
     let events = Arc::new(EventLog::create(&args.dir.join("events.jsonl"))?);
     let root = &args.root;
     let ports = free_tcp(4)?;
@@ -425,24 +381,24 @@ pub(crate) async fn run(build: Build, args: &Args) -> anyhow::Result<bool> {
     let read = |p: &str| -> anyhow::Result<String> {
         let text = std::fs::read_to_string(root.join("examples/scada").join(p))
             .with_context(|| format!("reading examples/scada/{p}"))?;
-        build.manifest(&text)
+        super::node::native_manifest(&text)
     };
     let setup = Setup {
         apps: vec![
             SetupApp {
                 name: "points",
                 manifest: read("points/bulkhead.toml")?,
-                wasm: build.program(root, "points"),
+                program: program(root, "points"),
             },
             SetupApp {
                 name: "hmi",
                 manifest: read("hmi/bulkhead.toml")?,
-                wasm: build.program(root, "hmi"),
+                program: program(root, "hmi"),
             },
             SetupApp {
                 name: CONTROL,
                 manifest: read("control/bulkhead.toml")?,
-                wasm: build.program(root, "control"),
+                program: program(root, "control"),
             },
         ],
         pair_config: [
@@ -464,7 +420,7 @@ pub(crate) async fn run(build: Build, args: &Args) -> anyhow::Result<bool> {
     );
     // Version 2, signed by the key the cluster's bundles use.
     let mut cluster = Cluster::start(args, &setup, events.clone()).await?;
-    let v2 = build.control_v2(root);
+    let v2 = control_v2(root);
     bundle(
         &args.bulkhead,
         &args.dir,
@@ -492,7 +448,6 @@ pub(crate) async fn run(build: Build, args: &Args) -> anyhow::Result<bool> {
         windows: Vec::new(),
         problems: Vec::new(),
         at_v2: false,
-        build,
     };
     let outcome = soak.cycle(&mut cluster).await;
     soak.probes.stop.store(true, Ordering::Relaxed);
@@ -512,9 +467,6 @@ struct Soak<'a> {
     problems: Vec<String>,
     /// Whether the last release went to version 2.
     at_v2: bool,
-    /// The apps' build, for the check (a native app runs on while its
-    /// node is stopped).
-    build: Build,
 }
 
 impl Soak<'_> {
@@ -846,7 +798,7 @@ impl Soak<'_> {
             lines.push('\n');
         }
         std::fs::write(self.args.dir.join("windows.txt"), &lines)?;
-        let both = check::check_dir(&self.args.dir, CONTROL, self.build == Build::Native)?;
+        let both = check::check_dir(&self.args.dir, CONTROL, true)?;
         let mut text = format!(
             "{} windows, {planned} planned; under faults {fault_failed} of {fault_made} requests failed, \
              longest point gap {worst_fault_gap} ms\n",

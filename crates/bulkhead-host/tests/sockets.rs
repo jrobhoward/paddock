@@ -1,9 +1,10 @@
 //! Guest sockets (`wasi:sockets`) through the net fixture, against local
 //! peers: the manifest's rules and the address guard, `max_sockets` across
 //! an app's instances, listening, and readiness delivered as host events
-//! (`bulkhead:io/ready`). Every test runs against the component and, on
-//! Linux, the same source built as a native program (ROADMAP Z8e).
+//! (`bulkhead:io/ready`), on the fixture built as a native program.
 
+// Native apps run on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -19,17 +20,9 @@ use bulkhead_bundle::manifest::{Capability, NativeProgram, SocketRule, SocketsSc
 use bulkhead_host::{
     InstanceHandle, InstanceSpec, LoadedApp, NativeCode, NativeConfig, Runtime, RuntimeConfig,
 };
-use common::{ask, ask_until, fixture};
-use rstest::rstest;
+use common::{ask, ask_until};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-
-/// Which build of the fixture.
-#[derive(Debug, Clone, Copy)]
-enum Build {
-    Component,
-    Native,
-}
 
 /// The net fixture built as a native program, once per test binary.
 fn native_net() -> &'static PathBuf {
@@ -57,31 +50,21 @@ fn native_net() -> &'static PathBuf {
     })
 }
 
-/// A runtime with the fixture loaded as `b`; `None` for the native build
-/// off Linux, where native apps do not run.
-fn runtime(b: Build) -> Option<(Runtime, LoadedApp)> {
+/// A runtime with the fixture loaded.
+fn runtime() -> (Runtime, LoadedApp) {
     let mut native = NativeConfig::default();
-    if matches!(b, Build::Native) {
-        if !cfg!(target_os = "linux") {
-            eprintln!("not Linux: the native case is skipped");
-            return None;
-        }
-        native.runner = Some(common::native_fixtures().0.clone());
-    }
+    native.runner = Some(common::native_fixtures().0.clone());
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 16,
         native,
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = match b {
-        Build::Component => rt.load(&fixture("bulkhead_fixture_net")).unwrap(),
-        Build::Native => rt.load_native(NativeCode {
-            path: native_net().clone(),
-            kind: NativeProgram::Executable,
-        }),
-    };
-    Some((rt, app))
+    let app = rt.load_native(NativeCode {
+        path: native_net().clone(),
+        kind: NativeProgram::Executable,
+    });
+    (rt, app)
 }
 
 fn rule(cidr: &str) -> SocketRule {
@@ -133,13 +116,10 @@ async fn peer() -> (SocketAddr, tokio::sync::mpsc::UnboundedReceiver<TcpStream>)
     (address, rx)
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connect____allowed_rule____bytes_both_ways_as_ready_events(#[case] b: Build) {
+async fn connect____allowed_rule____bytes_both_ways_as_ready_events() {
     let (address, mut accepted) = peer().await;
-    let Some(rt) = runtime(b) else { return };
+    let rt = runtime();
     let h = up(
         &rt,
         spec("net-ok", scope(&["127.0.0.1/32"], &[], false, 4), true),
@@ -167,13 +147,10 @@ async fn connect____allowed_rule____bytes_both_ways_as_ready_events(#[case] b: B
     h.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ready____peer_closes_and_rearmed____each_notice_once(#[case] b: Build) {
+async fn ready____peer_closes_and_rearmed____each_notice_once() {
     let (address, mut accepted) = peer().await;
-    let Some(rt) = runtime(b) else { return };
+    let rt = runtime();
     let h = up(
         &rt,
         spec("net-close", scope(&["127.0.0.1/32"], &[], false, 4), true),
@@ -195,13 +172,10 @@ async fn ready____peer_closes_and_rearmed____each_notice_once(#[case] b: Build) 
     h.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connect____ungranted_outside_rules_or_guarded____denied(#[case] b: Build) {
+async fn connect____ungranted_outside_rules_or_guarded____denied() {
     let (address, _accepted) = peer().await;
-    let Some(rt) = runtime(b) else { return };
+    let rt = runtime();
     let ungranted = up(
         &rt,
         spec(
@@ -243,12 +217,9 @@ async fn connect____ungranted_outside_rules_or_guarded____denied(#[case] b: Buil
     }
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connect_host____no_connect_rules____name_lookup_denied(#[case] b: Build) {
-    let Some(rt) = runtime(b) else { return };
+async fn connect_host____no_connect_rules____name_lookup_denied() {
+    let rt = runtime();
     let h = up(
         &rt,
         spec("net-lookup", scope(&[], &["127.0.0.1/32"], false, 4), true),
@@ -261,13 +232,10 @@ async fn connect_host____no_connect_rules____name_lookup_denied(#[case] b: Build
     h.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn max_sockets____across_instances_and_udp____limited_until_one_closes(#[case] b: Build) {
+async fn max_sockets____across_instances_and_udp____limited_until_one_closes() {
     let (address, _accepted) = peer().await;
-    let Some(rt) = runtime(b) else { return };
+    let rt = runtime();
     let rules = || scope(&["127.0.0.1/32"], &["127.0.0.1/32"], false, 3);
     let a = up(&rt, spec("net-cap", rules(), true));
     let b = up(&rt, spec("net-cap", rules(), true));
@@ -306,12 +274,9 @@ async fn max_sockets____across_instances_and_udp____limited_until_one_closes(#[c
     b.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn listen____with_listen_and_bind_rule____accepts_and_reads(#[case] b: Build) {
-    let Some(rt) = runtime(b) else { return };
+async fn listen____with_listen_and_bind_rule____accepts_and_reads() {
+    let rt = runtime();
     let h = up(
         &rt,
         spec("net-listen", scope(&[], &["127.0.0.1/32"], true, 4), true),

@@ -6,14 +6,10 @@
 //! nodes run in one process over loopback, as two processes on one
 //! machine, or on two machines.
 //!
-//! The fixture is one source built as a component and as a native program;
-//! `CLUSTER_NATIVE=1` runs the native program (Linux), through the
-//! `bulkhead-runner` in `target/release`, on the node it is set for. Set it
-//! the same on both nodes.
+//! The fixture is a native program (Linux), run through the
+//! `bulkhead-runner` in `target/release`.
 //!
 //! ```sh
-//! cargo build --release --target wasm32-wasip2 -p bulkhead-fixture-msgbench \
-//!     --target-dir target/fixtures
 //! cargo build --release -p bulkhead-native --bin bulkhead-runner
 //! cargo build --release -p bulkhead-fixture-msgbench --features native \
 //!     --bin bulkhead-fixture-msgbench
@@ -140,45 +136,25 @@ fn main() {
 
 const TARGET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target");
 
-/// The fixture: its component, or with `CLUSTER_NATIVE=1` its native
-/// program.
-enum Code {
-    Component(Vec<u8>),
-    Native(PathBuf),
-}
+/// The fixture's native program.
+struct Code(PathBuf);
 
 impl Code {
     fn find() -> Self {
-        if std::env::var_os("CLUSTER_NATIVE").is_some_and(|v| v == "1") {
-            let path = Path::new(TARGET).join("release/bulkhead-fixture-msgbench");
-            assert!(path.exists(), "{}: build it first", path.display());
-            return Self::Native(path);
-        }
-        let path =
-            format!("{TARGET}/fixtures/wasm32-wasip2/release/bulkhead_fixture_msgbench.wasm");
-        Self::Component(std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}")))
+        let path = Path::new(TARGET).join("release/bulkhead-fixture-msgbench");
+        assert!(path.exists(), "{}: build it first", path.display());
+        Self(path)
     }
 
     fn load(&self, rt: &Runtime) -> LoadedApp {
-        match self {
-            Self::Component(bytes) => rt.load(bytes).unwrap(),
-            Self::Native(path) => rt.load_native(NativeCode {
-                path: path.clone(),
-                kind: NativeProgram::Executable,
-            }),
-        }
+        rt.load_native(NativeCode {
+            path: self.0.clone(),
+            kind: NativeProgram::Executable,
+        })
     }
 
     fn kind(&self) -> String {
-        let kind = match self {
-            Self::Component(_) => "components",
-            Self::Native(_) => "native programs",
-        };
-        format!("{kind}, mailboxes of {}", mailbox_max())
-    }
-
-    fn native(&self) -> bool {
-        matches!(self, Self::Native(_))
+        format!("native programs, mailboxes of {}", mailbox_max())
     }
 }
 
@@ -404,7 +380,7 @@ async fn local(workers: usize, code: &Code) {
         code.kind()
     );
     let remote_pids: Vec<Pid> = remote.iter().map(InstanceHandle::pid).collect();
-    bench(&rt1, &local, &targets, &remote_pids, code.native()).await;
+    bench(&rt1, &local, &targets, &remote_pids).await;
     for h in local.iter().chain(&targets).chain(&remote) {
         h.kill();
     }
@@ -453,7 +429,7 @@ async fn connect(workers: usize, dir: &Path, bind: SocketAddr, seed: SocketAddr,
          (another process), {INSTANCES} instances per node, {}",
         code.kind()
     );
-    bench(&rt, &local, &targets, &remote, code.native()).await;
+    bench(&rt, &local, &targets, &remote).await;
     for h in local.iter().chain(&targets) {
         h.kill();
     }
@@ -469,7 +445,6 @@ async fn bench(
     local: &[InstanceHandle],
     targets: &[InstanceHandle],
     remote_pids: &[Pid],
-    native: bool,
 ) {
     from_host(rt1, local, remote_pids).await;
     let neighbours: Vec<Pid> = targets.iter().map(InstanceHandle::pid).collect();
@@ -483,11 +458,9 @@ async fn bench(
     );
     app_casts(rt1, local, &neighbours, "one node").await;
     app_casts(rt1, local, remote_pids, "two nodes").await;
-    if native {
-        for (to, label) in [(&neighbours[..], "one node"), (remote_pids, "two nodes")] {
-            for kind in ["cast", "try", "wait"] {
-                app_sends(rt1, local, to, kind, label).await;
-            }
+    for (to, label) in [(&neighbours[..], "one node"), (remote_pids, "two nodes")] {
+        for kind in ["cast", "try", "wait"] {
+            app_sends(rt1, local, to, kind, label).await;
         }
     }
 }

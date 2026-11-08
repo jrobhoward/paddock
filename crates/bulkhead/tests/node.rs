@@ -1,8 +1,6 @@
 //! A node end to end through its admin API: deploy, status, kill, upgrade,
 //! rollback, stop/start/remove, restart restore, refusals, logs and the
-//! audit log. The Phase 1 exit criteria are in `exit_criteria.rs`. The
-//! apps are native programs (ROADMAP Z9d), but for a component's compile
-//! cache.
+//! audit log. The Phase 1 exit criteria are in `exit_criteria.rs`.
 
 // Native apps run on Linux only.
 #![cfg(target_os = "linux")]
@@ -16,8 +14,8 @@ use std::time::Duration;
 
 use bulkhead::api::RolloutParams;
 use common::{
-    TestNode, app_bundle, bundle, call, counter_manifest, fast, fixture, kind, native_app,
-    native_counter, native_net, native_sdk, services_manifest,
+    TestNode, app_bundle, call, counter_manifest, fast, kind, native_app, native_counter,
+    native_net, native_sdk, services_manifest,
 };
 use serde_json::json;
 
@@ -887,45 +885,6 @@ async fn registered_names____listed_by_another_app____deploy_and_upgrade_refused
     assert!(other.is_ok(), "{other:?}");
     assert_eq!(kind(&upgrade), "conflict");
     assert!(own.is_ok(), "{own:?}");
-}
-
-/// The compiled component in `data`'s store for `app` `version`, if one.
-#[cfg(unix)]
-fn compiled(data: &std::path::Path, app: &str, version: &str) -> Option<std::path::PathBuf> {
-    std::fs::read_dir(data.join("compiled").join(app).join(version))
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| p.extension().is_some_and(|x| x == "cwasm"))
-}
-
-#[cfg(unix)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart____app_deployed____compiled_component_read_not_compiled_again() {
-    use std::os::unix::fs::MetadataExt;
-    let mut n = TestNode::start("").await;
-    n.client
-        .deploy(bundle(
-            &n.key,
-            "kept",
-            "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
-            fast(json!({})),
-            &[],
-        ))
-        .await
-        .unwrap();
-    let path = compiled(&n.data(), "kept", "1.0.0").expect("compiled at deploy");
-    let before = std::fs::metadata(&path).unwrap().ino();
-
-    n.restart().await;
-    let list = n.client.list().await.unwrap();
-
-    assert_eq!(list[0].status, "running");
-    assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
-    n.client.remove("kept").await.unwrap();
-    assert!(compiled(&n.data(), "kept", "1.0.0").is_none());
-    n.shutdown().await;
 }
 
 /// Passivation for apps: with `max_processes` above `max_instances` (32 here), apps

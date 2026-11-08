@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use bulkhead::api::RolloutParams;
-use common::{TestNode, conn, conn_bundle, kind, native_bundle, native_fixtures};
+use common::{TestNode, kind, native_bundle, native_fixtures};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -36,10 +36,6 @@ fn bound(port: u16) -> String {
 /// The idle timeout is long because a connection held open across an
 /// upgrade sits idle while the new version compiles, which under a loaded
 /// debug test run can take several seconds.
-fn manifest() -> serde_json::Value {
-    json!({ "listeners": [{ "name": "lines", "idle_timeout_ms": 60_000 }] })
-}
-
 /// The connection fixture as a native program, v1 or v2, once per test
 /// binary.
 fn native_conn(version: u8) -> Vec<u8> {
@@ -121,70 +117,6 @@ impl Line {
 /// One request on a new connection; `None` if nothing answered.
 async fn ask(port: u16, line: &str) -> Option<String> {
     Line::open(port).await?.ask(line).await
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection_app____lifecycle____served_upgraded_rolled_back_stopped_restored() {
-    let port = free_port();
-    let mut n = TestNode::start(&bound(port)).await;
-    let deployed = n
-        .client
-        .deploy(conn_bundle(&n.key, "lines", "1.0.0", &conn(1), manifest()))
-        .await
-        .unwrap();
-    let first = ask(port, "echo one").await;
-    let status = n.client.status("lines").await.unwrap();
-
-    let mut held = Line::open(port).await.unwrap();
-    held.ask("echo before").await;
-    let up = n
-        .client
-        .upgrade(
-            "lines",
-            conn_bundle(&n.key, "lines", "2.0.0", &conn(2), manifest()),
-            &RolloutParams::default(),
-        )
-        .await
-        .unwrap();
-    let after_up = ask(port, "echo x").await;
-    let held_after_up = held.ask("echo x").await;
-    let back = n
-        .client
-        .rollback("lines", &RolloutParams::default())
-        .await
-        .unwrap();
-    let after_back = ask(port, "echo x").await;
-
-    n.client.stop("lines").await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let while_stopped = ask(port, "echo x").await;
-    n.client.start("lines").await.unwrap();
-    let started = ask(port, "echo started").await;
-    n.restart().await;
-    let restored = ask(port, "echo restored").await;
-    n.client.remove("lines").await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let removed = ask(port, "echo x").await;
-
-    assert_eq!(deployed.app.status, "running");
-    assert_eq!(first.as_deref(), Some("one"));
-    let listener = &status.listeners[0];
-    assert_eq!(listener.name, "lines");
-    assert_eq!(listener.address, format!("127.0.0.1:{port}"));
-    assert!(listener.accepted >= 1, "{status:?}");
-    assert_eq!(
-        (up.from.as_str(), up.to.as_str(), up.mode.as_str()),
-        ("1.0.0", "2.0.0", "new-connections")
-    );
-    assert_eq!(after_up.as_deref(), Some("v2:x"));
-    assert_eq!(held_after_up.as_deref(), Some("x"));
-    assert_eq!((back.from.as_str(), back.to.as_str()), ("2.0.0", "1.0.0"));
-    assert_eq!(after_back.as_deref(), Some("x"));
-    assert_eq!(while_stopped, None);
-    assert_eq!(started.as_deref(), Some("started"));
-    assert_eq!(restored.as_deref(), Some("restored"));
-    assert_eq!(removed, None);
-    n.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -1,10 +1,9 @@
 //! Listeners and connection handlers (`bulkhead:connection`), with the
-//! connection fixture's line protocol. The cases both builds share run
-//! against the component (an instance per connection) and, on Linux, the
-//! same source built as a native program, whose pool of instances each
-//! hold many connections (ROADMAP Z8g); the rest are one build's. The
-//! component cases go with ROADMAP Z9e, which removes component handlers.
+//! connection fixture's line protocol built as a native program, whose pool
+//! of instances each hold many connections.
 
+// Native apps run on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -19,63 +18,14 @@ use std::time::{Duration, Instant};
 use bulkhead_bundle::manifest::NativeProgram;
 use bulkhead_host::{
     AppDeployment, Apps, InstanceHandle, InstanceSpec, LifecycleState, Listener, ListenerSpec,
-    LoadedApp, LoadedConnection, NativeCode, NativeConfig, Runtime, RuntimeConfig,
+    LoadedApp, NativeCode, NativeConfig, Runtime, RuntimeConfig,
 };
-use common::{app_manifest, fixture, shared, spec};
+use common::{app_manifest, spec};
 use rstest::rstest;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::net::tcp::OwnedWriteHalf;
-
-/// Which build of the fixture.
-#[derive(Debug, Clone, Copy)]
-enum Build {
-    Component,
-    Native,
-}
-
-fn conn_v1() -> &'static LoadedConnection {
-    static C: OnceLock<LoadedConnection> = OnceLock::new();
-    C.get_or_init(|| {
-        shared()
-            .0
-            .load_connection(&fixture("bulkhead_fixture_conn"))
-            .unwrap()
-    })
-}
-
-fn conn_v2() -> &'static LoadedConnection {
-    static C: OnceLock<LoadedConnection> = OnceLock::new();
-    C.get_or_init(|| {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let target = root.join("target/fixtures/conn-v2");
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let status = Command::new(cargo)
-            .current_dir(&root)
-            .args([
-                "build",
-                "--release",
-                "--target",
-                "wasm32-wasip2",
-                "-p",
-                "bulkhead-fixture-conn",
-                "--features",
-                "v2",
-                "--target-dir",
-            ])
-            .arg(&target)
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "building the v2 connection fixture failed"
-        );
-        let bytes =
-            std::fs::read(target.join("wasm32-wasip2/release/bulkhead_fixture_conn.wasm")).unwrap();
-        shared().0.load_connection(&bytes).unwrap()
-    })
-}
 
 /// The connection fixture built as a native program, once per test binary.
 fn native_conn() -> &'static PathBuf {
@@ -106,26 +56,25 @@ fn native_conn() -> &'static PathBuf {
 /// A listener on the fixture, and what it hands connections to.
 struct Served {
     listener: Listener,
-    /// The native build's runtime (with the chaos fixture loaded, for
-    /// targets of calls) and the app whose instances take connections.
-    native: Option<(Runtime, LoadedApp, Apps)>,
+    rt: Runtime,
+    /// The chaos app, for targets of calls.
+    chaos: LoadedApp,
+    /// The app whose instances take connections.
+    apps: Apps,
 }
 
 impl Served {
-    /// Start an instance of the chaos fixture beside the handler.
+    /// Start an instance of the chaos app beside the handler.
     fn spawn(&self, spec: InstanceSpec) -> InstanceHandle {
-        match &self.native {
-            Some((rt, chaos, _)) => rt.spawn(chaos, spec).unwrap(),
-            None => shared().0.spawn(&shared().1, spec).unwrap(),
-        }
+        self.rt.spawn(&self.chaos, spec).unwrap()
     }
 
-    /// The native app's instances, once each is running.
+    /// The app's instances, once each is running.
     async fn instances(&self, n: usize) -> Vec<InstanceHandle> {
-        let (_, _, apps) = self.native.as_ref().expect("a native listener");
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let running: Vec<InstanceHandle> = apps
+            let running: Vec<InstanceHandle> = self
+                .apps
                 .app("conn")
                 .unwrap()
                 .instances()
@@ -145,31 +94,13 @@ impl Served {
     }
 }
 
-/// A listener on the component handler.
-fn listen(name: &str, configure: impl FnOnce(&mut ListenerSpec)) -> Listener {
-    let mut s = ListenerSpec::new(name, "127.0.0.1:0".parse().unwrap());
-    configure(&mut s);
-    shared().0.listen(s, conn_v1().clone(), spec("")).unwrap()
-}
-
-/// A listener on the build `b`; natively, `instances` declares the app's
-/// pool (`count`, `routing`). `None` for the native build off Linux.
+/// A listener on the fixture; `instances` declares the app's pool (`count`,
+/// `routing`).
 async fn serve(
-    b: Build,
     name: &str,
     instances: serde_json::Value,
     configure: impl FnOnce(&mut ListenerSpec),
-) -> Option<Served> {
-    if matches!(b, Build::Component) {
-        return Some(Served {
-            listener: listen(name, configure),
-            native: None,
-        });
-    }
-    if !cfg!(target_os = "linux") {
-        eprintln!("not Linux: the native case is skipped");
-        return None;
-    }
+) -> Served {
     let mut native = NativeConfig::default();
     native.runner = Some(common::native_fixtures().0.clone());
     let rt = Runtime::new(RuntimeConfig {
@@ -201,11 +132,13 @@ async fn serve(
     let listener = rt.listen_native(s, apps.app("conn").unwrap()).unwrap();
     let served = Served {
         listener,
-        native: Some((rt, chaos, apps)),
+        rt,
+        chaos,
+        apps,
     };
     let count = instances["count"].as_u64().unwrap_or(1);
     served.instances(usize::try_from(count).unwrap()).await;
-    Some(served)
+    served
 }
 
 /// A line client.
@@ -259,14 +192,9 @@ async fn eventually(listener: &Listener, done: impl Fn(&bulkhead_host::ListenerS
     panic!("not reached: {:?}", listener.stats());
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection____line_protocol____served_and_closed_by_quit(#[case] b: Build) {
-    let Some(served) = serve(b, "lines", json!({ "count": 2 }), |_| {}).await else {
-        return;
-    };
+async fn connection____line_protocol____served_and_closed_by_quit() {
+    let served = serve("lines", json!({ "count": 2 }), |_| {}).await;
     let listener = &served.listener;
     let mut a = Client::connect(listener).await;
     let mut b = Client::connect(listener).await;
@@ -286,14 +214,9 @@ async fn connection____line_protocol____served_and_closed_by_quit(#[case] b: Bui
     listener.stop();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection____call_registered_instance____reply_comes_back(#[case] b: Build) {
-    let Some(served) = serve(b, "calls", json!({}), |_| {}).await else {
-        return;
-    };
+async fn connection____call_registered_instance____reply_comes_back() {
+    let served = serve("calls", json!({}), |_| {}).await;
     let mut s = spec("register:conn-target");
     s.registered_names = vec!["conn-target".into()];
     let target = served.spawn(s);
@@ -313,30 +236,8 @@ async fn connection____call_registered_instance____reply_comes_back(#[case] b: B
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection____crash_or_error____only_that_connection_closes() {
-    let listener = listen("crashes", |_| {});
-    let mut keep = Client::connect(&listener).await;
-    let mut crash = Client::connect(&listener).await;
-    let mut error = Client::connect(&listener).await;
-
-    let crashed = crash.ask("crash").await;
-    let errored = error.ask("error").await;
-    eventually(&listener, |s| s.crashed == 2).await;
-    let still = keep.ask("echo still here").await;
-    let mut next = Client::connect(&listener).await;
-    let fresh = next.ask("echo new").await;
-
-    assert_eq!((crashed, errored), (None, None));
-    assert_eq!(still.as_deref(), Some("still here"));
-    assert_eq!(fresh.as_deref(), Some("new"));
-    listener.stop();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native____error____closes_that_connection_only() {
-    let Some(served) = serve(Build::Native, "errors", json!({}), |_| {}).await else {
-        return;
-    };
+    let served = serve("errors", json!({}), |_| {}).await;
     let mut keep = Client::connect(&served.listener).await;
     let mut error = Client::connect(&served.listener).await;
     keep.ask("echo up").await;
@@ -357,9 +258,7 @@ async fn native____error____closes_that_connection_only() {
 async fn native____crash_or_spin____closes_the_instances_connections_then_it_restarts(
     #[case] command: &str,
 ) {
-    let Some(served) = serve(Build::Native, "crashes", json!({}), |_| {}).await else {
-        return;
-    };
+    let served = serve("crashes", json!({}), |_| {}).await;
     let before = served.instances(1).await[0].pid();
     let mut other = Client::connect(&served.listener).await;
     let mut failing = Client::connect(&served.listener).await;
@@ -380,9 +279,7 @@ async fn native____crash_or_spin____closes_the_instances_connections_then_it_res
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native____many_connections____one_instance_serves_them_all() {
-    let Some(served) = serve(Build::Native, "many", json!({}), |_| {}).await else {
-        return;
-    };
+    let served = serve("many", json!({}), |_| {}).await;
     let mut clients = Vec::new();
     for _ in 0..8 {
         clients.push(Client::connect(&served.listener).await);
@@ -404,9 +301,7 @@ async fn native____many_connections____one_instance_serves_them_all() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native____hash_routing____a_peers_connections_share_an_instance() {
     let pool = json!({ "count": 3, "routing": "hash:peer" });
-    let Some(served) = serve(Build::Native, "hashed", pool, |_| {}).await else {
-        return;
-    };
+    let served = serve("hashed", pool, |_| {}).await;
     let mut pids = std::collections::BTreeSet::new();
 
     for _ in 0..6 {
@@ -418,15 +313,10 @@ async fn native____hash_routing____a_peers_connections_share_an_instance() {
     served.listener.stop();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection____idle____closed_by_idle_timeout(#[case] b: Build) {
+async fn connection____idle____closed_by_idle_timeout() {
     let configure = |s: &mut ListenerSpec| s.idle_timeout = Duration::from_millis(200);
-    let Some(served) = serve(b, "idle", json!({}), configure).await else {
-        return;
-    };
+    let served = serve("idle", json!({}), configure).await;
     let mut talker = Client::connect(&served.listener).await;
     let mut silent = Client::connect(&served.listener).await;
 
@@ -450,28 +340,9 @@ async fn connection____idle____closed_by_idle_timeout(#[case] b: Build) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection____spinning____closed_by_idle_timeout() {
-    let listener = listen("spinning", |s| s.idle_timeout = Duration::from_millis(200));
-    let mut spinner = Client::connect(&listener).await;
-
-    spinner.send("spin").await;
-    let spun = spinner.line().await;
-    eventually(&listener, |s| s.idle_closed == 1).await;
-
-    assert_eq!(spun, None);
-    assert_eq!(listener.stats().active, 0);
-    listener.stop();
-}
-
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection____over_max_connections____refused(#[case] b: Build) {
+async fn connection____over_max_connections____refused() {
     let configure = |s: &mut ListenerSpec| s.max_connections = 2;
-    let Some(served) = serve(b, "capped", json!({}), configure).await else {
-        return;
-    };
+    let served = serve("capped", json!({}), configure).await;
     let listener = &served.listener;
     let mut a = Client::connect(listener).await;
     let mut b = Client::connect(listener).await;
@@ -492,29 +363,8 @@ async fn connection____over_max_connections____refused(#[case] b: Build) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn listener____replace____new_connections_get_new_version() {
-    let listener = listen("upgrades", |_| {});
-    let mut old = Client::connect(&listener).await;
-    old.ask("echo before").await;
-
-    listener.replace(conn_v2().clone(), spec(""));
-    let mut new = Client::connect(&listener).await;
-    let from_new = new.ask("echo x").await;
-    let from_old = old.ask("echo x").await;
-
-    assert_eq!(from_new.as_deref(), Some("v2:x"));
-    assert_eq!(from_old.as_deref(), Some("x"));
-    listener.stop();
-}
-
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn listener____stop____closes_connections_and_stops_accepting(#[case] b: Build) {
-    let Some(served) = serve(b, "stopping", json!({}), |_| {}).await else {
-        return;
-    };
+async fn listener____stop____closes_connections_and_stops_accepting() {
+    let served = serve("stopping", json!({}), |_| {}).await;
     let listener = &served.listener;
     let mut open = Client::connect(listener).await;
     open.ask("echo up").await;

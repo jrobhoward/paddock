@@ -1,28 +1,19 @@
 //! Keyvalue buckets against ETS, for `docs/BASELINE.md`: the loops of
-//! `bulkhead-fixture-kvbench`, run inside a guest against memory buckets,
+//! `bulkhead-fixture-kvbench`, run in a native program against memory
+//! buckets, where each operation is a request to the node,
 //! as `scripts/beam_ets.escript` runs them inside an Erlang process
 //! against ETS tables. The same keys (`k000000` ...), value sizes and
 //! pseudo-random key sequence on both sides.
 //!
 //! ```sh
-//! cargo build --release --target wasm32-wasip2 -p bulkhead-fixture-kvbench \
-//!     --target-dir target/fixtures
+//! cargo build --release -p bulkhead-native --bin bulkhead-runner
+//! cargo build --release -p bulkhead-fixture-kvbench --features native \
+//!     --bin bulkhead-fixture-kvbench
 //! cargo run --release -p bulkhead-host --example kv_cost -- [workers]
 //! ```
 //!
 //! `KV_READ_CONCURRENCY=1` makes every bucket a `read_concurrency` one
 //! (reads without a lock, spike S26).
-//!
-//! `KV_NATIVE=1` runs the same loops in the fixture built as a native
-//! program (Linux), through `bulkhead-runner`, where each operation is a
-//! request to the node over the app's pipes:
-//!
-//! ```sh
-//! cargo build --release -p bulkhead-native --bin bulkhead-runner
-//! cargo build --release -p bulkhead-fixture-kvbench --features native \
-//!     --bin bulkhead-fixture-kvbench
-//! KV_NATIVE=1 cargo run --release -p bulkhead-host --example kv_cost -- [workers]
-//! ```
 //!
 //! `KV_ONLY=<op>:<bucket>:<keys>:<size>:<seconds>` instead runs one loop
 //! (after filling the bucket) over and over for that long, for a profiler:
@@ -78,26 +69,15 @@ fn main() {
         .unwrap();
 }
 
-/// `KV_NATIVE=1`: the fixture as a native program.
-fn native() -> bool {
-    std::env::var_os("KV_NATIVE").is_some_and(|v| v == "1")
-}
-
-/// The fixture's code: the component, or with `KV_NATIVE=1` the native
-/// program and the runner beside it in `target/release`.
+/// The fixture's program, with the runner beside it in `target/release`.
 fn load(rt: &Runtime) -> LoadedApp {
     let target = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target");
-    if native() {
-        let path = std::path::Path::new(target).join("release/bulkhead-fixture-kvbench");
-        assert!(path.exists(), "{}: build it first", path.display());
-        return rt.load_native(NativeCode {
-            path,
-            kind: NativeProgram::Executable,
-        });
-    }
-    let path = format!("{target}/fixtures/wasm32-wasip2/release/bulkhead_fixture_kvbench.wasm");
-    let component = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    rt.load(&component).unwrap()
+    let path = std::path::Path::new(target).join("release/bulkhead-fixture-kvbench");
+    assert!(path.exists(), "{}: build it first", path.display());
+    rt.load_native(NativeCode {
+        path,
+        kind: NativeProgram::Executable,
+    })
 }
 
 async fn ask(h: &InstanceHandle, body: &str) -> String {
@@ -210,13 +190,8 @@ async fn run(workers: usize) {
     if let Ok(only) = std::env::var("KV_ONLY") {
         return only_loop(&h, &only).await;
     }
-    let kind = if native() {
-        "a native program"
-    } else {
-        "a component"
-    };
     println!(
-        "tokio workers: {workers}; the app is {kind}; median of {RUNS} runs; ns per operation, timed in the app\n"
+        "tokio workers: {workers}; the app is a native program; median of {RUNS} runs; ns per operation, timed in the app\n"
     );
     // First, before other buckets free memory the allocator could reuse.
     memory(&h).await;
@@ -342,9 +317,8 @@ async fn dependent(h: &InstanceHandle) {
     );
 }
 
-/// Reads of a published bucket of 100,000 keys (16 B; ROADMAP T4): in a
-/// native program from its mapped snapshot, in a component through the
-/// host as any shared bucket's. Filled by `h`, read by another instance:
+/// Reads of a published bucket of 100,000 keys (16 B; ROADMAP T4), from
+/// the program's mapped snapshot. Filled by `h`, read by another instance:
 /// a writer's own reads go to the node until a snapshot holds its writes.
 async fn published(rt: &Runtime, app: &LoadedApp, h: &InstanceHandle) {
     let keys = 100_000u64;

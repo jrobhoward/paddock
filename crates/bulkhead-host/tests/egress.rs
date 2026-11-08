@@ -1,9 +1,10 @@
 //! HTTP egress (`wasi:http/outgoing-handler`) through the SDK fixture's
 //! `fetch` command, against a local server: the allow list, methods, the
-//! address guard, the per-app limit, timeouts, the pool and TLS. Every
-//! test runs against the component and, on Linux, the same source built as
-//! a native program, whose requests the node sends (ROADMAP Z8f).
+//! address guard, the per-app limit, timeouts, the pool and TLS, on the
+//! fixture built as a native program, whose requests the node sends.
 
+// Native apps run on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -25,11 +26,10 @@ use bulkhead_host::{
     RuntimeConfig,
 };
 use bytes::Bytes;
-use common::{ask, fixture};
+use common::ask;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::{Request, Response};
-use rstest::rstest;
 
 /// A body that sends one chunk and then nothing, ever.
 struct Stall(bool);
@@ -111,13 +111,6 @@ async fn server(tls: Option<Arc<rustls::ServerConfig>>) -> (SocketAddr, Arc<Atom
     (address, accepted)
 }
 
-/// Which build of the fixture.
-#[derive(Debug, Clone, Copy)]
-enum Build {
-    Component,
-    Native,
-}
-
 /// The SDK fixture built as a native program, once per test binary.
 fn native_sdk() -> &'static PathBuf {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
@@ -144,17 +137,10 @@ fn native_sdk() -> &'static PathBuf {
     })
 }
 
-/// A runtime with `egress` and the fixture loaded as `b`; `None` for the
-/// native build off Linux, where native apps do not run.
-fn runtime(b: Build, egress: Egress) -> Option<(Runtime, LoadedApp)> {
+/// A runtime with `egress` and the fixture loaded.
+fn runtime(egress: Egress) -> (Runtime, LoadedApp) {
     let mut native = NativeConfig::default();
-    if matches!(b, Build::Native) {
-        if !cfg!(target_os = "linux") {
-            eprintln!("not Linux: the native case is skipped");
-            return None;
-        }
-        native.runner = Some(common::native_fixtures().0.clone());
-    }
+    native.runner = Some(common::native_fixtures().0.clone());
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 16,
         egress,
@@ -162,14 +148,11 @@ fn runtime(b: Build, egress: Egress) -> Option<(Runtime, LoadedApp)> {
         ..RuntimeConfig::default()
     })
     .unwrap();
-    let app = match b {
-        Build::Component => rt.load(&fixture("bulkhead_fixture_sdk")).unwrap(),
-        Build::Native => rt.load_native(NativeCode {
-            path: native_sdk().clone(),
-            kind: NativeProgram::Executable,
-        }),
-    };
-    Some((rt, app))
+    let app = rt.load_native(NativeCode {
+        path: native_sdk().clone(),
+        kind: NativeProgram::Executable,
+    });
+    (rt, app)
 }
 
 fn spec(app: &str, allow: &[String], granted: bool) -> InstanceSpec {
@@ -190,15 +173,10 @@ fn up(rt: &(Runtime, LoadedApp), spec: InstanceSpec) -> InstanceHandle {
     rt.0.spawn(&rt.1, spec).unwrap()
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fetch____allowed_address____responses_over_one_pooled_connection(#[case] b: Build) {
+async fn fetch____allowed_address____responses_over_one_pooled_connection() {
     let (address, accepted) = server(None).await;
-    let Some(rt) = runtime(b, Egress::default()) else {
-        return;
-    };
+    let rt = runtime(Egress::default());
     let h = up(&rt, spec("egress-ok", &[format!("http://{address}")], true));
 
     let first = ask(&h, &format!("fetch GET http://{address}/hello")).await;
@@ -215,15 +193,10 @@ async fn fetch____allowed_address____responses_over_one_pooled_connection(#[case
     h.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fetch____not_granted_other_port_or_method____denied(#[case] b: Build) {
+async fn fetch____not_granted_other_port_or_method____denied() {
     let (address, accepted) = server(None).await;
-    let Some(rt) = runtime(b, Egress::default()) else {
-        return;
-    };
+    let rt = runtime(Egress::default());
     let allow = [format!("http://{address}")];
     let ungranted = up(&rt, spec("egress-ungranted", &allow, false));
     let other_port = up(
@@ -254,20 +227,15 @@ async fn fetch____not_granted_other_port_or_method____denied(#[case] b: Build) {
     }
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fetch____name_resolving_to_loopback____prohibited_unless_node_allows(#[case] b: Build) {
+async fn fetch____name_resolving_to_loopback____prohibited_unless_node_allows() {
     let (address, _) = server(None).await;
     let url = format!("fetch GET http://localhost:{}/hello", address.port());
     let allow = [format!("http://localhost:{}", address.port())];
-    let Some(guarded) = runtime(b, Egress::default()) else {
-        return;
-    };
+    let guarded = runtime(Egress::default());
     let mut open = Egress::default();
     open.allow_loopback = true;
-    let Some(open) = runtime(b, open) else { return };
+    let open = runtime(open);
     let a = up(&guarded, spec("egress-guarded", &allow, true));
     let b = up(&open, spec("egress-open", &allow, true));
 
@@ -280,15 +248,10 @@ async fn fetch____name_resolving_to_loopback____prohibited_unless_node_allows(#[
     b.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn fetch____app_at_max_concurrent____limited_until_one_finishes(#[case] b: Build) {
+async fn fetch____app_at_max_concurrent____limited_until_one_finishes() {
     let (address, _) = server(None).await;
-    let Some(rt) = runtime(b, Egress::default()) else {
-        return;
-    };
+    let rt = runtime(Egress::default());
     let allow = [format!("http://{address}")];
     let with_limit = |app| {
         let mut s = spec(app, &allow, true);
@@ -315,16 +278,13 @@ async fn fetch____app_at_max_concurrent____limited_until_one_finishes(#[case] b:
     b.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fetch____slow_headers_or_stalled_body____timeout_and_instance_lives(#[case] b: Build) {
+async fn fetch____slow_headers_or_stalled_body____timeout_and_instance_lives() {
     let (address, _) = server(None).await;
     let mut egress = Egress::default();
     egress.first_byte_timeout = Duration::from_millis(300);
     egress.between_bytes_timeout = Duration::from_millis(300);
-    let Some(rt) = runtime(b, egress) else { return };
+    let rt = runtime(egress);
     let h = up(
         &rt,
         spec("egress-timeout", &[format!("http://{address}")], true),
@@ -340,11 +300,8 @@ async fn fetch____slow_headers_or_stalled_body____timeout_and_instance_lives(#[c
     h.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fetch____https____trusted_with_the_ca_file_only(#[case] b: Build) {
+async fn fetch____https____trusted_with_the_ca_file_only() {
     let dir = tempfile::tempdir().unwrap();
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
@@ -374,12 +331,8 @@ async fn fetch____https____trusted_with_the_ca_file_only(#[case] b: Build) {
     trusting.ca_file = Some(ca_file);
     let mut system_only = Egress::default();
     system_only.system_roots = false;
-    let Some(trusting) = runtime(b, trusting) else {
-        return;
-    };
-    let Some(untrusting) = runtime(b, system_only) else {
-        return;
-    };
+    let trusting = runtime(trusting);
+    let untrusting = runtime(system_only);
     let allow = [format!("https://{address}")];
     let a = up(&trusting, spec("egress-tls", &allow, true));
     let b = up(&untrusting, spec("egress-tls-no-ca", &allow, true));
@@ -393,15 +346,10 @@ async fn fetch____https____trusted_with_the_ca_file_only(#[case] b: Build) {
     b.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn fetch____instance_killed_mid_request____its_slot_freed(#[case] b: Build) {
+async fn fetch____instance_killed_mid_request____its_slot_freed() {
     let (address, _) = server(None).await;
-    let Some(rt) = runtime(b, Egress::default()) else {
-        return;
-    };
+    let rt = runtime(Egress::default());
     let allow = [format!("http://{address}")];
     let with_limit = |app| {
         let mut s = spec(app, &allow, true);
@@ -434,15 +382,10 @@ async fn fetch____instance_killed_mid_request____its_slot_freed(#[case] b: Build
     b.kill();
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fetch____forbidden_header____invalid_and_nothing_sent(#[case] b: Build) {
+async fn fetch____forbidden_header____invalid_and_nothing_sent() {
     let (address, accepted) = server(None).await;
-    let Some(rt) = runtime(b, Egress::default()) else {
-        return;
-    };
+    let rt = runtime(Egress::default());
     let h = up(
         &rt,
         spec("egress-headers", &[format!("http://{address}")], true),

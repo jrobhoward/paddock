@@ -122,8 +122,11 @@ fn counter_and_alarm_status____replies_of_the_apps____read() {
 #[rstest]
 #[case::no_appserver_table("[app]\nname = \"x\"\n[appserver.capabilities.\"wasi:logging\"]\n")]
 #[case::appserver_table("[app]\nname = \"x\"\n[appserver]\nregistered_names = [\"x\"]\n")]
-fn Build____native_manifest____runs_the_program_as_a_native_process(#[case] manifest: &str) {
-    let native: toml::Table = Build::Native.manifest(manifest).unwrap().parse().unwrap();
+fn native_manifest____any_manifest____runs_the_program_as_a_native_process(#[case] manifest: &str) {
+    let native: toml::Table = crate::soak::node::native_manifest(manifest)
+        .unwrap()
+        .parse()
+        .unwrap();
 
     assert_eq!(native["appserver"]["kind"].as_str(), Some("native-process"));
     assert_eq!(
@@ -131,5 +134,4 @@ fn Build____native_manifest____runs_the_program_as_a_native_process(#[case] mani
         Some("executable")
     );
     assert_eq!(native["app"]["name"].as_str(), Some("x"));
-    assert_eq!(Build::Component.manifest(manifest).unwrap(), manifest);
 }

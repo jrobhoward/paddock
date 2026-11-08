@@ -136,7 +136,7 @@ pub(crate) struct Setup {
 pub(crate) struct SetupApp {
     pub name: &'static str,
     pub manifest: String,
-    pub wasm: PathBuf,
+    pub program: PathBuf,
 }
 
 /// The counter example as a singleton.
@@ -146,10 +146,8 @@ fn singleton(args: &Args) -> anyhow::Result<Setup> {
     Ok(Setup {
         apps: vec![SetupApp {
             name: APP,
-            manifest,
-            wasm: args
-                .root
-                .join("target/wasm32-wasip2/release/example_counter.wasm"),
+            manifest: super::node::native_manifest(&manifest)?,
+            program: args.root.join("target/release/example-counter"),
         }],
         pair_config: [String::new(), String::new()],
         failover_config: String::new(),
@@ -235,7 +233,7 @@ impl Cluster {
         let mut bundles = Vec::new();
         let mut signer = String::new();
         for app in &setup.apps {
-            let (bytes, key) = bundle(&args.bulkhead, dir, app.name, &app.manifest, &app.wasm)?;
+            let (bytes, key) = bundle(&args.bulkhead, dir, app.name, &app.manifest, &app.program)?;
             bundles.push(bytes);
             signer = key;
         }

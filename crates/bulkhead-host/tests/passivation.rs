@@ -1,7 +1,7 @@
-//! Passivation (spike S11): an idle instance drops its Store and keeps its
+//! Passivation (spike S11): an idle instance drops its code and keeps its
 //! pid, mailbox, links, names and timers; a call, a cast, a timer or an exit
 //! signal wakes it with its state, through `save-snapshot` and
-//! `load-snapshot`. The runtime has fewer Store slots than instances.
+//! `load-snapshot`.
 
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
@@ -15,19 +15,14 @@ use std::time::Duration;
 use bulkhead_host::{
     ExitReason, InstanceHandle, InstanceSpec, LifecycleState, LoadedApp, Runtime, RuntimeConfig,
 };
-use common::{LONG, ask, counter, spec, text};
+use common::{LONG, ask, spec, text};
 
-/// Store slots: fewer than the instances these tests start at once.
-const SLOTS: u32 = 4;
-
-/// A runtime with [`SLOTS`] Store slots and room for 200 instances, and the
-/// counter fixture.
+/// A runtime with room for 200 instances, and the counter app.
 fn runtime() -> &'static (Runtime, LoadedApp) {
     static RT: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
     RT.get_or_init(|| {
         let rt = Runtime::new(RuntimeConfig {
-            max_instances: SLOTS,
-            max_processes: Some(200),
+            max_instances: 200,
             ..RuntimeConfig::default()
         })
         .unwrap();
@@ -175,111 +170,6 @@ async fn passivation____stopped_while_passive____kill_ends_it_and_shutdown_wakes
 
     assert_eq!(killed_reason, ExitReason::Killed);
     assert_eq!(stopped_reason, ExitReason::Shutdown);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn passivation____more_instances_than_store_slots____each_keeps_its_count() {
-    let (rt, _) = runtime();
-    let many: Vec<_> = (0..16).map(|_| spawn(&[])).collect();
-    for (i, h) in many.iter().enumerate() {
-        incs(h, i).await;
-    }
-
-    let mut counts = Vec::new();
-    for h in &many {
-        counts.push(ask(h, "get").await);
-    }
-
-    let want: Vec<_> = (0..16).map(|i| format!("1.0.0 count={i}")).collect();
-    assert_eq!(counts, want);
-    assert!(rt.store_count() <= SLOTS as usize);
-    for h in &many {
-        h.kill();
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn passivation____every_slot_held_by_an_idle_instance____one_passivates_early() {
-    let (rt, app) = runtime();
-    let mut slow = passivating(&[]);
-    slow.passivate_after = Some(Duration::from_secs(60));
-    let many: Vec<_> = (0..2 * SLOTS)
-        .map(|_| rt.spawn(app, slow.clone()).unwrap())
-        .collect();
-
-    let started = std::time::Instant::now();
-    for h in &many {
-        ask(h, "inc").await;
-    }
-    let took = started.elapsed();
-
-    assert!(
-        took < Duration::from_secs(5),
-        "waited for idle timers: {took:?}"
-    );
-    for h in &many {
-        h.kill();
-    }
-}
-
-/// A runtime of its own with one Store slot, so a test can hold it. Only a
-/// component takes a slot (a native app's limit is `max_processes`,
-/// `runtime.rs`'s `instance_limit_reached` case): the two tests on it go
-/// with ROADMAP Z9e.
-fn one_slot(component: &[u8]) -> (Runtime, LoadedApp) {
-    let rt = Runtime::new(RuntimeConfig {
-        max_instances: 1,
-        max_processes: Some(8),
-        ..RuntimeConfig::default()
-    })
-    .unwrap();
-    let app = rt.load(component).unwrap();
-    (rt, app)
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn passivation____every_slot_held_by_an_instance_that_never_passivates____start_fails_no_slot()
- {
-    let (rt, app) = one_slot(&counter(1));
-    let mut never = passivating(&[]);
-    never.passivate_after = None;
-    let holder = rt.spawn(&app, never).unwrap();
-    until_state(&holder, LifecycleState::Active).await;
-    let mut waiting = passivating(&[]);
-    waiting.init_timeout = Duration::from_millis(300);
-
-    let starved = rt.spawn(&app, waiting).unwrap();
-    let reason = starved.wait().await;
-    let metrics = rt.render_metrics();
-
-    assert_eq!(reason, ExitReason::Crashed("no_slot".into()));
-    assert!(
-        metrics.contains("bulkhead_slot_timeouts_total{app=\"counter\"} 1"),
-        "{metrics}"
-    );
-    holder.kill();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn upgrade____no_slot_for_the_new_store____reverts_and_the_old_version_runs() {
-    let (rt, app) = one_slot(&counter(1));
-    let mut never = passivating(&[]);
-    never.passivate_after = None;
-    let h = rt.spawn(&app, never.clone()).unwrap();
-    incs(&h, 2).await;
-    let mut next = never;
-    next.init_timeout = Duration::from_millis(300);
-
-    let result = h.upgrade(&app, next, "1.0.0").await;
-
-    assert_eq!(
-        result,
-        Err(bulkhead_host::UpgradeError::Instantiate(
-            "no instance slot".into()
-        ))
-    );
-    assert_eq!(ask(&h, "get").await, "1.0.0 count=2");
-    h.kill();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

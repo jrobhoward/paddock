@@ -1,7 +1,6 @@
 //! Host services against a native app (`bulkhead-fixture-native`, ROADMAP
 //! Z9d): logging, stdout capture, config, keyvalue and the filesystem.
-//! Covers Phase 1 exit criterion 8. Deny stubs, and a component's
-//! filesystem grant, still run on the component services fixture.
+//! Covers Phase 1 exit criterion 8.
 
 // The native fixture runs on Linux only.
 #![cfg(target_os = "linux")]
@@ -20,10 +19,9 @@ use bulkhead_bundle::manifest::{
     Bucket, ByteSize, Capability, Durability, LogLevel, NativeProgram,
 };
 use bulkhead_host::{
-    CallError, ExitReason, HostError, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, Preopen,
-    Runtime, RuntimeConfig,
+    HostError, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, Preopen, Runtime, RuntimeConfig,
 };
-use common::{LONG, ask, fixture, text};
+use common::{LONG, ask, text};
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
@@ -109,20 +107,6 @@ fn shared() -> &'static (Runtime, LoadedApp) {
         })
         .unwrap();
         let app = load(&rt);
-        (rt, app)
-    })
-}
-
-/// The component services fixture, for what only a component has.
-fn component() -> &'static (Runtime, LoadedApp) {
-    static SHARED: OnceLock<(Runtime, LoadedApp)> = OnceLock::new();
-    SHARED.get_or_init(|| {
-        let rt = Runtime::new(RuntimeConfig {
-            max_instances: 8,
-            ..RuntimeConfig::default()
-        })
-        .unwrap();
-        let app = rt.load(&fixture("bulkhead_fixture_services")).unwrap();
         (rt, app)
     })
 }
@@ -583,18 +567,6 @@ async fn exit_criterion_8____filesystem____priv_read_only_data_writable_escapes_
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn filesystem____not_granted____no_preopens() {
-    let (rt, app) = component();
-    let d = dirs();
-    let h = up(rt, app, fs_spec("fs-denied", &d, &[])).await;
-
-    let reply = ask(&h, "read:/priv/hello.txt").await;
-
-    assert!(reply.starts_with("err:"), "{reply}");
-    h.kill();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filesystem____native_app_not_granted____no_preopens() {
     let (rt, app) = shared();
     let d = dirs();
@@ -619,33 +591,6 @@ async fn spawn____preopen_directory_missing____refused() {
     let result = rt.spawn(app, s);
 
     assert!(matches!(result, Err(HostError::Preopen(_))), "{result:?}");
-}
-
-// --- deny stubs --------------------------------------------------------------
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn deny_stubs____unimplemented_interface____error_channel_returns_access_denied() {
-    let (rt, app) = component();
-    let h = up(rt, app, spec("deny", &[])).await;
-
-    let reply = ask(&h, "denied-ping").await;
-
-    assert_eq!(app.stubbed_imports(), ["bulkhead:fixture/denied"]);
-    assert_eq!(reply, "err:access-denied");
-    h.kill();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn deny_stubs____no_error_channel____traps_naming_the_function() {
-    let (rt, app) = component();
-    let h = up(rt, app, spec("deny-boom", &[])).await;
-
-    let result = h.call(text("denied-boom"), LONG).await;
-
-    let Err(CallError::Exited(ExitReason::Crashed(why))) = &result else {
-        panic!("expected exited(crashed), got {result:?}");
-    };
-    assert!(why.contains("bulkhead:fixture/denied#boom"), "{why}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

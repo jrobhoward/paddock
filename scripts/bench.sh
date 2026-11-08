@@ -18,38 +18,14 @@ ROOT=$PWD
 
 # name | what it measures | command (run from the repo root)
 BENCHES=(
-  "baseline|call, cast, instantiate, idle memory (1 and 4 workers, dense)|R/examples/baseline 1 1000 standard; R/examples/baseline 4 1000 standard; R/examples/baseline 1 5000 dense"
-  "pool_load|concurrent clients against a pool (1, 4, 16 workers)|R/examples/pool_load 1; R/examples/pool_load 4; R/examples/pool_load 16"
-  "epoch|epoch-check overhead|R/examples/epoch_cost"
-  "app|ordinary app code (serde JSON, regex, Markdown, a BTreeMap) native, in Bulkhead, and as a core module with epoch checks off and on|R/examples/app_cost"
-  "log|guest log records|R/examples/log_cost"
-  "admin|admin API latency (1 and 4 workers)|R/examples/admin_latency 1; R/examples/admin_latency 4"
-  "watch|keyvalue writes with watchers, memory and disk buckets|R/examples/watch_cost 4; R/examples/watch_cost 4 disk"
-  "publish|a publish to 1 to 1,000 group members|R/examples/publish_cost 4"
-  "ingress|HTTP ingress throughput: requests as calls to a pool, the ingress with a guest doing no CBOR, S15's bare shape, and an HTTP handler's instance per request|R/examples/ingress_throughput 4 4; R/examples/ingress_throughput 4 4 chaos; R/examples/ingress_throughput 4 4 s15; R/examples/ingress_throughput 4 4 handler"
-  "batch|points per second between apps, one cast each or batched|R/examples/batch_cost 1; R/examples/batch_cost 4"
-  "egress|outgoing HTTP from a guest through the pool|R/examples/egress_cost 1; R/examples/egress_cost 4; R/examples/egress_cost 4 nopool"
-  "cluster|calls, casts and payloads between two nodes over QUIC, from the host and from instances (components), and bare quinn's floor|R/examples/cluster_throughput 4; R/examples/quic_floor 4"
-  "cluster-native|cluster with native programs for instances|CLUSTER_NATIVE=1 R/examples/cluster_throughput 4"
-  "cluster-pair|cluster with the two nodes as two processes on this machine, components then native programs|scripts/cluster_pair.sh 4; CLUSTER_NATIVE=1 scripts/cluster_pair.sh 4"
-  "replication|writes to a replicated (cluster) bucket on a pair and witness over QUIC, against a disk bucket|R/examples/replication_cost 4"
-  "passivation|wake cost, instances per Store slot, random calls|R/examples/passivation_cost 4 1000 100000; R/examples/passivation_cost 4 100 2000; R/examples/passivation_cost 4 1000 1000 off"
-  "modbus|Modbus points through the scada pool|R/examples/modbus_load 16 100 10 4 4; R/examples/modbus_load 64 125 1 4 4; R/examples/modbus_load 64 125 1 8 8"
-  "call_split|where an empty call's time goes: wall, on-CPU time, context switches and time in the callback, against bare tokio|R/examples/call_split 1; R/examples/call_split 4"
-  "timer|send-after and guest sleep lateness against a native tokio sleep, idle and loaded; clock reads|R/examples/timer_cost 4"
-  "wake|how long a woken instance or a caller waits while the instance that woke it keeps running (16 workers)|R/examples/wake_cost 16"
-  "restart|crash and kill to the restarted instance's first reply; upgrades by state size|R/examples/restart_cost 1; R/examples/restart_cost 4"
-  "heap|heap growth, memory held live and after exit, slot reuse, passivated state by size|R/examples/heap_cost 1"
-  "compile|compile time by component size, and loads from the compiled-code cache|R/examples/compile_cost"
-  "kv|keyvalue memory buckets from a guest: single operations, ordered reads, 1 to 16 instances on one bucket, bytes per entry (1 and 4 workers)|R/examples/kv_cost 1; R/examples/kv_cost 4"
+  "cluster|calls, casts and payloads between two nodes over QUIC, from the host and from instances, and bare quinn's floor|R/examples/cluster_throughput 4; R/examples/quic_floor 4"
+  "cluster-pair|cluster with the two nodes as two processes on this machine|scripts/cluster_pair.sh 4"
+  "kv|keyvalue memory buckets from a native program, each operation a request to the node: single operations, ordered reads, 1 to 16 instances on one bucket, bytes per entry (1 and 4 workers)|R/examples/kv_cost 1; R/examples/kv_cost 4"
   "kv-rc|kv with every bucket read_concurrency (reads without a lock, spike S26), 4 workers|KV_READ_CONCURRENCY=1 R/examples/kv_cost 4"
-  "kv-native|kv with the loops in a native program (each operation a request to the node), 4 workers|KV_NATIVE=1 R/examples/kv_cost 4"
   "native|native-process instances through bulkhead-runner: calls from the host and between instances, requests from a callback, casts, start (4 workers)|R/examples/native_cost 4"
   "beam-cluster|BEAM reference for cluster: two Erlang nodes as two processes on this machine, the same runs over distributed Erlang, plain TCP then TLS (4 schedulers)|scripts/beam_cluster_pair.sh; scripts/beam_cluster_pair.sh tls"
   "beam-ets|ETS reference for kv: the same loops in an Erlang process against set and ordered_set tables (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_ets.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_ets.escript"
   "beam|Erlang/OTP reference: gen_server call, cast, spawn, process memory, send_after lateness (1 and 4 schedulers)|ERL_FLAGS='+S 1:1' escript scripts/beam_baseline.escript; ERL_FLAGS='+S 4:4' escript scripts/beam_baseline.escript"
-  "s14|spike S14: storage in the guest and host services|S/s14-bench spikes/target/wasm32-wasip2/release/s14_guest.wasm"
-  "s15|spike S15: HTTP in the guest and the host, and the connection sweep|S/s15-bench 4; S/s15-bench 4 sweep"
 )
 
 busy=0 list=0 selected=()
@@ -86,36 +62,11 @@ fi
 [ -x /usr/bin/time ] || { echo "bench: needs GNU time at /usr/bin/time" >&2; exit 1; }
 
 echo "bench: building (release)"
-cargo build -q --release --target wasm32-wasip2 -p bulkhead-fixture-chaos -p bulkhead-fixture-workload \
-  -p bulkhead-fixture-kvbench -p bulkhead-fixture-msgbench --target-dir target/fixtures
-# app_cost's core module: bulkhead-workload with no imports.
-app_core=0
-if wanted app; then
-  if rustup target list --installed 2>/dev/null | grep -qx wasm32-unknown-unknown; then
-    cargo rustc -q --release -p bulkhead-workload --features exports --crate-type cdylib \
-      --target wasm32-unknown-unknown --target-dir target/fixtures
-    app_core=1
-  else
-    echo "bench: app skipped (rustup target add wasm32-unknown-unknown)" >&2
-  fi
-fi
-cargo build -q --release --target wasm32-wasip2 -p bulkhead-fixture-sdk -p bulkhead-fixture-counter \
-  -p bulkhead-fixture-http -p bulkhead-fixture-echo -p bulkhead-fixture-chaos -p example-chaos \
-  -p example-scada-points -p example-scada-control
-# compile_cost's large component: the SDK fixture unoptimized.
-cargo build -q --target wasm32-wasip2 -p bulkhead-fixture-sdk
 cargo build -q --release -p bulkhead-host --examples
-# The native programs: native_cost's, and kv-native's loops.
 cargo build -q --release -p bulkhead-native --bin bulkhead-runner
 cargo build -q --release -p bulkhead-fixture-native
 cargo build -q --release -p bulkhead-fixture-kvbench --features native --bin bulkhead-fixture-kvbench
 cargo build -q --release -p bulkhead-fixture-msgbench --features native --bin bulkhead-fixture-msgbench
-cargo build -q --release -p bulkhead --example admin_latency
-cargo build -q --release -p bulkhead-modbus --example modbus_load
-if wanted s14 || wanted s15; then
-  (cd spikes && cargo build -q --release --target wasm32-wasip2 -p s14-guest -p s15-proxy -p s15-client -p s15-tcpserver \
-    && cargo build -q --release -p s14-bench -p s15-bench)
-fi
 
 mkdir -p target/bench
 stamp=$(date -u +%Y-%m-%dT%H%MZ)
@@ -143,7 +94,6 @@ mem=$(awk '/MemTotal/ { printf "%.0f GiB", $2 / 1048576 }' /proc/meminfo)
 for b in "${BENCHES[@]}"; do
   IFS='|' read -r name what commands <<<"$b"
   wanted "$name" || continue
-  [ "$name" = app ] && [ "$app_core" = 0 ] && continue
   if [[ "$name" = beam* ]] && ! command -v escript >/dev/null; then
     echo "bench: $name skipped (no escript on the PATH)" >&2
     continue

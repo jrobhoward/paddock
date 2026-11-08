@@ -35,11 +35,14 @@ impl Leased {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        // SAFETY: `dup2` between fork and exec, on a descriptor made
-        // before the fork; it neither allocates nor locks.
+        // SAFETY: `fcntl` and `dup2` between fork and exec, on a descriptor
+        // made before the fork; they neither allocate nor lock.
         unsafe {
             cmd.pre_exec(move || {
-                if libc::dup2(raw, LEASE_FD) < 0 {
+                // Above `LEASE_FD` first: were the pipe already there, `dup2`
+                // would do nothing and leave it to close at exec.
+                let above = libc::fcntl(raw, libc::F_DUPFD_CLOEXEC, LEASE_FD + 1);
+                if above < 0 || libc::dup2(above, LEASE_FD) < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())
