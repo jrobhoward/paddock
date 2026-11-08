@@ -120,7 +120,7 @@ fn native_singleton(rt: &Runtime) -> bulkhead_host::InstanceHandle {
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_bound_instance____lease_ends_mid_callback____crashed_lease_ended() {
+async fn native_bound_instance____lease_ends_mid_callback____crashed_at_the_lease_end() {
     let (nodes, mesh) = primary_with_a_lease().await;
     let singleton = native_singleton(&nodes[0]);
     assert_eq!(common::ask(&singleton, "echo up").await, "up");
@@ -136,7 +136,16 @@ async fn native_bound_instance____lease_ends_mid_callback____crashed_lease_ended
         .await
         .unwrap();
 
-    assert_eq!(reason, ExitReason::Crashed("lease_ended".into()));
+    // The node and the runner's watchdog act at the same end: whichever
+    // the node finds first.
+    assert!(
+        [
+            ExitReason::Crashed("lease_ended".into()),
+            ExitReason::Crashed("killed_at_lease_end".into())
+        ]
+        .contains(&reason),
+        "{reason:?}"
+    );
     assert!(
         cut.elapsed() < LEASE + Duration::from_secs(1),
         "{:?}",
@@ -146,7 +155,7 @@ async fn native_bound_instance____lease_ends_mid_callback____crashed_lease_ended
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_bound_instance____lease_ends_while_idle____crashed_lease_ended() {
+async fn native_bound_instance____lease_ends_while_idle____crashed_at_the_lease_end() {
     // A native process can run threads between callbacks, so an idle one
     // is ended too, not left to wait for its next message.
     let (nodes, mesh) = primary_with_a_lease().await;
@@ -160,7 +169,16 @@ async fn native_bound_instance____lease_ends_while_idle____crashed_lease_ended()
         .await
         .unwrap();
 
-    assert_eq!(reason, ExitReason::Crashed("lease_ended".into()));
+    // The node and the runner's watchdog act at the same end: whichever
+    // the node finds first.
+    assert!(
+        [
+            ExitReason::Crashed("lease_ended".into()),
+            ExitReason::Crashed("killed_at_lease_end".into())
+        ]
+        .contains(&reason),
+        "{reason:?}"
+    );
     assert!(
         cut.elapsed() < LEASE + Duration::from_secs(1),
         "{:?}",

@@ -142,6 +142,34 @@ fn running____native_frozen_past_its_lease____ends_at_the_lease_bound() {
 }
 
 #[test]
+fn running____lease_lapsed_and_came_back____the_gap_not_counted() {
+    let records = [
+        rec(20, 1, Mark::Start),
+        rec(21, 1, Mark::LeaseBound(40)),
+        rec(70, 1, Mark::LeaseBound(90)),
+        rec(80, 1, Mark::Stop),
+    ];
+
+    let spans = running(&records, 1, 100, true);
+
+    assert_eq!(spans, vec![(20, 40), (70, 80)]);
+}
+
+#[test]
+fn running____started_just_after_an_extension____capped_by_it() {
+    let records = [
+        rec(19, 1, Mark::LeaseBound(40)),
+        rec(20, 1, Mark::Start),
+        rec(70, 1, Mark::LeaseBound(90)),
+        rec(80, 1, Mark::Stop),
+    ];
+
+    let spans = running(&records, 1, 100, true);
+
+    assert_eq!(spans, vec![(20, 40), (70, 80)]);
+}
+
+#[test]
 fn log_records____killed_by_the_watchdog____no_cut_off() {
     let text = "\
 2026-10-10T12:00:09.051000Z  WARN instance{app=counter version=1.0.0 pid=1.4294967297.1 node=1}: bulkhead_host::instance: instance failed reason=crashed: killed_at_lease_end";

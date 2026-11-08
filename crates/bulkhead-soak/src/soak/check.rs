@@ -15,7 +15,9 @@
 //! the last one), which holds even when the process is killed before it
 //! can log anything more. A callback cut off after the lease's end
 //! (`crashed: lease_ended`) extends the run to that record. Without lease
-//! records a run lasts until the gate's kill. Every boundary is taken on the
+//! records a run lasts until the gate's kill. A lease that lapsed and came
+//! back within a run (an extension after the last bound had passed)
+//! leaves the time between out of it. Every boundary is taken on the
 //! side that makes a run longer, so the check errs toward reporting an
 //! overlap.
 //!
@@ -160,6 +162,9 @@ pub(crate) fn running(records: &[Record], node: u32, horizon: i64, native: bool)
     let mut closed_by_lease: Option<usize> = None;
     // The latest bound on the open run's lease.
     let mut bound: Option<i64> = None;
+    // The latest bound this node process logged, run or not: a start just
+    // after an extension runs under it.
+    let mut latest: Option<i64> = None;
     // Close the open run at `end`, or at its lease's bound if earlier.
     let close = |runs: &mut Vec<Span>,
                  run: &mut Option<i64>,
@@ -179,10 +184,26 @@ pub(crate) fn running(records: &[Record], node: u32, horizon: i64, native: bool)
     for r in mine {
         match r.mark {
             Mark::Start => {
-                run.get_or_insert(r.at_us);
+                if run.is_none() {
+                    run = Some(r.at_us);
+                    bound = latest;
+                }
                 closed_by_lease = None;
             }
             Mark::LeaseBound(b) => {
+                latest = Some(b);
+                // An extension after the open run's bound had passed: the
+                // lease lapsed between, when a bound instance runs nothing
+                // (a native one killed by the runner's watchdog, its
+                // restart waiting for the lease), so the run ended at the
+                // old bound and goes on from this extension.
+                if let (Some(s), Some(old)) = (run, bound)
+                    && old < r.at_us
+                {
+                    runs.push((s, old.max(s)));
+                    closed_by_lease = Some(runs.len() - 1);
+                    run = Some(r.at_us);
+                }
                 if run.is_some() {
                     bound = Some(b);
                 }
@@ -215,6 +236,7 @@ pub(crate) fn running(records: &[Record], node: u32, horizon: i64, native: bool)
                     r.at_us,
                 );
                 frozen.extend(freeze.take().map(|s| (s, r.at_us)));
+                latest = None;
                 if r.mark == Mark::Spawn {
                     closed_by_lease = None;
                 }
