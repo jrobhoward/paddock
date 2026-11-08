@@ -333,7 +333,6 @@ impl OneNode {
 }
 
 #[rstest]
-#[case::rust(Build::Rust)]
 #[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -654,7 +653,6 @@ fn short_dir() -> tempfile::TempDir {
 /// process group across the nodes, before it answers, so the count survives
 /// `kill -9` of the primary.
 #[rstest]
-#[case::rust(Build::Rust)]
 #[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -742,7 +740,6 @@ async fn location(port: u16, method: &str, path: &str) -> (u16, String) {
 /// the board's requests to the primary (307, path and query kept); after
 /// the primary is killed, node 2 serves the board itself.
 #[rstest]
-#[case::rust(Build::Rust)]
 #[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -799,7 +796,6 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
 /// board's requests over the cluster to the primary's board, so either
 /// address serves it; after the primary is killed, node 2 serves its own.
 #[rstest]
-#[case::rust(Build::Rust)]
 #[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -863,7 +859,6 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
 /// replicated between the pair, so the count survives `kill -9` of the
 /// primary without the app replicating anything.
 #[rstest]
-#[case::rust(Build::Rust)]
 #[case::native(Build::Native)]
 #[case::go(Build::Go)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

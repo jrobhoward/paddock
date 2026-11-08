@@ -1,8 +1,9 @@
-//! HTTP ingress through a node: `examples/http-counter`
-//! bundled with the CLI, deployed under operator policy, and driven over
+//! HTTP ingress through a node: `examples/http-counter` as a native
+//! program (ROADMAP Z9d), bundled with the CLI, deployed under operator policy, and driven over
 //! HTTP; route clashes, ungranted routes, stop and start.
 
-#![cfg(unix)]
+// Native apps run on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -22,24 +23,8 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn build() -> PathBuf {
-    let target = root().join("target/fixtures/examples-http");
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let ok = StdCommand::new(cargo)
-        .current_dir(root())
-        .args(["build", "--release", "--target", "wasm32-wasip2"])
-        .args(["-p", "example-http-counter", "--target-dir"])
-        .arg(&target)
-        .status()
-        .unwrap()
-        .success();
-    assert!(ok, "building example-http-counter failed");
-    target.join("wasm32-wasip2/release/example_http_counter.wasm")
-}
-
 /// The counter built as a native program (its `native` feature).
-#[cfg(target_os = "linux")]
-fn build_native() -> PathBuf {
+fn build() -> PathBuf {
     let target = root().join("target/fixtures/examples-http-native");
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let ok = StdCommand::new(cargo)
@@ -116,11 +101,11 @@ struct Setup {
     dir: TempDir,
     key: PathBuf,
     public: String,
-    wasm: PathBuf,
+    program: PathBuf,
 }
 
 async fn setup() -> Setup {
-    let wasm = build();
+    let program = build();
     let dir = TempDir::new().unwrap();
     let keys = bulkhead(
         &dir.path().join("x.sock"),
@@ -132,17 +117,18 @@ async fn setup() -> Setup {
         key: dir.path().join("k.key"),
         public: keys.stdout,
         dir,
-        wasm,
+        program,
     }
 }
 
-/// Bundle the counter's component as `name` with `routes` (TOML).
+/// Bundle the counter's program as `name` with `routes` (TOML).
 async fn bundle(setup: &Setup, name: &str, routes: &str) -> PathBuf {
     let manifest = setup.dir.path().join(format!("{name}.toml"));
     std::fs::write(
         &manifest,
         format!(
             "[app]\nname = \"{name}\"\nversion = \"1.0.0\"\n\
+             [appserver]\nkind = \"native-process\"\nnative = {{ program = \"executable\" }}\n\
              [appserver.capabilities.\"wasi:http/incoming-handler\"]\nroutes = {routes}\n"
         ),
     )
@@ -153,7 +139,7 @@ async fn bundle(setup: &Setup, name: &str, routes: &str) -> PathBuf {
         &[
             "bundle",
             s(&manifest),
-            s(&setup.wasm),
+            s(&setup.program),
             "--key",
             s(&setup.key),
             "-o",
@@ -175,9 +161,11 @@ async fn node(setup: &Setup, tag: &str, extra: &str) -> (Arc<Node>, PathBuf) {
     )
     .unwrap();
     let toml = format!(
-        "data_dir = {:?}\nadmin_socket = {socket:?}\ntrusted_keys = [{:?}]\npolicy = {policy:?}\n{extra}",
+        "data_dir = {:?}\nadmin_socket = {socket:?}\ntrusted_keys = [{:?}]\npolicy = {policy:?}\n{extra}\n\
+         [native]\nrunner = {:?}\n",
         setup.dir.path().join(tag),
         setup.public,
+        common::native_fixtures().0,
     );
     let node = Arc::new(
         Node::open(NodeConfig::from_toml_str(&toml).unwrap(), LogRing::new(100))
@@ -241,55 +229,6 @@ async fn http_counter____deployed_with_policy____served_and_routes_follow_the_ap
     assert_eq!(not_routed.0, 404);
     assert_eq!(stopped.0, 404);
     assert_eq!(started, (200, r#"{"count":0}"#.to_string()));
-    node.shutdown().await;
-}
-
-#[cfg(target_os = "linux")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn http_counter____native_build____served_as_the_component_is() {
-    let setup = setup().await;
-    let program = build_native();
-    let port = free_port();
-    let runner = &common::native_fixtures().0;
-    let (node, socket) = node(
-        &setup,
-        "native",
-        &format!("[http.main]\naddress = \"127.0.0.1:{port}\"\n[native]\nrunner = {runner:?}\n"),
-    )
-    .await;
-    let manifest = setup.dir.path().join("native-counter.toml");
-    std::fs::write(
-        &manifest,
-        "[app]\nname = \"http-counter\"\nversion = \"1.0.0\"\n\
-         [appserver]\nkind = \"native-process\"\nnative = { program = \"executable\" }\n\
-         [appserver.capabilities.\"wasi:http/incoming-handler\"]\nroutes = [{ path_prefix = \"/counter\" }]\n",
-    )
-    .unwrap();
-    let bundled = setup.dir.path().join("native-counter.rbp");
-    let r = bulkhead(
-        &setup.dir.path().join("x.sock"),
-        &[
-            "bundle",
-            s(&manifest),
-            s(&program),
-            "--key",
-            s(&setup.key),
-            "-o",
-            s(&bundled),
-        ],
-    )
-    .await;
-    assert!(r.ok, "{}", r.stderr);
-
-    let deployed = bulkhead(&socket, &["deploy", s(&bundled)]).await;
-    let first = http(port, "GET", "/counter", "").await;
-    let posted = http(port, "POST", "/counter", "5").await;
-    let wrong = http(port, "PUT", "/counter", "").await;
-
-    assert!(deployed.ok, "{}", deployed.stderr);
-    assert_eq!(first, (200, r#"{"count":0}"#.to_string()));
-    assert_eq!(posted, (200, r#"{"count":5}"#.to_string()));
-    assert_eq!(wrong.0, 405);
     node.shutdown().await;
 }
 

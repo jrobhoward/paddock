@@ -12,6 +12,7 @@
 
 pub(crate) mod cgroup;
 pub(crate) mod convert;
+pub(crate) mod memory;
 pub(crate) mod port;
 
 use std::path::PathBuf;

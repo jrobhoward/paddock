@@ -96,6 +96,7 @@ mod linux {
     use crate::config::NativeConfig;
     use crate::failover::RunUntil;
     use crate::message::ExitReason;
+    use crate::native::memory::MemorySource;
     use crate::native::{NativeCode, cgroup};
     use crate::output::CapturedOutput;
     use crate::spec::InstanceSpec;
@@ -473,6 +474,14 @@ mod linux {
         /// closed.
         /// The app said it speaks protocol `version` (one the node
         /// accepts, [`protocol::accepts`]).
+        /// Where this process's memory can be read.
+        pub(crate) fn memory_source(&self) -> Option<MemorySource> {
+            match &self.cgroup {
+                Some(dir) => Some(MemorySource::Cgroup(dir.clone())),
+                None => self.child.id().map(MemorySource::Process),
+            }
+        }
+
         pub(crate) fn set_version(&mut self, version: u16) {
             self.version = version;
         }
@@ -934,6 +943,10 @@ mod elsewhere {
             match self.0 {}
         }
 
+        pub(crate) fn memory_source(&self) -> Option<crate::native::memory::MemorySource> {
+            match self.0 {}
+        }
+
         pub(crate) async fn recv_in_callback(&mut self, _watch: bool) -> Option<Incoming> {
             match self.0 {}
         }
@@ -1029,6 +1042,16 @@ impl Port {
 
     pub(crate) fn set_version(&mut self, version: u16) {
         each!(self, p => p.set_version(version));
+    }
+
+    /// Where this instance's memory can be read: a process's. An in-process
+    /// app has none of its own.
+    pub(crate) fn memory_source(&self) -> Option<crate::native::memory::MemorySource> {
+        match self {
+            Self::Process(p) => p.memory_source(),
+            #[cfg(feature = "test-apps")]
+            Self::InProcess(_) => None,
+        }
     }
 
     pub(crate) fn send(&mut self, frame: &ToApp) {

@@ -107,7 +107,7 @@ async fn exit_criterion_1____kill____restarted_links_get_exit_monitors_get_down_
         (restarted.restarts, restarted.last_exit.as_deref()),
         (1, Some("killed"))
     );
-    // `memory_bytes` reads 0 for a native instance (ROADMAP Z9j).
+    assert!(restarted.memory_bytes > 0, "{restarted:?}");
     n.shutdown().await;
 }
 

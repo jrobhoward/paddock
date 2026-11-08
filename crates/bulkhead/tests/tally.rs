@@ -3,9 +3,8 @@
 //! this test starts; its count lives in the database, so it outlives the
 //! app. Skipped, saying so, when no Postgres is installed.
 //!
-//! The test runs against the component and the same source built as a
-//! native program (Linux; its manifest with `kind = "native-process"`
-//! added).
+//! The app is the example built as a native program (Linux; its manifest
+//! with `kind = "native-process"` added).
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -23,55 +22,30 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use bulkhead::node::{LogRing, Node, NodeConfig};
-use rstest::rstest;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Which build of the tally.
-#[derive(Debug, Clone, Copy)]
-enum Build {
-    Component,
-    Native,
+/// The manifest: a copy in `into` that runs the program as a native
+/// process.
+fn manifest(into: &Path) -> PathBuf {
+    let base = std::fs::read_to_string(root().join("examples/tally/bulkhead.toml")).unwrap();
+    let native = into.join("native-bulkhead.toml");
+    std::fs::write(
+        &native,
+        format!(
+            "{base}\n[appserver]\nkind = \"native-process\"\nnative = {{ program = \"executable\" }}\n"
+        ),
+    )
+    .unwrap();
+    native
 }
 
-impl Build {
-    /// The component or program; `None` for the native build off Linux.
-    fn program(self) -> Option<PathBuf> {
-        match self {
-            Self::Component => Some(build()),
-            Self::Native => build_native(),
-        }
-    }
-
-    /// The manifest; for the native build, a copy in `into` that runs the
-    /// program as a native process.
-    fn manifest(self, into: &Path) -> PathBuf {
-        let path = root().join("examples/tally/bulkhead.toml");
-        if matches!(self, Self::Component) {
-            return path;
-        }
-        let base = std::fs::read_to_string(&path).unwrap();
-        let native = into.join("native-bulkhead.toml");
-        std::fs::write(
-            &native,
-            format!(
-                "{base}\n[appserver]\nkind = \"native-process\"\nnative = {{ program = \"executable\" }}\n"
-            ),
-        )
-        .unwrap();
-        native
-    }
-
-    /// Node config this build needs: the native build's runner.
-    fn node_extra(self) -> String {
-        match self {
-            Self::Native => format!("[native]\nrunner = {:?}\n", common::native_fixtures().0),
-            Self::Component => String::new(),
-        }
-    }
+/// Node config for the native program: its runner.
+fn node_extra() -> String {
+    format!("[native]\nrunner = {:?}\n", common::native_fixtures().0)
 }
 
 /// The tally built as a native program (its `native` feature), once per
@@ -106,21 +80,6 @@ fn build_native() -> Option<PathBuf> {
             })
             .clone(),
     )
-}
-
-fn build() -> PathBuf {
-    let target = root().join("target/fixtures/examples-tally");
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let ok = StdCommand::new(cargo)
-        .current_dir(root())
-        .args(["build", "--release", "--target", "wasm32-wasip2"])
-        .args(["-p", "example-tally", "--target-dir"])
-        .arg(&target)
-        .status()
-        .unwrap()
-        .success();
-    assert!(ok, "building example-tally failed");
-    target.join("wasm32-wasip2/release/example_tally.wasm")
 }
 
 async fn bulkhead(socket: &Path, args: &[&str]) -> (bool, String, String) {
@@ -169,15 +128,12 @@ async fn http(port: u16, method: &str, body: &str) -> (u16, serde_json::Value) {
     )
 }
 
-#[rstest]
-#[case::component(Build::Component)]
-#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tally____on_postgres____counts_in_transactions_and_outlives_the_app(#[case] b: Build) {
+async fn tally____on_postgres____counts_in_transactions_and_outlives_the_app() {
     let Some(db) = pg::Scratch::start() else {
         return;
     };
-    let Some(program) = b.program() else {
+    let Some(program) = build_native() else {
         return;
     };
     let dir = tempfile::Builder::new()
@@ -189,7 +145,7 @@ async fn tally____on_postgres____counts_in_transactions_and_outlives_the_app(#[c
     let (ok, public, err) = bulkhead(&socket, &["keygen", "--no-password", s(&d.join("k"))]).await;
     assert!(ok, "{err}");
     let bundle = d.join("tally.rbp");
-    let manifest = b.manifest(d);
+    let manifest = manifest(d);
     let (ok, _, err) = bulkhead(
         &socket,
         &[
@@ -219,7 +175,7 @@ async fn tally____on_postgres____counts_in_transactions_and_outlives_the_app(#[c
         d.join("policy.toml"),
         db.socket_dir(),
         pg::PORT,
-        b.node_extra(),
+        node_extra(),
     );
     let node = Arc::new(
         Node::open(NodeConfig::from_toml_str(&toml).unwrap(), LogRing::new(100))

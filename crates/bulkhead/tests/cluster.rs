@@ -2,7 +2,8 @@
 //! address with pinned keys, a call from one node's admin API to an
 //! instance on the other, and a clean leave.
 
-#![cfg(unix)]
+// Native apps run on Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -15,7 +16,7 @@ use std::time::Duration;
 
 use bulkhead::api::Target;
 use bulkhead_host::transport::quic::generate_key;
-use common::{TestNode, bundle, fast, fixture};
+use common::{TestNode, app_bundle, fast, native_conformance};
 
 fn free_udp() -> String {
     std::net::UdpSocket::bind("127.0.0.1:0")
@@ -42,8 +43,9 @@ fn keys(dir: &Path) -> std::path::PathBuf {
 
 fn config(node: u32, dir: &Path, peers: &Path, address: &str, seeds: &[&str]) -> String {
     format!(
-        "node = {node}\n[cluster]\naddress = \"{address}\"\nseeds = {seeds:?}\n\
+        "node = {node}\n[native]\nrunner = {:?}\n[cluster]\naddress = \"{address}\"\nseeds = {seeds:?}\n\
          key = {:?}\npeers = {peers:?}\nheartbeat_interval_ms = 100\nnode_timeout_ms = 1000\n",
+        common::native_fixtures().0,
         dir.join(format!("node-{node}.key"))
     )
 }
@@ -77,13 +79,12 @@ async fn cluster____two_nodes_by_seed____members_remote_call_leave_and_events() 
     })
     .await;
     n2.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n2.key,
             "chaos",
             "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
+            &native_conformance(),
             fast(serde_json::json!({})),
-            &[],
         ))
         .await
         .unwrap();

@@ -122,6 +122,10 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- `ps`'s memory column and `bulkhead_memory_bytes` report native apps
+  (ROADMAP Z9j): their cgroup's `memory.current`, or without one the
+  resident set of the process and its direct children. Both read 0 for a
+  native app before.
 - `bulkhead-host`'s `test-apps` feature (ROADMAP Z9c): in-process test
   apps (`bulkhead_host::in_process`), written in Rust as `TestApp`s and
   loaded with `Runtime::load_in_process`, run inside their instance's task

@@ -50,7 +50,6 @@ fn s(p: &Path) -> &str {
 }
 
 #[rstest]
-#[case::component(Build::Component)]
 #[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed(

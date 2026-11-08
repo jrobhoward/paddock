@@ -187,6 +187,8 @@ struct Shared {
     /// Bytes of linear memory, as the Store's limiter last allowed it to
     /// grow.
     memory: Arc<AtomicU64>,
+    /// Where a native instance's memory is read, while it has a process.
+    native_memory: std::sync::Mutex<Option<crate::native::memory::MemorySource>>,
     /// Why the previous incarnation exited, when a supervisor restarted it.
     last_exit: std::sync::Mutex<Option<ExitReason>>,
 }
@@ -288,11 +290,23 @@ impl InstanceHandle {
         self.shared.dropped.load(Ordering::Relaxed)
     }
 
-    /// Bytes of linear memory the instance has grown to (its largest memory
-    /// as last grown; 0 before it starts).
+    /// Bytes of memory the instance holds. A component: the linear memory
+    /// it has grown to (its largest as last grown). A native app: its
+    /// cgroup's `memory.current`, or else the resident set of its process
+    /// and that process's direct children, read now. 0 before it starts and
+    /// while it is passivated.
     #[must_use]
     pub fn memory_bytes(&self) -> u64 {
-        self.shared.memory.load(Ordering::Relaxed)
+        let source = self
+            .shared
+            .native_memory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        source.map_or_else(
+            || self.shared.memory.load(Ordering::Relaxed),
+            |source| source.read(),
+        )
     }
 
     /// How many times this instance has been restarted: its incarnation
@@ -319,6 +333,16 @@ impl InstanceHandle {
             .last_exit
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
+    }
+
+    /// Where to read this native instance's memory from now: its current
+    /// process, or `None` while it has none.
+    pub(crate) fn set_native_memory(&self, source: Option<crate::native::memory::MemorySource>) {
+        *self
+            .shared
+            .native_memory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = source;
     }
 
     /// The counter the Store's limiter records memory growth in.
@@ -746,6 +770,7 @@ pub(crate) fn prepare(
             trap_exits: AtomicBool::new(false),
             woke: AtomicBool::new(false),
             memory: Arc::new(AtomicU64::new(0)),
+            native_memory: std::sync::Mutex::new(None),
             last_exit: std::sync::Mutex::new(None),
         }),
     };

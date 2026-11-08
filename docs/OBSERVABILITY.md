@@ -12,7 +12,7 @@ What an operator can see on a running node: instance stats, events and log recor
 | `APP`, `VERSION`, `STATE` | What it runs, and its lifecycle state (`active`, `upgrading`, `passive`, ...). |
 | `QUEUED` | Messages waiting in its mailbox. |
 | `DROPPED` | Casts and timer messages dropped because its mailbox was full. |
-| `MEMORY` | Linear memory it has grown to. Wasm memory does not shrink, so this is its high-water mark. |
+| `MEMORY` | A component: the linear memory it has grown to. Wasm memory does not shrink, so this is its high-water mark. A native app: its cgroup's `memory.current`, or without `[native] cgroup` the resident set of its process and that process's direct children, shared pages (the channel's rings, the program's libraries) included, read when asked. 0 while passivated. |
 | `RESTARTS` | Times its supervisor restarted it (the incarnation minus one). |
 | `LAST EXIT` | Why the previous incarnation exited, as its supervisor saw it. |
 
@@ -69,7 +69,7 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
 | `bulkhead_instances` | gauge | | Live instances. |
-| `bulkhead_memory_bytes` | gauge | | Linear memory of live instances. |
+| `bulkhead_memory_bytes` | gauge | | Memory of live instances, as `ps`'s `MEMORY` column counts it. |
 | `bulkhead_mailbox_depth` | gauge | | Messages waiting in live instances' mailboxes. |
 | `bulkhead_mailbox_bytes` | gauge | | Bytes of message bodies waiting in live instances' mailboxes (`mailbox_max_bytes` bounds each). |
 | `bulkhead_callbacks_total` | counter | `kind` (`call`, `cast`, `info`) | Callbacks run; a native app's `handle_connection` counts as `info`. |

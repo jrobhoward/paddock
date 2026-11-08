@@ -70,7 +70,7 @@ rustls-native-certs = { workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["pipe"] }
+rustix = { workspace = true, features = ["param", "pipe"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true }

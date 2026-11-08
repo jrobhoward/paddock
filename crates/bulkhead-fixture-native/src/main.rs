@@ -21,6 +21,7 @@
 //! | `published BUCKET` | the revision of the published snapshot it reads `BUCKET` from, or `none` |
 //! | `fd ID` | what the descriptor the node passed as `ID` reads (up to 1 KiB), or `err:` |
 //! | `alloc MIB` | `ok` once allocated and touched |
+//! | `hold MIB` | `ok` once allocated, touched and kept |
 //! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID`, `io-uring` (set up a ring) | `ok` or `err:` and the OS error |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
 //! | `udp-bind ADDR`; `udp-send S ADDR TEXT`; `udp-recv S`; `net-watch S TAG` | a UDP socket the node holds (its number); a datagram sent; one received as `FROM TEXT`, or `none`; an `io-ready` notice tagged `TAG` (recorded as `event io-ready {"tag":TAG}`) |

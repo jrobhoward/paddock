@@ -19,6 +19,8 @@ struct Fixture {
     loaded_from: Option<String>,
     /// Fail the next `save_snapshot`.
     fail_save: bool,
+    /// Memory `hold` keeps.
+    held: Vec<Vec<u8>>,
     /// The SQL transaction `sql-begin` opened.
     tx: Option<u32>,
     /// Streams `tcp-connect` made, by the node's socket number.
@@ -327,6 +329,11 @@ impl Fixture {
             "spin" => loop {
                 std::hint::spin_loop();
             },
+            "hold" => {
+                let mib: usize = rest.parse().unwrap_or(0);
+                self.held.push(std::hint::black_box(vec![1u8; mib << 20]));
+                "ok".into()
+            }
             "alloc" => {
                 let mib: usize = rest.parse().unwrap_or(0);
                 let v = vec![1u8; mib << 20];

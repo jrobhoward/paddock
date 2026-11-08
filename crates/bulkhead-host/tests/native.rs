@@ -356,14 +356,66 @@ async fn cgroup____allocates_over_memory_max____memory_limit_and_cgroup_removed(
 
     let small = ask(&instance, "alloc 8").await;
     let inside = std::fs::read_to_string(dir.join("cgroup.procs")).unwrap();
+    let before = instance.memory_bytes();
+    ask(&instance, "hold 16").await;
+    let held = instance.memory_bytes();
     let _ = instance.call(text("alloc 256"), LONG).await;
     let reason = instance.wait().await;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     assert_eq!(small, "ok 8");
     assert!(!inside.trim().is_empty());
+    assert!(held >= before + (14 << 20), "{before} then {held}");
     assert_eq!(reason, ExitReason::Crashed("memory_limit".into()));
     assert!(!dir.exists(), "{} left behind", dir.display());
+}
+
+#[tokio::test]
+async fn executable____holding_memory____resident_set_reported() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+    ask(&instance, "echo up").await;
+
+    let before = instance.memory_bytes();
+    ask(&instance, "hold 32").await;
+    let held = instance.memory_bytes();
+
+    assert!(before > 0);
+    assert!(held >= before + (30 << 20), "{before} then {held}");
+    instance.kill();
+}
+
+#[tokio::test]
+async fn executable____passivated_then_woken____memory_zero_then_reported() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = rt
+        .spawn(
+            &app,
+            InstanceSpec {
+                passivate_after: Some(Duration::from_millis(30)),
+                ..spec("")
+            },
+        )
+        .unwrap();
+    ask(&instance, "echo up").await;
+    let mut state = instance.subscribe_state();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        state.wait_for(|s| *s == bulkhead_host::LifecycleState::Passive),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    let passive = instance.memory_bytes();
+    ask(&instance, "echo awake").await;
+    let woken = instance.memory_bytes();
+
+    assert_eq!(passive, 0);
+    assert!(woken > 0);
+    instance.kill();
 }
 
 #[tokio::test]

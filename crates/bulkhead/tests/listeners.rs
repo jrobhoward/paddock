@@ -188,12 +188,23 @@ async fn connection_app____lifecycle____served_upgraded_rolled_back_stopped_rest
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection_app____listener_not_bound____deploy_refused() {
-    let mut n = TestNode::start("").await;
+async fn native_app____listener_not_bound____deploy_refused() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("not Linux: native apps do not run here");
+        return;
+    }
+    let mut n = TestNode::start_native("").await;
+    let listeners = json!([{ "name": "lines", "idle_timeout_ms": 60_000 }]);
 
     let refused = n
         .client
-        .deploy(conn_bundle(&n.key, "lines", "1.0.0", &conn(1), manifest()))
+        .deploy(native_bundle(
+            &n.key,
+            "lines",
+            "1.0.0",
+            &native_conn(1),
+            native_manifest(listeners),
+        ))
         .await
         .unwrap_err();
     let list = n.client.list().await.unwrap();

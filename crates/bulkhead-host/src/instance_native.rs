@@ -498,9 +498,11 @@ impl InstanceTask {
             Ok(port) => port,
             Err(why) => return ExitReason::Crashed(why),
         };
+        self.me.set_native_memory(port.memory_source());
         let reason = self
             .native_run(&mut state, &mut port, spec, weak, &rt)
             .await;
+        self.me.set_native_memory(None);
         port.finish().await;
         reason
     }
@@ -736,7 +738,7 @@ impl InstanceTask {
         // their peers see the end.
         #[cfg(unix)]
         HostState::<Sockets>::service(state).state.close_native();
-        self.me.memory_counter().store(0, Ordering::Relaxed);
+        self.me.set_native_memory(None);
         self.set_state(LifecycleState::Passive);
         self.stats.passivated();
         tracing::debug!(bytes = snapshot.len(), "passivated");
@@ -757,6 +759,7 @@ impl InstanceTask {
             Err(why) => return Some(ExitReason::Crashed(why)),
         };
         *port = fresh;
+        self.me.set_native_memory(port.memory_source());
         let version = spec.version.clone();
         match self
             .native_start(state, port, spec, Some((&version, &snapshot)))
@@ -854,6 +857,7 @@ impl InstanceTask {
         match outcome {
             Ok(fresh) => {
                 let mut old = std::mem::replace(port, fresh);
+                self.me.set_native_memory(port.memory_source());
                 old.kill();
                 old.finish().await;
                 *state = fresh_state;

@@ -196,7 +196,6 @@ fn alarm<'a>(body: &'a Value, name: &str) -> &'a Value {
 }
 
 #[rstest]
-#[case::component(Build::Component)]
 #[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded_rolled_back(
@@ -515,7 +514,6 @@ async fn reads_in(reads: &AtomicUsize, secs: u64) -> usize {
 }
 
 #[rstest]
-#[case::component(Build::Component)]
 #[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchover(

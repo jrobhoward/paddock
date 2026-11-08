@@ -691,7 +691,7 @@ fn render_live(out: &mut String, live: &BTreeMap<&str, Live>) {
         ("bulkhead_instances", "Live instances.", |l| l.instances),
         (
             "bulkhead_memory_bytes",
-            "Linear memory of live instances.",
+            "Memory of live instances: linear memory, or a native process's.",
             |l| l.memory,
         ),
         (

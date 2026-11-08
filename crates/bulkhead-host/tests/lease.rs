@@ -156,6 +156,21 @@ async fn native_bound_instance____lease_ends_mid_callback____crashed_at_the_leas
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_bound_instance____holding_memory____the_app_under_the_watchdog_is_counted() {
+    let (nodes, _mesh) = primary_with_a_lease().await;
+    let singleton = native_singleton(&nodes[0]);
+    assert_eq!(common::ask(&singleton, "echo up").await, "up");
+
+    let before = singleton.memory_bytes();
+    common::ask(&singleton, "hold 32").await;
+    let held = singleton.memory_bytes();
+
+    assert!(held >= before + (30 << 20), "{before} then {held}");
+    singleton.kill();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_bound_instance____lease_ends_while_idle____crashed_at_the_lease_end() {
     // A native process can run threads between callbacks, so an idle one
     // is ended too, not left to wait for its next message.
