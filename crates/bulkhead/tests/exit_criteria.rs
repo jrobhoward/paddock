@@ -1,8 +1,10 @@
 //! Phase 1 exit criteria, one test each (named for its criterion), all through
 //! a running node and its admin API. `bulkhead-host` tests cover the same
-//! ground at the runtime level.
+//! ground at the runtime level. The apps are native programs (ROADMAP Z9d),
+//! but for criterion 7's import check.
 
-#![cfg(unix)]
+// Native apps run on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -13,16 +15,15 @@ use std::time::{Duration, Instant};
 
 use bulkhead::api::RolloutParams;
 use common::{
-    TestNode, bundle, call, counter, counter_manifest, fast, fixture, kind, services_manifest,
+    TestNode, app_bundle, app_bundle_with, bundle, call, counter_manifest, fast, fixture, kind,
+    native_app, native_conformance, native_counter, services_manifest,
 };
 use minisign::KeyPair;
 use serde_json::json;
 
-const CHAOS: &str = "bulkhead_fixture_chaos";
-
-async fn deploy(n: &TestNode, name: &str, component: &[u8], manifest: serde_json::Value) {
+async fn deploy(n: &TestNode, name: &str, program: &[u8], manifest: serde_json::Value) {
     n.client
-        .deploy(bundle(&n.key, name, "1.0.0", component, manifest, &[]))
+        .deploy(app_bundle(&n.key, name, "1.0.0", program, manifest))
         .await
         .unwrap();
 }
@@ -70,8 +71,8 @@ fn incarnation(pid: &str) -> u64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_1____kill____restarted_links_get_exit_monitors_get_down_stale_pid_noproc() {
-    let mut n = TestNode::start("").await;
-    let chaos = fixture(CHAOS);
+    let mut n = TestNode::start_native("").await;
+    let chaos = native_conformance();
     deploy(&n, "target", &chaos, fast(json!({}))).await;
     deploy(
         &n,
@@ -106,20 +107,19 @@ async fn exit_criterion_1____kill____restarted_links_get_exit_monitors_get_down_
         (restarted.restarts, restarted.last_exit.as_deref()),
         (1, Some("killed"))
     );
-    assert!(restarted.memory_bytes > 0, "{restarted:?}");
+    // `memory_bytes` reads 0 for a native instance (ROADMAP Z9j).
     n.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_2____init_traps____app_failed_with_reason_in_status() {
-    let mut n = TestNode::start("").await;
-    let b = bundle(
+    let mut n = TestNode::start_native("").await;
+    let b = app_bundle(
         &n.key,
         "crashy",
         "1.0.0",
-        &fixture(CHAOS),
+        &native_conformance(),
         fast(json!({ "lifecycle": { "start_args": "trap", "init_timeout_ms": 500 } })),
-        &[],
     );
 
     let deployed = n.client.deploy(b).await;
@@ -134,8 +134,8 @@ async fn exit_criterion_2____init_traps____app_failed_with_reason_in_status() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_3____handler_spins____killed_with_timeout_and_node_stays_responsive() {
-    let mut n = TestNode::start("").await;
-    let chaos = fixture(CHAOS);
+    let mut n = TestNode::start_native("").await;
+    let chaos = native_conformance();
     deploy(
         &n,
         "runaway",
@@ -179,9 +179,9 @@ async fn exit_criterion_3____handler_spins____killed_with_timeout_and_node_stays
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exit_criterion_4____allocates_past_memory_max____memory_limit_and_others_unaffected() {
-    let mut n = TestNode::start("").await;
-    let chaos = fixture(CHAOS);
+async fn exit_criterion_4____allocates_past_memory_max____crashes_and_others_unaffected() {
+    let mut n = TestNode::start_native("").await;
+    let chaos = native_conformance();
     deploy(
         &n,
         "hog",
@@ -204,7 +204,9 @@ async fn exit_criterion_4____allocates_past_memory_max____memory_limit_and_other
     let status = n.client.status("bystander").await.unwrap();
 
     assert_eq!(small, "ok");
-    assert!(big.to_string().contains("memory_limit"), "{big}");
+    // Without a cgroup `memory_max` is `RLIMIT_DATA`: the failed allocation
+    // aborts the app (MANIFEST.md).
+    assert!(big.to_string().contains("killed by signal 6"), "{big}");
     assert_eq!(bystander, "2", "bystander kept its state");
     assert_eq!(status.restarts, 0);
     n.shutdown().await;
@@ -212,11 +214,11 @@ async fn exit_criterion_4____allocates_past_memory_max____memory_limit_and_other
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_5____mailbox_full____casts_dropped_and_counted_calls_fail_fast() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     deploy(
         &n,
         "busy",
-        &fixture(CHAOS),
+        &native_conformance(),
         fast(json!({ "limits": { "mailbox_max": 1, "callback_deadline_ms": 30_000 } })),
     )
     .await;
@@ -258,7 +260,7 @@ async fn exit_criterion_5____mailbox_full____casts_dropped_and_counted_calls_fai
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_6____upgrade____state_pid_name_and_links_kept_broken_v3_reverts_losing_nothing()
  {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     let mut v1 = counter_manifest(None);
     v1["lifecycle"]["start_args"] = json!("register:ctr");
     v1["registered_names"] = json!(["ctr"]);
@@ -268,11 +270,11 @@ async fn exit_criterion_6____upgrade____state_pid_name_and_links_kept_broken_v3_
     let mut v3 = counter_manifest(Some("^2"));
     v3["lifecycle"]["start_args"] = json!("register:ctr");
     v3["registered_names"] = json!(["ctr"]);
-    deploy(&n, "ctr", &counter(1), v1).await;
+    deploy(&n, "ctr", &native_counter(1), v1).await;
     deploy(
         &n,
         "watcher",
-        &fixture(CHAOS),
+        &native_conformance(),
         fast(json!({ "lifecycle": { "start_args": "trap-exits" } })),
     )
     .await;
@@ -285,7 +287,7 @@ async fn exit_criterion_6____upgrade____state_pid_name_and_links_kept_broken_v3_
     n.client
         .upgrade(
             "ctr",
-            bundle(&n.key, "ctr", "2.0.0", &counter(2), v2, &[]),
+            app_bundle(&n.key, "ctr", "2.0.0", &native_counter(2), v2),
             &RolloutParams::default(),
         )
         .await
@@ -309,7 +311,7 @@ async fn exit_criterion_6____upgrade____state_pid_name_and_links_kept_broken_v3_
         .client
         .upgrade(
             "ctr",
-            bundle(&n.key, "ctr", "3.0.0", &counter(3), v3, &[]),
+            app_bundle(&n.key, "ctr", "3.0.0", &native_counter(3), v3),
             &RolloutParams::default(),
         )
         .await
@@ -375,28 +377,28 @@ async fn exit_criterion_7____declared_but_ungranted____denied_at_call_time() {
         "[defaults]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:filesystem\"]\n",
     )
     .unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {:?}\n[volumes]\nscratch = {:?}\n",
         policy,
         scratch.path()
     ))
     .await;
-    let b = bundle(
+    let b = app_bundle_with(
         &n.key,
         "svc",
         "1.0.0",
-        &fixture("bulkhead_fixture_services"),
+        &native_app(),
         services_manifest(),
         &[("priv/motd.txt", b"from the bundle")],
     );
 
     let deployed = n.client.deploy(b).await.unwrap();
-    let kv = call(&n, "svc", "kv-get:data:k").await;
-    let priv_file = call(&n, "svc", "read:/priv/motd.txt").await;
+    let kv = call(&n, "svc", "kv get data k").await;
+    let priv_file = call(&n, "svc", "vcat /priv/motd.txt").await;
     let status = n.client.status("svc").await.unwrap();
 
     assert_eq!(deployed.denied, vec!["wasi:keyvalue"]);
-    assert_eq!(kv, "err:access-denied");
+    assert_eq!(kv, "err:AccessDenied");
     assert_eq!(priv_file, "from the bundle");
     assert_eq!(
         status.granted,
@@ -416,43 +418,43 @@ async fn exit_criterion_8____disk_bucket_and_files____survive_crash_and_restart_
         "[defaults]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:keyvalue\", \"wasi:filesystem\"]\n",
     )
     .unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {:?}\n[volumes]\nscratch = {:?}\n",
         policy,
         scratch.path()
     ))
     .await;
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle_with(
             &n.key,
             "svc",
             "1.0.0",
-            &fixture("bulkhead_fixture_services"),
+            &native_app(),
             services_manifest(),
             &[("priv/motd.txt", b"from the bundle")],
         ))
         .await
         .unwrap();
     let before = pid_of(&n, "svc").await;
-    assert_eq!(call(&n, "svc", "kv-set:data:k:kept").await, "ok");
-    assert_eq!(call(&n, "svc", "write:/data/note.txt:written").await, "ok");
+    assert_eq!(call(&n, "svc", "kv set data k kept").await, "ok");
+    assert_eq!(call(&n, "svc", "vwrite /data/note.txt").await, "ok");
 
     n.client
-        .call("svc", "text/plain", b"trap".to_vec(), 5_000)
+        .call("svc", "text/plain", b"panic".to_vec(), 5_000)
         .await
         .unwrap_err();
     next_pid(&n, "svc", &before).await;
-    let kv_after_crash = call(&n, "svc", "kv-get:data:k").await;
-    let priv_read = call(&n, "svc", "read:/priv/motd.txt").await;
-    let priv_write = call(&n, "svc", "write:/priv/motd.txt:changed").await;
+    let kv_after_crash = call(&n, "svc", "kv get data k").await;
+    let priv_read = call(&n, "svc", "vcat /priv/motd.txt").await;
+    let priv_write = call(&n, "svc", "vwrite /priv/motd.txt").await;
     let escapes = [
-        call(&n, "svc", "read:/data/../../../../etc/hostname").await,
-        call(&n, "svc", "read:/priv/../../../../etc/hostname").await,
-        call(&n, "svc", "write:/data/../escaped.txt:x").await,
+        call(&n, "svc", "vcat /data/../../../../etc/hostname").await,
+        call(&n, "svc", "vcat /priv/../../../../etc/hostname").await,
+        call(&n, "svc", "vwrite /data/../escaped.txt").await,
     ];
     n.restart().await;
-    let kv_after_restart = call(&n, "svc", "kv-get:data:k").await;
-    let file_after_restart = call(&n, "svc", "read:/data/note.txt").await;
+    let kv_after_restart = call(&n, "svc", "kv get data k").await;
+    let file_after_restart = call(&n, "svc", "vcat /data/note.txt").await;
 
     assert_eq!(kv_after_crash, "kept");
     assert_eq!(priv_read, "from the bundle");
@@ -469,30 +471,16 @@ async fn exit_criterion_8____disk_bucket_and_files____survive_crash_and_restart_
             .exists()
     );
     assert_eq!(kv_after_restart, "kept");
-    assert_eq!(file_after_restart, "written");
+    assert_eq!(file_after_restart, "x");
     n.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exit_criterion_9____tampered_or_untrusted_bundle____refused_and_audited() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     let stranger = KeyPair::generate_unencrypted_keypair().unwrap();
-    let untrusted = bundle(
-        &stranger,
-        "x",
-        "1.0.0",
-        &fixture("bulkhead_fixture_chaos"),
-        json!({}),
-        &[],
-    );
-    let mut tampered = bundle(
-        &n.key,
-        "x",
-        "1.0.0",
-        &fixture("bulkhead_fixture_chaos"),
-        json!({}),
-        &[],
-    );
+    let untrusted = app_bundle(&stranger, "x", "1.0.0", &native_conformance(), json!({}));
+    let mut tampered = app_bundle(&n.key, "x", "1.0.0", &native_conformance(), json!({}));
     let at = tampered.len() / 2;
     tampered[at] ^= 0xff;
 

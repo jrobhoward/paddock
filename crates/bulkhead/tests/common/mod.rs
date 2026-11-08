@@ -262,6 +262,18 @@ pub fn native_sdk() -> Vec<u8> {
     native_program("bulkhead-fixture-sdk", "native", "native-sdk", &BUILT)
 }
 
+/// The conformance app as a native program: the chaos fixture's commands
+/// and pid format, on the SDK.
+pub fn native_conformance() -> Vec<u8> {
+    static BUILT: OnceLock<()> = OnceLock::new();
+    native_program(
+        "bulkhead-fixture-conformance",
+        "native",
+        "native-conformance",
+        &BUILT,
+    )
+}
+
 /// The net fixture as a native program.
 pub fn native_net() -> Vec<u8> {
     static BUILT: OnceLock<()> = OnceLock::new();
@@ -275,11 +287,24 @@ pub fn app_bundle(
     name: &str,
     version: &str,
     program: &[u8],
+    appserver: serde_json::Value,
+) -> Vec<u8> {
+    app_bundle_with(key, name, version, program, appserver, &[])
+}
+
+/// [`app_bundle`] with checksummed `files` (`priv/...`).
+pub fn app_bundle_with(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    program: &[u8],
     mut appserver: serde_json::Value,
+    files: &[(&str, &[u8])],
 ) -> Vec<u8> {
     appserver["kind"] = json!("native-process");
     appserver["native"] = json!({ "program": "executable" });
-    native_bundle(key, name, version, program, appserver)
+    let platform = Platform::current().unwrap();
+    native_bundle_files(key, name, version, &[(platform, program)], appserver, files)
 }
 
 /// A signed `.rbp` of a native-process app: `program` as the release
@@ -324,8 +349,22 @@ pub fn native_bundle_for(
     programs: &[(Platform, &[u8])],
     appserver: serde_json::Value,
 ) -> Vec<u8> {
+    native_bundle_files(key, name, version, programs, appserver, &[])
+}
+
+fn native_bundle_files(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    programs: &[(Platform, &[u8])],
+    appserver: serde_json::Value,
+    files: &[(&str, &[u8])],
+) -> Vec<u8> {
     let dir = TempDir::new().unwrap();
     let mut builder = BundleBuilder::new(Manifest::new(name, version));
+    for (path, bytes) in files {
+        builder = builder.add_checksummed_bytes(path, bytes.to_vec());
+    }
     for (platform, program) in programs {
         let lib = dir.path().join(platform.as_str()).join(name);
         std::fs::create_dir_all(lib.parent().unwrap()).unwrap();

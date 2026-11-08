@@ -3,7 +3,8 @@
 //! primary stops or its process is killed, and stays put when the old
 //! primary comes back.
 
-#![cfg(unix)]
+// Native apps run on Linux only (ROADMAP Z9d).
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -17,7 +18,7 @@ use std::time::Duration;
 use bulkhead::api::FailoverInfo;
 use bulkhead_host::transport::quic::generate_key;
 use bulkhead_host::transport::wire;
-use common::{TestNode, bundle, fast, fixture};
+use common::{TestNode, app_bundle, fast, native_conformance, native_sdk};
 
 fn free_udp() -> String {
     std::net::UdpSocket::bind("127.0.0.1:0")
@@ -44,8 +45,9 @@ fn keys(dir: &Path) -> std::path::PathBuf {
 
 fn cluster(node: u32, dir: &Path, peers: &Path, address: &str, seeds: &[&str]) -> String {
     format!(
-        "node = {node}\n[cluster]\naddress = \"{address}\"\nseeds = {seeds:?}\n\
+        "node = {node}\n[native]\nrunner = {:?}\n[cluster]\naddress = \"{address}\"\nseeds = {seeds:?}\n\
          key = {:?}\npeers = {peers:?}\nheartbeat_interval_ms = 100\nnode_timeout_ms = 1000\n",
+        common::native_fixtures().0,
         dir.join(format!("node-{node}.key"))
     )
 }
@@ -91,13 +93,12 @@ async fn singleton(node: &TestNode) -> String {
 
 async fn deploy_singleton(node: &TestNode) {
     node.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &node.key,
             "leader",
             "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
+            &native_conformance(),
             fast(serde_json::json!({ "placement": { "mode": "singleton" } })),
-            &[],
         ))
         .await
         .unwrap();
@@ -219,13 +220,12 @@ async fn failover____primary_process_killed____standby_takes_over_and_old_primar
     let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
     let pk = signer.pk.to_base64();
     let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
-    let app = bundle(
+    let app = app_bundle(
         &signer,
         "leader",
         "1.0.0",
-        &fixture("bulkhead_fixture_chaos"),
+        &native_conformance(),
         fast(serde_json::json!({ "placement": { "mode": "singleton" } })),
-        &[],
     );
     let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
     // The pair starts after the witness has given up on hearing it.
@@ -373,13 +373,12 @@ async fn switchover____on_the_primary____standby_runs_the_singleton_old_primary_
     let signer = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
     let pk = signer.pk.to_base64();
     let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
-    let app = bundle(
+    let app = app_bundle(
         &signer,
         "leader",
         "1.0.0",
-        &fixture("bulkhead_fixture_chaos"),
+        &native_conformance(),
         fast(serde_json::json!({ "placement": { "mode": "singleton" } })),
-        &[],
     );
     let mut w = Process::start(dir.path(), 3, &pk, &witness(dir.path(), &peers, &a3)).await;
     tokio::time::sleep(Duration::from_millis(1_500)).await;
@@ -466,13 +465,12 @@ async fn alone_for(arbiter: &str, node_timeout_ms: u64) -> (tempfile::TempDir, T
 fn singleton_bundle(node: &TestNode, version: &str, extra: serde_json::Value) -> Vec<u8> {
     let mut manifest = fast(extra);
     manifest["placement"] = serde_json::json!({ "mode": "singleton" });
-    bundle(
+    app_bundle(
         &node.key,
         "leader",
         version,
-        &fixture("bulkhead_fixture_chaos"),
+        &native_conformance(),
         manifest,
-        &[],
     )
 }
 
@@ -669,15 +667,15 @@ async fn gate____held_singleton_with_a_missing_dependency____deploy_and_upgrade_
 /// promotion.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gate____start_fails_at_promotion____tried_again_until_it_starts() {
-    let (_dir, mut n) = alone_for("paths", 4000).await;
+    // Long enough for both deploys, a debug program each, to come first.
+    let (_dir, mut n) = alone_for("paths", 10_000).await;
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "base",
             "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
+            &native_conformance(),
             fast(serde_json::json!({})),
-            &[],
         ))
         .await
         .unwrap();
@@ -811,14 +809,7 @@ fn replicated_singleton(signer: &minisign::KeyPair) -> Vec<u8> {
             "wasi:http/outgoing-handler": {}
         }
     }));
-    bundle(
-        signer,
-        "vault",
-        "1.0.0",
-        &fixture("bulkhead_fixture_sdk"),
-        manifest,
-        &[],
-    )
+    app_bundle(signer, "vault", "1.0.0", &native_sdk(), manifest)
 }
 
 async fn call_text(c: &bulkhead::api::Client, app: &str, body: &str) -> String {
@@ -907,7 +898,13 @@ async fn failover____singleton_with_replicated_bucket_primary_killed____new_prim
 fn moving_counter(signer: &minisign::KeyPair) -> Vec<u8> {
     let mut manifest = common::counter_manifest(None);
     manifest["placement"] = serde_json::json!({ "mode": "singleton" });
-    bundle(signer, "tally", "1.0.0", &common::counter(1), manifest, &[])
+    app_bundle(
+        signer,
+        "tally",
+        "1.0.0",
+        &common::native_counter(1),
+        manifest,
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1071,13 +1068,12 @@ fn counter_singleton(
 ) -> Vec<u8> {
     let mut manifest = common::counter_manifest(from);
     manifest["placement"] = serde_json::json!({ "mode": "singleton" });
-    bundle(
+    app_bundle(
         signer,
         "tally",
         version,
-        &common::counter(build),
+        &common::native_counter(build),
         manifest,
-        &[],
     )
 }
 
