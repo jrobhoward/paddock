@@ -14,20 +14,12 @@
 //! `trap-link:<name>` (trap exits and link to the instance registered as
 //! `<name>`; its exit adds one), `hold` (no reply until `release`) and
 //! `release`.
+//!
+//! Built for `wasm32-wasip2`, or as a native program with feature `native`.
 
-#[allow(missing_docs, clippy::too_many_arguments)]
-mod bindings {
-    wit_bindgen::generate!({
-        path: "../../wit",
-        world: "bulkhead:runtime/app@0.1.0",
-        pub_export_macro: true,
-    });
-}
+use std::time::Duration;
 
-use std::cell::RefCell;
-
-use bindings::bulkhead::runtime::process;
-use bindings::{CallRef, CallResult, Envelope, ExitReason, Guest, Info};
+use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Info, Reply};
 
 #[cfg(not(any(feature = "v2", feature = "v3")))]
 const VERSION: &str = "1.0.0";
@@ -38,93 +30,82 @@ const VERSION: &str = "3.0.0";
 
 const HISTORY: bool = cfg!(any(feature = "v2", feature = "v3"));
 
+/// The counter app.
 #[derive(Default)]
-struct State {
+struct Counter {
     count: u64,
     history: Vec<u64>,
     /// A call answered later, by `release`.
     held: Option<CallRef>,
 }
 
-thread_local! {
-    static STATE: RefCell<State> = RefCell::new(State::default());
-}
-
-/// The counter app.
-struct Counter;
-
-fn text(body: String) -> Envelope {
-    Envelope {
-        content_type: "text/plain".into(),
-        schema: None,
-        body: body.into_bytes(),
+impl Counter {
+    fn inc(&mut self) -> String {
+        self.count += 1;
+        if HISTORY {
+            self.history.push(self.count);
+            if self.history.len() > 3 {
+                self.history.remove(0);
+            }
+        }
+        self.count.to_string()
     }
-}
 
-fn inc(s: &mut State) -> String {
-    s.count += 1;
-    if HISTORY {
-        s.history.push(s.count);
-        if s.history.len() > 3 {
-            s.history.remove(0);
+    fn describe(&self) -> String {
+        if HISTORY {
+            let h: Vec<String> = self.history.iter().map(u64::to_string).collect();
+            format!("{VERSION} count={} history={}", self.count, h.join(","))
+        } else {
+            format!("{VERSION} count={}", self.count)
         }
     }
-    s.count.to_string()
 }
 
-fn describe(s: &State) -> String {
-    if HISTORY {
-        let h: Vec<String> = s.history.iter().map(u64::to_string).collect();
-        format!("{VERSION} count={} history={}", s.count, h.join(","))
-    } else {
-        format!("{VERSION} count={}", s.count)
-    }
-}
-
-impl Guest for Counter {
-    fn init(args: Vec<u8>) -> Result<(), String> {
-        let args = String::from_utf8_lossy(&args).into_owned();
+impl App for Counter {
+    fn init(ctx: &mut Ctx, args: &[u8]) -> Result<Self, String> {
+        let args = String::from_utf8_lossy(args).into_owned();
         for word in args.trim().trim_matches('"').split_whitespace() {
             if let Some(name) = word.strip_prefix("register:") {
-                process::register(name).map_err(|_| format!("cannot register {name}"))?;
+                ctx.register(name)
+                    .map_err(|_| format!("cannot register {name}"))?;
             }
         }
-        Ok(())
+        Ok(Self::default())
     }
 
-    fn handle_call(caller: CallRef, msg: Envelope) -> CallResult {
+    fn handle_call(&mut self, ctx: &mut Ctx, call: CallRef, msg: Envelope) -> Reply {
         let command = String::from_utf8_lossy(&msg.body).into_owned();
         let reply = match command.as_str() {
-            "inc" => STATE.with_borrow_mut(inc),
+            "inc" => self.inc(),
             "hold" => {
-                STATE.with_borrow_mut(|s| s.held = Some(caller));
-                return CallResult::Noreply;
+                self.held = Some(call);
+                return Reply::Later;
             }
-            "release" => match STATE.with_borrow_mut(|s| s.held.take()) {
+            "release" => match self.held.take() {
                 Some(held) => {
-                    process::reply(held, &text("released".into()));
+                    ctx.reply(held, Envelope::text("released"));
                     "ok".into()
                 }
                 None => "nothing held".into(),
             },
             other if other.starts_with("after:") => {
                 let ms = other["after:".len()..].parse().unwrap_or(0);
-                process::send_after(ms, &text("tick".into()));
+                ctx.send_after(Duration::from_millis(ms), Envelope::text("tick"));
                 "ok".into()
             }
             other if other.starts_with("trap-link:") => {
-                match process::whereis(&other["trap-link:".len()..]) {
+                match ctx.whereis(&other["trap-link:".len()..]) {
                     Some(pid) => {
-                        process::trap_exits(true);
-                        process::link(pid);
+                        ctx.trap_exits(true);
+                        ctx.link(pid);
                         "ok".into()
                     }
                     None => "no such name".into(),
                 }
             }
-            "get" => STATE.with_borrow(describe),
+            "get" => self.describe(),
             "self" => {
-                let p = process::self_();
+                let p = ctx.pid();
                 format!(
                     "{}.{}.{}@{}",
                     p.node,
@@ -136,54 +117,51 @@ impl Guest for Counter {
             "trap" => panic!("asked to trap"),
             other => format!("unknown command '{other}'"),
         };
-        CallResult::Reply(text(reply))
+        Reply::Now(Envelope::text(reply))
     }
 
-    fn handle_cast(msg: Envelope) {
+    fn handle_cast(&mut self, _ctx: &mut Ctx, msg: Envelope) {
         if msg.body == b"inc" {
-            STATE.with_borrow_mut(inc);
+            self.inc();
         }
     }
 
-    fn handle_info(msg: Info) {
-        if matches!(msg, Info::Timer(_) | Info::Exit(_)) {
-            STATE.with_borrow_mut(inc);
+    fn handle_info(&mut self, _ctx: &mut Ctx, info: Info) {
+        if matches!(info, Info::Timer { .. } | Info::Exit { .. }) {
+            self.inc();
         }
     }
-    fn terminate(_reason: ExitReason) {}
 
-    fn save_snapshot() -> Vec<u8> {
-        STATE.with_borrow(|s| {
-            if HISTORY {
-                let h: Vec<String> = s.history.iter().map(u64::to_string).collect();
-                format!("{};{}", s.count, h.join(","))
-            } else {
-                s.count.to_string()
-            }
-            .into_bytes()
-        })
+    fn save_snapshot(&self) -> Result<Vec<u8>, String> {
+        Ok(if HISTORY {
+            let h: Vec<String> = self.history.iter().map(u64::to_string).collect();
+            format!("{};{}", self.count, h.join(","))
+        } else {
+            self.count.to_string()
+        }
+        .into_bytes())
     }
 
-    fn load_snapshot(from_version: String, snapshot: Vec<u8>) -> Result<(), String> {
+    fn load_snapshot(_ctx: &mut Ctx, from_version: &str, snapshot: &[u8]) -> Result<Self, String> {
         if cfg!(feature = "v3") {
             return Err(format!("v3 cannot read snapshots from {from_version}"));
         }
-        let text = String::from_utf8(snapshot).map_err(|e| e.to_string())?;
+        let text = String::from_utf8(snapshot.to_vec()).map_err(|e| e.to_string())?;
         let (count, history) = text.split_once(';').unwrap_or((&text, ""));
         let count: u64 = count
             .parse()
             .map_err(|_| format!("bad count in '{text}'"))?;
-        let history: Vec<u64> = if HISTORY {
+        let history = if HISTORY {
             history.split(',').filter_map(|h| h.parse().ok()).collect()
         } else {
             Vec::new()
         };
-        STATE.with_borrow_mut(|s| {
-            s.count = count;
-            s.history = history;
-        });
-        Ok(())
+        Ok(Self {
+            count,
+            history,
+            ..Self::default()
+        })
     }
 }
 
-bindings::export!(Counter with_types_in bindings);
+bulkhead_sdk::app!(Counter);

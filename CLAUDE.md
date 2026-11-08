@@ -234,8 +234,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   built natively into `target/fixtures/native` by the tests that use them.
   The plugin's `[package.metadata.bulkhead] native-library = true` keeps
   `scripts/check.sh guests` from building it for wasm32.
-- `crates/bulkhead-fixture-counter`: a stateful counter built three ways by
-  feature (v1, v2, a broken v3) for upgrade and passivation tests
+- `crates/bulkhead-fixture-counter`: a stateful counter on the SDK, built
+  three ways by feature (v1, v2, a broken v3), as a component or with
+  feature `native` as a program, for upgrade and passivation tests
   (`tests/passivation.rs`, `examples/passivation_cost.rs`); each version
   builds into its own target directory.
 - `crates/bulkhead-fixture-echo`: the smallest app implementing the `app`

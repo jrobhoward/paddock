@@ -1,8 +1,11 @@
 //! A node end to end through its admin API: deploy, status, kill, upgrade,
 //! rollback, stop/start/remove, restart restore, refusals, logs and the
-//! audit log. The Phase 1 exit criteria are in `exit_criteria.rs`.
+//! audit log. The Phase 1 exit criteria are in `exit_criteria.rs`. The
+//! apps are native programs (ROADMAP Z9d), but for a component's compile
+//! cache.
 
-#![cfg(unix)]
+// Native apps run on Linux only.
+#![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -13,26 +16,26 @@ use std::time::Duration;
 
 use bulkhead::api::RolloutParams;
 use common::{
-    TestNode, bundle, call, counter, counter_manifest, fast, fixture, kind, services_manifest,
+    TestNode, app_bundle, bundle, call, counter_manifest, fast, fixture, kind, native_app,
+    native_counter, native_net, native_sdk, services_manifest,
 };
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deploy____signed_bundle____running_listed_and_callable() {
-    let mut n = TestNode::start("").await;
-    let b = bundle(
+    let mut n = TestNode::start_native("").await;
+    let b = app_bundle(
         &n.key,
         "echoer",
         "1.0.0",
-        &fixture("bulkhead_fixture_chaos"),
+        &native_app(),
         fast(json!({ "instances": { "count": 2 } })),
-        &[],
     );
 
     let deployed = n.client.deploy(b).await.unwrap();
     let list = n.client.list().await.unwrap();
     let ps = n.client.ps().await.unwrap();
-    let reply = call(&n, "echoer", "echo:hello").await;
+    let reply = call(&n, "echoer", "echo hello").await;
 
     assert_eq!(deployed.app.status, "running");
     assert_eq!(list.len(), 1);
@@ -57,15 +60,14 @@ async fn deploy____signed_bundle____running_listed_and_callable() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn kill____instance____restarted_with_next_incarnation() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "victim",
             "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
+            &native_app(),
             fast(json!({})),
-            &[],
         ))
         .await
         .unwrap();
@@ -106,27 +108,26 @@ async fn config_and_logs____node_and_app_both_set____node_values_win_and_records
     let policy_dir = tempfile::tempdir().unwrap();
     let policy = policy_dir.path().join("policy.toml");
     std::fs::write(&policy, "[apps.svclog]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:keyvalue\", \"wasi:filesystem\"]\n").unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {:?}\n[volumes]\nscratch = {:?}\n[config.svclog]\nmode = \"from-node\"\n",
         policy,
         scratch.path()
     ))
     .await;
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "svclog",
             "1.0.0",
-            &fixture("bulkhead_fixture_services"),
+            &native_app(),
             services_manifest(),
-            &[],
         ))
         .await
         .unwrap();
 
     let all = call(&n, "svclog", "config-all").await;
-    call(&n, "svclog", "log:warn:disk almost full").await;
-    call(&n, "svclog", "print:to stdout").await;
+    call(&n, "svclog", "log-at warn disk almost full").await;
+    call(&n, "svclog", "print to stdout").await;
     let mut lines = Vec::new();
     for _ in 0..100 {
         lines = n.client.logs("svclog", 10).await.unwrap();
@@ -136,14 +137,15 @@ async fn config_and_logs____node_and_app_both_set____node_values_win_and_records
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    assert_eq!(all, "greeting=hello;mode=from-node");
+    assert_eq!(all, "greeting=hello,mode=from-node");
     let messages: Vec<(&str, &str)> = lines
         .iter()
         .map(|l| (l.source.as_str(), l.message.as_str()))
         .collect();
     assert_eq!(
         messages,
-        vec![("fixture", "disk almost full"), ("stdout", "to stdout")]
+        // A native record has no context, and its streams share one pipe.
+        vec![("", "disk almost full"), ("stderr", "to stdout")]
     );
     assert_eq!(lines[0].level, "WARN");
 
@@ -151,9 +153,9 @@ async fn config_and_logs____node_and_app_both_set____node_values_win_and_records
         .set_log_level("svclog", Some("error"))
         .await
         .unwrap();
-    call(&n, "svclog", "log:warn:hidden while capped").await;
+    call(&n, "svclog", "log-at warn hidden while capped").await;
     n.client.set_log_level("svclog", None).await.unwrap();
-    call(&n, "svclog", "log:warn:shown after reset").await;
+    call(&n, "svclog", "log-at warn shown after reset").await;
     let mut after = Vec::new();
     for _ in 0..100 {
         after = n.client.logs("svclog", 10).await.unwrap();
@@ -199,7 +201,7 @@ async fn events_and_follow____deploy_kill_and_logs____streamed_as_they_happen() 
     let policy_dir = tempfile::tempdir().unwrap();
     let policy = policy_dir.path().join("policy.toml");
     std::fs::write(&policy, "[apps.svcfollow]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:keyvalue\", \"wasi:filesystem\"]\n").unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {:?}\n[volumes]\nscratch = {:?}\n",
         policy,
         scratch.path()
@@ -208,21 +210,20 @@ async fn events_and_follow____deploy_kill_and_logs____streamed_as_they_happen() 
     let mut events = n.client.events().await.unwrap();
 
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "svcfollow",
             "1.0.0",
-            &fixture("bulkhead_fixture_services"),
+            &native_app(),
             services_manifest(),
-            &[],
         ))
         .await
         .unwrap();
     let deployed = next_event(&mut events, "audit", "deploy").await;
-    call(&n, "svcfollow", "log:warn:before the follow").await;
+    call(&n, "svcfollow", "log-at warn before the follow").await;
     let mut logs = n.client.follow_logs("svcfollow", 1).await.unwrap();
     let backlog = logs.next().await.unwrap().unwrap();
-    call(&n, "svcfollow", "log:warn:while following").await;
+    call(&n, "svcfollow", "log-at warn while following").await;
     let live = tokio::time::timeout(Duration::from_secs(10), logs.next())
         .await
         .unwrap()
@@ -263,15 +264,14 @@ async fn events_and_follow____deploy_kill_and_logs____streamed_as_they_happen() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upgrade_and_rollback____through_the_api____state_kept_and_audited() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "ctr",
             "1.0.0",
-            &counter(1),
+            &native_counter(1),
             counter_manifest(None),
-            &[],
         ))
         .await
         .unwrap();
@@ -283,13 +283,12 @@ async fn upgrade_and_rollback____through_the_api____state_kept_and_audited() {
         .client
         .upgrade(
             "ctr",
-            bundle(
+            app_bundle(
                 &n.key,
                 "ctr",
                 "2.0.0",
-                &counter(2),
+                &native_counter(2),
                 counter_manifest(Some("^1")),
-                &[],
             ),
             &RolloutParams::default(),
         )
@@ -300,13 +299,12 @@ async fn upgrade_and_rollback____through_the_api____state_kept_and_audited() {
         .client
         .upgrade(
             "ctr",
-            bundle(
+            app_bundle(
                 &n.key,
                 "ctr",
                 "3.0.0",
-                &counter(3),
+                &native_counter(3),
                 counter_manifest(Some("^2")),
-                &[],
             ),
             &RolloutParams::default(),
         )
@@ -348,28 +346,26 @@ async fn upgrade_and_rollback____through_the_api____state_kept_and_audited() {
 async fn rollback____previous_cannot_read_snapshot____refused_then_restart_discards_state() {
     // v3's load-snapshot always fails, so a snapshot rollback from v2 to v3
     // is refused.
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "rb",
             "3.0.0",
-            &counter(3),
+            &native_counter(3),
             counter_manifest(None),
-            &[],
         ))
         .await
         .unwrap();
     n.client
         .upgrade(
             "rb",
-            bundle(
+            app_bundle(
                 &n.key,
                 "rb",
                 "2.0.0",
-                &counter(2),
+                &native_counter(2),
                 counter_manifest(Some("^3")),
-                &[],
             ),
             &RolloutParams::default(),
         )
@@ -426,41 +422,38 @@ async fn rollback____previous_cannot_read_snapshot____refused_then_restart_disca
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restart____node_comes_back____running_apps_restored_stopped_ones_not() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "keep",
             "1.0.0",
-            &counter(1),
+            &native_counter(1),
             counter_manifest(None),
-            &[],
         ))
         .await
         .unwrap();
     n.client
         .upgrade(
             "keep",
-            bundle(
+            app_bundle(
                 &n.key,
                 "keep",
                 "2.0.0",
-                &counter(2),
+                &native_counter(2),
                 counter_manifest(Some("^1")),
-                &[],
             ),
             &RolloutParams::default(),
         )
         .await
         .unwrap();
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "parked",
             "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
+            &native_app(),
             fast(json!({})),
-            &[],
         ))
         .await
         .unwrap();
@@ -491,27 +484,19 @@ async fn restart____node_comes_back____running_apps_restored_stopped_ones_not() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stop_start_remove____app_with_dependents____lifecycle_and_dependency_guard_hold() {
-    let mut n = TestNode::start("").await;
-    let chaos = fixture("bulkhead_fixture_chaos");
+    let mut n = TestNode::start_native("").await;
+    let chaos = native_app();
     n.client
-        .deploy(bundle(
-            &n.key,
-            "base",
-            "1.0.0",
-            &chaos,
-            fast(json!({})),
-            &[],
-        ))
+        .deploy(app_bundle(&n.key, "base", "1.0.0", &chaos, fast(json!({}))))
         .await
         .unwrap();
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "top",
             "1.0.0",
             &chaos,
             fast(json!({ "dependencies": [{ "app": "base", "version": "^1" }] })),
-            &[],
         ))
         .await
         .unwrap();
@@ -536,20 +521,13 @@ async fn stop_start_remove____app_with_dependents____lifecycle_and_dependency_gu
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn errors____unknown_app_pid_and_route____not_found_or_invalid() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
 
     let app = n.client.status("ghost").await.unwrap_err();
     let pid = n.client.kill("not-a-pid").await.unwrap_err();
     let dead = n.client.kill("0.999.1").await.unwrap_err();
     let dup = {
-        let b = bundle(
-            &n.key,
-            "once",
-            "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
-            fast(json!({})),
-            &[],
-        );
+        let b = app_bundle(&n.key, "once", "1.0.0", &native_app(), fast(json!({})));
         n.client.deploy(b.clone()).await.unwrap();
         n.client.deploy(b).await.unwrap_err()
     };
@@ -564,7 +542,7 @@ async fn errors____unknown_app_pid_and_route____not_found_or_invalid() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admin_socket____node_starts____created_owner_only() {
     use std::os::unix::fs::PermissionsExt;
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
 
     let mode = std::fs::metadata(n.node().socket())
         .unwrap()
@@ -578,7 +556,7 @@ async fn admin_socket____node_starts____created_owner_only() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn open____data_dir_held_by_another_node____refused() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     let toml = format!("data_dir = {:?}\n", n.data());
 
     let second = bulkhead::node::Node::open(
@@ -600,29 +578,27 @@ async fn open____data_dir_held_by_another_node____refused() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn node____witness_role____deploy_refused_and_apps_on_disk_refuse_the_role() {
-    let mut w = TestNode::start("[cluster]\nrole = \"witness\"\n").await;
+    let mut w = TestNode::start_native("[cluster]\nrole = \"witness\"\n").await;
     let refused = w
         .client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &w.key,
             "echoer",
             "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
+            &native_app(),
             fast(json!({})),
-            &[],
         ))
         .await
         .unwrap_err();
     w.shutdown().await;
-    let mut m = TestNode::start("").await;
+    let mut m = TestNode::start_native("").await;
     m.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &m.key,
             "echoer",
             "1.0.0",
-            &fixture("bulkhead_fixture_chaos"),
+            &native_app(),
             fast(json!({})),
-            &[],
         ))
         .await
         .unwrap();
@@ -658,7 +634,7 @@ async fn node____witness_role____deploy_refused_and_apps_on_disk_refuse_the_role
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn node____restarted____creation_raised_on_every_start() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     let first = std::fs::read_to_string(n.data().join("creation")).unwrap();
 
     n.restart().await;
@@ -685,23 +661,15 @@ async fn shared_bucket____two_apps_through_policy____shared_read_only_and_kept_o
         "[defaults]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"board\"]\n",
     )
     .unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {policy:?}\n[volumes]\nscratch = {:?}\n\
          [buckets.board]\ndurability = \"disk\"\n[buckets.alarms]\n",
         scratch.path()
     ))
     .await;
-    let services = fixture("bulkhead_fixture_services");
-    let deploy = |name: &str, shared| {
-        bundle(
-            &n.key,
-            name,
-            "1.0.0",
-            &services,
-            shared_manifest(shared),
-            &[],
-        )
-    };
+    let services = native_app();
+    let deploy =
+        |name: &str, shared| app_bundle(&n.key, name, "1.0.0", &services, shared_manifest(shared));
     n.client
         .deploy(deploy("plc", json!({ "board": "rw" })))
         .await
@@ -717,20 +685,20 @@ async fn shared_bucket____two_apps_through_policy____shared_read_only_and_kept_o
         .await
         .unwrap_err();
 
-    call(&n, "plc", "kv-set:board:pump-1:on").await;
-    let seen = call(&n, "hmi", "kv-get:board:pump-1").await;
-    let write = call(&n, "hmi", "kv-set:board:pump-1:off").await;
-    let ungranted = call(&n, "hmi", "kv-get:alarms:a1").await;
+    call(&n, "plc", "kv set board pump-1 on").await;
+    let seen = call(&n, "hmi", "kv get board pump-1").await;
+    let write = call(&n, "hmi", "kv set board pump-1 off").await;
+    let ungranted = call(&n, "hmi", "kv get alarms a1").await;
     n.restart().await;
-    let after_restart = call(&n, "hmi", "kv-get:board:pump-1").await;
+    let after_restart = call(&n, "hmi", "kv get board pump-1").await;
 
     assert!(hmi.granted.contains(&"bucket:board".to_string()), "{hmi:?}");
     assert!(hmi.denied.contains(&"bucket:alarms".to_string()), "{hmi:?}");
     assert!(!hmi.denied.contains(&"bucket:board".to_string()), "{hmi:?}");
     assert_eq!(kind(&refused), "invalid");
     assert_eq!(seen, "on");
-    assert_eq!(write, "err:access-denied");
-    assert_eq!(ungranted, "err:access-denied");
+    assert_eq!(write, "err:AccessDenied");
+    assert_eq!(ungranted, "err:AccessDenied");
     assert_eq!(after_restart, "on");
     n.shutdown().await;
 }
@@ -746,7 +714,7 @@ async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
         "[apps.vault]\ngrant = [\"bulkhead:secrets\"]\nsecrets = [\"db\"]\n",
     )
     .unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {policy:?}\n[secrets.db]\nfile = {secret:?}\n[secrets.other]\nenv = \"BULKHEAD_UNSET_FOR_TEST\"\n"
     ))
     .await;
@@ -763,28 +731,26 @@ async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
             "wasi:http/outgoing-handler": {}
         } }))
     };
-    let sdk = fixture("bulkhead_fixture_sdk");
+    let sdk = native_sdk();
 
     let unbound = n
         .client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "vault",
             "1.0.0",
             &sdk,
             manifest(json!(["db", "nowhere"])),
-            &[],
         ))
         .await;
     let deployed = n
         .client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "vault",
             "1.0.0",
             &sdk,
             manifest(json!(["db", "other"])),
-            &[],
         ))
         .await
         .unwrap();
@@ -817,7 +783,7 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
         .local_addr()
         .unwrap()
         .port();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {policy:?}\n[metrics]\naddress = \"127.0.0.1:{port}\"\n"
     ))
     .await;
@@ -831,14 +797,7 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
         "bulkhead:metrics": { "prefix": "shop" }
     } }));
     n.client
-        .deploy(bundle(
-            &n.key,
-            "shop",
-            "1.0.0",
-            &fixture("bulkhead_fixture_sdk"),
-            manifest,
-            &[],
-        ))
+        .deploy(app_bundle(&n.key, "shop", "1.0.0", &native_sdk(), manifest))
         .await
         .unwrap();
 
@@ -875,16 +834,15 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn registered_names____listed_by_another_app____deploy_and_upgrade_refused() {
-    let n = TestNode::start("").await;
-    let chaos = fixture("bulkhead_fixture_chaos");
+    let n = TestNode::start_native("").await;
+    let chaos = native_app();
     let named = |app: &str, version: &str, names: &[&str]| {
-        bundle(
+        app_bundle(
             &n.key,
             app,
             version,
             &chaos,
             fast(json!({ "registered_names": names })),
-            &[],
         )
     };
     n.client
@@ -976,15 +934,14 @@ async fn restart____app_deployed____compiled_component_read_not_compiled_again()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn deploy____instances_that_never_passivate_past_max_instances____refused_passivating_ones_fit()
  {
-    let mut n = TestNode::start("max_processes = 64\n").await;
+    let mut n = TestNode::start_native("max_processes = 64\n").await;
     let app = |name: &str, instances: serde_json::Value| {
-        bundle(
+        app_bundle(
             &n.key,
             name,
             "1.0.0",
-            &counter(1),
+            &native_counter(1),
             fast(json!({ "instances": instances })),
-            &[],
         )
     };
     n.client
@@ -1072,7 +1029,7 @@ async fn egress____inside_and_outside_the_node_ceiling____fetches_or_refused() {
         "[apps.fetcher]\ngrant = [\"wasi:http/outgoing-handler\"]\n",
     )
     .unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {policy:?}\n[egress]\nallow = [\"http://{address}\", \"*.internal\"]\n"
     ))
     .await;
@@ -1087,28 +1044,26 @@ async fn egress____inside_and_outside_the_node_ceiling____fetches_or_refused() {
             "wasi:http/outgoing-handler": { "allow": allow }
         } }))
     };
-    let sdk = fixture("bulkhead_fixture_sdk");
+    let sdk = native_sdk();
 
     let outside = n
         .client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "fetcher",
             "1.0.0",
             &sdk,
             manifest(json!(["https://api.example.com"])),
-            &[],
         ))
         .await
         .unwrap_err();
     n.client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "fetcher",
             "1.0.0",
             &sdk,
             manifest(json!([format!("http://{address}"), "*.plant.internal"])),
-            &[],
         ))
         .await
         .unwrap();
@@ -1142,48 +1097,39 @@ async fn sockets____inside_and_outside_the_node_ceiling____connects_or_refused()
     let policy_dir = tempfile::tempdir().unwrap();
     let policy = policy_dir.path().join("policy.toml");
     std::fs::write(&policy, "[apps.mqtt]\ngrant = [\"wasi:sockets\"]\n").unwrap();
-    let mut n = TestNode::start(&format!(
+    let mut n = TestNode::start_native(&format!(
         "policy = {policy:?}\n[sockets]\nconnect = [{{ cidr = \"127.0.0.1/32\", ports = \"{}\" }}]\n",
         address.port()
     ))
     .await;
     let manifest =
         |scope: serde_json::Value| fast(json!({ "capabilities": { "wasi:sockets": scope } }));
-    let net = fixture("bulkhead_fixture_net");
+    let net = native_net();
 
     let outside = n
         .client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "mqtt",
             "1.0.0",
             &net,
             manifest(json!({ "connect": [{ "cidr": "127.0.0.0/8" }] })),
-            &[],
         ))
         .await
         .unwrap_err();
     let listen = n
         .client
-        .deploy(bundle(
+        .deploy(app_bundle(
             &n.key,
             "mqtt",
             "1.0.0",
             &net,
             manifest(json!({ "listen": true })),
-            &[],
         ))
         .await
         .unwrap_err();
     n.client
-        .deploy(bundle(
-            &n.key,
-            "mqtt",
-            "1.0.0",
-            &net,
-            manifest(json!({ "connect": [{ "cidr": "127.0.0.1/32", "ports": address.port().to_string() }] })),
-            &[],
-        ))
+        .deploy(app_bundle(&n.key, "mqtt", "1.0.0", &net, manifest(json!({ "connect": [{ "cidr": "127.0.0.1/32", "ports": address.port().to_string() }] }))))
         .await
         .unwrap();
     let id = call(&n, "mqtt", &format!("connect {address}")).await;
@@ -1213,7 +1159,7 @@ async fn sockets____inside_and_outside_the_node_ceiling____connects_or_refused()
 fn blue_green_counter(n: &TestNode, version: &str, build: u8) -> Vec<u8> {
     let mut manifest = fast(json!({ "instances": { "count": 2 } }));
     manifest["upgrade"] = json!({ "mode": "blue-green" });
-    bundle(&n.key, "bg", version, &counter(build), manifest, &[])
+    app_bundle(&n.key, "bg", version, &native_counter(build), manifest)
 }
 
 /// Of `n` calls to the app by name, how many reached 1.0.0 and 2.0.0.
@@ -1232,7 +1178,7 @@ async fn versions_reached(node: &TestNode, n: usize) -> (usize, usize) {
 /// weight, then promoted; a second one dropped by rollback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn blue_green____start_move_restart_promote_and_drop____traffic_follows_and_is_kept() {
-    let mut n = TestNode::start("").await;
+    let mut n = TestNode::start_native("").await;
     n.client
         .deploy(blue_green_counter(&n, "1.0.0", 1))
         .await
@@ -1315,7 +1261,7 @@ async fn blue_green____start_move_restart_promote_and_drop____traffic_follows_an
 /// one upgrade.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn blue_green____steps_to_full____promoted_in_one_upgrade() {
-    let n = TestNode::start("").await;
+    let n = TestNode::start_native("").await;
     n.client
         .deploy(blue_green_counter(&n, "1.0.0", 1))
         .await
@@ -1348,7 +1294,7 @@ async fn blue_green____steps_to_full____promoted_in_one_upgrade() {
 /// one is kept.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn blue_green____new_version_gives_up_mid_step____dropped_and_refused() {
-    let n = TestNode::start("").await;
+    let n = TestNode::start_native("").await;
     n.client
         .deploy(blue_green_counter(&n, "1.0.0", 1))
         .await
@@ -1356,7 +1302,7 @@ async fn blue_green____new_version_gives_up_mid_step____dropped_and_refused() {
     let mut fragile =
         fast(json!({ "instances": { "count": 2 }, "supervision": { "intensity": 0 } }));
     fragile["upgrade"] = json!({ "mode": "blue-green" });
-    let v2 = bundle(&n.key, "bg", "2.0.0", &counter(2), fragile, &[]);
+    let v2 = app_bundle(&n.key, "bg", "2.0.0", &native_counter(2), fragile);
     let client = n.client.clone();
     let upgrade = tokio::spawn(async move {
         client

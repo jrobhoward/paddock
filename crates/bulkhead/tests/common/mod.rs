@@ -216,6 +216,72 @@ pub fn native_fixtures() -> &'static (PathBuf, PathBuf) {
     })
 }
 
+/// A fixture crate's program, built natively with `features` on first use
+/// by each test binary, into `target/fixtures/<dir>`.
+fn native_program(package: &str, features: &str, dir: &str, once: &OnceLock<()>) -> Vec<u8> {
+    let target = workspace_root().join("target/fixtures").join(dir);
+    once.get_or_init(|| {
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let status = Command::new(cargo)
+            .current_dir(workspace_root())
+            .args(["build", "-p", package, "--features", features, "--bin"])
+            .arg(package)
+            .arg("--target-dir")
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success(), "building {package} natively failed");
+    });
+    std::fs::read(target.join("debug").join(package)).unwrap()
+}
+
+/// The native fixture executable (`bulkhead-fixture-native`).
+pub fn native_app() -> Vec<u8> {
+    std::fs::read(&native_fixtures().1).unwrap()
+}
+
+/// The counter fixture at `version` (1, 2 or 3) as a native program.
+pub fn native_counter(version: u8) -> Vec<u8> {
+    static BUILT: [OnceLock<()>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let features = if version > 1 {
+        format!("native,v{version}")
+    } else {
+        "native".to_string()
+    };
+    native_program(
+        "bulkhead-fixture-counter",
+        &features,
+        &format!("native-counter-v{version}"),
+        &BUILT[usize::from(version - 1)],
+    )
+}
+
+/// The SDK fixture as a native program.
+pub fn native_sdk() -> Vec<u8> {
+    static BUILT: OnceLock<()> = OnceLock::new();
+    native_program("bulkhead-fixture-sdk", "native", "native-sdk", &BUILT)
+}
+
+/// The net fixture as a native program.
+pub fn native_net() -> Vec<u8> {
+    static BUILT: OnceLock<()> = OnceLock::new();
+    native_program("bulkhead-fixture-net", "native", "native-net", &BUILT)
+}
+
+/// A signed `.rbp` running `program` as a native-process app under
+/// `appserver`, which need not say so.
+pub fn app_bundle(
+    key: &KeyPair,
+    name: &str,
+    version: &str,
+    program: &[u8],
+    mut appserver: serde_json::Value,
+) -> Vec<u8> {
+    appserver["kind"] = json!("native-process");
+    appserver["native"] = json!({ "program": "executable" });
+    native_bundle(key, name, version, program, appserver)
+}
+
 /// A signed `.rbp` of a native-process app: `program` as the release
 /// variant for this machine's platform, and `appserver`.
 pub fn native_bundle(
@@ -299,6 +365,16 @@ pub struct TestNode {
 }
 
 impl TestNode {
+    /// [`TestNode::start`] with the test-built `bulkhead-runner`, for
+    /// native apps.
+    pub async fn start_native(extra: &str) -> Self {
+        Self::start(&format!(
+            "{extra}\n[native]\nrunner = {:?}\n",
+            native_fixtures().0
+        ))
+        .await
+    }
+
     /// A node trusting a fresh key, with `extra` TOML appended to its
     /// config (policy path, volumes, config overrides).
     pub async fn start(extra: &str) -> Self {
