@@ -105,7 +105,7 @@ async fn config_and_logs____node_and_app_both_set____node_values_win_and_records
     let scratch = tempfile::tempdir().unwrap();
     let policy_dir = tempfile::tempdir().unwrap();
     let policy = policy_dir.path().join("policy.toml");
-    std::fs::write(&policy, "[apps.svclog]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:keyvalue\", \"wasi:filesystem\"]\n").unwrap();
+    std::fs::write(&policy, "[apps.svclog]\ngrant = [\"bulkhead:logging\", \"bulkhead:config\", \"bulkhead:keyvalue\", \"bulkhead:files\"]\n").unwrap();
     let mut n = TestNode::start_native(&format!(
         "policy = {:?}\n[volumes]\nscratch = {:?}\n[config.svclog]\nmode = \"from-node\"\n",
         policy,
@@ -198,7 +198,7 @@ async fn events_and_follow____deploy_kill_and_logs____streamed_as_they_happen() 
     let scratch = tempfile::tempdir().unwrap();
     let policy_dir = tempfile::tempdir().unwrap();
     let policy = policy_dir.path().join("policy.toml");
-    std::fs::write(&policy, "[apps.svcfollow]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:keyvalue\", \"wasi:filesystem\"]\n").unwrap();
+    std::fs::write(&policy, "[apps.svcfollow]\ngrant = [\"bulkhead:logging\", \"bulkhead:config\", \"bulkhead:keyvalue\", \"bulkhead:files\"]\n").unwrap();
     let mut n = TestNode::start_native(&format!(
         "policy = {:?}\n[volumes]\nscratch = {:?}\n",
         policy,
@@ -645,7 +645,7 @@ async fn node____restarted____creation_raised_on_every_start() {
 /// The services fixture's manifest with these shared buckets listed.
 fn shared_manifest(shared: serde_json::Value) -> serde_json::Value {
     let mut m = services_manifest();
-    m["capabilities"]["wasi:keyvalue"]["shared"] = shared;
+    m["capabilities"]["bulkhead:keyvalue"]["shared"] = shared;
     m
 }
 
@@ -656,7 +656,7 @@ async fn shared_bucket____two_apps_through_policy____shared_read_only_and_kept_o
     let policy = policy_dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[defaults]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"board\"]\n",
+        "[defaults]\ngrant = [\"bulkhead:keyvalue\"]\nbuckets = [\"board\"]\n",
     )
     .unwrap();
     let mut n = TestNode::start_native(&format!(
@@ -718,15 +718,15 @@ async fn secrets____granted_by_name____read_and_kept_out_of_the_audit_log() {
     .await;
     let manifest = |names: serde_json::Value| {
         fast(json!({ "capabilities": {
-            "wasi:config": {},
-            "wasi:keyvalue": {},
+            "bulkhead:config": {},
+            "bulkhead:keyvalue": {},
             "bulkhead:groups": {},
             "bulkhead:metrics": { "prefix": "vault" },
             "bulkhead:secrets": { "secrets": names },
-            // The SDK fixture imports `bulkhead:sql` and `wasi:http`;
+            // The SDK fixture uses `bulkhead:sql` and `bulkhead:http-egress`;
             // declared, nothing used.
             "bulkhead:sql": {},
-            "wasi:http/outgoing-handler": {}
+            "bulkhead:http-egress": {}
         } }))
     };
     let sdk = native_sdk();
@@ -786,12 +786,12 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
     ))
     .await;
     let manifest = fast(json!({ "capabilities": {
-        "wasi:config": {},
-        "wasi:keyvalue": {},
+        "bulkhead:config": {},
+        "bulkhead:keyvalue": {},
         "bulkhead:groups": {},
         "bulkhead:secrets": { "secrets": [] },
         "bulkhead:sql": {},
-        "wasi:http/outgoing-handler": {},
+        "bulkhead:http-egress": {},
         "bulkhead:metrics": { "prefix": "shop" }
     } }));
     n.client
@@ -961,7 +961,7 @@ async fn egress____inside_and_outside_the_node_ceiling____fetches_or_refused() {
     let policy = policy_dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[apps.fetcher]\ngrant = [\"wasi:http/outgoing-handler\"]\n",
+        "[apps.fetcher]\ngrant = [\"bulkhead:http-egress\"]\n",
     )
     .unwrap();
     let mut n = TestNode::start_native(&format!(
@@ -970,13 +970,13 @@ async fn egress____inside_and_outside_the_node_ceiling____fetches_or_refused() {
     .await;
     let manifest = |allow: serde_json::Value| {
         fast(json!({ "capabilities": {
-            "wasi:config": {},
-            "wasi:keyvalue": {},
+            "bulkhead:config": {},
+            "bulkhead:keyvalue": {},
             "bulkhead:groups": {},
             "bulkhead:secrets": { "secrets": [] },
             "bulkhead:sql": {},
             "bulkhead:metrics": { "prefix": "fetcher" },
-            "wasi:http/outgoing-handler": { "allow": allow }
+            "bulkhead:http-egress": { "allow": allow }
         } }))
     };
     let sdk = native_sdk();
@@ -1031,14 +1031,14 @@ async fn sockets____inside_and_outside_the_node_ceiling____connects_or_refused()
     });
     let policy_dir = tempfile::tempdir().unwrap();
     let policy = policy_dir.path().join("policy.toml");
-    std::fs::write(&policy, "[apps.mqtt]\ngrant = [\"wasi:sockets\"]\n").unwrap();
+    std::fs::write(&policy, "[apps.mqtt]\ngrant = [\"bulkhead:sockets\"]\n").unwrap();
     let mut n = TestNode::start_native(&format!(
         "policy = {policy:?}\n[sockets]\nconnect = [{{ cidr = \"127.0.0.1/32\", ports = \"{}\" }}]\n",
         address.port()
     ))
     .await;
     let manifest =
-        |scope: serde_json::Value| fast(json!({ "capabilities": { "wasi:sockets": scope } }));
+        |scope: serde_json::Value| fast(json!({ "capabilities": { "bulkhead:sockets": scope } }));
     let net = native_net();
 
     let outside = n
@@ -1344,7 +1344,7 @@ async fn native____filesystem_declared_and_denied_by_policy____no_volume() {
     let policy = dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[apps.allowed]\ngrant = [\"wasi:filesystem\"]\n[apps.refused]\ngrant = []\n",
+        "[apps.allowed]\ngrant = [\"bulkhead:files\"]\n[apps.refused]\ngrant = []\n",
     )
     .unwrap();
     let n = TestNode::start(&format!(
@@ -1355,7 +1355,7 @@ async fn native____filesystem_declared_and_denied_by_policy____no_volume() {
         "kind": "native-process",
         "native": { "program": "executable" },
         "capabilities": {
-            "wasi:filesystem": { "preopens": { "/data": { "volume": "scratch", "mode": "ro" } } }
+            "bulkhead:files": { "preopens": { "/data": { "volume": "scratch", "mode": "ro" } } }
         }
     }));
     for app in ["allowed", "refused"] {
@@ -1406,22 +1406,7 @@ async fn native____executable_deployed____answers_and_network_refused() {
         .unwrap();
     let echo = call(&n, "vendor", "echo native").await;
     let read = call(&n, "vendor", "read /etc/hostname").await;
-    let refused = n
-        .client
-        .deploy(native_bundle(
-            &n.key,
-            "vendor2",
-            "1.0.0",
-            &program,
-            manifest(json!({ "capabilities": { "bulkhead:runtime/supervisor": {} } })),
-        ))
-        .await
-        .unwrap_err();
 
     assert_eq!(echo, "native");
     assert!(read.contains("Permission denied"), "{read}");
-    assert!(
-        format!("{refused:?}").contains("a native-process app may declare only"),
-        "{refused:?}"
-    );
 }

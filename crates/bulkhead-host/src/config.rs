@@ -239,7 +239,7 @@ pub struct RuntimeConfig {
     pub datasources: BTreeMap<String, SqlDatasource>,
     /// HTTP egress for every app.
     pub egress: Egress,
-    /// Most log records per second per app, `wasi:logging` records and
+    /// Most log records per second per app, `bulkhead:logging` records and
     /// captured stdout and stderr lines together; an app's own
     /// `rate_limit_per_sec` can only lower it. 0 for no ceiling.
     pub log_records_per_sec: u32,
@@ -298,7 +298,7 @@ impl Default for NativeConfig {
     }
 }
 
-/// HTTP egress (`wasi:http/outgoing-handler`): what every
+/// HTTP egress (`bulkhead:http-egress`): what every
 /// app's outgoing requests share. Each app may reach only what its
 /// manifest's `allow` lists, within [`Egress::allow`].
 #[derive(Debug, Clone, PartialEq, Eq)]

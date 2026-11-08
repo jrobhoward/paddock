@@ -1,6 +1,6 @@
-//! The app's configuration, through `wasi:config` (cargo feature `config`).
+//! The app's configuration, through `bulkhead:config` (cargo feature `config`).
 //!
-//! Declare the `wasi:config` capability in the manifest. Values are the
+//! Declare the `bulkhead:config` capability in the manifest. Values are the
 //! manifest's `config.defaults`, overridden by the node's `[config.<app>]`;
 //! they are read-only and fixed for the instance's life.
 //!
@@ -17,7 +17,7 @@ use bulkhead_native::protocol as p;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConfigError {
-    /// The operator did not grant `wasi:config`.
+    /// The operator did not grant `bulkhead:config`.
     Denied,
     /// Reading it failed.
     Io(String),

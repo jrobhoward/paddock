@@ -158,7 +158,7 @@ pub struct HttpRoute {
 }
 
 impl HttpRoute {
-    /// The routes a manifest's `wasi:http/incoming-handler` scope declares
+    /// The routes a manifest's `bulkhead:http-routes` scope declares
     /// (none if it declares no scope).
     #[must_use]
     pub fn from_manifest(manifest: &AppManifest) -> Vec<Self> {

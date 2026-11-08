@@ -32,24 +32,24 @@
 //! (WRITING_APPS.md). Bundle it with `bulkhead bundle`.
 //!
 //! Host services, each needing its capability in the manifest:
-//! - [`log`] and its macros (`info!` and friends): `wasi:logging`, always
+//! - [`log`] and its macros (`info!` and friends): `bulkhead:logging`, always
 //!   available.
 //! - [`batch`]: many small updates in one message, and reading them back.
-//! - [`files`]: the paths of preopened files (`wasi:filesystem`).
+//! - [`files`]: the paths of preopened files (`bulkhead:files`).
 //! - [`extension`]: calls to extensions, the host services a node is built
 //!   with from outside Bulkhead.
-//! - `config` (cargo feature `config`): `wasi:config`.
-//! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
+//! - `config` (cargo feature `config`): `bulkhead:config`.
+//! - `kv` (cargo feature `keyvalue`): `bulkhead:keyvalue` buckets.
 //! - `groups` (cargo feature `groups`): `bulkhead:groups`, process groups
 //!   on this node with publish.
 //! - `http` (cargo feature `http`): requests from the node's HTTP ingress,
 //!   delivered as calls, and the responses to them.
 //! - `http_client` (cargo feature `http-client`): requests from the app
-//!   to hosts its manifest allows (`wasi:http/outgoing-handler`).
+//!   to hosts its manifest allows (`bulkhead:http-egress`).
 //! - `metrics` (cargo feature `metrics`): `bulkhead:metrics`, counters,
 //!   gauges and histograms the node exports.
 //! - `net` (cargo feature `net`): TCP to and from addresses the manifest
-//!   allows (`wasi:sockets`), with readiness delivered as host events
+//!   allows (`bulkhead:sockets`), with readiness delivered as host events
 //!   (`bulkhead:io`).
 //! - `secrets` (cargo feature `secrets`): `bulkhead:secrets`, values the
 //!   operator binds on the node.

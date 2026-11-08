@@ -81,9 +81,9 @@ fn from_manifest____no_start_args____empty_init_args() {
 fn from_manifest____capabilities____granted_buckets_logging_and_config() {
     let m = manifest(serde_json::json!({
         "capabilities": {
-            "wasi:logging": { "max_level": "warn", "rate_limit_per_sec": 50 },
-            "wasi:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1MiB" } } },
-            "wasi:config": {}
+            "bulkhead:logging": { "max_level": "warn", "rate_limit_per_sec": 50 },
+            "bulkhead:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1MiB" } } },
+            "bulkhead:config": {}
         },
         "config": { "defaults": { "mode": "fast" } }
     }));
@@ -110,8 +110,9 @@ fn from_manifest____capabilities____granted_buckets_logging_and_config() {
 
 #[test]
 fn with_granted____operator_grants_less____narrows() {
-    let m =
-        manifest(serde_json::json!({ "capabilities": { "wasi:logging": {}, "wasi:config": {} } }));
+    let m = manifest(
+        serde_json::json!({ "capabilities": { "bulkhead:logging": {}, "bulkhead:config": {} } }),
+    );
 
     let spec = InstanceSpec::from_manifest(&m).with_granted(&BTreeSet::from([Capability::Config]));
 
@@ -128,7 +129,7 @@ fn new____defaults____nothing_granted() {
 
 fn fs_manifest() -> AppManifest {
     manifest(serde_json::json!({
-        "capabilities": { "wasi:filesystem": { "preopens": {
+        "capabilities": { "bulkhead:files": { "preopens": {
             "/data": { "volume": "orders-data", "mode": "rw" },
             "/ref": { "volume": "reference" }
         } } }
@@ -182,7 +183,7 @@ fn resolve_preopens____unknown_volume____error_names_it() {
 #[test]
 fn resolve_preopens____manifest_claims_priv____error() {
     let m = manifest(serde_json::json!({
-        "capabilities": { "wasi:filesystem": { "preopens": { "/priv": { "volume": "x" } } } }
+        "capabilities": { "bulkhead:files": { "preopens": { "/priv": { "volume": "x" } } } }
     }));
     let mut spec = InstanceSpec::from_manifest(&m);
 

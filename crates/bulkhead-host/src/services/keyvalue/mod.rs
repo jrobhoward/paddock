@@ -1,4 +1,4 @@
-//! `wasi:keyvalue` (`store`, `atomics`, `batch`): term storage in host-owned
+//! `bulkhead:keyvalue` (`store`, `atomics`, `batch`): term storage in host-owned
 //! buckets (the private `storage` module has the storage rules), and
 //! `bulkhead:watch`: revisioned reads, compare-and-swap and change watches on
 //! the same buckets (the private `watches` module has the delivery rules).
@@ -12,7 +12,7 @@
 //! `no-such-store`. Every operation runs
 //! in the shared store and its time counts as host time, not against the
 //! callback deadline. Bulkhead's own host on the vendored
-//! `wasi:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (spike S7).
+//! `bulkhead:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (spike S7).
 
 mod native;
 pub(crate) mod publish;

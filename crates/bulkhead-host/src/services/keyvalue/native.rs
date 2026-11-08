@@ -1,5 +1,5 @@
 //! Keyvalue for native-process apps: each [`KvRequest`] from the app's
-//! protocol, answered with the functions a component's `wasi:keyvalue`
+//! protocol, answered with the functions a component's `bulkhead:keyvalue`
 //! and `bulkhead:watch` imports run too (ROADMAP Z9b), on the same terms (the manifest's
 //! buckets, the grant, read-only shared buckets, quotas, watch limits).
 //! A watch notice is delivered with the key's value and revision, read

@@ -80,8 +80,8 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `bulkhead_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no Store, state in a snapshot. |
 | `bulkhead_passivations_total` | counter | | Instances passivated. |
 | `bulkhead_wake_seconds` | histogram | | Time to wake a passivated instance: a new process and `load-snapshot` (10 µs to 1 s buckets). |
-| `bulkhead_egress_requests_total` | counter | `outcome` (`sent`: a response came; `denied`; `limited`: over `max_concurrent`; `failed`: connection, TLS or timeout) | Outgoing HTTP requests (`wasi:http/outgoing-handler`); listed once an app has made one. |
-| `bulkhead_sockets_open` | gauge | | Sockets the app's instances hold open (`wasi:sockets`), TCP and UDP, accepted ones included; listed once an app has opened or been refused one. |
+| `bulkhead_egress_requests_total` | counter | `outcome` (`sent`: a response came; `denied`; `limited`: over `max_concurrent`; `failed`: connection, TLS or timeout) | Outgoing HTTP requests (`bulkhead:http-egress`); listed once an app has made one. |
+| `bulkhead_sockets_open` | gauge | | Sockets the app's instances hold open (`bulkhead:sockets`), TCP and UDP, accepted ones included; listed once an app has opened or been refused one. |
 | `bulkhead_sockets_refused_total` | counter | | Socket addresses the app's policy refused (bind, listen, connect, send, receive) and sockets refused over `max_sockets`. |
 
 With an HTTP ingress, also (no labels): `bulkhead_http_requests_total`, `bulkhead_http_server_errors_total`, `bulkhead_http_not_found_total`, `bulkhead_http_redirected_total` and `bulkhead_http_forwarded_total` (requests a standby redirected or forwarded to its failover partner), ran out of time or set no response), `bulkhead_http_refused_connections_total`.

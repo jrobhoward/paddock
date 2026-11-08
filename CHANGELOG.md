@@ -8,11 +8,18 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Capability keys, in manifests and operator policies, are `bulkhead:`
+  names (ROADMAP Z9g): `bulkhead:logging`, `bulkhead:config`,
+  `bulkhead:keyvalue`, `bulkhead:files`, `bulkhead:http-routes`,
+  `bulkhead:http-egress` and `bulkhead:sockets` replace the `wasi:` keys.
+  The old keys are unknown keys. Extensions may use the `wasi` namespace.
 - `limits.memory_max` is no longer capped at 4 GiB, a limit that came from
   wasm32's address space.
 
 ### Removed
 
+- The capabilities `bulkhead:runtime/supervisor` and `bulkhead:admin`,
+  which were never enforced.
 - WebAssembly components from bundles, the SDK and the examples (ROADMAP
   Z9f). `bulkhead bundle` takes a program, has no `--skip-import-check`,
   and a bundle holding a component is refused saying so. A manifest needs

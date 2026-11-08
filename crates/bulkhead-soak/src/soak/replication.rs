@@ -108,7 +108,9 @@ pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
         }],
         pair_config: [bucket.clone(), bucket],
         failover_config: String::new(),
-        policy: Some("[apps.ledger]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"ledger\"]\n".into()),
+        policy: Some(
+            "[apps.ledger]\ngrant = [\"bulkhead:keyvalue\"]\nbuckets = [\"ledger\"]\n".into(),
+        ),
     };
     let deadline = Instant::now() + Duration::from_secs_f64(args.minutes * 60.0);
     let mut rng = Rng::new(args.seed);

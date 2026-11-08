@@ -31,7 +31,7 @@ pub fn appserver() -> serde_json::Value {
     json!({
         "registered_names": ["orders"],
         "limits": { "memory_max": "32MiB" },
-        "capabilities": { "wasi:keyvalue": { "buckets": { "orders": { "durability": "disk" } } } }
+        "capabilities": { "bulkhead:keyvalue": { "buckets": { "orders": { "durability": "disk" } } } }
     })
 }
 

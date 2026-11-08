@@ -19,7 +19,7 @@
 //! let spec = AppSpec::from_json_str(r#"{
 //!     "registered_names": ["orders"],
 //!     "limits": { "memory_max": "64MiB", "callback_deadline_ms": 2000 },
-//!     "capabilities": { "wasi:logging": { "max_level": "info" } }
+//!     "capabilities": { "bulkhead:logging": { "max_level": "info" } }
 //! }"#)?;
 //! assert_eq!(spec.limits.memory_max.bytes(), 64 * 1024 * 1024);
 //! # Ok::<(), bulkhead_bundle::manifest::ManifestError>(())
@@ -36,11 +36,10 @@ mod validate;
 
 pub use bytesize::{ByteSize, ParseByteSizeError};
 pub use capabilities::{
-    AccessMode, AdminAccess, AdminScope, Bucket, Capabilities, Capability, ConfigScope,
-    DEFAULT_MAX_SOCKETS, Datasource, Durability, FilesystemScope, GroupsScope, HttpIncomingScope,
-    HttpOutgoingScope, InterfaceName, KeyValueScope, LoggingScope, MetricsScope, PortRange,
-    Preopen, RESERVED_NAMESPACES, Route, SecretsScope, SocketRule, SocketsScope, SqlScope,
-    SupervisorScope, cidr_contains, is_extension_key, parse_cidr,
+    AccessMode, Bucket, Capabilities, Capability, ConfigScope, DEFAULT_MAX_SOCKETS, Datasource,
+    Durability, FilesystemScope, GroupsScope, HttpIncomingScope, HttpOutgoingScope, InterfaceName,
+    KeyValueScope, LoggingScope, MetricsScope, PortRange, Preopen, RESERVED_NAMESPACES, Route,
+    SecretsScope, SocketRule, SocketsScope, SqlScope, cidr_contains, is_extension_key, parse_cidr,
 };
 pub use error::{ManifestError, ValidationError};
 pub use lifecycle::{
@@ -60,22 +59,6 @@ use validate::Validator;
 
 /// Name of the `.rbp` manifest extension that holds the [`AppSpec`].
 pub const SECTION: &str = "appserver";
-
-/// The capabilities a `native-process` app may declare: the services the
-/// node answers over the native protocol.
-pub const NATIVE_CAPABILITIES: &[Capability] = &[
-    Capability::Logging,
-    Capability::KeyValue,
-    Capability::Groups,
-    Capability::Config,
-    Capability::Secrets,
-    Capability::Metrics,
-    Capability::HttpIncoming,
-    Capability::Filesystem,
-    Capability::Sql,
-    Capability::Sockets,
-    Capability::HttpOutgoing,
-];
 
 /// The `appserver` section of a bundle manifest: everything the server needs
 /// to place, limit, wire and upgrade an app. Every section is optional and
@@ -233,11 +216,9 @@ impl AppSpec {
         }
     }
 
-    /// What a `native-process` app may not have: any capability outside
-    /// [`NATIVE_CAPABILITIES`] (extensions it may declare: native apps
-    /// call them through the protocol, ROADMAP Z8h); for a rustbridge plugin, which takes no
-    /// snapshot and no connection, passivation, snapshot upgrades and
-    /// listeners too; and the `native` section on any other kind.
+    /// What a `native-process` app may not have: for a rustbridge plugin,
+    /// which takes no snapshot and no connection, passivation, snapshot
+    /// upgrades and listeners; and the `native` section on any other kind.
     fn check_native(&self, v: &mut Validator) {
         if self.kind != Kind::NativeProcess {
             v.error_at(
@@ -246,19 +227,6 @@ impl AppSpec {
                  (kind = \"native-process\", the default)",
             );
             return;
-        }
-        let only = format!(
-            "a native-process app may declare only {}",
-            NATIVE_CAPABILITIES
-                .iter()
-                .map(|c| c.key())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        for c in self.capabilities.declared() {
-            if !NATIVE_CAPABILITIES.contains(&c) {
-                v.error_at(format!("capabilities.{}", c.key()), only.clone());
-            }
         }
         let executable = self.native.unwrap_or_default().program == NativeProgram::Executable;
         if !self.listeners.is_empty() {

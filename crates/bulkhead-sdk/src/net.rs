@@ -1,4 +1,4 @@
-//! TCP from apps (`wasi:sockets`), with readiness as messages
+//! TCP from apps (`bulkhead:sockets`), with readiness as messages
 //! (`bulkhead:io`), as Erlang's `{active, once}`.
 //!
 //! An instance never blocks waiting for a peer between callbacks: it asks
@@ -12,7 +12,7 @@
 //! itself; reading and writing are the app's own system calls, counted
 //! against the callback deadline as its code is.
 //!
-//! The manifest declares `wasi:sockets` with the addresses the app may
+//! The manifest declares `bulkhead:sockets` with the addresses the app may
 //! connect to, bind and listen on; anything else fails with
 //! [`NetError::Denied`].
 //!

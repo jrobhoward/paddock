@@ -3,7 +3,7 @@
 # ../points/bulkhead.toml), and in policy:
 #
 #   [apps.hmi]
-#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
+#   grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging"]
 #   buckets = ["points"]
 [app]
 name = "hmi"
@@ -14,12 +14,12 @@ license = "MIT OR Apache-2.0"
 [appserver.instances]
 count = 2
 
-[appserver.capabilities."wasi:http/incoming-handler"]
+[appserver.capabilities."bulkhead:http-routes"]
 routes = [{ path_prefix = "/scada/points" }]
 max_body = "1KiB"
 timeout_ms = 30000
 
-[appserver.capabilities."wasi:keyvalue".shared]
+[appserver.capabilities."bulkhead:keyvalue".shared]
 points = "ro"
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]

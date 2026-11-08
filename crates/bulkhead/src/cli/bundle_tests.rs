@@ -46,7 +46,7 @@ name = "orders"
 version = "1.2.0"
 description = "Orders"
 
-[appserver.capabilities."wasi:keyvalue".buckets.orders]
+[appserver.capabilities."bulkhead:keyvalue".buckets.orders]
 durability = "disk"
 "#;
 

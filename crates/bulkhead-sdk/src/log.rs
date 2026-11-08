@@ -1,4 +1,4 @@
-//! Logging through `wasi:logging`. Declare the `wasi:logging` capability in
+//! Logging through `bulkhead:logging`. Declare the `bulkhead:logging` capability in
 //! the manifest; records carry the app, version and pid, and the host caps
 //! their level and rate.
 //!

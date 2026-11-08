@@ -142,7 +142,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   bucket over HTTP; `bulkhead.toml`, `watch.toml` and `hot-standby.toml`, one
   component), run by `crates/bulkhead/tests/board.rs`; `examples/board-go`
   is the same app in Go on the Go SDK (a Go module, not a crate; its
-  manifests add `wasi:filesystem`), and `board.rs` runs every test against
+  manifests add `bulkhead:files`), and `board.rs` runs every test against
   the Rust component, the same Rust source built as a native program
   (feature `native`; Linux, its manifests given `kind = "native-process"`
   by the test) and the Go build (the Go cases pass with a note without
@@ -173,8 +173,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   for `bulkhead-host`'s `kv_cost` benchmark; `scripts/beam_ets.escript`
   runs the same loops (keys, values, key sequence) against ETS. Keep the
   two in step.
-- `crates/bulkhead-fixture-sdk`: a guest that uses `wasi:config`,
-  `wasi:keyvalue`, `bulkhead:groups`, `wasi:http/outgoing-handler` and the
+- `crates/bulkhead-fixture-sdk`: a guest that uses `bulkhead:config`,
+  `bulkhead:keyvalue`, `bulkhead:groups`, `bulkhead:http-egress` and the
   other services through `bulkhead-sdk`'s wrappers (`config`, `kv`,
   `groups`, `http_client`, ...). Node tests that deploy it declare every
   capability it imports.

@@ -69,7 +69,7 @@
 //! - `loaded-from`: the version `load-snapshot` was given, or `none`.
 //! - `health:<text>`: health checks answer `<text>` from now on (`ok` is
 //!   healthy). `health-checks`: how many have been answered.
-//! - `log:<level>:<text>`: a `wasi:logging` record; `ok`. `log-level`: the
+//! - `log:<level>:<text>`: a `bulkhead:logging` record; `ok`. `log-level`: the
 //!   lowest level whose records the app sends to the host, from the
 //!   `log-level` host event (`trace` before any).
 //! - `kv-set:<bucket>:<key>:<value>`, `kv-delete:<bucket>:<key>`: `ok`.

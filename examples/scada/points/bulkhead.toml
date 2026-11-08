@@ -22,7 +22,7 @@
 #   primary_only = true
 #   ...
 #
-# and in policy: grant = ["wasi:logging", "wasi:keyvalue"],
+# and in policy: grant = ["bulkhead:logging", "bulkhead:keyvalue"],
 # buckets = ["points"].
 [app]
 name = "points"
@@ -34,7 +34,7 @@ license = "MIT OR Apache-2.0"
 count = 4
 routing = "hash:device"
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]
 
-[appserver.capabilities."wasi:keyvalue".shared]
+[appserver.capabilities."bulkhead:keyvalue".shared]
 points = "rw"

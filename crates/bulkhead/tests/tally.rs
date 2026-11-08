@@ -143,7 +143,7 @@ async fn tally____on_postgres____counts_in_transactions_and_outlives_the_app() {
     assert!(ok, "{err}");
     std::fs::write(
         d.join("policy.toml"),
-        "[apps.tally]\ngrant = [\"wasi:http/incoming-handler\", \"bulkhead:sql\", \"wasi:logging\"]\n\
+        "[apps.tally]\ngrant = [\"bulkhead:http-routes\", \"bulkhead:sql\", \"bulkhead:logging\"]\n\
          datasources = [\"main\"]\n",
     )
     .unwrap();

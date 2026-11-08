@@ -35,7 +35,7 @@ http = ["node", "bulkhead-host/http"]
 # HTTPS on the HTTP ingress, and the remote admin API (`[admin]`) with its
 # client (`bulkhead --remote`).
 tls = ["http", "bulkhead-host/tls", "dep:tokio-rustls"]
-# HTTP egress for apps (`wasi:http/outgoing-handler`, `[egress]` in node
+# HTTP egress for apps (`bulkhead:http-egress`, `[egress]` in node
 # config): allow-listed requests through a connection pool.
 egress = ["tls", "bulkhead-host/egress"]
 # SQL datasources (`[datasources.<name>]` in node config, `bulkhead:sql`):

@@ -300,13 +300,13 @@ fn pair_config(http: u16, devices: &[SocketAddr]) -> String {
 }
 
 const POLICY: &str = r#"[apps.points]
-grant = ["wasi:logging", "wasi:keyvalue"]
+grant = ["bulkhead:logging", "bulkhead:keyvalue"]
 buckets = ["points"]
 [apps.hmi]
-grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
+grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging"]
 buckets = ["points"]
 [apps.control]
-grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging", "wasi:config",
+grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging", "bulkhead:config",
          "bulkhead-modbus:modbus"]
 buckets = ["points"]
 "#;

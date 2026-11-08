@@ -4,7 +4,7 @@
 # in policy `bulkhead:groups` granted too:
 #
 #   [apps.board]
-#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging", "bulkhead:groups"]
+#   grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging", "bulkhead:groups"]
 #   buckets = ["board"]
 [app]
 name = "board"
@@ -18,15 +18,15 @@ start_args = { replicate = true }
 [appserver.placement]
 mode = "hot-standby"
 
-[appserver.capabilities."wasi:http/incoming-handler"]
+[appserver.capabilities."bulkhead:http-routes"]
 routes = [{ path_prefix = "/board" }]
 max_body = "1KiB"
 timeout_ms = 5000
 
-[appserver.capabilities."wasi:keyvalue".shared]
+[appserver.capabilities."bulkhead:keyvalue".shared]
 board = "rw"
 
 [appserver.capabilities."bulkhead:groups"]
 join = ["board"]
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]

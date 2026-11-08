@@ -17,10 +17,10 @@ const DESIGN_EXAMPLE: &str = r#"{
     "instances": { "count": 2, "routing": "hash:customer_id" },
     "limits": { "memory_max": "64MiB", "callback_deadline_ms": 2000, "mailbox_max": 10000 },
     "capabilities": {
-      "wasi:logging": { "max_level": "info" },
-      "wasi:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1GiB" } } },
-      "wasi:http/outgoing-handler": { "allow": ["https://payments.internal"] },
-      "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } }
+      "bulkhead:logging": { "max_level": "info" },
+      "bulkhead:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1GiB" } } },
+      "bulkhead:http-egress": { "allow": ["https://payments.internal"] },
+      "bulkhead:files": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } }
     },
     "messaging_acl": { "accept_from": ["web", "billing"] },
     "upgrade": { "mode": "snapshot", "snapshot_version": 3, "from_versions": [">=1.2, <1.4"] },
@@ -163,13 +163,13 @@ fn AppSpec____json_round_trip____is_lossless() {
     "unknown unit"
 )]
 #[case(
-    r#"{ "capabilities": { "wasi:telepathy": {} } }"#,
-    "capabilities.wasi:telepathy",
-    "unknown field `wasi:telepathy`"
+    r#"{ "capabilities": { "bulkhead:telepathy": {} } }"#,
+    "capabilities.bulkhead:telepathy",
+    "unknown field `bulkhead:telepathy`"
 )]
 #[case(
-    r#"{ "capabilities": { "wasi:keyvalue": { "buckets": { "b": { "durability": "tape" } } } } }"#,
-    "capabilities.wasi:keyvalue.buckets.b.durability",
+    r#"{ "capabilities": { "bulkhead:keyvalue": { "buckets": { "b": { "durability": "tape" } } } } }"#,
+    "capabilities.bulkhead:keyvalue.buckets.b.durability",
     "unknown variant `tape`"
 )]
 #[case(
@@ -232,8 +232,8 @@ fn AppSpec____memory_max_above_4_gib____accepted() {
 #[case(json!({ "limits": { "pending_calls_max": 0 } }), "limits.pending_calls_max")]
 #[case(json!({ "limits": { "groups_max": 0 } }), "limits.groups_max")]
 #[case(json!({ "limits": { "watches_max": 0 } }), "limits.watches_max")]
-#[case(json!({ "capabilities": { "wasi:keyvalue": { "shared": { "Points": "ro" } } } }), "capabilities.wasi:keyvalue.shared.Points")]
-#[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "p": {} }, "shared": { "p": "rw" } } } }), "capabilities.wasi:keyvalue.shared.p")]
+#[case(json!({ "capabilities": { "bulkhead:keyvalue": { "shared": { "Points": "ro" } } } }), "capabilities.bulkhead:keyvalue.shared.Points")]
+#[case(json!({ "capabilities": { "bulkhead:keyvalue": { "buckets": { "p": {} }, "shared": { "p": "rw" } } } }), "capabilities.bulkhead:keyvalue.shared.p")]
 #[case(json!({ "capabilities": { "bulkhead:groups": { "join": ["Bad Name"] } } }), "capabilities.bulkhead:groups.join[0]")]
 #[case(json!({ "capabilities": { "bulkhead:groups": { "publish": ["a", "a"] } } }), "capabilities.bulkhead:groups.publish[1]")]
 #[case(json!({ "lifecycle": { "init_timeout_ms": 0 } }), "lifecycle.init_timeout_ms")]
@@ -250,26 +250,26 @@ fn AppSpec____memory_max_above_4_gib____accepted() {
 #[case(json!({ "supervision": { "children": [{ "id": "w", "app": "x" }, { "id": "w", "app": "y" }] } }), "supervision.children[1]")]
 #[case(json!({ "supervision": { "backoff": { "initial_ms": 10, "max_ms": 5 } } }), "supervision.backoff.max_ms")]
 #[case(json!({ "upgrade": { "mode": "snapshot" } }), "upgrade.snapshot_version")]
-#[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "Bad Name": {} } } } }), "capabilities.wasi:keyvalue.buckets.Bad Name")]
-#[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "b": { "quota": 0 } } } } }), "capabilities.wasi:keyvalue.buckets.b.quota")]
-#[case(json!({ "capabilities": { "wasi:keyvalue": { "buckets": { "b": { "durability": "disk", "read_concurrency": true } } } } }), "capabilities.wasi:keyvalue.buckets.b.read_concurrency")]
-#[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "data": { "volume": "v" } } } } }), "capabilities.wasi:filesystem.preopens.data")]
-#[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data/../etc": { "volume": "v" } } } } }), "capabilities.wasi:filesystem.preopens./data/../etc")]
-#[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "v", "mode": "rw", "quota": "5GiB" } } } } }), "capabilities.wasi:filesystem.preopens./data.quota")]
-#[case(json!({ "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "v", "quota": "1MiB" } } } } }), "capabilities.wasi:filesystem.preopens./data.quota")]
-#[case(json!({ "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/33" }] } } }), "capabilities.wasi:sockets.connect[0].cidr")]
-#[case(json!({ "capabilities": { "wasi:sockets": { "max_sockets": 0 } } }), "capabilities.wasi:sockets.max_sockets")]
-#[case(json!({ "capabilities": { "wasi:http/outgoing-handler": { "allow": ["x"], "methods": ["get"] } } }), "capabilities.wasi:http/outgoing-handler.methods[0]")]
-#[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "orders" }] } } }), "capabilities.wasi:http/incoming-handler.routes[0].path_prefix")]
-#[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [] } } }), "capabilities.wasi:http/incoming-handler.routes")]
-#[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/", "hash_header": "x tenant" }] } } }), "capabilities.wasi:http/incoming-handler.routes[0].hash_header")]
-#[case(json!({ "capabilities": { "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/" }], "timeout_ms": 0 } } }), "capabilities.wasi:http/incoming-handler.timeout_ms")]
-#[case(json!({ "capabilities": { "wasi:logging": { "rate_limit_per_sec": 0 } } }), "capabilities.wasi:logging.rate_limit_per_sec")]
+#[case(json!({ "capabilities": { "bulkhead:keyvalue": { "buckets": { "Bad Name": {} } } } }), "capabilities.bulkhead:keyvalue.buckets.Bad Name")]
+#[case(json!({ "capabilities": { "bulkhead:keyvalue": { "buckets": { "b": { "quota": 0 } } } } }), "capabilities.bulkhead:keyvalue.buckets.b.quota")]
+#[case(json!({ "capabilities": { "bulkhead:keyvalue": { "buckets": { "b": { "durability": "disk", "read_concurrency": true } } } } }), "capabilities.bulkhead:keyvalue.buckets.b.read_concurrency")]
+#[case(json!({ "capabilities": { "bulkhead:files": { "preopens": { "data": { "volume": "v" } } } } }), "capabilities.bulkhead:files.preopens.data")]
+#[case(json!({ "capabilities": { "bulkhead:files": { "preopens": { "/data/../etc": { "volume": "v" } } } } }), "capabilities.bulkhead:files.preopens./data/../etc")]
+#[case(json!({ "capabilities": { "bulkhead:files": { "preopens": { "/data": { "volume": "v", "mode": "rw", "quota": "5GiB" } } } } }), "capabilities.bulkhead:files.preopens./data.quota")]
+#[case(json!({ "capabilities": { "bulkhead:files": { "preopens": { "/data": { "volume": "v", "quota": "1MiB" } } } } }), "capabilities.bulkhead:files.preopens./data.quota")]
+#[case(json!({ "capabilities": { "bulkhead:sockets": { "connect": [{ "cidr": "10.0.0.0/33" }] } } }), "capabilities.bulkhead:sockets.connect[0].cidr")]
+#[case(json!({ "capabilities": { "bulkhead:sockets": { "max_sockets": 0 } } }), "capabilities.bulkhead:sockets.max_sockets")]
+#[case(json!({ "capabilities": { "bulkhead:http-egress": { "allow": ["x"], "methods": ["get"] } } }), "capabilities.bulkhead:http-egress.methods[0]")]
+#[case(json!({ "capabilities": { "bulkhead:http-routes": { "routes": [{ "path_prefix": "orders" }] } } }), "capabilities.bulkhead:http-routes.routes[0].path_prefix")]
+#[case(json!({ "capabilities": { "bulkhead:http-routes": { "routes": [] } } }), "capabilities.bulkhead:http-routes.routes")]
+#[case(json!({ "capabilities": { "bulkhead:http-routes": { "routes": [{ "path_prefix": "/", "hash_header": "x tenant" }] } } }), "capabilities.bulkhead:http-routes.routes[0].hash_header")]
+#[case(json!({ "capabilities": { "bulkhead:http-routes": { "routes": [{ "path_prefix": "/" }], "timeout_ms": 0 } } }), "capabilities.bulkhead:http-routes.timeout_ms")]
+#[case(json!({ "capabilities": { "bulkhead:logging": { "rate_limit_per_sec": 0 } } }), "capabilities.bulkhead:logging.rate_limit_per_sec")]
 #[case(json!({ "api": { "messages": [{ "name": "ping", "pattern": "cast", "response_schema": "s.json" }] } }), "api.messages[0].response_schema")]
 #[case(json!({ "api": { "messages": [{ "name": "a", "pattern": "call" }, { "name": "a", "pattern": "cast" }] } }), "api.messages[1].name")]
 #[case(json!({ "placement": { "mode": "singleton" }, "instances": { "count": 2 } }), "placement.mode")]
 #[case(json!({ "placement": { "mode": "singleton" }, "instances": { "min": 1, "max": 3 } }), "placement.mode")]
-#[case(json!({ "capabilities": { "extensions": { "wasi:extra": {} } } }), "capabilities.extensions.wasi:extra")]
+#[case(json!({ "capabilities": { "extensions": { "bulkhead:extra": {} } } }), "capabilities.extensions.bulkhead:extra")]
 #[case(json!({ "capabilities": { "extensions": { "example:greeting/greet": {} } } }), "capabilities.extensions.example:greeting/greet")]
 #[case(json!({ "capabilities": { "extensions": { "example:greeting": 3 } } }), "capabilities.extensions.example:greeting")]
 #[case(json!({ "listeners": [{ "name": "Bad Name" }] }), "listeners[0]")]
@@ -328,10 +328,10 @@ fn unenforced_fields____phase1_only_manifest____returns_empty() {
         "instances": { "count": 2 },
         "limits": { "memory_max": "32MiB", "table_max": 1000 },
         "capabilities": {
-            "wasi:logging": {},
-            "wasi:config": {},
-            "wasi:keyvalue": { "buckets": { "b": { "durability": "disk" } } },
-            "wasi:filesystem": { "preopens": { "/data": { "volume": "d", "mode": "rw" } } }
+            "bulkhead:logging": {},
+            "bulkhead:config": {},
+            "bulkhead:keyvalue": { "buckets": { "b": { "durability": "disk" } } },
+            "bulkhead:files": { "preopens": { "/data": { "volume": "d", "mode": "rw" } } }
         },
         "upgrade": { "mode": "snapshot", "snapshot_version": 1 }
     }))
@@ -425,7 +425,6 @@ fn AppManifest____invalid_app_name____invalid_at_plugin_name() {
 }
 
 #[rstest]
-#[case(json!({ "kind": "native-process", "capabilities": { "bulkhead:runtime/supervisor": {} } }), "capabilities.bulkhead:runtime/supervisor")]
 #[case(json!({ "native": { "program": "library" }, "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
 #[case(json!({ "native": { "program": "library" }, "upgrade": { "mode": "snapshot", "snapshot_version": 1 } }), "upgrade.mode")]
 #[case(json!({ "native": { "program": "library" }, "listeners": [{ "name": "lines" }] }), "listeners")]
@@ -448,7 +447,7 @@ fn validate____native_process_with_logging____accepted_with_program() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",
         "native": { "program": "executable" },
-        "capabilities": { "wasi:logging": {} },
+        "capabilities": { "bulkhead:logging": {} },
         "upgrade": { "mode": "blue-green" }
     }))
     .unwrap();
@@ -474,7 +473,7 @@ fn validate____native_process_with_preopens____accepted() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",
         "native": { "program": "executable" },
-        "capabilities": { "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } } },
+        "capabilities": { "bulkhead:files": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } } },
         "upgrade": { "mode": "blue-green" }
     }));
 
@@ -486,7 +485,7 @@ fn validate____native_process_with_egress____accepted() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",
         "native": { "program": "executable" },
-        "capabilities": { "wasi:http/outgoing-handler": { "allow": ["https://payments.internal"] } },
+        "capabilities": { "bulkhead:http-egress": { "allow": ["https://payments.internal"] } },
         "upgrade": { "mode": "blue-green" }
     }));
 
@@ -523,7 +522,7 @@ fn validate____native_process_with_sockets____accepted() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",
         "native": { "program": "executable" },
-        "capabilities": { "wasi:sockets": { "connect": [{ "cidr": "10.0.0.0/8" }] } },
+        "capabilities": { "bulkhead:sockets": { "connect": [{ "cidr": "10.0.0.0/8" }] } },
         "upgrade": { "mode": "blue-green" }
     }));
 
@@ -547,7 +546,7 @@ fn validate____native_process_with_keyvalue____accepted() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",
         "native": { "program": "executable" },
-        "capabilities": { "wasi:keyvalue": { "buckets": { "state": {} }, "shared": { "board": "rw" } } },
+        "capabilities": { "bulkhead:keyvalue": { "buckets": { "state": {} }, "shared": { "board": "rw" } } },
         "upgrade": { "mode": "blue-green" }
     }));
 

@@ -42,7 +42,7 @@ TALLY_PROGRAM=$(example_program example-tally "$ROOT/target/tutorial-tally")
 
 cat > policy.toml <<'TOML'
 [apps.tally]
-grant = ["wasi:http/incoming-handler", "bulkhead:sql", "wasi:logging"]
+grant = ["bulkhead:http-routes", "bulkhead:sql", "bulkhead:logging"]
 datasources = ["main"]
 TOML
 echo "[peers]" > peers.toml

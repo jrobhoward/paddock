@@ -269,11 +269,11 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
     let policy = dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[apps.points]\ngrant = [\"wasi:logging\", \"wasi:keyvalue\"]\nbuckets = [\"points\"]\n\
-         [apps.hmi]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"]\n\
+        "[apps.points]\ngrant = [\"bulkhead:logging\", \"bulkhead:keyvalue\"]\nbuckets = [\"points\"]\n\
+         [apps.hmi]\ngrant = [\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\"]\n\
          buckets = [\"points\"]\n\
-         [apps.control]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\", \
-         \"wasi:config\", \"bulkhead-modbus:modbus\"]\nbuckets = [\"points\"]\n",
+         [apps.control]\ngrant = [\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\", \
+         \"bulkhead:config\", \"bulkhead-modbus:modbus\"]\nbuckets = [\"points\"]\n",
     )
     .unwrap();
     let port = free_port();
@@ -549,11 +549,11 @@ async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchove
     }
     std::fs::write(
         d.join("policy.toml"),
-        "[apps.points]\ngrant = [\"wasi:logging\", \"wasi:keyvalue\"]\nbuckets = [\"points\"]\n\
-         [apps.hmi]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"]\n\
+        "[apps.points]\ngrant = [\"bulkhead:logging\", \"bulkhead:keyvalue\"]\nbuckets = [\"points\"]\n\
+         [apps.hmi]\ngrant = [\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\"]\n\
          buckets = [\"points\"]\n\
-         [apps.control]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\", \
-         \"wasi:config\", \"bulkhead-modbus:modbus\"]\nbuckets = [\"points\"]\n",
+         [apps.control]\ngrant = [\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\", \
+         \"bulkhead:config\", \"bulkhead-modbus:modbus\"]\nbuckets = [\"points\"]\n",
     )
     .unwrap();
     let mut peers = String::from("[peers]\n");

@@ -75,7 +75,7 @@ Two words have more than one meaning:
 
 ## Capabilities and services
 
-- **Capability:** a host interface an app declares under `capabilities` in its manifest, with the scope that narrows it (`wasi:keyvalue` with its buckets, `wasi:http/outgoing-handler` with its `allow` list, `bulkhead:sql` with its datasources). [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance).
+- **Capability:** a host interface an app declares under `capabilities` in its manifest, with the scope that narrows it (`bulkhead:keyvalue` with its buckets, `bulkhead:http-egress` with its `allow` list, `bulkhead:sql` with its datasources). [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance).
 - **Policy:** the operator's file of what apps may be granted (`policy` in node config names it): defaults, per app and per signer, plus the shared buckets, secrets and datasources each may use.
 - **Signer:** a minisign key whose bundles a node runs (`trusted_keys`); policy can grant by signer.
 - **Grant:** the capabilities an instance gets: what the manifest asks for, narrowed by policy (the effective grant). Imports outside it get deny stubs.
@@ -89,7 +89,7 @@ Two words have more than one meaning:
 
 ## Storage
 
-- **Bucket:** a key-value namespace through `wasi:keyvalue`, an app's own or shared from node config's `[buckets]`. Durability: `memory` (survives instance crashes, not node restarts), `disk` (redb, synced) or `replicated` (kept whole on both nodes of an HA pair, through the replicated log). A shared bucket with `scope = "cluster"` is replicated the same way. [MANIFEST.md](MANIFEST.md).
+- **Bucket:** a key-value namespace through `bulkhead:keyvalue`, an app's own or shared from node config's `[buckets]`. Durability: `memory` (survives instance crashes, not node restarts), `disk` (redb, synced) or `replicated` (kept whole on both nodes of an HA pair, through the replicated log). A shared bucket with `scope = "cluster"` is replicated the same way. [MANIFEST.md](MANIFEST.md).
 - **Watch:** a subscription to changes of a key or prefix in a bucket (`bulkhead:watch`); each change is delivered as a host event. Notices for a watcher that falls behind are conflated.
 - **Replicated log:** the HA pair's log of writes to replicated and cluster buckets, in the same redb file as the disk buckets. A write is acknowledged once both nodes have synced it, or, with the standby gone, once the witness has recorded it out of date.
 - **Group commit:** writers arriving together sharing one synced append.

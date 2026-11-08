@@ -5,8 +5,8 @@
 # Modbus devices it writes, and in policy:
 #
 #   [apps.control]
-#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging",
-#            "wasi:config", "bulkhead-modbus:modbus"]
+#   grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging",
+#            "bulkhead:config", "bulkhead-modbus:modbus"]
 #   buckets = ["points"]
 #
 # Its `rules` can be set per node in `[config.control]`. Its buckets are
@@ -31,7 +31,7 @@ snapshot_version = 1
 [appserver.config.defaults]
 rules = "pump-1-pressure: pump-1/holding/1 > 150, pump-2-pressure: pump-2/holding/1 > 150"
 
-[appserver.capabilities."wasi:http/incoming-handler"]
+[appserver.capabilities."bulkhead:http-routes"]
 routes = [
   { path_prefix = "/scada/alarms" },
   { path_prefix = "/scada/events" },
@@ -40,16 +40,16 @@ routes = [
 max_body = "1KiB"
 timeout_ms = 5000
 
-[appserver.capabilities."wasi:keyvalue".buckets]
+[appserver.capabilities."bulkhead:keyvalue".buckets]
 alarms = { durability = "replicated" }
 events = { durability = "replicated" }
 
-[appserver.capabilities."wasi:keyvalue".shared]
+[appserver.capabilities."bulkhead:keyvalue".shared]
 points = "ro"
 
-[appserver.capabilities."wasi:config"]
+[appserver.capabilities."bulkhead:config"]
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]
 
 [appserver.capabilities.extensions."bulkhead-modbus:modbus"]
 write = ["pump-1", "pump-2"]

@@ -1,6 +1,6 @@
-//! Keyvalue buckets, through `wasi:keyvalue` (cargo feature `keyvalue`).
+//! Keyvalue buckets, through `bulkhead:keyvalue` (cargo feature `keyvalue`).
 //!
-//! Declare the `wasi:keyvalue` capability and each bucket in the manifest;
+//! Declare the `bulkhead:keyvalue` capability and each bucket in the manifest;
 //! an instance can open only the buckets listed there. Buckets are
 //! host-owned: `memory` buckets outlive instance crashes, `disk` buckets also
 //! survive node restarts. Each operation is one transaction.
@@ -25,7 +25,7 @@ use serde::de::DeserializeOwned;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum KvError {
-    /// The operator did not grant `wasi:keyvalue`, or the manifest does not
+    /// The operator did not grant `bulkhead:keyvalue`, or the manifest does not
     /// list the bucket.
     AccessDenied,
     /// The host does not know the bucket.

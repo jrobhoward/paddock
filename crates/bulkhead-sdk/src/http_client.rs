@@ -1,7 +1,7 @@
-//! HTTP requests from the app (`wasi:http/outgoing-handler`), blocking.
+//! HTTP requests from the app (`bulkhead:http-egress`), blocking.
 //!
 //! The node sends a request only to a scheme, host and port the manifest
-//! lists in `capabilities."wasi:http/outgoing-handler".allow`, and refuses
+//! lists in `capabilities."bulkhead:http-egress".allow`, and refuses
 //! the rest with [`HttpError::Denied`]. Waiting for the response does not
 //! count against the callback deadline, but the instance handles no other
 //! message meanwhile; a pool of instances keeps an app responsive.

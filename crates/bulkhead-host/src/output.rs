@@ -4,7 +4,7 @@
 //! span, so each record carries its app, version and pid itself.
 //!
 //! Every line counts against the app's log rate ([`LogRate`]), the same
-//! budget `wasi:logging` records use. Control characters in guest text are
+//! budget `bulkhead:logging` records use. Control characters in guest text are
 //! escaped ([`escape_control`]) wherever it reaches a log, so a guest cannot
 //! start what looks like a new record of the host's.
 

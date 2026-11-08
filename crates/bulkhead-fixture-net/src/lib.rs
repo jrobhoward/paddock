@@ -1,4 +1,4 @@
-//! Test fixture: an app that uses `wasi:sockets` and `bulkhead:io` through
+//! Test fixture: an app that uses `bulkhead:sockets` and `bulkhead:io` through
 //! `bulkhead-sdk`'s `net` module, for the host's tests of app sockets. Its
 //! UDP goes through the node (`bulkhead_native::app::Ctx::net`).
 //!

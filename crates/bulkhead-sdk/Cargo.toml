@@ -10,9 +10,9 @@ repository.workspace = true
 publish = false
 
 [features]
-# `bulkhead_sdk::config`: the app's configuration (`wasi:config`).
+# `bulkhead_sdk::config`: the app's configuration (`bulkhead:config`).
 config = []
-# `bulkhead_sdk::kv`: keyvalue buckets (`wasi:keyvalue`).
+# `bulkhead_sdk::kv`: keyvalue buckets (`bulkhead:keyvalue`).
 keyvalue = []
 # `bulkhead_sdk::connection`: connection handlers.
 connection = []
@@ -21,9 +21,9 @@ groups = []
 # `bulkhead_sdk::http`: HTTP requests from the node's ingress, as calls.
 http = []
 # `bulkhead_sdk::http_client`: HTTP requests from the app
-# (`wasi:http/outgoing-handler`).
+# (`bulkhead:http-egress`).
 http-client = []
-# `bulkhead_sdk::net`: TCP from the app (`wasi:sockets`), with readiness as
+# `bulkhead_sdk::net`: TCP from the app (`bulkhead:sockets`), with readiness as
 # messages (`bulkhead:io`).
 net = []
 # `bulkhead_sdk::secrets`: secrets the operator binds (`bulkhead:secrets`).
@@ -33,7 +33,7 @@ metrics = []
 # `bulkhead_sdk::sql`: SQL datasources the node binds (`bulkhead:sql`).
 sql = []
 # `bulkhead_sdk::watch`: revisions, compare-and-swap and watches on keyvalue
-# buckets (`bulkhead:watch`, under the `wasi:keyvalue` capability).
+# buckets (`bulkhead:watch`, under the `bulkhead:keyvalue` capability).
 watch = []
 
 [dependencies]

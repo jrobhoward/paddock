@@ -10,7 +10,7 @@
 # and in policy:
 #
 #   [apps.ledger]
-#   grant = ["wasi:keyvalue"]
+#   grant = ["bulkhead:keyvalue"]
 #   buckets = ["ledger"]
 #
 # Bundle with:
@@ -23,5 +23,5 @@ version = "1.0.0"
 description = "Entries in a shared bucket, replicated on an HA pair (bulkhead example)"
 license = "MIT OR Apache-2.0"
 
-[appserver.capabilities."wasi:keyvalue".shared]
+[appserver.capabilities."bulkhead:keyvalue".shared]
 ledger = "rw"

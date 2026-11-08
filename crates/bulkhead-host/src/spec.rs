@@ -42,11 +42,11 @@ pub struct InstanceSpec {
     /// Passed to `init`.
     pub init_args: Vec<u8>,
     /// Capabilities the host serves. A declared capability missing here is
-    /// denied: `wasi:logging` drops records, `wasi:config` and
-    /// `wasi:keyvalue` return `access-denied`, `wasi:filesystem` gets no
+    /// denied: `bulkhead:logging` drops records, `bulkhead:config` and
+    /// `bulkhead:keyvalue` return `access-denied`, `bulkhead:files` gets no
     /// preopens.
     pub granted: BTreeSet<Capability>,
-    /// Directories visible to the guest, used when `wasi:filesystem` is
+    /// Directories visible to the guest, used when `bulkhead:files` is
     /// granted.
     pub preopens: Vec<Preopen>,
     /// What the manifest asks of each host service.
@@ -112,7 +112,7 @@ impl InstanceSpec {
     /// capability granted (narrow it with [`InstanceSpec::with_granted`]).
     /// `lifecycle.start_args` is passed to `init` as JSON; absent args are an
     /// empty list. Every name in `registered_names` may be registered on this
-    /// node; global scope is not enforced. `wasi:config`
+    /// node; global scope is not enforced. `bulkhead:config`
     /// returns the manifest's `config.defaults` (merge node overrides into
     /// `services.config.values`). Preopens need
     /// [`InstanceSpec::resolve_preopens`].
@@ -234,7 +234,7 @@ impl InstanceSpec {
         self
     }
 
-    /// Set the preopens a manifest's `wasi:filesystem` scope asks for:
+    /// Set the preopens a manifest's `bulkhead:files` scope asks for:
     /// `priv_dir` (the bundle's files) read-only at `/priv`, and each
     /// declared preopen backed by the host directory `volume` resolves its
     /// volume name to.

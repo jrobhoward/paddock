@@ -1,5 +1,5 @@
 //! Which addresses an app's sockets may use: the manifest's
-//! `wasi:sockets` rules, the address guard, and node config's ceiling.
+//! `bulkhead:sockets` rules, the address guard, and node config's ceiling.
 //!
 //! | Use | Allowed when |
 //! | --- | --- |

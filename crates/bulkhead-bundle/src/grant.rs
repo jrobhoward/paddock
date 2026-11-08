@@ -25,7 +25,7 @@ pub struct EffectiveGrant {
     /// Extension packages declared but not granted.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub denied_extensions: BTreeSet<String>,
-    /// Shared keyvalue buckets declared and granted, with `wasi:keyvalue`
+    /// Shared keyvalue buckets declared and granted, with `bulkhead:keyvalue`
     /// granted.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub granted_buckets: BTreeSet<String>,

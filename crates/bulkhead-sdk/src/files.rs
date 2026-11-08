@@ -1,4 +1,4 @@
-//! Files in the directories the manifest preopens (`wasi:filesystem`):
+//! Files in the directories the manifest preopens (`bulkhead:files`):
 //! the bundle's `priv/` files at `/priv`, and each volume at its guest
 //! path (`/data`).
 //!

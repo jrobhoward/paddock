@@ -32,7 +32,6 @@ impl AppSpec {
     pub fn unenforced_fields(&self) -> Vec<UnenforcedField> {
         let mut out = Fields(Vec::new());
         self.unenforced_runtime(&mut out);
-        self.unenforced_capabilities(&mut out);
         self.unenforced_sections(&mut out);
         out.0
     }
@@ -58,15 +57,6 @@ impl AppSpec {
         ];
         for (field, set) in later_limits {
             out.add_if(set, format!("limits.{field}"));
-        }
-    }
-
-    /// Whole capabilities the host does not enforce.
-    fn unenforced_capabilities(&self, out: &mut Fields) {
-        for capability in self.capabilities.declared() {
-            if !capability.enforced() {
-                out.add(format!("capabilities.{}", capability.key()));
-            }
         }
     }
 

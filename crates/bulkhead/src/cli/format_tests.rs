@@ -49,8 +49,8 @@ fn detail____failed_app____shows_reason_and_denied() {
     let d = AppDetail {
         summary: s,
         signer: "RWQ".into(),
-        granted: vec!["wasi:logging".into()],
-        denied: vec!["wasi:keyvalue".into()],
+        granted: vec!["bulkhead:logging".into()],
+        denied: vec!["bulkhead:keyvalue".into()],
         warnings: vec!["observability.metrics is not enforced".into()],
         restarts: 3,
         instance_list: vec![],
@@ -60,7 +60,7 @@ fn detail____failed_app____shows_reason_and_denied() {
     let out = detail(&d);
 
     assert!(out.contains("reason:    crashed: max restart intensity"));
-    assert!(out.contains("denied:    wasi:keyvalue"));
+    assert!(out.contains("denied:    bulkhead:keyvalue"));
     assert!(out.contains("warning:   observability.metrics"));
 }
 

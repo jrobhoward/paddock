@@ -12,7 +12,7 @@
 # and in policy:
 #
 #   [apps.tally]
-#   grant = ["wasi:http/incoming-handler", "bulkhead:sql", "wasi:logging"]
+#   grant = ["bulkhead:http-routes", "bulkhead:sql", "bulkhead:logging"]
 #   datasources = ["main"]
 #
 # examples/tutorial (chapter 4) runs it on an HA pair.
@@ -22,7 +22,7 @@ version = "1.0.0"
 description = "A tally kept in Postgres, over HTTP (bulkhead example)"
 license = "MIT OR Apache-2.0"
 
-[appserver.capabilities."wasi:http/incoming-handler"]
+[appserver.capabilities."bulkhead:http-routes"]
 routes = [{ path_prefix = "/tally" }]
 max_body = "1KiB"
 timeout_ms = 10000
@@ -30,4 +30,4 @@ timeout_ms = 10000
 [appserver.capabilities."bulkhead:sql".datasources.main]
 max_connections = 2
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]

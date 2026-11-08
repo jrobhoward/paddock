@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::lifecycle::Instances;
 use crate::manifest::validate::Validator;
 
-/// Log severity, matching `wasi:logging` levels.
+/// Log severity, matching `bulkhead:logging` levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LogLevel {

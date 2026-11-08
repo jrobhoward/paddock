@@ -152,7 +152,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
         "[app]\nname = \"chaos-fail\"\nversion = \"1.0.0\"\n\
          [appserver.lifecycle]\nstart_args = { fail = \"trap\" }\n\
          [appserver.supervision]\nintensity = 2\nbackoff = { initial_ms = 10, max_ms = 20 }\n\
-         [appserver.capabilities.\"wasi:logging\"]\n",
+         [appserver.capabilities.\"bulkhead:logging\"]\n",
     )
     .unwrap();
     let chaos_fail = bundle(failing_manifest, chaos, "chaos-fail.rbp").await;
@@ -177,7 +177,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
     let policy = dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[apps.ledger]\ngrant = [\"wasi:keyvalue\"]\nbuckets = [\"ledger\"]\n",
+        "[apps.ledger]\ngrant = [\"bulkhead:keyvalue\"]\nbuckets = [\"ledger\"]\n",
     )
     .unwrap();
     let toml = format!(

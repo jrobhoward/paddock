@@ -4,7 +4,7 @@
 #   [http.main]
 #   address = "127.0.0.1:8080"
 #
-# and the operator's grant: grant = ["wasi:http/incoming-handler"].
+# and the operator's grant: grant = ["bulkhead:http-routes"].
 #
 # Bundle with:
 #   cargo build -p example-http-counter --release
@@ -17,7 +17,7 @@ version = "1.0.0"
 description = "A counter served over HTTP (bulkhead-sdk example)"
 license = "MIT OR Apache-2.0"
 
-[appserver.capabilities."wasi:http/incoming-handler"]
+[appserver.capabilities."bulkhead:http-routes"]
 routes = [{ path_prefix = "/counter" }]
 max_body = "4KiB"
 timeout_ms = 5000

@@ -15,35 +15,31 @@ use crate::manifest::bytesize::ByteSize;
 use crate::manifest::sections::LogLevel;
 use crate::manifest::validate::Validator;
 
-/// A host interface an app must declare before importing it.
+/// A host service an app must declare before using it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(into = "&'static str", try_from = "String")]
 #[non_exhaustive]
 pub enum Capability {
-    /// `bulkhead:runtime/supervisor`: start and supervise child instances.
-    Supervisor,
-    /// `wasi:logging`.
+    /// `bulkhead:logging`.
     Logging,
-    /// `wasi:config`.
+    /// `bulkhead:config`.
     Config,
     /// `bulkhead:secrets`.
     Secrets,
-    /// `wasi:keyvalue`: term storage.
+    /// `bulkhead:keyvalue`: term storage.
     KeyValue,
-    /// `wasi:filesystem`: preopened volumes.
+    /// `bulkhead:files`: preopened volumes.
     Filesystem,
-    /// `wasi:http/outgoing-handler`.
+    /// `bulkhead:http-egress`.
     HttpOutgoing,
-    /// `wasi:http/incoming-handler`.
+    /// `bulkhead:http-routes`.
     HttpIncoming,
-    /// `wasi:sockets`.
+    /// `bulkhead:sockets`.
     Sockets,
     /// `bulkhead:sql`.
     Sql,
     /// `bulkhead:metrics`.
     Metrics,
-    /// `bulkhead:admin`.
-    Admin,
     /// `bulkhead:groups`: local process groups and publish.
     Groups,
 }
@@ -51,7 +47,6 @@ pub enum Capability {
 impl Capability {
     /// Every capability.
     pub const ALL: &'static [Self] = &[
-        Self::Supervisor,
         Self::Logging,
         Self::Config,
         Self::Secrets,
@@ -62,7 +57,6 @@ impl Capability {
         Self::Sockets,
         Self::Sql,
         Self::Metrics,
-        Self::Admin,
         Self::Groups,
     ];
 
@@ -71,18 +65,16 @@ impl Capability {
     #[must_use]
     pub const fn key(self) -> &'static str {
         match self {
-            Self::Supervisor => "bulkhead:runtime/supervisor",
-            Self::Logging => "wasi:logging",
-            Self::Config => "wasi:config",
+            Self::Logging => "bulkhead:logging",
+            Self::Config => "bulkhead:config",
             Self::Secrets => "bulkhead:secrets",
-            Self::KeyValue => "wasi:keyvalue",
-            Self::Filesystem => "wasi:filesystem",
-            Self::HttpOutgoing => "wasi:http/outgoing-handler",
-            Self::HttpIncoming => "wasi:http/incoming-handler",
-            Self::Sockets => "wasi:sockets",
+            Self::KeyValue => "bulkhead:keyvalue",
+            Self::Filesystem => "bulkhead:files",
+            Self::HttpOutgoing => "bulkhead:http-egress",
+            Self::HttpIncoming => "bulkhead:http-routes",
+            Self::Sockets => "bulkhead:sockets",
             Self::Sql => "bulkhead:sql",
             Self::Metrics => "bulkhead:metrics",
-            Self::Admin => "bulkhead:admin",
             Self::Groups => "bulkhead:groups",
         }
     }
@@ -91,13 +83,6 @@ impl Capability {
     #[must_use]
     pub fn from_key(key: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|c| c.key() == key)
-    }
-
-    /// Whether the host enforces this capability; the others parse and
-    /// validate only.
-    #[must_use]
-    pub const fn enforced(self) -> bool {
-        !matches!(self, Self::Supervisor | Self::Admin)
     }
 }
 
@@ -121,9 +106,8 @@ impl TryFrom<String> for Capability {
     }
 }
 
-/// A component import name split into parts:
-/// `wasi:keyvalue/store@0.2.0-draft` → package `wasi:keyvalue`, interface
-/// `store`, version `0.2.0-draft`.
+/// A package name split into parts: `example:greeting/greet@0.1.0` →
+/// package `example:greeting`, interface `greet`, version `0.1.0`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceName<'a> {
     /// `namespace:package`.
@@ -135,8 +119,8 @@ pub struct InterfaceName<'a> {
 }
 
 impl<'a> InterfaceName<'a> {
-    /// Split an import name. `None` if it is not an interface name (a plain
-    /// function or instance import such as `log`).
+    /// Split a name. `None` if it is not `namespace:package`, with an
+    /// optional interface and version.
     #[must_use]
     pub fn parse(name: &'a str) -> Option<Self> {
         let (path, version) = match name.split_once('@') {
@@ -156,8 +140,8 @@ impl<'a> InterfaceName<'a> {
     }
 }
 
-/// Namespaces whose interfaces only built-in capabilities provide.
-pub const RESERVED_NAMESPACES: &[&str] = &["wasi", "bulkhead"];
+/// Namespaces only built-in capabilities use.
+pub const RESERVED_NAMESPACES: &[&str] = &["bulkhead"];
 
 /// Whether `key` names an extension package: `namespace:package`, outside
 /// [`RESERVED_NAMESPACES`], with no interface or version.
@@ -177,23 +161,16 @@ pub fn is_extension_key(key: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
-    /// `bulkhead:runtime/supervisor`.
+    /// `bulkhead:logging`.
     #[serde(
-        rename = "bulkhead:runtime/supervisor",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub supervisor: Option<SupervisorScope>,
-    /// `wasi:logging`.
-    #[serde(
-        rename = "wasi:logging",
+        rename = "bulkhead:logging",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub logging: Option<LoggingScope>,
-    /// `wasi:config`.
+    /// `bulkhead:config`.
     #[serde(
-        rename = "wasi:config",
+        rename = "bulkhead:config",
         default,
         skip_serializing_if = "Option::is_none"
     )]
@@ -205,37 +182,37 @@ pub struct Capabilities {
         skip_serializing_if = "Option::is_none"
     )]
     pub secrets: Option<SecretsScope>,
-    /// `wasi:keyvalue`.
+    /// `bulkhead:keyvalue`.
     #[serde(
-        rename = "wasi:keyvalue",
+        rename = "bulkhead:keyvalue",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub keyvalue: Option<KeyValueScope>,
-    /// `wasi:filesystem`.
+    /// `bulkhead:files`.
     #[serde(
-        rename = "wasi:filesystem",
+        rename = "bulkhead:files",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub filesystem: Option<FilesystemScope>,
-    /// `wasi:http/outgoing-handler`.
+    /// `bulkhead:http-egress`.
     #[serde(
-        rename = "wasi:http/outgoing-handler",
+        rename = "bulkhead:http-egress",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub http_outgoing: Option<HttpOutgoingScope>,
-    /// `wasi:http/incoming-handler`.
+    /// `bulkhead:http-routes`.
     #[serde(
-        rename = "wasi:http/incoming-handler",
+        rename = "bulkhead:http-routes",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub http_incoming: Option<HttpIncomingScope>,
-    /// `wasi:sockets`.
+    /// `bulkhead:sockets`.
     #[serde(
-        rename = "wasi:sockets",
+        rename = "bulkhead:sockets",
         default,
         skip_serializing_if = "Option::is_none"
     )]
@@ -254,13 +231,6 @@ pub struct Capabilities {
         skip_serializing_if = "Option::is_none"
     )]
     pub metrics: Option<MetricsScope>,
-    /// `bulkhead:admin`.
-    #[serde(
-        rename = "bulkhead:admin",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub admin: Option<AdminScope>,
     /// `bulkhead:groups`.
     #[serde(
         rename = "bulkhead:groups",
@@ -291,7 +261,6 @@ impl Capabilities {
     #[must_use]
     pub fn is_declared(&self, capability: Capability) -> bool {
         match capability {
-            Capability::Supervisor => self.supervisor.is_some(),
             Capability::Logging => self.logging.is_some(),
             Capability::Config => self.config.is_some(),
             Capability::Secrets => self.secrets.is_some(),
@@ -302,15 +271,11 @@ impl Capabilities {
             Capability::Sockets => self.sockets.is_some(),
             Capability::Sql => self.sql.is_some(),
             Capability::Metrics => self.metrics.is_some(),
-            Capability::Admin => self.admin.is_some(),
             Capability::Groups => self.groups.is_some(),
         }
     }
 
     pub(crate) fn validate(&self, v: &mut Validator) {
-        if let Some(s) = &self.supervisor {
-            v.at(Capability::Supervisor.key(), |v| s.validate(v));
-        }
         if let Some(s) = &self.logging {
             v.at(Capability::Logging.key(), |v| s.validate(v));
         }
@@ -372,7 +337,7 @@ impl Capabilities {
             if !is_extension_key(key) {
                 v.error_at(
                     format!("extensions.{key}"),
-                    "must be a package name (`namespace:package`) outside the wasi and bulkhead namespaces",
+                    "must be a package name (`namespace:package`) outside the bulkhead namespace",
                 );
             }
             if !scope.is_object() {
@@ -382,28 +347,7 @@ impl Capabilities {
     }
 }
 
-/// Scope of `bulkhead:runtime/supervisor`.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct SupervisorScope {
-    /// Most children the app may run at once. Unset means no app-level cap.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_children: Option<u32>,
-    /// Apps it may start as children.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub allowed_apps: Vec<String>,
-}
-
-impl SupervisorScope {
-    fn validate(&self, v: &mut Validator) {
-        if self.max_children == Some(0) {
-            v.error_at("max_children", "must be greater than zero");
-        }
-        v.unique_names("allowed_apps", self.allowed_apps.iter().map(String::as_str));
-    }
-}
-
-/// Scope of `wasi:logging`.
+/// Scope of `bulkhead:logging`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LoggingScope {
@@ -422,7 +366,7 @@ impl LoggingScope {
     }
 }
 
-/// Scope of `wasi:config`.
+/// Scope of `bulkhead:config`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConfigScope {
@@ -450,7 +394,7 @@ pub struct SecretsScope {
     pub secrets: Vec<String>,
 }
 
-/// Scope of `wasi:keyvalue`.
+/// Scope of `bulkhead:keyvalue`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct KeyValueScope {
@@ -525,7 +469,7 @@ pub enum Durability {
     Replicated,
 }
 
-/// Scope of `wasi:filesystem`.
+/// Scope of `bulkhead:files`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FilesystemScope {
@@ -597,7 +541,7 @@ pub enum AccessMode {
     Rw,
 }
 
-/// Scope of `wasi:http/outgoing-handler`.
+/// Scope of `bulkhead:http-egress`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HttpOutgoingScope {
@@ -633,7 +577,7 @@ impl HttpOutgoingScope {
     }
 }
 
-/// Scope of `wasi:http/incoming-handler`: the routes the node's HTTP
+/// Scope of `bulkhead:http-routes`: the routes the node's HTTP
 /// ingress sends to the app, each request as a call.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -697,7 +641,7 @@ pub struct Route {
     pub hash_header: Option<String>,
 }
 
-/// Scope of `wasi:sockets`. Bind and connect have separate rules: Rust's
+/// Scope of `bulkhead:sockets`. Bind and connect have separate rules: Rust's
 /// standard library binds `0.0.0.0:0` before every connect, so one
 /// destination-only rule would refuse every connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -918,25 +862,6 @@ impl GroupsScope {
     pub fn may_publish(&self, group: &str) -> bool {
         self.publish.iter().any(|g| g == group)
     }
-}
-
-/// Scope of `bulkhead:admin`.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct AdminScope {
-    /// What the app may do through the admin interface.
-    pub access: AdminAccess,
-}
-
-/// Admin access level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AdminAccess {
-    /// Inspect only.
-    #[default]
-    ReadOnly,
-    /// Deploy, stop, upgrade.
-    Control,
 }
 
 #[cfg(test)]

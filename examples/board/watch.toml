@@ -4,7 +4,7 @@
 # bulkhead.toml) and in policy:
 #
 #   [apps.board-watch]
-#   grant = ["wasi:keyvalue", "wasi:logging"]
+#   grant = ["bulkhead:keyvalue", "bulkhead:logging"]
 #   buckets = ["board"]
 [app]
 name = "board-watch"
@@ -15,11 +15,11 @@ license = "MIT OR Apache-2.0"
 [appserver.lifecycle]
 start_args = { watch = true }
 
-[appserver.capabilities."wasi:keyvalue".shared]
+[appserver.capabilities."bulkhead:keyvalue".shared]
 board = "ro"
 
 # The app joins process groups in its hot-standby mode
 # (hot-standby.toml); declared without groups here, it is never called.
 [appserver.capabilities."bulkhead:groups"]
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]

@@ -359,7 +359,7 @@ pub(crate) struct AppStats {
     /// Starts, wakes and upgrades that found no Store slot in time.
     /// Outgoing HTTP requests by outcome ([`EGRESS_OUTCOMES`]).
     egress: [AtomicU64; 4],
-    /// Sockets the app's instances hold open (`wasi:sockets`).
+    /// Sockets the app's instances hold open (`bulkhead:sockets`).
     sockets_open: AtomicU64,
     /// Socket addresses refused by policy, and sockets refused over
     /// `max_sockets`.
@@ -629,7 +629,7 @@ impl Metrics {
             &mut out,
             "bulkhead_egress_requests_total",
             "counter",
-            "Outgoing HTTP requests (wasi:http), by outcome.",
+            "Outgoing HTTP requests, by outcome.",
         );
         for (app, (_, s)) in &apps {
             if s.egress.iter().all(|n| n.load(Ordering::Relaxed) == 0) {
@@ -725,7 +725,7 @@ fn write_sockets(out: &mut String, apps: &BTreeMap<String, AppEntry>) {
         out,
         "bulkhead_sockets_open",
         "gauge",
-        "Sockets the app's instances hold open (wasi:sockets).",
+        "Sockets the app's instances hold open (bulkhead:sockets).",
     );
     for (app, (_, s)) in apps {
         if sockets(s) != (0, 0) {

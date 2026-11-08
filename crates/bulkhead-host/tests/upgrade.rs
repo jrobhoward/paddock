@@ -446,7 +446,13 @@ async fn upgrade____new_capability____needs_approval() {
         .start_apps(vec![deployment(name, 1, json!({}))])
         .await
         .unwrap();
-    let v2 = || deployment(name, 2, json!({ "capabilities": { "wasi:logging": {} } }));
+    let v2 = || {
+        deployment(
+            name,
+            2,
+            json!({ "capabilities": { "bulkhead:logging": {} } }),
+        )
+    };
 
     let refused = apps.upgrade(name, v2(), &UpgradeOptions::default()).await;
     let approved = apps

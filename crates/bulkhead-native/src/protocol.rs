@@ -244,7 +244,7 @@ pub enum RegisterError {
     Taken(Pid),
 }
 
-/// A log record's level, as `wasi:logging`'s.
+/// A log record's level, as `bulkhead:logging`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Level {
     /// Variables and flow of control.
@@ -499,7 +499,7 @@ pub enum Request {
         /// The reason.
         reason: ExitReason,
     },
-    /// A keyvalue operation (`wasi:keyvalue` and `bulkhead:watch`):
+    /// A keyvalue operation (`bulkhead:keyvalue` and `bulkhead:watch`):
     /// [`Answer::Kv`].
     Kv(KvRequest),
     /// A handle for a bucket the manifest lists, for the hot frames'
@@ -510,7 +510,7 @@ pub enum Request {
     KvOpen(String),
     /// A process groups operation (`bulkhead:groups`): [`Answer::Groups`].
     Groups(GroupsRequest),
-    /// A configuration value (`wasi:config`): [`Answer::Config`].
+    /// A configuration value (`bulkhead:config`): [`Answer::Config`].
     ConfigGet(String),
     /// Every configuration value: [`Answer::ConfigAll`].
     ConfigAll,
@@ -533,9 +533,9 @@ pub enum Request {
     },
     /// A SQL operation (`bulkhead:sql`): [`Answer::Sql`].
     Sql(SqlRequest),
-    /// A socket operation (`wasi:sockets`): [`Answer::Net`].
+    /// A socket operation (`bulkhead:sockets`): [`Answer::Net`].
     Net(NetRequest),
-    /// An HTTP request (`wasi:http/outgoing-handler`), sent by the node's
+    /// An HTTP request (`bulkhead:http-egress`), sent by the node's
     /// egress client on the manifest's rules: [`Answer::Http`].
     Http(HttpRequest),
     /// A call to a function of an extension the node runs (ROADMAP Z8h):
@@ -656,7 +656,7 @@ pub enum GroupsError {
 /// Why a configuration read failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfigError {
-    /// `wasi:config` is not granted.
+    /// `bulkhead:config` is not granted.
     AccessDenied,
     /// The configuration could not be read.
     Other(String),
@@ -673,7 +673,7 @@ pub enum SecretError {
     Unavailable(String),
 }
 
-/// A socket operation (`wasi:sockets`, ROADMAP Z8e), on the manifest's
+/// A socket operation (`bulkhead:sockets`, ROADMAP Z8e), on the manifest's
 /// rules. A TCP stream is made by the node and passed to the app on the
 /// descriptor socket, connected; the node keeps a copy and shuts the
 /// socket down when the app closes it. Listeners and UDP sockets stay in

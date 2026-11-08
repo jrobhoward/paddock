@@ -161,11 +161,11 @@ impl Node {
             &spec.services.egress.allow,
             self.config.egress.allow.as_deref(),
         )
-        .map_err(|e| NodeError::Invalid(format!("wasi:http/outgoing-handler: {e}")))?;
+        .map_err(|e| NodeError::Invalid(format!("bulkhead:http-egress: {e}")))?;
         if let (Some(scope), Some(ceiling)) = (&spec.services.sockets.scope, &self.config.sockets) {
             ceiling
                 .admits(scope)
-                .map_err(|e| NodeError::Invalid(format!("wasi:sockets: {e}")))?;
+                .map_err(|e| NodeError::Invalid(format!("bulkhead:sockets: {e}")))?;
         }
         if let Some(missing) = grant
             .granted_datasources

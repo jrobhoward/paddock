@@ -6,11 +6,11 @@
 //! ```toml
 //! # Granted to every app.
 //! [defaults]
-//! grant = ["wasi:logging", "wasi:config"]
+//! grant = ["bulkhead:logging", "bulkhead:config"]
 //!
 //! # Granted to one app, by name.
 //! [apps.orders]
-//! grant = ["wasi:keyvalue", "wasi:filesystem"]
+//! grant = ["bulkhead:keyvalue", "bulkhead:files"]
 //! buckets = ["points"]          # shared buckets, from the node's [buckets]
 //! secrets = ["db-password"]     # secrets, from the node's [secrets]
 //! datasources = ["main"]        # SQL datasources, from the node's [datasources]
@@ -18,14 +18,14 @@
 //! # Granted to every app signed by this key.
 //! [signers.payments-team]
 //! key = "RWQ..."
-//! grant = ["wasi:http/outgoing-handler"]
+//! grant = ["bulkhead:http-egress"]
 //! ```
 //!
 //! A `grant` list holds capability keys and extension package names
 //! (`"example:greeting"`) alike.
 //!
 //! Policy grants or withholds whole capabilities, each shared keyvalue
-//! bucket by name (`buckets`; it needs `wasi:keyvalue` granted too), and
+//! bucket by name (`buckets`; it needs `bulkhead:keyvalue` granted too), and
 //! each secret by name (`secrets`; it needs `bulkhead:secrets` granted too), and
 //! each SQL datasource by name (`datasources`; it needs `bulkhead:sql`). Other
 //! scopes an app requests (its own buckets, preopens, hosts) are used as
@@ -55,7 +55,7 @@ pub struct OperatorPolicy {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Grants {
-    /// Capabilities and extensions granted, by key (`wasi:keyvalue`,
+    /// Capabilities and extensions granted, by key (`bulkhead:keyvalue`,
     /// `example:greeting`).
     pub grant: Granted,
     /// Shared keyvalue buckets granted, by name.

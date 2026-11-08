@@ -13,11 +13,11 @@ URL="http://127.0.0.1:$HTTP_PORT/board"
 
 cat > policy.toml <<'TOML'
 [apps.board]
-grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
+grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging"]
 buckets = ["board"]
 
 [apps.board-watch]
-grant = ["wasi:keyvalue", "wasi:logging"]
+grant = ["bulkhead:keyvalue", "bulkhead:logging"]
 buckets = ["board"]
 TOML
 cat > node-1.toml <<TOML

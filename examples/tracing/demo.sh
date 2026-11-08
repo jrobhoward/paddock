@@ -51,7 +51,7 @@ callback_deadline_ms = 300
 intensity = 100
 period_ms = 60000
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]
 max_level = "info"
 TOML
 

@@ -1,4 +1,4 @@
-//! `wasi:logging`: guest log records as `tracing` events on the
+//! `bulkhead:logging`: guest log records as `tracing` events on the
 //! `bulkhead::guest` target, tagged with app, version and pid.
 //!
 //! Records below the app's level are dropped; the operator can override the
@@ -49,7 +49,7 @@ pub(crate) struct Shared {
 }
 
 /// One app's log budget: its `rate_limit_per_sec`, under the node's
-/// ceiling, shared by its `wasi:logging` records and captured output.
+/// ceiling, shared by its `bulkhead:logging` records and captured output.
 #[derive(Debug, Clone)]
 pub(crate) struct LogRate {
     shared: Arc<Shared>,

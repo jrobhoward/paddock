@@ -1,4 +1,4 @@
-//! Guest sockets (`wasi:sockets`) through the net fixture, against local
+//! Guest sockets (`bulkhead:sockets`) through the net fixture, against local
 //! peers: the manifest's rules and the address guard, `max_sockets` across
 //! an app's instances, listening, and readiness delivered as host events
 //! (`bulkhead:io/ready`), on the fixture built as a native program.

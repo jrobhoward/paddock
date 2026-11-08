@@ -1,4 +1,4 @@
-//! `wasi:sockets`: TCP and UDP from apps.
+//! `bulkhead:sockets`: TCP and UDP from apps.
 //!
 //! Without the capability granted, every socket request is refused. With
 //! it, each address a socket binds, listens on, accepts from, connects or
@@ -42,7 +42,7 @@ pub(crate) struct Sockets;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct SocketsSpec {
-    /// The manifest's `wasi:sockets` scope; `None` when it declares none.
+    /// The manifest's `bulkhead:sockets` scope; `None` when it declares none.
     pub scope: Option<SocketsScope>,
 }
 

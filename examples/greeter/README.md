@@ -12,7 +12,7 @@ cargo test -p example-greeter-node
 
 ## Writing an extension
 
-1. Name the package in a namespace other than `wasi` or `bulkhead`. Give every function a `Result` whose error has an `AccessDenied` case, so an ungranted app gets an error value, not a crash.
+1. Name the package in a namespace other than `bulkhead`. Give every function a `Result` whose error has an `AccessDenied` case, so an ungranted app gets an error value, not a crash.
 2. Implement `bulkhead_host::services::Extension`:
    - `package()`: the package name, which is also the manifest key and the policy grant.
    - `instance(app)`: per-instance state from the app's scope table (`app.scope`) and whether it was granted (`app.granted`). Every instance gets state, including apps that do not declare the extension.

@@ -658,12 +658,12 @@ impl Ctx {
         }
     }
 
-    /// A configuration value (`wasi:config`: the manifest's `config` with
+    /// A configuration value (`bulkhead:config`: the manifest's `config` with
     /// the node's overrides), if set.
     ///
     /// # Errors
     ///
-    /// [`ConfigError::AccessDenied`] if `wasi:config` is not granted.
+    /// [`ConfigError::AccessDenied`] if `bulkhead:config` is not granted.
     pub fn config(&mut self, key: impl Into<String>) -> Result<Option<String>, ConfigError> {
         match self.request(Request::ConfigGet(key.into())) {
             Answer::Config(result) => result,
@@ -697,7 +697,7 @@ impl Ctx {
         }
     }
 
-    /// A socket operation (`wasi:sockets`, ROADMAP Z8e). A stream comes
+    /// A socket operation (`bulkhead:sockets`, ROADMAP Z8e). A stream comes
     /// connected, on the descriptor socket ([`take_fd`]); listeners and
     /// UDP sockets stay in the node. [`close_socket_quietly`] closes one
     /// from a `Drop`.
@@ -714,7 +714,7 @@ impl Ctx {
         }
     }
 
-    /// An HTTP request (`wasi:http/outgoing-handler`, ROADMAP Z8f), sent
+    /// An HTTP request (`bulkhead:http-egress`, ROADMAP Z8f), sent
     /// by the node's egress client on the manifest's rules; the whole
     /// response, up to a frame's size.
     ///
@@ -1153,7 +1153,7 @@ fn unexpected_kv(answer: &KvAnswer) -> ! {
     protocol_error(&format!("unexpected keyvalue answer {answer:?}"))
 }
 
-/// A bucket, from [`Ctx::bucket`]: `wasi:keyvalue`'s operations and
+/// A bucket, from [`Ctx::bucket`]: `bulkhead:keyvalue`'s operations and
 /// `bulkhead:watch`'s (revisions, compare-and-swap, scans, watches).
 ///
 /// Every method fails with [`KvError::AccessDenied`] for a bucket the

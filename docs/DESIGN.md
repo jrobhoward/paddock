@@ -164,16 +164,16 @@ In a bundle, the `appserver` section holds every section below except three that
 | --- | --- | --- |
 | Messaging | `bulkhead:runtime/process` | always granted; `messaging_acl` narrows it |
 | Spawn and supervise | `bulkhead:runtime/supervisor` | max children, allowed child apps (not enforced) |
-| Logging | `wasi:logging` | max level, rate limit |
-| Config | `wasi:config` | key prefixes |
+| Logging | `bulkhead:logging` | max level, rate limit |
+| Config | `bulkhead:config` | key prefixes |
 | Secrets | `bulkhead:secrets` | named secret refs |
 | Clocks, random | `wasi:clocks`, `wasi:random` | always granted |
 | WASI plumbing | `wasi:io`, `wasi:cli` | always granted; Rust's standard library imports them. Stdout and stderr become tagged logs, and the environment holds only what the host sets |
-| Term storage | `wasi:keyvalue` | buckets, durability (memory, disk, replicated), quota bytes |
-| Files | `wasi:filesystem` | preopens: guest path → host volume, read-only or read-write |
-| HTTP out | `wasi:http/outgoing-handler` | allowed hosts and ports, methods, max concurrent |
-| HTTP in | `wasi:http/incoming-handler` | routes (host, path prefix), max body size |
-| Sockets | `wasi:sockets` | allowed CIDRs and ports for connect and bind, listen yes/no, `max_sockets` |
+| Term storage | `bulkhead:keyvalue` | buckets, durability (memory, disk, replicated), quota bytes |
+| Files | `bulkhead:files` | preopens: guest path → host volume, read-only or read-write |
+| HTTP out | `bulkhead:http-egress` | allowed hosts and ports, methods, max concurrent |
+| HTTP in | `bulkhead:http-routes` | routes (host, path prefix), max body size |
+| Sockets | `bulkhead:sockets` | allowed CIDRs and ports for connect and bind, listen yes/no, `max_sockets` |
 | SQL pool | `bulkhead:sql` | named datasource, max connections |
 | Metrics | `bulkhead:metrics` | metric name prefix |
 | Admin | `bulkhead:admin` | read-only or control; for operator tooling apps only (not enforced) |
@@ -454,18 +454,18 @@ The server provides OTP's runtime services and JBoss's managed resources as WIT 
 | Failure detection | Host-native | Links, `heart` | Health checks | 1 |
 | Registry | `process` (local); groups below; global names parked | `register`, `pg`, `global` | JNDI | 1 |
 | Process groups and publish | `bulkhead:groups`: join, leave, members, and `publish`, which the host fans out to every member; members leave when they exit. Each node owns its members and sends a snapshot per session and every join and leave to the others; a publish sends one copy per node with members, which fans it out under the messaging ACLs | `pg`, `gen_event` | JMS topics (loosely) | 2a (local), 2b (cluster) |
-| Shared buckets and watches | `wasi:keyvalue` buckets bound in node config and granted to several apps; `bulkhead:watch` for revisioned change notices and compare-and-swap on revision | ETS (public tables), `mnesia:subscribe` | Infinispan listeners | 2a |
-| Logging | `wasi:logging`; host adds app, version, pid, node, trace id | `logger` | Logging subsystem | 1 |
-| Config | `wasi:config` | `application:get_env` | System properties | 1 |
+| Shared buckets and watches | `bulkhead:keyvalue` buckets bound in node config and granted to several apps; `bulkhead:watch` for revisioned change notices and compare-and-swap on revision | ETS (public tables), `mnesia:subscribe` | Infinispan listeners | 2a |
+| Logging | `bulkhead:logging`; host adds app, version, pid, node, trace id | `logger` | Logging subsystem | 1 |
+| Config | `bulkhead:config` | `application:get_env` | System properties | 1 |
 | Secrets | `bulkhead:secrets`: names granted by policy, bound in node config to files or environment variables (Vault later) | — | Elytron credential store | 2 |
 | Clocks, random | `wasi:clocks`, `wasi:random` | `erlang:monotonic_time` | — | 1 |
-| In-memory term storage | `wasi:keyvalue` bucket, durability `memory`; host-owned so it outlives instance crashes | ETS (with `heir`) | Infinispan local cache | 1 |
-| Persistent term storage | `wasi:keyvalue`, durability `disk` (redb) | DETS | — | 1 |
-| Replicated storage | `wasi:keyvalue`, durability `replicated`, and `cluster` shared buckets: synchronous within the HA pair (below); every node reads its local copy and delivers watches from it | Mnesia, Khepri | Infinispan distributed | 3 |
-| Files | `wasi:filesystem`: read-only `/priv` from the bundle, and preopens of volumes the operator binds | `code:priv_dir` | — | 1 |
-| HTTP ingress | Node-level ingress delivering each request on an app's routes (`wasi:http/incoming-handler` scope) as a call; host terminates HTTP and TLS and routes by host/path (see "HTTP ingress") | Cowboy, inets | Undertow web container | 2 |
-| HTTP egress | `wasi:http/outgoing-handler` through the host's filter and connection pool | `httpc` | — | 2 |
-| Sockets | `wasi:sockets` with allow-list; readiness as messages (`bulkhead:io`) | `gen_tcp`, `gen_udp` (`{active, once}`) | — | 3 |
+| In-memory term storage | `bulkhead:keyvalue` bucket, durability `memory`; host-owned so it outlives instance crashes | ETS (with `heir`) | Infinispan local cache | 1 |
+| Persistent term storage | `bulkhead:keyvalue`, durability `disk` (redb) | DETS | — | 1 |
+| Replicated storage | `bulkhead:keyvalue`, durability `replicated`, and `cluster` shared buckets: synchronous within the HA pair (below); every node reads its local copy and delivers watches from it | Mnesia, Khepri | Infinispan distributed | 3 |
+| Files | `bulkhead:files`: read-only `/priv` from the bundle, and preopens of volumes the operator binds | `code:priv_dir` | — | 1 |
+| HTTP ingress | Node-level ingress delivering each request on an app's routes (`bulkhead:http-routes` scope) as a call; host terminates HTTP and TLS and routes by host/path (see "HTTP ingress") | Cowboy, inets | Undertow web container | 2 |
+| HTTP egress | `bulkhead:http-egress` through the host's filter and connection pool | `httpc` | — | 2 |
+| Sockets | `bulkhead:sockets` with allow-list; readiness as messages (`bulkhead:io`) | `gen_tcp`, `gen_udp` (`{active, once}`) | — | 3 |
 | Database pools | `bulkhead:sql` against named datasources (Postgres) | — | JDBC datasources | 2 |
 | Metrics and tracing | `bulkhead:metrics` (per-app counters, gauges, histograms) and host counters, exported as Prometheus text (`[metrics]`, `/v1/metrics`); OTLP push later | `telemetry` | Metrics subsystem | 2 |
 | Introspection | Admin API: apps, pids, mailbox depth, memory, restarts; message trace through USDT probes (OBSERVABILITY.md) | `observer`, `recon`, `dbg` | Management console | 1 (probes, `ps`); 2 (cluster-wide) |
@@ -634,10 +634,10 @@ Bulkhead reuses rustbridge's bundle format, signing, lifecycle and transport, an
     "instances": { "count": 2, "routing": "hash:customer_id" },
     "limits": { "memory_max": "64MiB", "callback_deadline_ms": 2000, "mailbox_max": 10000 },
     "capabilities": {
-      "wasi:logging": { "max_level": "info" },
-      "wasi:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1GiB" } } },
-      "wasi:http/outgoing-handler": { "allow": ["https://payments.internal"] },
-      "wasi:filesystem": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } }
+      "bulkhead:logging": { "max_level": "info" },
+      "bulkhead:keyvalue": { "buckets": { "orders": { "durability": "disk", "quota": "1GiB" } } },
+      "bulkhead:http-egress": { "allow": ["https://payments.internal"] },
+      "bulkhead:files": { "preopens": { "/data": { "volume": "orders-data", "mode": "rw" } } }
     },
     "messaging_acl": { "accept_from": ["web", "billing"] },
     "upgrade": { "mode": "snapshot", "snapshot_version": 3, "from_versions": [">=1.2 <1.4"] },

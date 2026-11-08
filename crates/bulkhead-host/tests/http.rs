@@ -100,7 +100,7 @@ fn start() -> Served {
             "instances": { "count": 3, "routing": "hash:key" },
             "supervision": { "intensity": 100, "backoff": { "initial_ms": 1, "max_ms": 5 } },
             "limits": { "callback_deadline_ms": 2000 },
-            "capabilities": { "wasi:http/incoming-handler": {
+            "capabilities": { "bulkhead:http-routes": {
                 "routes": [
                     { "path_prefix": "/api", "hash_header": "x-tenant" },
                     { "host": "shop.example", "path_prefix": "/shop" }

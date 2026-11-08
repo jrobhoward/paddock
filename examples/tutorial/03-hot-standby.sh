@@ -18,7 +18,7 @@ addr() { echo "127.0.0.1:$((BASE_PORT + $1 - 1))"; }
 
 cat > policy.toml <<'TOML'
 [apps.board]
-grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging", "bulkhead:groups"]
+grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging", "bulkhead:groups"]
 buckets = ["board"]
 TOML
 echo "[peers]" > peers.toml

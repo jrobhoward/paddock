@@ -10,7 +10,7 @@
 # and in policy:
 #
 #   [apps.board]
-#   grant = ["wasi:http/incoming-handler", "wasi:keyvalue", "wasi:logging"]
+#   grant = ["bulkhead:http-routes", "bulkhead:keyvalue", "bulkhead:logging"]
 #   buckets = ["board"]
 #
 # examples/tutorial walks through it. Bundle `target/release/example-board`
@@ -21,16 +21,16 @@ version = "1.0.0"
 description = "A counter on a shared disk bucket, over HTTP (bulkhead example)"
 license = "MIT OR Apache-2.0"
 
-[appserver.capabilities."wasi:http/incoming-handler"]
+[appserver.capabilities."bulkhead:http-routes"]
 routes = [{ path_prefix = "/board" }]
 max_body = "1KiB"
 timeout_ms = 5000
 
-[appserver.capabilities."wasi:keyvalue".shared]
+[appserver.capabilities."bulkhead:keyvalue".shared]
 board = "rw"
 
 # The app joins process groups in its hot-standby mode
 # (hot-standby.toml); declared without groups here, it is never called.
 [appserver.capabilities."bulkhead:groups"]
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]

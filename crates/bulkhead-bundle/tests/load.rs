@@ -170,7 +170,7 @@ fn native_bundle(
     builder
         .with_extension(
             "appserver",
-            json!({ "kind": "native-process", "capabilities": { "wasi:logging": {} } }),
+            json!({ "kind": "native-process", "capabilities": { "bulkhead:logging": {} } }),
         )
         .with_signing_key(keypair.pk.to_base64(), keypair.sk)
         .write(&path)
@@ -239,7 +239,7 @@ fn open____native_process_for_this_platform____program_and_declared_grant() {
 
     let bundle = VerifiedBundle::open(&path, &[key]).unwrap();
     let grant = bundle.effective_grant(
-        &OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"wasi:logging\"]\n").unwrap(),
+        &OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"bulkhead:logging\"]\n").unwrap(),
     );
 
     assert_eq!(bundle.program, elf(this));
@@ -367,7 +367,7 @@ fn effective_grant____policy_grants_keyvalue____granted() {
     let spec = Spec::default();
     let bundle = VerifiedBundle::open(spec.write(&dir), &[spec.public_key()]).unwrap();
     let policy =
-        OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"wasi:keyvalue\"]\n").unwrap();
+        OperatorPolicy::from_toml_str("[apps.orders]\ngrant = [\"bulkhead:keyvalue\"]\n").unwrap();
 
     let grant = bundle.effective_grant(&policy);
 

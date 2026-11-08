@@ -1,4 +1,4 @@
-//! Term storage behind `wasi:keyvalue`.
+//! Term storage behind `bulkhead:keyvalue`.
 //!
 //! Buckets are host-owned, so their data outlives instance crashes. An app
 //! bucket is namespaced by app: two apps opening a bucket of the same name
@@ -211,7 +211,7 @@ fn scan_table<T: ReadableTable<&'static str, &'static [u8]>>(
 /// The namespace of shared buckets. App names cannot start with `@`.
 pub(crate) const SHARED: &str = "@shared";
 
-/// A bucket an instance opened: the resource behind `wasi:keyvalue`'s
+/// A bucket an instance opened: the resource behind `bulkhead:keyvalue`'s
 /// `bucket`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BucketHandle {

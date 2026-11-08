@@ -49,17 +49,17 @@ mailbox_max = 10000
 mailbox_max_bytes = "64MiB"
 message_max_bytes = "1MiB"
 
-[appserver.capabilities."wasi:logging"]
+[appserver.capabilities."bulkhead:logging"]
 max_level = "info"
 rate_limit_per_sec = 100
 
-[appserver.capabilities."wasi:config"]
+[appserver.capabilities."bulkhead:config"]
 
-[appserver.capabilities."wasi:keyvalue".buckets]
+[appserver.capabilities."bulkhead:keyvalue".buckets]
 orders = { durability = "disk", quota = "256MiB" }
 cache = { durability = "memory" }
 
-[appserver.capabilities."wasi:filesystem".preopens]
+[appserver.capabilities."bulkhead:files".preopens]
 "/data" = { volume = "orders-data", mode = "rw" }
 
 [appserver.config.defaults]
@@ -168,22 +168,21 @@ Each key requests one host interface, with the scope that narrows it. Importing 
 - **Imported but not declared:** the component is refused by `bulkhead bundle` and at deploy.
 - **Declared but not granted:** the app deploys. Its imports are linked to stubs that return the interface's permission error (`access-denied` for keyvalue, for example) at call time. `bulkhead status` lists these under `denied`.
 
-Always available, with no declaration: `bulkhead:runtime/process` and `types`, `bulkhead:io` (readiness of a pollable as the host event `io-ready`; see `wasi:sockets`), `wasi:clocks`, `wasi:random`, `wasi:io` and `wasi:cli` (stdout and stderr become log records).
+Always available, with no declaration: `bulkhead:runtime/process` and `types`, `bulkhead:io` (readiness of a pollable as the host event `io-ready`; see `bulkhead:sockets`), `wasi:clocks`, `wasi:random`, `wasi:io` and `wasi:cli` (stdout and stderr become log records).
 
 | Key | Scope fields | Status |
 | --- | --- | --- |
-| `wasi:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted; it can only lower the node's `[limits] log_records_per_sec` (default 1000), and captured stdout and stderr lines count against the same budget. Control characters in the text are escaped, so a record stays on one line. | enforced |
-| `wasi:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
-| `wasi:keyvalue` | `buckets.<name> = { durability, quota, read_concurrency }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (kept whole on both nodes of an HA pair, as a `cluster` shared bucket is, so it survives losing either node; needs a node with `[failover] replication = true`, or the deploy is refused). A bucket whose durability changes in an upgrade starts empty in its new durability. `quota` is a byte cap per bucket. `read_concurrency = true` (memory buckets only, as ETS's `read_concurrency`): reads take no lock, so many instances read the bucket at once (about three times the reads with 4 to 16 readers, spike S26; for native apps 1.85 times with 16 instances on a 16-core machine, and no more on a 4-core Raspberry Pi 5, where the cores are the limit: BASELINE.md, T11), at the cost of 0 to 25% more per operation, 13 to 54% more per write and a third to a half of the writes to one hot key; turn it on for a bucket read far more than it is written, by more instances than the node has cores to spare; readers may see part of a `set-many`, and a `scan` page holds each entry as of its own revision. Off by default. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `bulkhead:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
+| `bulkhead:logging` | `max_level` (default `"info"`): records above it are dropped. `rate_limit_per_sec`: the excess is dropped and counted; it can only lower the node's `[limits] log_records_per_sec` (default 1000), and captured stdout and stderr lines count against the same budget. Control characters in the text are escaped, so a record stays on one line. | enforced |
+| `bulkhead:config` | `key_prefixes`: node-level keys the app may read. Its own `config.defaults` keys are always readable. | enforced |
+| `bulkhead:keyvalue` | `buckets.<name> = { durability, quota, read_concurrency }`. `durability` is `"memory"` (survives instance crashes), `"disk"` (also survives node restarts) or `"replicated"` (kept whole on both nodes of an HA pair, as a `cluster` shared bucket is, so it survives losing either node; needs a node with `[failover] replication = true`, or the deploy is refused). A bucket whose durability changes in an upgrade starts empty in its new durability. `quota` is a byte cap per bucket. `read_concurrency = true` (memory buckets only, as ETS's `read_concurrency`): reads take no lock, so many instances read the bucket at once (about three times the reads with 4 to 16 readers, spike S26; for native apps 1.85 times with 16 instances on a 16-core machine, and no more on a 4-core Raspberry Pi 5, where the cores are the limit: BASELINE.md, T11), at the cost of 0 to 25% more per operation, 13 to 54% more per write and a third to a half of the writes to one hot key; turn it on for a bucket read far more than it is written, by more instances than the node has cores to spare; readers may see part of a `set-many`, and a `scan` page holds each entry as of its own revision. Off by default. Buckets are namespaced per app. `shared.<name> = "ro"` or `"rw"`: a shared bucket from the node's `[buckets]`, which every app listing it and granted it sees; `"ro"` refuses writes with `access-denied`. A name is an app bucket or a shared one, not both. The same declaration covers `bulkhead:watch` (revisions, compare-and-swap, watches) on these buckets. | enforced |
 | `bulkhead:groups` | `join`: groups the app's instances may join and leave. `publish`: groups the app may publish to. Listing members is allowed for a group in either list. Groups exist while they have members; nothing in node configuration binds them. Groups span the cluster: members on every node are listed and published to, except where `messaging_acl` keeps two apps apart. | enforced |
-| `wasi:filesystem` | `preopens."<guest path>" = { volume, mode }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`. Bulkhead enforces no byte quota on a volume and refuses `quota` here: give each writable volume a filesystem quota of its own (a ZFS dataset quota, an XFS project quota, or a separate mount). `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
-| `wasi:http/incoming-handler` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
+| `bulkhead:files` | `preopens."<guest path>" = { volume, mode }`. `volume` names a host directory in the node's `[volumes]`; `mode` is `"ro"` or `"rw"`. Bulkhead enforces no byte quota on a volume and refuses `quota` here: give each writable volume a filesystem quota of its own (a ZFS dataset quota, an XFS project quota, or a separate mount). `/priv` is reserved: it always holds the bundle's files, read-only. | enforced |
+| `bulkhead:http-routes` | `routes = [{ host, path_prefix, hash_header }]`: requests the node's HTTP ingress sends to the app, each as a call (`host` optional; `path_prefix` matched on segments; `hash_header` copies a header into the request's `key` for `instances.routing = "hash:key"`). `max_body` (default `"1MiB"`), `timeout_ms` for the reply (default `30000`, then 504). The app imports nothing for this; the routes go live only when the operator grants the key, and need `[http]` in node config. | enforced |
 | `bulkhead:secrets` | `secrets = ["db-password"]`: names the app reads. Each name needs a `[secrets.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`secrets = [...]`); reading an ungranted one returns `access-denied`. | enforced |
 | `bulkhead:metrics` | `prefix` (required; letters, digits, `_`): every metric is exported as `<prefix>_<name>` with an `app` label. `max_series` (default 1000): most name and label combinations the app may hold; past it, registering returns `limit-reached`. | enforced |
-| `wasi:http/outgoing-handler` | `allow`: what the app may reach, each entry a scheme, host and port: `https://api.example.com` (port 443), `http://plc.internal:8080`, a bare `api.example.com` (HTTPS), `*.internal` (any host under `internal`, HTTPS, 443), or an address, `http://10.0.0.5:8080`, `https://[fd00::1]` (reached only as written, never through a name). No path, query or user. `methods` (upper case; empty for any). `max_concurrent`: requests in flight at once across the app's instances (default: the node's `[egress] max_concurrent`, 64); past it a request fails at once with `connection-limit-reached`. Anything else is refused with `HTTP-request-denied`, and a name that resolves only to loopback or link-local addresses with `destination-IP-prohibited`, unless node config sets `allow_loopback`. Node config's `[egress] allow` is a ceiling: a deploy asking for more is refused. Cargo feature `egress` (on by default); `bulkhead_sdk::http_client` is the SDK's client. | enforced |
+| `bulkhead:http-egress` | `allow`: what the app may reach, each entry a scheme, host and port: `https://api.example.com` (port 443), `http://plc.internal:8080`, a bare `api.example.com` (HTTPS), `*.internal` (any host under `internal`, HTTPS, 443), or an address, `http://10.0.0.5:8080`, `https://[fd00::1]` (reached only as written, never through a name). No path, query or user. `methods` (upper case; empty for any). `max_concurrent`: requests in flight at once across the app's instances (default: the node's `[egress] max_concurrent`, 64); past it a request fails at once with `connection-limit-reached`. Anything else is refused with `HTTP-request-denied`, and a name that resolves only to loopback or link-local addresses with `destination-IP-prohibited`, unless node config sets `allow_loopback`. Node config's `[egress] allow` is a ceiling: a deploy asking for more is refused. Cargo feature `egress` (on by default); `bulkhead_sdk::http_client` is the SDK's client. | enforced |
 | `bulkhead:sql` | `datasources.<name>.max_connections` (default 4): the SQL datasources the app uses, and how many connections its instances hold on each at once, transactions included. Each name needs a `[datasources.<name>]` binding on the node (or the deploy is refused) and a grant in policy (`datasources = [...]`); using an ungranted one returns `access-denied`. A call that cannot get a connection within the datasource's `acquire_timeout_ms` returns `limit-reached`. Postgres only; see `wit/sql/sql.wit` for what values carry. | enforced |
-| `wasi:sockets` | `connect = [{ cidr, ports }]`: where the app may connect TCP and send UDP (`ports` is `"1883"` or `"8000-8100"`; unset for any). `bind = [{ cidr, ports }]`: what it may bind; the unspecified address with port 0, the bind before every connect, needs no rule. `listen` (default `false`): whether it may listen on a bound TCP address, accept connections and take UDP datagrams from any peer (without it, datagrams only from `connect` addresses). `max_sockets` (default 16): sockets open at once across the app's instances, TCP and UDP, accepted ones included; past it, creating or accepting one fails with `new-socket-limit`. Loopback, link-local (`169.254.0.0/16`, cloud metadata) and unspecified destinations are reached only through a rule whose block lies inside that range (`127.0.0.1/32` reaches loopback; `0.0.0.0/0` does not). Name lookups are allowed only with `connect` rules; the addresses they return are checked like any other. Anything else fails with `access-denied` (a refused name lookup as `permanent-resolver-failure`). Node config's `[sockets]` is a ceiling: a deploy asking for more is refused. Sockets close when the instance exits or is upgraded, and an instance holding one is not passivated. `bulkhead_sdk::net` is the SDK's TCP client and listener; it waits for bytes with `bulkhead:io` instead of blocking the instance. | enforced |
-| `bulkhead:runtime/supervisor`, `bulkhead:admin` | as documented in `bulkhead_bundle::manifest` | *not enforced* |
+| `bulkhead:sockets` | `connect = [{ cidr, ports }]`: where the app may connect TCP and send UDP (`ports` is `"1883"` or `"8000-8100"`; unset for any). `bind = [{ cidr, ports }]`: what it may bind; the unspecified address with port 0, the bind before every connect, needs no rule. `listen` (default `false`): whether it may listen on a bound TCP address, accept connections and take UDP datagrams from any peer (without it, datagrams only from `connect` addresses). `max_sockets` (default 16): sockets open at once across the app's instances, TCP and UDP, accepted ones included; past it, creating or accepting one fails with `new-socket-limit`. Loopback, link-local (`169.254.0.0/16`, cloud metadata) and unspecified destinations are reached only through a rule whose block lies inside that range (`127.0.0.1/32` reaches loopback; `0.0.0.0/0` does not). Name lookups are allowed only with `connect` rules; the addresses they return are checked like any other. Anything else fails with `access-denied` (a refused name lookup as `permanent-resolver-failure`). Node config's `[sockets]` is a ceiling: a deploy asking for more is refused. Sockets close when the instance exits or is upgraded, and an instance holding one is not passivated. `bulkhead_sdk::net` is the SDK's TCP client and listener; it waits for bytes with `bulkhead:io` instead of blocking the instance. | enforced |
 | `extensions."<package>"` | Free-form: the table the extension's host service reads. | enforced by the node's extension |
 
 `extensions` declares packages served by host services built into a node from outside Bulkhead (extensions; see [`examples/greeter`](../examples/greeter/README.md)). The key is the WIT package, `namespace:package`, outside the reserved `wasi` and `bulkhead` namespaces; an import from any interface of that package needs the declaration:
@@ -201,18 +200,18 @@ What each host service needs from the app, the node and the operator. Every capa
 
 | Service | Manifest | Node config | Policy | `bulkhead-sdk` | Node build |
 | --- | --- | --- | --- | --- | --- |
-| Logging | `wasi:logging` | `[limits] log_records_per_sec` (optional) | | always | |
-| Configuration | `wasi:config`, `config.defaults` | `[config.<app>]` (optional) | | `config` | |
-| Keyvalue, the app's own buckets | `wasi:keyvalue` `buckets` | `[failover] replication = true` for `replicated` | | `keyvalue`; `watch` for revisions and watches | |
-| Keyvalue, shared buckets | `wasi:keyvalue` `shared` | `[buckets.<name>]` | `buckets` | `keyvalue`, `watch` | |
+| Logging | `bulkhead:logging` | `[limits] log_records_per_sec` (optional) | | always | |
+| Configuration | `bulkhead:config`, `config.defaults` | `[config.<app>]` (optional) | | `config` | |
+| Keyvalue, the app's own buckets | `bulkhead:keyvalue` `buckets` | `[failover] replication = true` for `replicated` | | `keyvalue`; `watch` for revisions and watches | |
+| Keyvalue, shared buckets | `bulkhead:keyvalue` `shared` | `[buckets.<name>]` | `buckets` | `keyvalue`, `watch` | |
 | Process groups | `bulkhead:groups` | | | `groups` | |
-| Files | `wasi:filesystem` `preopens` | `[volumes]` | | `std::fs` | |
+| Files | `bulkhead:files` `preopens` | `[volumes]` | | `std::fs` | |
 | Secrets | `bulkhead:secrets` | `[secrets.<name>]` | `secrets` | `secrets` | |
 | Metrics | `bulkhead:metrics` | `[metrics] address` to scrape (optional) | | `metrics` | |
 | SQL | `bulkhead:sql` | `[datasources.<name>]` | `datasources` | `sql` | `sql` (default) |
-| HTTP in (as calls) | `wasi:http/incoming-handler` `routes` | `[http.<name>]` | | `http` | `http` (default) |
-| HTTP out | `wasi:http/outgoing-handler` `allow` | `[egress]` (optional ceiling) | | `http-client` | `egress` (default) |
-| Sockets | `wasi:sockets` | `[sockets]` (optional ceiling) | | `net` | |
+| HTTP in (as calls) | `bulkhead:http-routes` `routes` | `[http.<name>]` | | `http` | `http` (default) |
+| HTTP out | `bulkhead:http-egress` `allow` | `[egress]` (optional ceiling) | | `http-client` | `egress` (default) |
+| Sockets | `bulkhead:sockets` | `[sockets]` (optional ceiling) | | `net` | |
 | TCP connections (a connection handler) | `listeners` (not a capability) | `[listeners.<name>]` | | `connection` | |
 | An extension | `extensions."<package>"` | `[extensions."<package>"]` | the package in `grant` | the extension's own bindings | the extension (`modbus` for Modbus) |
 
@@ -222,7 +221,7 @@ Always available, with nothing to declare: `bulkhead:runtime/process` (calls, ca
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `defaults` | `{}` | String key-value pairs the app reads through `wasi:config`. The node's `[config.<app>]` table overrides them per key. |
+| `defaults` | `{}` | String key-value pairs the app reads through `bulkhead:config`. The node's `[config.<app>]` table overrides them per key. |
 | `schema` | none | Path of a JSON Schema in the bundle; documentation only. |
 | `secrets` | `[]` | Secret names; *not enforced*. `capabilities."bulkhead:secrets"` declares the secrets an app reads. |
 
@@ -240,7 +239,7 @@ An upgrade that adds capabilities needs `bulkhead upgrade --approve`. `--batch`,
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `log_level` | `"info"` | The app's log level when `wasi:logging` sets no `max_level`. An operator can override either at run time with `bulkhead log-level <app> <level>` (and `reset`). |
+| `log_level` | `"info"` | The app's log level when `bulkhead:logging` sets no `max_level`. An operator can override either at run time with `bulkhead log-level <app> <level>` (and `reset`). |
 | `metrics`, `trace_sampling` | `false`, `0.0` | *Not enforced*. `capabilities."bulkhead:metrics"` exports an app's metrics. |
 
 ### `listeners`
@@ -275,7 +274,6 @@ Two shapes, by `native.program`:
 
 Every section and capability works for an executable as for a component, each host service a request to the node answered by the code a component's import runs, on the same checks. The differences:
 
-- `bulkhead:runtime/supervisor` and `bulkhead:admin` may not be declared (neither is enforced for a component either); every other capability, and extensions, may.
 - A frame between the node and the app is at most 17 MiB: a message, a keyvalue value, or a batch (`set_many`, `get_many` and their answers) over about 16 MiB ends the instance with a protocol error, where a component's has no such limit (ROADMAP, "Smaller open items"). `limits.message_max_bytes` (1 MiB by default) bounds messages first.
 - An extension is called through the node rather than imported, so an undeclared one is not refused at deploy (the extension sees the app as not granted), and a node without it answers that it has none where a component gets deny stubs.
 - Native apps with `listeners` may not passivate or be singletons, and a new version may not change its `listeners`.
@@ -284,18 +282,18 @@ Every section and capability works for an executable as for a component, each ho
 
 How the rest works natively:
 
-- The process's environment holds only `BULKHEAD_PRIV`, the directory of the bundle's `priv/` files, and `BULKHEAD_PREOPENS`, where each preopened directory is (the bundle's `priv/` files and each volume, by guest path), when the manifest declares `wasi:filesystem` and the operator grants it. `bulkhead bundle` packs a native app's program as the variant for the machine it runs on, or one per platform with `--program PLATFORM=PATH`, each checked to be an ELF file for its architecture. A node refuses a bundle without its own platform's program (WRITING_APPS.md, "Bundles").
+- The process's environment holds only `BULKHEAD_PRIV`, the directory of the bundle's `priv/` files, and `BULKHEAD_PREOPENS`, where each preopened directory is (the bundle's `priv/` files and each volume, by guest path), when the manifest declares `bulkhead:files` and the operator grants it. `bulkhead bundle` packs a native app's program as the variant for the machine it runs on, or one per platform with `--program PLATFORM=PATH`, each checked to be an ELF file for its architecture. A node refuses a bundle without its own platform's program (WRITING_APPS.md, "Bundles").
 - Each instance is one process, with a pid, mailbox, links, monitors and supervision like a component's, one callback at a time. `limits.callback_deadline_ms` bounds each callback's wall time, less time spent answering the app's requests; past it the process is killed (`timeout`). An idle instance is pinged (`[native]`); no answer kills it (`timeout`). The process exiting is `crashed` with its status or signal, a panic in a callback `crashed` with the panic's message, and going over `memory_max` with a cgroup `crashed: memory_limit`.
 - `memory_max` is the process's cgroup `memory.max` with node config `[native] cgroup`, else its `RLIMIT_DATA` (a failed allocation then aborts it).
 - `placement` works as for a component (`singleton`, `hot-standby`, `partner_url`, standby forwarding). A native process can run threads between callbacks, so a singleton's process is killed when the node's lease ends whether or not a callback is running (`crashed: lease_ended`); its restart waits for the lease before the process starts. `bulkhead-runner` enforces the lease too, beside the app: the node sends it each new end of the lease, and a watchdog process kills the app once the last one has passed, so a node process stopped or stalled past its lease does not leave its singleton running (`crashed: killed_at_lease_end`, when the node finds it already ended).
 - An executable may set `upgrade.mode = "snapshot"` and `instances.passivate_after_ms`, and a singleton moves with its state, as for a component: the node asks the running process for its state (`save_snapshot`) between callbacks, and starts a new process from it (`load_snapshot` in place of `init`). A snapshot upgrade starts the new version's process beside the old one, which keeps running if the new one refuses the snapshot; passivation ends the process, and a message, signal or operation starts a new one. A rustbridge plugin takes no snapshot: both fields are refused, and its upgrades are `restart` or `blue-green`.
-- `wasi:keyvalue` gives an executable the buckets it lists, on a component's terms (the grant, read-only shared buckets, quotas, `limits.watches_max`): `Ctx::bucket` for `wasi:keyvalue`'s operations and `bulkhead:watch`'s (revisions, compare-and-swap, scans, watches). Each operation is a request to the node, about 5 µs (a component's bucket read is about 1.2 µs), so reads of many keys go in one `get_many` or scan page. A watch notice arrives as `Info::KvChanged` with the key's value and revision, read when the notice is delivered.
-- The other services are `Ctx` methods on the same terms as a component's imports: `join_group`, `leave_group`, `group_members` and `publish` (`bulkhead:groups`; a publish arrives at each member as a cast), `config` and `config_all` (`wasi:config`), `secret` (`bulkhead:secrets`), and `register_metric` with `metric_add`, `metric_set` and `metric_observe` (`bulkhead:metrics`). Metric updates are sent together just before the callback's result, in one frame the node does not answer; the node logs any it refuses.
+- `bulkhead:keyvalue` gives an executable the buckets it lists, on a component's terms (the grant, read-only shared buckets, quotas, `limits.watches_max`): `Ctx::bucket` for `bulkhead:keyvalue`'s operations and `bulkhead:watch`'s (revisions, compare-and-swap, scans, watches). Each operation is a request to the node, about 5 µs (a component's bucket read is about 1.2 µs), so reads of many keys go in one `get_many` or scan page. A watch notice arrives as `Info::KvChanged` with the key's value and revision, read when the notice is delivered.
+- The other services are `Ctx` methods on the same terms as a component's imports: `join_group`, `leave_group`, `group_members` and `publish` (`bulkhead:groups`; a publish arrives at each member as a cast), `config` and `config_all` (`bulkhead:config`), `secret` (`bulkhead:secrets`), and `register_metric` with `metric_add`, `metric_set` and `metric_observe` (`bulkhead:metrics`). Metric updates are sent together just before the callback's result, in one frame the node does not answer; the node logs any it refuses.
 - `bulkhead:sql` works as for a component: the manifest's datasources with their `max_connections`, granted and bound by the operator, each query, statement and transaction a request to the node (`bulkhead_sdk::sql` in both builds, `Ctx::sql` on the app API). A transaction holds one of the app's connections until it commits or rolls back; dropping the SDK's handle rolls it back, and one still open when the instance exits is rolled back.
-- `wasi:filesystem`'s preopens work as for a component: each names a volume from the node's `[volumes]`, read-only (`"ro"`) or read-write (`"rw"`), and the bundle's `priv/` files are read-only at `/priv`. The program opens them on the host's filesystem, under the runner's Landlock rules, at the paths `BULKHEAD_PREOPENS` gives; `bulkhead_sdk::files::path("/data/orders.json")` returns the right path in both builds. A read-write volume allows reading, writing, making and removing files, directories and symbolic links, and renaming within it; executing nothing from it.
-- `wasi:sockets` works on a component's rules, address guard and `max_sockets`, with the node making every socket: it connects (or resolves a name and connects), listens and accepts, and passes each TCP stream to the program, connected, keeping a copy it shuts down when the program closes the stream (so a stream kept after closing is dead). Listeners and UDP sockets stay in the node: the program accepts, sends and receives datagrams with requests, each destination and source checked against the rules. Readiness is watched by the node and arrives as the host event `io-ready`, as for a component. `bulkhead_sdk::net`'s `TcpStream` and `TcpListener` are the same in both builds (UDP natively through `Ctx::net`); reading and writing a passed stream are the program's own system calls, counted against the callback deadline.
-- `wasi:http/outgoing-handler` works as for a component: each request is sent by the node's egress client on the same rules (the `allow` list, `methods`, forbidden headers, `max_concurrent`, the address guard, node config's timeouts, roots and CA file, no redirects), and the whole response comes back, its body up to 16 MiB (a frame). `bulkhead_sdk::http_client` is the same in both builds.
-- `listeners` (an executable only) bind as for a connection handler, and each accepted connection goes to an instance of the app's pool: the next in turn, or by the peer's IP address with `instances.routing = "hash:<any>"`, so one client's connections share an instance while the pool's size holds. The node passes the stream on the instance's descriptor socket and runs its `handle_connection` (`bulkhead_sdk::connection::Handler` in both builds); the instance reads it when the node says it has bytes (`io-ready`), as a `wasi:sockets` stream, so one instance serves many connections, one callback at a time. `max_connections` counts a connection until the app closes it or its instance exits, and the idle timeout is the kernel's `TCP_INFO`: no data either way for `idle_timeout_ms` and the node shuts the socket down. A crash closes every connection its instance held, and the listener's `crashed` stays 0 (the app's restarts count it). The app is upgraded as any app; an upgrade closes the connections open on the instances it replaces. The connections do not count against `max_sockets`, and the app needs no `wasi:sockets`.
+- `bulkhead:files`'s preopens work as for a component: each names a volume from the node's `[volumes]`, read-only (`"ro"`) or read-write (`"rw"`), and the bundle's `priv/` files are read-only at `/priv`. The program opens them on the host's filesystem, under the runner's Landlock rules, at the paths `BULKHEAD_PREOPENS` gives; `bulkhead_sdk::files::path("/data/orders.json")` returns the right path in both builds. A read-write volume allows reading, writing, making and removing files, directories and symbolic links, and renaming within it; executing nothing from it.
+- `bulkhead:sockets` works on a component's rules, address guard and `max_sockets`, with the node making every socket: it connects (or resolves a name and connects), listens and accepts, and passes each TCP stream to the program, connected, keeping a copy it shuts down when the program closes the stream (so a stream kept after closing is dead). Listeners and UDP sockets stay in the node: the program accepts, sends and receives datagrams with requests, each destination and source checked against the rules. Readiness is watched by the node and arrives as the host event `io-ready`, as for a component. `bulkhead_sdk::net`'s `TcpStream` and `TcpListener` are the same in both builds (UDP natively through `Ctx::net`); reading and writing a passed stream are the program's own system calls, counted against the callback deadline.
+- `bulkhead:http-egress` works as for a component: each request is sent by the node's egress client on the same rules (the `allow` list, `methods`, forbidden headers, `max_concurrent`, the address guard, node config's timeouts, roots and CA file, no redirects), and the whole response comes back, its body up to 16 MiB (a frame). `bulkhead_sdk::http_client` is the same in both builds.
+- `listeners` (an executable only) bind as for a connection handler, and each accepted connection goes to an instance of the app's pool: the next in turn, or by the peer's IP address with `instances.routing = "hash:<any>"`, so one client's connections share an instance while the pool's size holds. The node passes the stream on the instance's descriptor socket and runs its `handle_connection` (`bulkhead_sdk::connection::Handler` in both builds); the instance reads it when the node says it has bytes (`io-ready`), as a `bulkhead:sockets` stream, so one instance serves many connections, one callback at a time. `max_connections` counts a connection until the app closes it or its instance exits, and the idle timeout is the kernel's `TCP_INFO`: no data either way for `idle_timeout_ms` and the node shuts the socket down. A crash closes every connection its instance held, and the listener's `crashed` stays 0 (the app's restarts count it). The app is upgraded as any app; an upgrade closes the connections open on the instances it replaces. The connections do not count against `max_sockets`, and the app needs no `bulkhead:sockets`.
 - An extension the manifest declares under `extensions."<package>"` is granted by the operator by package name, as for a component; the program calls its functions through the node (`bulkhead_sdk::extension::call`, `Ctx::extension` on the app API) by the extension's names for them (`greet#hello`), with arguments and results in CBOR, and the extension reads the same scope table and checks the same grant.
 - The runner restricts the program before it runs (SECURITY.md, "Native-process apps"): it reads only the system libraries, its own directory, the app's `priv/` files and its volumes, writes only its read-write volumes, executes nothing else, opens no sockets of its own (no `socket`, `connect`, `accept` or `io_uring`), and signals only itself. Linux only.
 
@@ -346,7 +344,7 @@ acquire_timeout_ms = 5000              # a call waiting longer for a connection 
 statement_timeout_ms = 30000           # the server cancels longer statements (timeout)
 max_result_bytes = "16MiB"             # larger results are refused (too-large)
 
-[egress]                               # HTTP requests from apps (wasi:http/outgoing-handler); every key optional
+[egress]                               # HTTP requests from apps (bulkhead:http-egress); every key optional
 allow = ["*.internal", "https://api.example.com"]  # the most any app may reach (manifest syntax); unset: no ceiling
 system_roots = true                    # trust the OS root certificates (SSL_CERT_FILE and SSL_CERT_DIR are read)
 ca_file = "/etc/bulkhead/egress-ca.pem" # more CAs, PEM (a private CA)
@@ -358,7 +356,7 @@ pool_idle_timeout_ms = 90000           # idle pooled connections are closed afte
 pool_max_idle_per_host = 32
 max_concurrent = 64                    # requests in flight per app, unless its manifest says
 
-[sockets]                              # TCP and UDP from apps (wasi:sockets); unset: no ceiling
+[sockets]                              # TCP and UDP from apps (bulkhead:sockets); unset: no ceiling
 connect = [{ cidr = "10.20.0.0/16", ports = "1883" }]  # the most any app may connect to (manifest syntax)
 bind = [{ cidr = "0.0.0.0/0", ports = "9000-9099" }]   # the most any app may bind
 listen = false                         # whether any app may listen
@@ -442,7 +440,7 @@ watches_max = 1000
 log_records_per_sec = 1000             # per app, logging records and stdout/stderr lines together; 0: none
 
 [buckets.points]                       # a shared keyvalue bucket, opened by apps that list it
-durability = "disk"                    # under wasi:keyvalue's shared and are granted it; or "memory"
+durability = "disk"                    # under bulkhead:keyvalue's shared and are granted it; or "memory"
 quota = "256MiB"                       # across every app writing it
 scope = "node"                         # or "cluster": replicated on the HA pair (below)
 read_concurrency = false               # memory buckets: reads without a lock (as the manifest's)
@@ -497,17 +495,17 @@ The operator policy (`policy`). Grants add up: the defaults, plus the app's own 
 
 ```toml
 [defaults]
-grant = ["wasi:logging", "wasi:config"]
+grant = ["bulkhead:logging", "bulkhead:config"]
 
 [apps.orders]
-grant = ["wasi:keyvalue", "wasi:filesystem"]
-buckets = ["points"]                   # shared buckets; needs wasi:keyvalue granted too
+grant = ["bulkhead:keyvalue", "bulkhead:files"]
+buckets = ["points"]                   # shared buckets; needs bulkhead:keyvalue granted too
 secrets = ["db-password"]              # secrets; needs bulkhead:secrets granted too
 datasources = ["main"]                 # SQL datasources; needs bulkhead:sql granted too
 
 [signers.payments-team]
 key = "RWQ..."
-grant = ["wasi:keyvalue"]
+grant = ["bulkhead:keyvalue"]
 ```
 
 A `grant` list takes extension packages (`"example:greeting"`) as well as capability keys. Policy grants or withholds whole capabilities, and each shared bucket by name (`buckets`, in any entry). A deploy reports shared buckets as `bucket:<name>` under `granted` or `denied`; opening a denied one returns `access-denied`. Other scopes an app requests (its own buckets, preopens) are used as written; narrowing them by policy is not supported.

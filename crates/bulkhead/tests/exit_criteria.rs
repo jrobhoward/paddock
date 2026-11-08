@@ -349,7 +349,7 @@ async fn exit_criterion_7____declared_but_ungranted____denied_at_call_time() {
     let policy = policy_dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[defaults]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:filesystem\"]\n",
+        "[defaults]\ngrant = [\"bulkhead:logging\", \"bulkhead:config\", \"bulkhead:files\"]\n",
     )
     .unwrap();
     let mut n = TestNode::start_native(&format!(
@@ -372,12 +372,12 @@ async fn exit_criterion_7____declared_but_ungranted____denied_at_call_time() {
     let priv_file = call(&n, "svc", "vcat /priv/motd.txt").await;
     let status = n.client.status("svc").await.unwrap();
 
-    assert_eq!(deployed.denied, vec!["wasi:keyvalue"]);
+    assert_eq!(deployed.denied, vec!["bulkhead:keyvalue"]);
     assert_eq!(kv, "err:AccessDenied");
     assert_eq!(priv_file, "from the bundle");
     assert_eq!(
         status.granted,
-        vec!["wasi:logging", "wasi:config", "wasi:filesystem"]
+        vec!["bulkhead:logging", "bulkhead:config", "bulkhead:files"]
     );
     n.shutdown().await;
 }
@@ -390,7 +390,7 @@ async fn exit_criterion_8____disk_bucket_and_files____survive_crash_and_restart_
     let policy = policy_dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[defaults]\ngrant = [\"wasi:logging\", \"wasi:config\", \"wasi:keyvalue\", \"wasi:filesystem\"]\n",
+        "[defaults]\ngrant = [\"bulkhead:logging\", \"bulkhead:config\", \"bulkhead:keyvalue\", \"bulkhead:files\"]\n",
     )
     .unwrap();
     let mut n = TestNode::start_native(&format!(

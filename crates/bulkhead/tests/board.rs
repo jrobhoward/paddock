@@ -183,9 +183,9 @@ impl OneNode {
         let policy = dir.join("policy.toml");
         std::fs::write(
             &policy,
-            "[apps.board]\ngrant = [\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"]\n\
+            "[apps.board]\ngrant = [\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\"]\n\
              buckets = [\"board\"]\n\
-             [apps.board-watch]\ngrant = [\"wasi:keyvalue\", \"wasi:logging\"]\nbuckets = [\"board\"]\n",
+             [apps.board-watch]\ngrant = [\"bulkhead:keyvalue\", \"bulkhead:logging\"]\nbuckets = [\"board\"]\n",
         )
         .unwrap();
         let port = free_port();
@@ -489,8 +489,7 @@ async fn board____hot_standby_primary_killed____count_survives_on_the_standby() 
     };
     let dir = short_dir();
     let manifest = manifest("hot-standby.toml");
-    let grant =
-        "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\", \"bulkhead:groups\"";
+    let grant = "\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\", \"bulkhead:groups\"";
     let Pair {
         _witness,
         mut n1,
@@ -578,7 +577,7 @@ async fn board____singleton_on_a_pair_with_partner_url____standby_redirects_to_t
         format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
     )
     .unwrap();
-    let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
+    let grant = "\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\"";
     let Pair {
         _witness,
         mut n1,
@@ -629,7 +628,7 @@ async fn board____singleton_on_a_pair_with_standby_forward____either_address_ser
         format!("{base}\n[appserver.placement]\nmode = \"singleton\"\n"),
     )
     .unwrap();
-    let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
+    let grant = "\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\"";
     let Pair {
         _witness,
         mut n1,
@@ -680,7 +679,7 @@ async fn board____cluster_bucket_primary_killed____count_survives_on_the_standby
     };
     let dir = short_dir();
     let manifest = manifest("bulkhead.toml");
-    let grant = "\"wasi:http/incoming-handler\", \"wasi:keyvalue\", \"wasi:logging\"";
+    let grant = "\"bulkhead:http-routes\", \"bulkhead:keyvalue\", \"bulkhead:logging\"";
     let Pair {
         _witness,
         mut n1,

@@ -1,4 +1,4 @@
-//! HTTP egress (`wasi:http/outgoing-handler`) through the SDK fixture's
+//! HTTP egress (`bulkhead:http-egress`) through the SDK fixture's
 //! `fetch` command, against a local server: the allow list, methods, the
 //! address guard, the per-app limit, timeouts, the pool and TLS, on the
 //! fixture built as a native program, whose requests the node sends.

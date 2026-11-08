@@ -1,7 +1,7 @@
 //! HTTP requests from the node's ingress (cargo feature `http`).
 //!
 //! The node terminates HTTP and sends each request on the app's routes
-//! (manifest `capabilities."wasi:http/incoming-handler".routes`) to the app
+//! (manifest `capabilities."bulkhead:http-routes".routes`) to the app
 //! as a call. In `handle_call`, [`Request::from_envelope`] recognises one;
 //! answer with a [`Response`], now or later with `Ctx::reply`. Any other
 //! reply is sent as `200` with its content type and body.

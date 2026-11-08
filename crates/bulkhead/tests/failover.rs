@@ -798,15 +798,15 @@ fn replicated_singleton(signer: &minisign::KeyPair) -> Vec<u8> {
     let manifest = fast(serde_json::json!({
         "placement": { "mode": "singleton" },
         "capabilities": {
-            "wasi:config": {},
-            "wasi:keyvalue": { "buckets": { "state": { "durability": "replicated" } } },
+            "bulkhead:config": {},
+            "bulkhead:keyvalue": { "buckets": { "state": { "durability": "replicated" } } },
             "bulkhead:groups": {},
             "bulkhead:metrics": { "prefix": "vault" },
             "bulkhead:secrets": { "secrets": [] },
-            // The SDK fixture imports `bulkhead:sql` and `wasi:http`;
+            // The SDK fixture uses `bulkhead:sql` and `bulkhead:http-egress`;
             // declared, nothing used.
             "bulkhead:sql": {},
-            "wasi:http/outgoing-handler": {}
+            "bulkhead:http-egress": {}
         }
     }));
     app_bundle(signer, "vault", "1.0.0", &native_sdk(), manifest)
@@ -834,7 +834,7 @@ async fn failover____singleton_with_replicated_bucket_primary_killed____new_prim
     let pk = signer.pk.to_base64();
     let (a1, a2, a3) = (free_udp(), free_udp(), free_udp());
     let policy = dir.path().join("policy.toml");
-    std::fs::write(&policy, "[apps.vault]\ngrant = [\"wasi:keyvalue\"]\n").unwrap();
+    std::fs::write(&policy, "[apps.vault]\ngrant = [\"bulkhead:keyvalue\"]\n").unwrap();
     let replicating = |n: u32, a: &str| {
         format!(
             "policy = {policy:?}\n{}replication = true\n",

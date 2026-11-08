@@ -8,11 +8,11 @@ use super::*;
 
 #[test]
 fn InterfaceName____full_name____splits_parts() {
-    let name = InterfaceName::parse("wasi:keyvalue/store@0.2.0-draft").unwrap();
+    let name = InterfaceName::parse("example:greeting/greet@0.1.0").unwrap();
 
-    assert_eq!(name.package, "wasi:keyvalue");
-    assert_eq!(name.interface, Some("store"));
-    assert_eq!(name.version, Some("0.2.0-draft"));
+    assert_eq!(name.package, "example:greeting");
+    assert_eq!(name.interface, Some("greet"));
+    assert_eq!(name.version, Some("0.1.0"));
 }
 
 #[test]

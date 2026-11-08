@@ -22,7 +22,7 @@ fn grants(capabilities: &[Capability]) -> Granted {
 
 #[test]
 fn effective_grant____declared_and_granted____granted() {
-    let spec = spec(json!({ "wasi:keyvalue": {} }));
+    let spec = spec(json!({ "bulkhead:keyvalue": {} }));
 
     let grant = effective_grant(&spec, &grants(&[Capability::KeyValue]));
 
@@ -32,7 +32,7 @@ fn effective_grant____declared_and_granted____granted() {
 
 #[test]
 fn effective_grant____declared_not_granted____denied() {
-    let spec = spec(json!({ "wasi:keyvalue": {} }));
+    let spec = spec(json!({ "bulkhead:keyvalue": {} }));
 
     let grant = effective_grant(&spec, &grants(&[]));
 
@@ -42,7 +42,7 @@ fn effective_grant____declared_not_granted____denied() {
 
 #[test]
 fn effective_grant____granted_but_not_declared____neither() {
-    let spec = spec(json!({ "wasi:logging": {} }));
+    let spec = spec(json!({ "bulkhead:logging": {} }));
 
     let grant = effective_grant(&spec, &grants(&[Capability::Logging, Capability::KeyValue]));
 
@@ -52,12 +52,15 @@ fn effective_grant____granted_but_not_declared____neither() {
 
 #[test]
 fn EffectiveGrant____serialize____records_the_grant_for_audit() {
-    let spec = spec(json!({ "wasi:keyvalue": {} }));
+    let spec = spec(json!({ "bulkhead:keyvalue": {} }));
     let grant = effective_grant(&spec, &grants(&[]));
 
     let json = serde_json::to_value(&grant).unwrap();
 
-    assert_eq!(json, json!({ "granted": [], "denied": ["wasi:keyvalue"] }));
+    assert_eq!(
+        json,
+        json!({ "granted": [], "denied": ["bulkhead:keyvalue"] })
+    );
 }
 
 #[test]
@@ -80,7 +83,8 @@ fn effective_grant____extensions____granted_or_denied_by_policy() {
 
 #[test]
 fn effective_grant____shared_buckets____granted_only_with_keyvalue_and_policy() {
-    let spec = spec(json!({ "wasi:keyvalue": { "shared": { "points": "rw", "alarms": "ro" } } }));
+    let spec =
+        spec(json!({ "bulkhead:keyvalue": { "shared": { "points": "rw", "alarms": "ro" } } }));
     let mut with_kv = grants(&[Capability::KeyValue]);
     with_kv.buckets = BTreeSet::from(["points".to_string()]);
     let mut without_kv = grants(&[]);
@@ -97,8 +101,7 @@ fn effective_grant____shared_buckets____granted_only_with_keyvalue_and_policy() 
 
 #[test]
 fn effective_grant____http_incoming____granted_or_denied_by_policy() {
-    let spec =
-        spec(json!({ "wasi:http/incoming-handler": { "routes": [{ "path_prefix": "/" }] } }));
+    let spec = spec(json!({ "bulkhead:http-routes": { "routes": [{ "path_prefix": "/" }] } }));
 
     let granted = effective_grant(&spec, &grants(&[Capability::HttpIncoming]));
     let denied = effective_grant(&spec, &grants(&[]));

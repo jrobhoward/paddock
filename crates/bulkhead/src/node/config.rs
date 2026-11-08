@@ -30,7 +30,7 @@
 //!                               # arbiter "witness"; both nodes the same)
 //!
 //! # Node-level config overrides, per app, on top of the manifest defaults.
-//! # HTTP ingress: every app's `wasi:http/incoming-handler` routes, on
+//! # HTTP ingress: every app's `bulkhead:http-routes` routes, on
 //! # each address.
 //! [http.main]
 //! address = "0.0.0.0:8080"
@@ -171,11 +171,11 @@ pub struct NodeConfig {
     /// Where Prometheus scrapes the node's metrics.
     #[serde(default)]
     pub metrics: Option<MetricsBinding>,
-    /// HTTP requests from apps (`wasi:http/outgoing-handler`): the most any
+    /// HTTP requests from apps (`bulkhead:http-egress`): the most any
     /// app may reach, trusted roots, timeouts and the connection pool.
     #[serde(default)]
     pub egress: EgressBinding,
-    /// TCP and UDP from apps (`wasi:sockets`): the most any app may reach,
+    /// TCP and UDP from apps (`bulkhead:sockets`): the most any app may reach,
     /// bind and listen on. Unset: no ceiling.
     #[serde(default)]
     pub sockets: Option<SocketsCeiling>,
@@ -235,7 +235,7 @@ pub struct NodeLimits {
     /// Keyvalue watches held.
     #[serde(default = "default_groups")]
     pub watches_max: u32,
-    /// Log records per second per app, `wasi:logging` records and captured
+    /// Log records per second per app, `bulkhead:logging` records and captured
     /// stdout and stderr lines together. An app's `rate_limit_per_sec` can
     /// only lower it; 0 for no ceiling.
     #[serde(default = "default_log_records")]
@@ -697,7 +697,7 @@ impl EgressBinding {
 }
 
 /// `[sockets]`: TCP and UDP from apps. Each app's
-/// `wasi:sockets` rules must fall inside the rules here, in the manifest's
+/// `bulkhead:sockets` rules must fall inside the rules here, in the manifest's
 /// syntax (`{ cidr = "10.0.0.0/8", ports = "1883" }`); a deploy asking for
 /// more is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
@@ -715,7 +715,7 @@ pub struct SocketsCeiling {
 }
 
 impl SocketsCeiling {
-    /// Check an app's `wasi:sockets` scope against this ceiling.
+    /// Check an app's `bulkhead:sockets` scope against this ceiling.
     ///
     /// # Errors
     ///

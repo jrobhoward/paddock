@@ -1,4 +1,4 @@
-//! `wasi:http/outgoing-handler`: HTTP requests from apps.
+//! `bulkhead:http-egress`: HTTP requests from apps.
 //!
 //! wasmtime-wasi-http implements the interface; its send hook is this
 //! module's filter. A request goes out only if the operator granted the
@@ -8,7 +8,7 @@
 //! `max_concurrent` per app at once (node config's default otherwise). A
 //! host name that resolves only to loopback or link-local addresses is
 //! refused unless node config sets `allow_loopback`; an address written in
-//! an allow entry is reached as written. Refusals are wasi:http error codes
+//! an allow entry is reached as written. Refusals are error codes
 //! (`HTTP-request-denied`, `connection-limit-reached`,
 //! `destination-IP-prohibited`), never traps.
 //!

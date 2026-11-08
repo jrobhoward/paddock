@@ -17,7 +17,7 @@ http = ["dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 tls = ["http", "dep:tokio-rustls"]
 # SQL datasources (`bulkhead:sql`): a Postgres pool per datasource
 # in node config. Idle without one.
-# HTTP egress (`wasi:http/outgoing-handler`): a filtering
+# HTTP egress (`bulkhead:http-egress`): a filtering
 # sender with a connection pool. Without it, the interface is deny-stubbed.
 egress = ["tls", "dep:hyper-rustls", "dep:rustls-native-certs", "dep:tower-service", "hyper-util/client-legacy", "hyper-util/http1"]
 sql = ["dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio-postgres-rustls", "dep:futures-util"]

@@ -6,14 +6,14 @@ use super::*;
 
 const POLICY: &str = r#"
 [defaults]
-grant = ["wasi:logging"]
+grant = ["bulkhead:logging"]
 
 [apps.orders]
-grant = ["wasi:keyvalue"]
+grant = ["bulkhead:keyvalue"]
 
 [signers.payments]
 key = "RWQpayments"
-grant = ["wasi:http/outgoing-handler"]
+grant = ["bulkhead:http-egress"]
 "#;
 
 #[test]
@@ -70,11 +70,14 @@ fn OperatorPolicy____empty_file____grants_nothing() {
 
 #[test]
 fn OperatorPolicy____unknown_capability____returns_policy_error() {
-    let result = OperatorPolicy::from_toml_str("[defaults]\ngrant = [\"wasi:telepathy\"]\n");
+    let result = OperatorPolicy::from_toml_str("[defaults]\ngrant = [\"bulkhead:telepathy\"]\n");
 
     let err = result.unwrap_err().to_string();
 
-    assert!(err.contains("unknown capability 'wasi:telepathy'"), "{err}");
+    assert!(
+        err.contains("unknown capability 'bulkhead:telepathy'"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -94,7 +97,7 @@ fn OperatorPolicy____missing_file____returns_policy_error() {
 #[test]
 fn OperatorPolicy____extension_in_grant____granted_as_extension() {
     let policy = OperatorPolicy::from_toml_str(
-        "[defaults]\ngrant = [\"wasi:logging\", \"example:greeting\"]\n",
+        "[defaults]\ngrant = [\"bulkhead:logging\", \"example:greeting\"]\n",
     )
     .unwrap();
 
@@ -109,7 +112,7 @@ fn OperatorPolicy____extension_in_grant____granted_as_extension() {
 
 #[test]
 fn OperatorPolicy____reserved_or_bad_key____refused() {
-    let reserved = OperatorPolicy::from_toml_str("[defaults]\ngrant = [\"wasi:telepathy\"]\n");
+    let reserved = OperatorPolicy::from_toml_str("[defaults]\ngrant = [\"bulkhead:telepathy\"]\n");
     let bad = OperatorPolicy::from_toml_str("[defaults]\ngrant = [\"nonsense\"]\n");
 
     assert!(reserved.is_err());

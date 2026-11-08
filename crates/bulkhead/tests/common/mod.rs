@@ -404,10 +404,10 @@ pub async fn call(node: &TestNode, app: &str, body: &str) -> String {
 pub fn services_manifest() -> serde_json::Value {
     fast(json!({
         "capabilities": {
-            "wasi:logging": {},
-            "wasi:config": {},
-            "wasi:keyvalue": { "buckets": { "data": { "durability": "disk" } } },
-            "wasi:filesystem": { "preopens": { "/data": { "volume": "scratch", "mode": "rw" } } }
+            "bulkhead:logging": {},
+            "bulkhead:config": {},
+            "bulkhead:keyvalue": { "buckets": { "data": { "durability": "disk" } } },
+            "bulkhead:files": { "preopens": { "/data": { "volume": "scratch", "mode": "rw" } } }
         },
         "config": { "defaults": { "greeting": "hello", "mode": "default" } }
     }))

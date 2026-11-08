@@ -323,7 +323,7 @@ The rules are R1 to R14 in `docs/tla/VERIFICATION.md`; the assumptions the model
 
 ## A watch between two apps
 
-Two native apps share a bucket from node config (`[buckets.<name>]`), each listing it in its manifest under `wasi:keyvalue` `shared`; the watcher may hold it read-only. The watcher starts a watch, usually in `init`; the writer writes as usual and knows nothing of it. Three processes take part, as in "Processes and shared memory" above: the writer and the watcher, each talking only to the node through its own channel, and the node, which holds the bucket and does the write:
+Two native apps share a bucket from node config (`[buckets.<name>]`), each listing it in its manifest under `bulkhead:keyvalue` `shared`; the watcher may hold it read-only. The watcher starts a watch, usually in `init`; the writer writes as usual and knows nothing of it. Three processes take part, as in "Processes and shared memory" above: the writer and the watcher, each talking only to the node through its own channel, and the node, which holds the bucket and does the write:
 
 ```mermaid
 sequenceDiagram
@@ -367,7 +367,7 @@ sequenceDiagram
     participant I as instance on node 2 (standby)
     participant R2 as node 2 replication task
     participant R1 as node 1 replication task (primary)
-    I->>R2: wasi:keyvalue set, through KvStore::run
+    I->>R2: bulkhead:keyvalue set, through KvStore::run
     R2->>R1: forwards Write
     Note over R1: appends at epoch e (synced)
     R1->>R2: Append

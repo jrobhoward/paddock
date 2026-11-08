@@ -35,12 +35,12 @@ fn validate_upgrade____compatible____ok_with_no_new_capabilities() {
     let old = manifest(
         "c",
         "1.0.0",
-        json!({ "capabilities": { "wasi:logging": {} } }),
+        json!({ "capabilities": { "bulkhead:logging": {} } }),
     );
     let new = manifest(
         "c",
         "2.0.0",
-        json!({ "capabilities": { "wasi:logging": {} }, "upgrade": { "from_versions": ["^1"] } }),
+        json!({ "capabilities": { "bulkhead:logging": {} }, "upgrade": { "from_versions": ["^1"] } }),
     );
 
     let added = validate_upgrade(&old, &new, false).unwrap();
@@ -54,7 +54,7 @@ fn validate_upgrade____new_capability_without_approval____needs_approval() {
     let new = manifest(
         "c",
         "2.0.0",
-        json!({ "capabilities": { "wasi:keyvalue": {} } }),
+        json!({ "capabilities": { "bulkhead:keyvalue": {} } }),
     );
 
     let result = validate_upgrade(&old, &new, false);

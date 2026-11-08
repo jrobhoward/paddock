@@ -1,4 +1,4 @@
-//! `wasi:config`: an app's configuration values, read-only.
+//! `bulkhead:config`: an app's configuration values, read-only.
 //!
 //! The values are the manifest's `config.defaults` with the node's per-app
 //! overrides merged in ([`ConfigSpec::values`]). Without the capability
@@ -22,7 +22,7 @@ pub(crate) struct Config;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct ConfigSpec {
-    /// What `wasi:config` returns: the manifest's `config.defaults`, with
+    /// What `bulkhead:config` returns: the manifest's `config.defaults`, with
     /// node overrides merged in by the caller.
     pub values: BTreeMap<String, String>,
 }
@@ -59,7 +59,7 @@ impl Service for Config {
 
 impl ServiceCtx<'_, Instance> {
     /// A configuration value for a native app (`None` for every value),
-    /// as a component's `wasi:config` import reads it.
+    /// as a component's `bulkhead:config` import reads it.
     pub(crate) fn native(
         &self,
         key: Option<&str>,

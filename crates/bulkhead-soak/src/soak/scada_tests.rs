@@ -120,7 +120,7 @@ fn counter_and_alarm_status____replies_of_the_apps____read() {
 }
 
 #[rstest]
-#[case::no_appserver_table("[app]\nname = \"x\"\n[appserver.capabilities.\"wasi:logging\"]\n")]
+#[case::no_appserver_table("[app]\nname = \"x\"\n[appserver.capabilities.\"bulkhead:logging\"]\n")]
 #[case::appserver_table("[app]\nname = \"x\"\n[appserver]\nregistered_names = [\"x\"]\n")]
 fn native_manifest____any_manifest____runs_the_program_as_a_native_process(#[case] manifest: &str) {
     let native: toml::Table = crate::soak::node::native_manifest(manifest)

@@ -406,7 +406,7 @@ pub struct LogLine {
     pub level: String,
     /// The instance's pid.
     pub pid: String,
-    /// `stdout`, `stderr`, or the `wasi:logging` context.
+    /// `stdout`, `stderr`, or the `bulkhead:logging` context.
     pub source: String,
     /// The text.
     pub message: String,

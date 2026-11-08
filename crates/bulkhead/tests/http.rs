@@ -123,7 +123,7 @@ async fn bundle(setup: &Setup, name: &str, routes: &str) -> PathBuf {
         format!(
             "[app]\nname = \"{name}\"\nversion = \"1.0.0\"\n\
              [appserver]\nkind = \"native-process\"\nnative = {{ program = \"executable\" }}\n\
-             [appserver.capabilities.\"wasi:http/incoming-handler\"]\nroutes = {routes}\n"
+             [appserver.capabilities.\"bulkhead:http-routes\"]\nroutes = {routes}\n"
         ),
     )
     .unwrap();
@@ -150,8 +150,8 @@ async fn node(setup: &Setup, tag: &str, extra: &str) -> (Arc<Node>, PathBuf) {
     let policy = setup.dir.path().join("policy.toml");
     std::fs::write(
         &policy,
-        "[apps.http-counter]\ngrant = [\"wasi:http/incoming-handler\"]\n\
-         [apps.thief]\ngrant = [\"wasi:http/incoming-handler\"]\n",
+        "[apps.http-counter]\ngrant = [\"bulkhead:http-routes\"]\n\
+         [apps.thief]\ngrant = [\"bulkhead:http-routes\"]\n",
     )
     .unwrap();
     let toml = format!(
@@ -216,7 +216,7 @@ async fn http_counter____deployed_with_policy____served_and_routes_follow_the_ap
     );
     assert!(free.ok, "{}", free.stderr);
     assert!(
-        free.stdout.contains("wasi:http/incoming-handler"),
+        free.stdout.contains("bulkhead:http-routes"),
         "{}",
         free.stdout
     );

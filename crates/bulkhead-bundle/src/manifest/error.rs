@@ -29,7 +29,7 @@ pub enum ManifestError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
     /// Where the problem is, as a dotted path
-    /// (`capabilities.wasi:keyvalue.buckets.orders.quota`).
+    /// (`capabilities.bulkhead:keyvalue.buckets.orders.quota`).
     pub path: String,
     /// What is wrong.
     pub message: String,

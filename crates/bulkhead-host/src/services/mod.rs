@@ -169,15 +169,15 @@ pub(crate) trait HostState<S: Service>: Send + 'static {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct ServiceSpecs {
-    /// `wasi:config`.
+    /// `bulkhead:config`.
     pub config: config::ConfigSpec,
-    /// `wasi:http/outgoing-handler`.
+    /// `bulkhead:http-egress`.
     pub egress: egress::EgressSpec,
     /// `bulkhead:groups`.
     pub groups: groups::GroupsSpec,
-    /// `wasi:keyvalue`.
+    /// `bulkhead:keyvalue`.
     pub keyvalue: keyvalue::KeyValueSpec,
-    /// `wasi:logging`.
+    /// `bulkhead:logging`.
     pub logging: logging::LoggingSpec,
     /// `bulkhead:secrets`.
     pub secrets: secrets::SecretsSpec,
@@ -185,7 +185,7 @@ pub struct ServiceSpecs {
     pub metrics: metrics::MetricsSpec,
     /// `bulkhead:sql`.
     pub sql: sql::SqlSpec,
-    /// `wasi:sockets`.
+    /// `bulkhead:sockets`.
     pub sockets: sockets::SocketsSpec,
     /// Extensions the manifest declares, by package.
     pub extensions: BTreeMap<String, ExtensionSpec>,

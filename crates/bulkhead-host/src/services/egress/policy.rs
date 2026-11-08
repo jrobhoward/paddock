@@ -1,5 +1,5 @@
 //! Allow entries for HTTP egress: what a manifest's
-//! `wasi:http/outgoing-handler.allow` and node config's `[egress] allow`
+//! `bulkhead:http-egress.allow` and node config's `[egress] allow`
 //! list, and whether a request or another entry falls inside them.
 //!
 //! An entry names a scheme, a host and a port:

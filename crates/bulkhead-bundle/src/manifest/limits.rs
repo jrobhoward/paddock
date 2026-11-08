@@ -40,7 +40,7 @@ pub struct Limits {
     /// Most open files. Not enforced.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_files: Option<u32>,
-    /// Most concurrent outbound connections. Not enforced (`wasi:sockets`
+    /// Most concurrent outbound connections. Not enforced (`bulkhead:sockets`
     /// has `max_sockets`, HTTP egress `max_concurrent`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outbound_connections: Option<u32>,

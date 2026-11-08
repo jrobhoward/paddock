@@ -1,7 +1,7 @@
 //! Revisioned reads, compare-and-swap and change watches on keyvalue
 //! buckets, through `bulkhead:watch` (cargo feature `watch`).
 //!
-//! Covered by the `wasi:keyvalue` capability: a bucket works here exactly
+//! Covered by the `bulkhead:keyvalue` capability: a bucket works here exactly
 //! when [`kv::Bucket::open`](crate::kv) would open it. Every change raises
 //! the bucket's revision and stamps the keys it wrote. A watch delivers one
 //! notice per changed key to `handle_info` as [`Info::Event`]; turn it into

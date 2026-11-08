@@ -1,4 +1,4 @@
-//! Test fixture: an app that uses `wasi:config`, `wasi:keyvalue` and
+//! Test fixture: an app that uses `bulkhead:config`, `bulkhead:keyvalue` and
 //! `bulkhead:groups` through `bulkhead-sdk`'s wrappers, for the host's tests
 //! of those wrappers.
 //!
