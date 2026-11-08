@@ -23,14 +23,11 @@ use bulkhead_bundle::manifest::Durability;
 use bulkhead_host::failover::FailoverHandle;
 use bulkhead_host::services::{Extension, StartedExtensions};
 use bulkhead_host::transport::quic::QuicTransport;
-use bulkhead_host::{
-    Apps, HostObjects, MemoryProfile as HostProfile, Role, Runtime, RuntimeConfig, SecretSource,
-    SharedBucket,
-};
+use bulkhead_host::{Apps, HostObjects, Role, Runtime, RuntimeConfig, SecretSource, SharedBucket};
 use serde_json::json;
 
 use super::audit::Audit;
-use super::config::{BucketScope, ClusterRole, MemoryProfile, NodeConfig};
+use super::config::{BucketScope, ClusterRole, NodeConfig};
 use super::error::{NodeError, internal};
 use super::events::{self, Events};
 use super::gate::Gate;
@@ -175,10 +172,6 @@ impl Node {
                 node: config.node,
                 max_instances: config.max_instances,
                 max_processes: config.max_processes,
-                memory_profile: match config.memory_profile {
-                    MemoryProfile::Standard => HostProfile::Standard,
-                    MemoryProfile::Dense => HostProfile::Dense,
-                },
                 data_dir: Some(store.kv_dir()),
                 heartbeat_interval: Duration::from_millis(config.cluster.heartbeat_interval_ms),
                 node_timeout: Duration::from_millis(config.cluster.node_timeout_ms),

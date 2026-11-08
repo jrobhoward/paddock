@@ -276,9 +276,8 @@ impl Runtime {
     /// # Errors
     ///
     /// [`HostError::InstanceLimit`] when every slot is in use, and
-    /// [`HostError::MemoryAboveProfile`] when `memory_max` exceeds what the
-    /// node's memory profile reserves, and [`HostError::HostObjectsAboveNode`]
-    /// when a host-object limit exceeds the node's.
+    /// [`HostError::HostObjectsAboveNode`] when a host-object limit exceeds
+    /// the node's.
     pub fn spawn(&self, app: &LoadedApp, spec: InstanceSpec) -> Result<InstanceHandle, HostError> {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         self.start(app, spec, id, 1)
@@ -621,13 +620,6 @@ impl Runtime {
                 p.host.display(),
                 p.guest
             )));
-        }
-        let limit = self.inner.config.memory_profile.memory_max();
-        if spec.memory_max > limit {
-            return Err(HostError::MemoryAboveProfile {
-                requested: spec.memory_max,
-                limit,
-            });
         }
         self.inner
             .config

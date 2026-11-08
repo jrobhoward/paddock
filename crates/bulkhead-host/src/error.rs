@@ -19,16 +19,6 @@ pub enum HostError {
     #[error("instance limit reached ({0} instances)")]
     InstanceLimit(u32),
 
-    /// The instance asks for more memory than the node's memory profile
-    /// reserves.
-    #[error("memory_max of {requested} bytes exceeds the node limit of {limit} bytes")]
-    MemoryAboveProfile {
-        /// The instance's `memory_max`.
-        requested: u64,
-        /// The memory profile's limit.
-        limit: u64,
-    },
-
     /// The instance asks for more host objects than the node allows
     /// ([`HostObjects`](crate::HostObjects)).
     #[error("{0}")]

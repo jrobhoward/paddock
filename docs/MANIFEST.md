@@ -127,7 +127,7 @@ The app's root supervisor, with OTP semantics.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `memory_max` | `"64MiB"` | Most linear memory per instance. Growing past it crashes the instance with `memory_limit`. At most 128 MiB on a node with the `dense` memory profile. |
+| `memory_max` | `"64MiB"` | Most linear memory per instance. Growing past it crashes the instance with `memory_limit`. |
 | `callback_deadline_ms` | `5000` | Most guest CPU time per callback. Past it, the instance is killed with reason `timeout`. Time spent waiting does not count: in host calls, or for a worker after a preemption. Host work that does not wait (a memory-bucket write, for one) counts. |
 | `mailbox_max` | `10000` | Most queued messages per instance. When full (or past `mailbox_max_bytes`), casts are dropped (and counted under `DROPPED` in `bulkhead ps`), and calls fail at once with `overloaded`. |
 | `mailbox_max_bytes` | `"64MiB"` | Most bytes of message bodies queued per instance: casts, calls and timer messages (replies go straight to the caller). A message that would go past it is treated as at a full mailbox. Must be at least `message_max_bytes`. An upgrade that raises it applies at once; a lower value takes effect at the next start, as `mailbox_max` does. |
@@ -320,7 +320,6 @@ trusted_keys = ["RWQ..."]              # minisign public keys whose bundles are 
 policy = "/etc/bulkhead/policy.toml"    # without one, only the always-available interfaces are granted
 max_instances = 1000                   # instances holding a Store at once (each reserves address space)
 max_processes = 20000                  # all instances, passivated ones too; default max_instances
-memory_profile = "standard"            # or "dense": 128 MiB cap per instance, many more instances
 log_format = "text"                    # the node's own log on stderr; or "json", one object per line
 
 [volumes]

@@ -8,28 +8,6 @@ use std::time::Duration;
 
 use crate::transport::membership::Role;
 
-/// The cap a node puts on `limits.memory_max`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum MemoryProfile {
-    /// No cap.
-    #[default]
-    Standard,
-    /// At most 128 MiB.
-    Dense,
-}
-
-impl MemoryProfile {
-    /// The largest `limits.memory_max` an instance may have.
-    #[must_use]
-    pub const fn memory_max(self) -> u64 {
-        match self {
-            Self::Standard => u64::MAX,
-            Self::Dense => 128 << 20,
-        }
-    }
-}
-
 /// Most host objects one instance may hold. These live in host memory,
 /// outside `memory_max` (a pending timer holds its envelope), so each is
 /// charged to the instance that creates it. Over a limit, the instance
@@ -232,8 +210,6 @@ pub struct RuntimeConfig {
     /// instance starting or waking while every Store slot is taken waits
     /// for one (spike S11).
     pub max_processes: Option<u32>,
-    /// Address-space reservation per linear memory.
-    pub memory_profile: MemoryProfile,
     /// Where node state lives (`disk` keyvalue buckets). `None` disables
     /// disk buckets.
     pub data_dir: Option<PathBuf>,
@@ -380,7 +356,6 @@ impl Default for RuntimeConfig {
             node: 0,
             max_instances: 1_000,
             max_processes: None,
-            memory_profile: MemoryProfile::Standard,
             data_dir: None,
             heartbeat_interval: Duration::from_secs(1),
             node_timeout: Duration::from_secs(5),

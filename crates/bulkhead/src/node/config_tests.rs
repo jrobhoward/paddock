@@ -10,7 +10,6 @@ fn NodeConfig____minimal____defaults_filled_in() {
 
     assert_eq!(config.node, 0);
     assert_eq!(config.max_instances, 1_000);
-    assert_eq!(config.memory_profile, MemoryProfile::Standard);
     assert_eq!(
         config.socket(),
         PathBuf::from("/var/lib/bulkhead/admin.sock")
@@ -27,7 +26,6 @@ data_dir = "/d"
 admin_socket = "/run/p.sock"
 trusted_keys = ["RWQ1"]
 policy = "/etc/p.toml"
-memory_profile = "dense"
 
 [volumes]
 orders-data = "/srv/v/orders"
@@ -40,7 +38,6 @@ orders-data = "/srv/v/orders"
 
     assert_eq!(config.node, 3);
     assert_eq!(config.socket(), PathBuf::from("/run/p.sock"));
-    assert_eq!(config.memory_profile, MemoryProfile::Dense);
     assert_eq!(
         config.volumes["orders-data"],
         PathBuf::from("/srv/v/orders")
@@ -756,6 +753,7 @@ fn native____zero____refused(#[case] line: &str, #[case] path: &str) {
 #[case::keep_resident("keep_resident = \"2MiB\"\n")]
 #[case::release_idle("release_idle_after_s = 300\n")]
 #[case::epoch_tick("epoch_tick_ms = 2\n")]
+#[case::memory_profile("memory_profile = \"dense\"\n")]
 fn NodeConfig____key_only_components_read____refused_saying_so(#[case] line: &str) {
     let err = NodeConfig::from_toml_str(&format!("data_dir = \"/d\"\n{line}")).unwrap_err();
 

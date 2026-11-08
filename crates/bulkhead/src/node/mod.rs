@@ -24,8 +24,8 @@ mod store;
 
 pub use config::{
     ArbiterKind, BucketConfig, BucketScope, ClusterConfig, ClusterRole, EgressBinding,
-    FailoverBinding, HttpBinding, ListenerBinding, LogFormat, MemoryProfile, MetricsBinding,
-    NodeConfig, SecretBinding, SerialBinding, TlsBinding, WitnessBinding,
+    FailoverBinding, HttpBinding, ListenerBinding, LogFormat, MetricsBinding, NodeConfig,
+    SecretBinding, SerialBinding, TlsBinding, WitnessBinding,
 };
 pub use daemon::{Node, Traffic};
 pub use error::NodeError;

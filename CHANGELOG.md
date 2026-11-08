@@ -9,7 +9,7 @@ All notable changes are recorded here. The format follows
 ### Changed
 
 - `limits.memory_max` is no longer capped at 4 GiB, a limit that came from
-  wasm32's address space. The `dense` memory profile's 128 MiB stays.
+  wasm32's address space.
 
 ### Removed
 
@@ -29,7 +29,8 @@ All notable changes are recorded here. The format follows
   allocator, the epoch ticker, connection handlers and HTTP handlers as
   components. Deploying a component is refused, naming what to do. A
   node config with `max_core_instances_per_component`, `keep_resident`,
-  `release_idle_after_s` or `epoch_tick_ms` is refused with a message.
+  `release_idle_after_s`, `epoch_tick_ms` or `memory_profile` is refused
+  with a message.
   The metrics `bulkhead_slot_timeouts_total`,
   `bulkhead_http_handler_failures_total` and `bulkhead_pool_*`, `ps`'s
   listener `CRASHED` column, and `stubbed` in `status` are gone with

@@ -8,7 +8,6 @@
 //! policy = "/etc/bulkhead/policy.toml"
 //! max_instances = 1000           # instances on the node
 //! max_processes = 20000          # all instances, passivated ones too
-//! memory_profile = "standard"   # or "dense"
 //!
 //! [volumes]
 //! orders-data = "/srv/bulkhead/volumes/orders-data"
@@ -110,17 +109,6 @@ use serde::Deserialize;
 
 use super::error::NodeError;
 
-/// Address-space profile, as in the host's `MemoryProfile`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryProfile {
-    /// Large reservations; up to a few thousand instances.
-    #[default]
-    Standard,
-    /// 128 MiB reservations; dense nodes.
-    Dense,
-}
-
 /// The node's configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -149,9 +137,6 @@ pub struct NodeConfig {
     /// `max_instances`.
     #[serde(default)]
     pub max_processes: Option<u32>,
-    /// Address-space profile.
-    #[serde(default)]
-    pub memory_profile: MemoryProfile,
     /// How the node writes its log to stderr.
     #[serde(default)]
     pub log_format: LogFormat,
@@ -967,11 +952,12 @@ fn default_max_instances() -> u32 {
 }
 
 /// Keys that only WebAssembly components read, gone with them.
-const REMOVED_KEYS: [&str; 4] = [
+const REMOVED_KEYS: [&str; 5] = [
     "max_core_instances_per_component",
     "keep_resident",
     "release_idle_after_s",
     "epoch_tick_ms",
+    "memory_profile",
 ];
 
 /// Refuse a config naming a key that went with components, saying so.
