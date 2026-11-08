@@ -10,8 +10,8 @@ upgrade with explicit state migration. Nodes connect over QUIC with mutual
 TLS. It is a fork of Paddock (2026-10-31) that runs each app instance as a
 native OS process, sandboxed by `bulkhead-runner` (Landlock, seccomp) and
 talking to its node over shared-memory rings; WebAssembly components (WASI
-0.2), Paddock's kind, still run beside them until native apps reach parity
-(ROADMAP Z8, Z9). Apps see only the capabilities their manifest declares
+0.2), Paddock's kind, still run beside them until they are removed (ROADMAP
+Z9; native apps reached parity in Z8). Apps see only the capabilities their manifest declares
 and an operator grants. Bundles use the rustbridge `.rbp` format.
 `docs/PADDOCK.md` compares the two.
 

@@ -2,7 +2,7 @@
 
 Bulkhead is a fork of Paddock, made on 2026-10-31 at Paddock's commit 657ae61. Both are clustered application servers with Erlang/OTP-style semantics.
 - **Paddock** runs each app instance as a WebAssembly component inside the node.
-- **Bulkhead** runs each instance as a native OS process. It keeps components beside native apps until those reach parity, and then drops them (ROADMAP Z8 and Z9).
+- **Bulkhead** runs each instance as a native OS process. Native apps reached parity on 2026-11-07 (ROADMAP Z8); it keeps components beside them until it drops them (Z9).
 
 This page says what the two share, where they differ, and what the differences cost. The figures are BASELINE.md's from 2026-11-01, on a 16-core machine and a Raspberry Pi 5. "Component" figures are Bulkhead's component path, the runtime Paddock runs.
 
@@ -22,7 +22,7 @@ Paddock as forked already had a `native-process` kind: rustbridge plugins and ex
 | --- | --- | --- |
 | An instance | A wasmtime Store inside the node's process | A process of its own, started through `bulkhead-runner` and kept for the instance's life |
 | Languages | Anything that builds a WASI 0.2 component: Rust on `bulkhead-sdk`, Go on TinyGo, and Python and JavaScript demos | Rust on `bulkhead-sdk` or `bulkhead-native`, and rustbridge plugins; Rust only: other languages are not planned |
-| Where it runs | Any node: Linux or macOS; one bundle runs everywhere | Linux only, x86-64 and aarch64; a bundle carries a program per platform (Z8a) |
+| Where it runs | Any node: Linux or macOS; one bundle runs everywhere | Linux only, x86-64 and aarch64; a bundle carries a program per platform |
 | Fence | WebAssembly's sandbox: linear memory with a limit, and only the imports its grant links | Landlock (files), seccomp (no new sockets, no signals or ptrace to others), not dumpable; memory and process limits from a cgroup or `RLIMIT_DATA`; the rest of the kernel's interface is reachable |
 | Runaway code | The epoch interrupts a callback past its deadline; nothing runs between callbacks | A callback past its wall-clock deadline is killed; threads may run between callbacks, with no CPU quota |
 | Its code's speed | 1.4 to 2.6 times native time on ordinary app code, more for code using SHA or AES instructions | Native |
@@ -33,7 +33,7 @@ Paddock as forked already had a `native-process` kind: rustbridge plugins and ex
 | A crash | A trap ends the instance; its Store is discarded | An abort, segfault or panic ends the process; supervision is the same |
 | Upgrade | The new component is swapped in between messages | The new version's process starts beside the old and loads the snapshot (executables); plugins upgrade by restart or blue-green |
 | Passivation | The Store is freed and the state kept as a snapshot | The process ends and the state is kept as a snapshot; a message starts a new one |
-| Services | All of them: keyvalue and watches, groups, config, secrets, metrics, HTTP routes and egress, SQL, sockets, listeners and connection handlers, volumes, extensions, HTTP handlers | Logging, keyvalue and watches, published buckets, groups, config, secrets, metrics, HTTP routes, volumes, SQL, sockets (UDP relayed by the node), HTTP egress (sent by the node), listeners (each connection passed to an instance of the pool, which holds many); extensions come with Z8, dynamic children with E8 for both kinds; HTTP handlers go with WebAssembly |
+| Services | All of them: keyvalue and watches, groups, config, secrets, metrics, HTTP routes and egress, SQL, sockets, listeners and connection handlers, volumes, extensions, HTTP handlers | Logging, keyvalue and watches, published buckets, groups, config, secrets, metrics, HTTP routes, volumes, SQL, sockets (UDP relayed by the node), HTTP egress (sent by the node), listeners (each connection passed to an instance of the pool, which holds many), extensions (named functions called through the node); dynamic children come with E8 for both kinds; HTTP handlers go with WebAssembly |
 | Casts to a busy node | Refused once the link's queue is full: 17% of a component's casts from instances arrived between two node processes | Each cast is a request to the node, which paces the sender: nearly all arrived |
 | Casts that must arrive | A cast is not told whether it was queued | `try_cast` is told, and `cast_timeout` waits for room in the target's mailbox on any node: every one that returned `Ok` arrived (BASELINE.md, 2026-11-05) |
 | Large messages | No frame limit beyond `message_max_bytes` | A frame between node and app is at most 17 MiB |

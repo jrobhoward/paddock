@@ -10,10 +10,10 @@
 
 > **A fork in progress.** Bulkhead is a fork of Paddock (commit 657ae61,
 > 2026-10-31) that runs apps as native OS processes instead of
-> WebAssembly components. Native apps passed their first exit on
-> 2026-11-01 (the tutorial's board app, built natively, passes its node
-> tests); components still run beside them until native apps reach
-> parity, and then go (`docs/ROADMAP.md`, Z8 and Z9).
+> WebAssembly components. Native apps reached parity on 2026-11-07:
+> every example runs as a native program and passes its node tests, the
+> SCADA release cycle under faults included (`docs/ROADMAP.md`, Z8).
+> Components still run beside them until they go (Z9).
 > [`docs/PADDOCK.md`](docs/PADDOCK.md) compares the two.
 
 Bulkhead is a clustered application server that runs each app instance as
