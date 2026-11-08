@@ -39,6 +39,9 @@
 //! - [`batch`]: many small updates in one message, and reading them back.
 //! - [`files`]: the paths of preopened files (`wasi:filesystem`), the same
 //!   in both builds.
+//! - `extension` (native programs): calls to extensions, the host services
+//!   a node is built with from outside Bulkhead; a component imports their
+//!   WIT packages instead.
 //! - `config` (cargo feature `config`): `wasi:config`.
 //! - `kv` (cargo feature `keyvalue`): `wasi:keyvalue` buckets.
 //! - `groups` (cargo feature `groups`): `bulkhead:groups`, process groups
@@ -77,6 +80,8 @@ pub mod config;
 pub mod connection;
 mod ctx;
 mod envelope;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub mod extension;
 pub mod files;
 #[cfg(feature = "groups")]
 pub mod groups;

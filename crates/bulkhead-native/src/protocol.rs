@@ -25,15 +25,17 @@
 //! [`Answer::Unit`], so an app can learn why (ROADMAP I1). Version 7 added
 //! [`Request::CastWait`], a cast that waits for room in a full mailbox
 //! (ROADMAP I2). Versions 8 to 10 added SQL, sockets and HTTP egress
-//! requests (ROADMAP Z8d to Z8f), and version 11 [`ToApp::Connection`],
-//! a connection accepted on one of the app's listeners (ROADMAP Z8g).
+//! requests (ROADMAP Z8d to Z8f), version 11 [`ToApp::Connection`],
+//! a connection accepted on one of the app's listeners (ROADMAP Z8g), and
+//! version 12 [`Request::Extension`], a call to a function of an
+//! extension the node runs (ROADMAP Z8h).
 
 use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 11;
+pub const VERSION: u16 = 12;
 
 /// The environment variable naming the directory of the bundle's `priv/`
 /// files, set when the bundle has any: a native app reads them there.
@@ -480,6 +482,31 @@ pub enum Request {
     /// An HTTP request (`wasi:http/outgoing-handler`), sent by the node's
     /// egress client on the manifest's rules: [`Answer::Http`].
     Http(HttpRequest),
+    /// A call to a function of an extension the node runs (ROADMAP Z8h):
+    /// [`Answer::Extension`]. The extension checks the app's grant and
+    /// scope, as for a component's import of its package.
+    Extension {
+        /// The extension's package (`example:greeting`).
+        package: String,
+        /// The function, by the extension's name for it: by convention the
+        /// WIT interface and function, `greet#hello`.
+        function: String,
+        /// The arguments in CBOR: by convention an array of the WIT
+        /// parameters, in order.
+        args: Bytes,
+    },
+}
+
+/// Why an extension call was not made: the extension's own errors (a
+/// denied grant, say) are in the result it returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExtensionError {
+    /// The node runs no extension serving this package.
+    NoSuchExtension,
+    /// The extension has no such function for native apps.
+    NoSuchFunction(String),
+    /// The arguments are not what the function takes.
+    BadArguments(String),
 }
 
 /// An HTTP request a native app asks the node to send (ROADMAP Z8f), on a
@@ -1098,6 +1125,8 @@ pub enum Answer {
     Net(Result<NetAnswer, NetError>),
     /// An HTTP request's response.
     Http(Result<HttpResponse, HttpError>),
+    /// An extension function's result, in CBOR.
+    Extension(Result<Bytes, ExtensionError>),
 }
 
 /// A frame that could not be read.

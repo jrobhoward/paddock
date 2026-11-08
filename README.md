@@ -48,8 +48,8 @@ a restricted native process, with Erlang/OTP-style semantics:
   disk, or replicated across a pair), watches, process groups, config,
   secrets, logging, metrics, timers, HTTP ingress and allow-listed HTTP
   egress, Postgres datasources, guest sockets, and a Modbus TCP extension.
-  Native apps reach all of them but extensions and HTTP handlers so far;
-  those are components only until they come to them. A shared bucket can be published: native apps
+  Native apps reach all of them but HTTP handlers, which stay components
+  only. A shared bucket can be published: native apps
   then read it from a snapshot mapped into their own memory, in 0.16 to
   0.39 µs a read, without asking the node.
 - **Connections**: a connection handler serves TCP connections on

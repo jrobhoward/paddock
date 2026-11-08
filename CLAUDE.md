@@ -50,6 +50,7 @@ scripts/check.sh clippy guests
 # each failure keeps a run directory under target/soak/ with its seed and
 # logs.
 scripts/soak.sh --hours 1
+scripts/soak.sh --hours 1 --only scada --scada-minutes 60 --native   # SCADA apps natively
 
 # Coverage per file (cargo install cargo-llvm-cov once). Tests that start
 # `bulkhead node` as its own process are not counted.
@@ -147,7 +148,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `examples/`: apps written with the SDK, each with a `bulkhead.toml`.
   `bulkhead`'s `tests/examples.rs` builds, bundles, deploys and drives them.
   `examples/greeter/` is an extension (a host service from outside
-  Bulkhead): `service` depends on `bulkhead-host` alone, `app` calls it, and
+  Bulkhead): `service` depends on `bulkhead-host` alone, `app` calls it
+  (both builds, through its client module `src/greeting.rs`), and
   `node` is a node binary with it, whose test runs all three.
   `examples/board` is the tutorial's app (a counter on a shared disk
   bucket over HTTP; `bulkhead.toml`, `watch.toml` and `hot-standby.toml`, one
@@ -285,7 +287,9 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   release drill on a pair and a witness); `crates/bulkhead/tests/scada.rs`
   runs it on one node and on a pair and a witness against a fake device, and
   `crates/bulkhead-modbus/examples/fake_device.rs` serves fake devices to
-  the drill.
+  the drill. `crates/bulkhead-modbus-client` is the apps' side of its WIT
+  in both builds (the generated bindings in a component; calls through the
+  node natively), which `control` uses.
 - `crates/bulkhead-host/src/metrics.rs`: app metrics (per app, lock-free
   series) and the host's per-app counters, rendered as Prometheus text;
   the `bulkhead:metrics` service is `src/services/metrics`. Metric names

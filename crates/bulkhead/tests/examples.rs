@@ -1,45 +1,26 @@
-//! The SDK examples end to end: built for wasm32-wasip2, keyed and bundled
-//! with the `bulkhead` binary, deployed to a node, and driven through the
-//! CLI.
+//! The SDK examples end to end: built for wasm32-wasip2 and, from the
+//! same source, as native programs (Linux; their manifests with `kind =
+//! "native-process"` added), keyed and bundled with the `bulkhead` binary,
+//! deployed to a node, and driven through the CLI.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bulkhead::node::{LogRing, Node, NodeConfig};
+use common::ExampleBuild as Build;
+use rstest::rstest;
 use tempfile::TempDir;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-/// Build `packages` together into `target/fixtures/examples-<tag>` (one
-/// directory per feature set, since features unify within a build) and
-/// return the directory holding the `.wasm` files.
-fn build(packages: &[&str], features: Option<&str>, tag: &str) -> PathBuf {
-    let target = root().join(format!("target/fixtures/examples-{tag}"));
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let mut cmd = StdCommand::new(cargo);
-    cmd.current_dir(root())
-        .args(["build", "--release", "--target", "wasm32-wasip2"]);
-    for p in packages {
-        cmd.args(["-p", p]);
-    }
-    cmd.arg("--target-dir").arg(&target);
-    if let Some(f) = features {
-        cmd.args(["--features", f]);
-    }
-    assert!(
-        cmd.status().unwrap().success(),
-        "building {packages:?} failed"
-    );
-    target.join("wasm32-wasip2/release")
 }
 
 struct Run {
@@ -68,12 +49,21 @@ fn s(p: &Path) -> &str {
     p.to_str().unwrap()
 }
 
+#[rstest]
+#[case::component(Build::Component)]
+#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() {
+async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed(
+    #[case] build: Build,
+) {
+    if build == Build::Native && !cfg!(target_os = "linux") {
+        eprintln!("not Linux: the native examples' case is skipped");
+        return;
+    }
     let dir = TempDir::new().unwrap();
     let socket = dir.path().join("a.sock");
     let ex = root().join("examples");
-    let plain = build(
+    let built = build.packages(
         &[
             "example-counter",
             "example-ping-pong",
@@ -81,27 +71,20 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
             "example-line-server",
             "example-ledger",
         ],
-        None,
+        &[],
         "plain",
     );
     let counter = [
-        plain.join("example_counter.wasm"),
-        build(
-            &["example-counter"],
-            Some("example-counter/v2"),
-            "counter-v2",
-        )
-        .join("example_counter.wasm"),
-        build(
-            &["example-counter"],
-            Some("example-counter/v3"),
-            "counter-v3",
-        )
-        .join("example_counter.wasm"),
+        built.of("example-counter"),
+        build
+            .packages(&["example-counter"], &["example-counter/v2"], "counter-v2")
+            .of("example-counter"),
+        build
+            .packages(&["example-counter"], &["example-counter/v3"], "counter-v3")
+            .of("example-counter"),
     ];
-    let ping_pong = plain.join("example_ping_pong.wasm");
-    let plain_wasm = plain.clone();
-    let chaos = plain.join("example_chaos.wasm");
+    let ping_pong = built.of("example-ping-pong");
+    let chaos = built.of("example-chaos");
 
     // One encrypted key (opened with BULKHEAD_KEY_PASSWORD) for the first
     // bundle; a plain key for the rest, since key derivation is slow.
@@ -120,6 +103,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
     let encrypted_key = dir.path().join("signer.key");
     let plain_key = dir.path().join("fast.key");
     let bundle_with = |key_file: PathBuf, manifest: PathBuf, wasm: PathBuf, out: &str| {
+        let manifest = build.manifest(&manifest, dir.path(), out);
         let out = dir.path().join(out);
         let socket = socket.clone();
         async move {
@@ -186,13 +170,13 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
     let chaos_fail = bundle(failing_manifest, chaos, "chaos-fail.rbp").await;
     let line_server = bundle(
         ex.join("line-server/bulkhead.toml"),
-        plain_wasm.join("example_line_server.wasm"),
+        built.of("example-line-server"),
         "line-server.rbp",
     )
     .await;
     let ledger = bundle(
         ex.join("ledger/bulkhead.toml"),
-        plain_wasm.join("example_ledger.wasm"),
+        built.of("example-ledger"),
         "ledger.rbp",
     )
     .await;
@@ -210,11 +194,12 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
     .unwrap();
     let toml = format!(
         "data_dir = {:?}\nadmin_socket = {:?}\nmax_instances = 16\ntrusted_keys = [{:?}, {:?}]\npolicy = {policy:?}\n[listeners.lines]\naddress = \"127.0.0.1:{lines_port}\"\n\
-         [buckets.ledger]\ndurability = \"disk\"\n",
+         [buckets.ledger]\ndurability = \"disk\"\n{}",
         dir.path().join("data"),
         socket,
         encrypted.stdout,
-        plain.stdout
+        plain.stdout,
+        build.node_extra()
     );
     let node = Arc::new(
         Node::open(NodeConfig::from_toml_str(&toml).unwrap(), LogRing::new(100))

@@ -32,11 +32,28 @@
 //! [`ExtensionNode::stopped`] completes. Work that only one node of an HA
 //! pair should do (polling a device whose values the pair replicates)
 //! checks [`ExtensionNode::runs_singletons`] first.
+//!
+//! Native apps (ROADMAP Z8h) reach an extension through
+//! [`Extension::call`]: a function named by a string, by convention the
+//! WIT interface and function (`greet#hello`), with its arguments and
+//! result in CBOR (an array of the WIT parameters in order; the WIT
+//! result as serde encodes it). An extension that serves them decodes the
+//! arguments with [`NativeCall::args`], calls its generated `Host` trait's
+//! method on the same [`ServiceCtx`], and encodes the result with
+//! [`reply`]; deriving serde's traits on the bindings' types
+//! (`additional_derives` in `bindgen!`) makes both sides one definition.
+//! An extension without it answers every native call with
+//! [`NativeCallError::NoSuchFunction`].
 
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::Arc;
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use tokio::sync::watch;
 use wasmtime::component::{HasData, Linker};
@@ -88,7 +105,108 @@ pub trait Extension: Send + Sync + 'static {
         let _ = node;
         Ok(())
     }
+
+    /// Serve a native app's call of a function (see the module
+    /// documentation), with the calling instance's data: reach this
+    /// extension's state with [`extension_ctx`], as the linked functions
+    /// do. [`NativeCallError::NoSuchFunction`] for every function by
+    /// default.
+    fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a> {
+        let _ = data;
+        Box::pin(async move { Err(call.no_such_function()) })
+    }
 }
+
+/// What [`Extension::call`] returns: the result in CBOR, or why there is
+/// none.
+pub type NativeReply<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<u8>, NativeCallError>> + Send + 'a>>;
+
+/// A native app's call of an extension's function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeCall {
+    function: String,
+    args: Vec<u8>,
+}
+
+impl NativeCall {
+    /// A call of `function` with `args` in CBOR.
+    #[must_use]
+    pub fn new(function: impl Into<String>, args: Vec<u8>) -> Self {
+        Self {
+            function: function.into(),
+            args,
+        }
+    }
+
+    /// The function's name (`greet#hello`).
+    #[must_use]
+    pub fn function(&self) -> &str {
+        &self.function
+    }
+
+    /// The arguments as `T`: by convention a tuple of the WIT parameters.
+    ///
+    /// # Errors
+    ///
+    /// [`NativeCallError::BadArguments`] if they do not decode as `T`.
+    pub fn args<T: DeserializeOwned>(&self) -> Result<T, NativeCallError> {
+        ciborium::from_reader(self.args.as_slice())
+            .map_err(|e| NativeCallError::BadArguments(format!("{}: {e}", self.function)))
+    }
+
+    /// The error for a function this extension does not serve.
+    #[must_use]
+    pub fn no_such_function(&self) -> NativeCallError {
+        NativeCallError::NoSuchFunction(self.function.clone())
+    }
+}
+
+/// `value` in CBOR, as [`Extension::call`] returns it.
+///
+/// # Errors
+///
+/// [`NativeCallError::Crash`] if `value` does not encode (a map with keys
+/// that are not strings, for one).
+pub fn reply<T: Serialize>(value: &T) -> Result<Vec<u8>, NativeCallError> {
+    let mut out = Vec::new();
+    ciborium::into_writer(value, &mut out)
+        .map_err(|e| NativeCallError::Crash(format!("encoding a reply: {e}")))?;
+    Ok(out)
+}
+
+/// Why [`Extension::call`] has no result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeCallError {
+    /// The extension serves no such function to native apps; the app gets
+    /// an error.
+    NoSuchFunction(String),
+    /// The arguments are not what the function takes; the app gets an
+    /// error.
+    BadArguments(String),
+    /// What a trap is to a component: the calling instance crashes with
+    /// this reason.
+    Crash(String),
+}
+
+impl From<wasmtime::Error> for NativeCallError {
+    /// A trap from a generated `Host` method.
+    fn from(e: wasmtime::Error) -> Self {
+        Self::Crash(crate::error::describe(&e))
+    }
+}
+
+impl std::fmt::Display for NativeCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoSuchFunction(name) => write!(f, "no function {name} for native apps"),
+            Self::BadArguments(why) => write!(f, "bad arguments to {why}"),
+            Self::Crash(why) => f.write_str(why),
+        }
+    }
+}
+
+impl std::error::Error for NativeCallError {}
 
 /// What an extension's node-level work reaches: its configuration, the
 /// node's apps, the node's failover lease, and a stop signal. Cheap to

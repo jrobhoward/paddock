@@ -45,7 +45,6 @@ use crate::native::port::{Incoming, KvCall, Port};
 use crate::output::{CapturedOutput, Tags};
 use crate::probe;
 use crate::runtime::{LoadedApp, RuntimeInner};
-use crate::services::HostState;
 use crate::services::config::Config;
 use crate::services::egress::Egress;
 use crate::services::groups::Groups;
@@ -58,6 +57,7 @@ use crate::services::secrets::Secrets;
 #[cfg(unix)]
 use crate::services::sockets::{NativeReply, Sockets};
 use crate::services::sql::Sql;
+use crate::services::{HostState, NativeCall, NativeCallError};
 use crate::spec::InstanceSpec;
 use crate::state::{InstanceState, ProcessContext};
 use crate::upgrade::UpgradeError;
@@ -452,8 +452,41 @@ async fn service_answer(state: &mut InstanceState, request: Request) -> Result<A
                 .native(request)
                 .await,
         ),
+        Request::Extension {
+            package,
+            function,
+            args,
+        } => Answer::Extension(extension_call(state, &package, function, args.0).await?),
         other => return Err(format!("not a service request: {other:?}")),
     })
+}
+
+/// Call `function` of the extension serving `package` (ROADMAP Z8h). An
+/// extension's crash is the instance's, as a trap is a component's.
+async fn extension_call(
+    state: &mut InstanceState,
+    package: &str,
+    function: String,
+    args: Vec<u8>,
+) -> Result<Result<p::Bytes, p::ExtensionError>, String> {
+    let Some(ext) = state
+        .ctx
+        .rt
+        .extensions
+        .iter()
+        .find(|e| e.package() == package)
+        .cloned()
+    else {
+        return Ok(Err(p::ExtensionError::NoSuchExtension));
+    };
+    match ext.call(state, NativeCall::new(function, args)).await {
+        Ok(result) => Ok(Ok(p::Bytes(result))),
+        Err(NativeCallError::NoSuchFunction(name)) => {
+            Ok(Err(p::ExtensionError::NoSuchFunction(name)))
+        }
+        Err(NativeCallError::BadArguments(why)) => Ok(Err(p::ExtensionError::BadArguments(why))),
+        Err(NativeCallError::Crash(why)) => Err(format!("extension {package}: {why}")),
+    }
 }
 
 impl InstanceTask {

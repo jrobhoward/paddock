@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 bulkhead-host = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

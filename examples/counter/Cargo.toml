@@ -10,11 +10,18 @@ repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+# The same app as a native program (`kind = "native-process"`).
+[[bin]]
+name = "example-counter"
+path = "src/main.rs"
+required-features = ["native"]
 
 # v1 by default; `v2` adds history and migrates v1 snapshots; `v3` is v2 with
 # a load_snapshot that always refuses (the deliberately broken upgrade).
 [features]
+native = []
 v2 = []
 v3 = ["v2"]
 

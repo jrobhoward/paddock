@@ -21,6 +21,7 @@ bulkhead = { path = "../../../crates/bulkhead" }
 [dev-dependencies]
 minisign = { workspace = true }
 bulkhead-host = { workspace = true }
+rstest = { workspace = true }
 rustbridge-bundle = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

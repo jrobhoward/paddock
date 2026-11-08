@@ -19,6 +19,7 @@ members = [
     "crates/bulkhead-fixture-workload",
     "crates/bulkhead-host",
     "crates/bulkhead-modbus",
+    "crates/bulkhead-modbus-client",
     "crates/bulkhead-native",
     "crates/bulkhead-sdk",
     "crates/bulkhead-sdk-macros",
@@ -128,6 +129,7 @@ bulkhead-bundle = { path = "crates/bulkhead-bundle" }
 # Without the HTTP ingress; `bulkhead` enables `http` and `tls` by feature.
 bulkhead-host = { path = "crates/bulkhead-host", default-features = false }
 bulkhead-modbus = { path = "crates/bulkhead-modbus" }
+bulkhead-modbus-client = { path = "crates/bulkhead-modbus-client" }
 bulkhead-native = { path = "crates/bulkhead-native", default-features = false }
 bulkhead-sdk = { path = "crates/bulkhead-sdk" }
 bulkhead-sdk-macros = { path = "crates/bulkhead-sdk-macros" }

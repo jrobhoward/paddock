@@ -10,7 +10,16 @@ repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+# The same app as a native program (`kind = "native-process"`).
+[[bin]]
+name = "example-ledger"
+path = "src/main.rs"
+required-features = ["native"]
+
+[features]
+native = []
 
 [dependencies]
 bulkhead-sdk = { workspace = true, features = ["keyvalue", "watch"] }

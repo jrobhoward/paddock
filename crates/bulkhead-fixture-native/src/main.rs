@@ -33,6 +33,7 @@
 //! | `group OP GROUP [TEXT]` | `join`, `leave`: `ok`; `members`: how many; `publish GROUP TEXT`: to how many |
 //! | `config KEY`, `config-all` | the value (`none`), or every `k=v` |
 //! | `secret NAME` | the secret's text |
+//! | `ext PACKAGE FUNCTION JSON` | an extension call with the JSON arguments in CBOR: its result as JSON, or `err:` and the error |
 //! | `metric register KIND NAME` | the id (`counter`, `gauge` or `histogram`) |
 //! | `metric add ID N`, `metric set ID N`, `metric observe ID N` | `queued`: sent with the callback's result |
 //!

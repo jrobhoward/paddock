@@ -397,7 +397,9 @@ name = "bulkhead-fixture-native"
 version = "0.3.0"
 dependencies = [
  "bulkhead-native",
+ "ciborium",
  "rustix",
+ "serde_json",
 ]
 
 [[package]]
@@ -505,6 +507,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulkhead-modbus-client"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-sdk",
+ "serde",
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
 name = "bulkhead-native"
 version = "0.3.0"
 dependencies = [
@@ -555,6 +566,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -1307,6 +1319,7 @@ name = "example-greeter-app"
 version = "0.3.0"
 dependencies = [
  "bulkhead-sdk",
+ "serde",
  "wit-bindgen 0.63.0",
 ]
 
@@ -1319,6 +1332,7 @@ dependencies = [
  "bulkhead-host",
  "example-greeter-service",
  "minisign",
+ "rstest",
  "rustbridge-bundle",
  "serde_json",
  "tempfile",
@@ -1330,6 +1344,7 @@ name = "example-greeter-service"
 version = "0.3.0"
 dependencies = [
  "bulkhead-host",
+ "serde",
  "serde_json",
 ]
 
@@ -1368,10 +1383,10 @@ dependencies = [
 name = "example-scada-control"
 version = "0.3.0"
 dependencies = [
+ "bulkhead-modbus-client",
  "bulkhead-sdk",
  "serde",
  "serde_json",
- "wit-bindgen 0.63.0",
 ]
 
 [[package]]

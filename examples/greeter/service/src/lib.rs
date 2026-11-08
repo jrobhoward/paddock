@@ -11,13 +11,18 @@
 //! and the operator grants it by package name (`grant =
 //! ["example:greeting"]`). A node runs it with
 //! `bulkhead::node::run(&config, vec![Arc::new(Greeter::default())])`.
+//!
+//! Components import the package; native programs call the same functions
+//! through the node ([`Extension::call`]), named `greet#hello` and
+//! `greet#count`, with arguments and results in CBOR.
 
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bulkhead_host::services::{
-    Extension, ExtensionApp, ExtensionCtx, ServiceCtx, StoreData, extension_ctx,
+    Extension, ExtensionApp, ExtensionCtx, NativeCall, NativeReply, ServiceCtx, StoreData,
+    extension_ctx, reply,
 };
 use bulkhead_host::wasmtime;
 use bulkhead_host::wasmtime::component::Linker;
@@ -30,6 +35,9 @@ mod bindings {
         path: "../wit",
         world: "example:greeting/client",
         imports: { default: async | trappable },
+        // The error travels in CBOR to native programs (`Extension::call`);
+        // their client derives the same traits on its bindings.
+        additional_derives: [serde::Serialize, serde::Deserialize],
         // The wasmtime bulkhead-host links against; no wasmtime dependency
         // of this crate's own, so the versions cannot drift.
         wasmtime_crate: bulkhead_host::wasmtime,
@@ -72,6 +80,22 @@ impl Extension for Greeter {
             granted: app.granted,
             greetings: self.greetings.clone(),
         }))
+    }
+
+    /// The same functions for native programs, through the `Host` methods
+    /// components reach.
+    fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a> {
+        Box::pin(async move {
+            let mut ctx = extension_ctx::<State>(data);
+            match call.function() {
+                "greet#hello" => {
+                    let (name,): (String,) = call.args()?;
+                    reply(&greet::Host::hello(&mut ctx, name).await?)
+                }
+                "greet#count" => reply(&greet::Host::count(&mut ctx).await?),
+                _ => Err(call.no_such_function()),
+            }
+        })
     }
 }
 

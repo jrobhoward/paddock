@@ -37,6 +37,8 @@ fn pid() -> Pid {
 #[case(ToApp::Answer { id: 15, answer: Answer::Net(Err(NetError::Limited)) })]
 #[case(ToApp::Answer { id: 16, answer: Answer::Http(Ok(HttpResponse { status: 200, headers: vec![("content-type".into(), Bytes(b"text/plain".to_vec()))], body: Bytes(vec![0, 255]) })) })]
 #[case(ToApp::Answer { id: 17, answer: Answer::Http(Err(HttpError::Tls("bad certificate".into()))) })]
+#[case(ToApp::Answer { id: 18, answer: Answer::Extension(Ok(Bytes(vec![0x82, 0, 255]))) })]
+#[case(ToApp::Answer { id: 19, answer: Answer::Extension(Err(ExtensionError::NoSuchFunction("greet#x".into()))) })]
 fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
     let bytes = encode(&frame);
 
@@ -61,6 +63,7 @@ fn encode____to_app_frames____read_back_unchanged(#[case] frame: ToApp) {
 #[case(FromApp::Request { id: 9, request: Request::Net(NetRequest::UdpSend { socket: 1, to: "127.0.0.1:9".parse().unwrap(), data: Bytes(vec![1]) }) })]
 #[case(FromApp::Request { id: 10, request: Request::Net(NetRequest::ConnectHost { host: "example.com".into(), port: 443 }) })]
 #[case(FromApp::Request { id: 11, request: Request::Http(HttpRequest { method: "POST".into(), url: "https://a.example/x".into(), headers: vec![("x".into(), Bytes(vec![1]))], body: Bytes(vec![0, 255]), timeout_ms: Some(500) }) })]
+#[case(FromApp::Request { id: 12, request: Request::Extension { package: "example:greeting".into(), function: "greet#hello".into(), args: Bytes(vec![0x81, 0x61, b'a']) } })]
 #[case(FromApp::Request { id: 4, request: Request::Kv(KvRequest::Scan { bucket: "b".into(), query: ScanQuery { prefix: Some("p".into()), limit: 10, ..ScanQuery::default() } }) })]
 fn encode____from_app_frames____read_back_unchanged(#[case] frame: FromApp) {
     let bytes = encode(&frame);

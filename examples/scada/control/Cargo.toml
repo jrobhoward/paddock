@@ -10,18 +10,25 @@ repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+# The same app as a native program (`kind = "native-process"`).
+[[bin]]
+name = "example-scada-control"
+path = "src/main.rs"
+required-features = ["native"]
 
 # v1 by default; `v2` counts how often each alarm was raised and migrates
 # v1 snapshots.
 [features]
+native = []
 v2 = []
 
 [dependencies]
+bulkhead-modbus-client = { workspace = true }
 bulkhead-sdk = { workspace = true, features = ["config", "http", "keyvalue", "watch"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-wit-bindgen = { workspace = true }
 
 [lints]
 workspace = true

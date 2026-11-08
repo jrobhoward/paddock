@@ -49,8 +49,8 @@ pub mod sockets;
 pub mod sql;
 
 pub use extension::{
-    Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ExtensionSpec, StartedExtensions,
-    StoreData, extension_ctx,
+    Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ExtensionSpec, NativeCall,
+    NativeCallError, NativeReply, StartedExtensions, StoreData, extension_ctx, reply,
 };
 
 use std::collections::BTreeMap;

@@ -16,6 +16,7 @@ bulkhead = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
+toml = { workspace = true }
 
 [lints]
 workspace = true

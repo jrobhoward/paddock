@@ -334,6 +334,7 @@ impl Fixture {
                 Ok(v) => String::from_utf8_lossy(&v).into_owned(),
                 Err(e) => format!("err:{e:?}"),
             },
+            "ext" => extension(ctx, first, tail),
             "metric" => metric(ctx, first, tail),
             "kill" => {
                 let target: i32 = rest.parse().unwrap_or(0);
@@ -590,5 +591,26 @@ fn read_passed(fd: FdRef) -> String {
     match file.read(&mut buf) {
         Ok(n) => String::from_utf8_lossy(&buf[..n]).into_owned(),
         Err(e) => format!("err:{e}"),
+    }
+}
+
+/// `ext PACKAGE FUNCTION JSON`: the extension call with the JSON
+/// arguments in CBOR, answered with its result as JSON.
+fn extension(ctx: &mut Ctx, package: &str, rest: &str) -> String {
+    let (function, json) = rest.split_once(' ').unwrap_or((rest, "null"));
+    let args: serde_json::Value = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => return format!("err:json {e}"),
+    };
+    let mut encoded = Vec::new();
+    if let Err(e) = ciborium::into_writer(&args, &mut encoded) {
+        return format!("err:cbor {e}");
+    }
+    match ctx.extension(package, function, encoded) {
+        Ok(result) => match ciborium::from_reader::<serde_json::Value, _>(result.as_slice()) {
+            Ok(v) => v.to_string(),
+            Err(e) => format!("err:result {e}"),
+        },
+        Err(e) => format!("err:{e:?}"),
     }
 }

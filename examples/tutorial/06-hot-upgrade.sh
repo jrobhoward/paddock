@@ -6,23 +6,22 @@
 #
 #   examples/tutorial/06-hot-upgrade.sh          # pauses between steps
 #   AUTO=1 examples/tutorial/06-hot-upgrade.sh   # runs straight through
+#   BOARD=native examples/tutorial/06-hot-upgrade.sh   # the counter as a native program
 source "$(dirname "$0")/common.sh"
 
 # One crate, three versions by cargo feature; each built into its own
-# target directory so the three components sit side by side.
+# target directory so the three builds sit side by side.
 for v in 1 2 3; do
-  features=""
+  feature=""
   manifest="$ROOT/examples/counter/bulkhead.toml"
   if [ "$v" != 1 ]; then
-    features="--features v$v"
+    feature="v$v"
     manifest="$ROOT/examples/counter/bulkhead-v$v.toml"
   fi
-  # shellcheck disable=SC2086
-  cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
-    --target wasm32-wasip2 -p example-counter $features \
-    --target-dir "$ROOT/target/tutorial-counter-v$v"
-  "$BULKHEAD" bundle "$manifest" \
-    "$ROOT/target/tutorial-counter-v$v/wasm32-wasip2/release/example_counter.wasm" \
+  program=$(example_program example-counter "$ROOT/target/tutorial-counter-v$v" "$feature")
+  cp "$manifest" "counter-$v.toml"
+  make_native "counter-$v.toml"
+  "$BULKHEAD" bundle "counter-$v.toml" "$program" \
     --key signer.key --out "counter-$v.rbp" >/dev/null
 done
 

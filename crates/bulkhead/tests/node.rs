@@ -1477,14 +1477,14 @@ async fn native____executable_deployed____answers_and_network_refused() {
         .unwrap();
     let echo = call(&n, "vendor", "echo native").await;
     let read = call(&n, "vendor", "read /etc/hostname").await;
-    let egress = n
+    let refused = n
         .client
         .deploy(native_bundle(
             &n.key,
             "vendor2",
             "1.0.0",
             &program,
-            manifest(json!({ "capabilities": { "extensions": { "acme:x": {} } } })),
+            manifest(json!({ "capabilities": { "bulkhead:runtime/supervisor": {} } })),
         ))
         .await
         .unwrap_err();
@@ -1492,7 +1492,7 @@ async fn native____executable_deployed____answers_and_network_refused() {
     assert_eq!(echo, "native");
     assert!(read.contains("Permission denied"), "{read}");
     assert!(
-        format!("{egress:?}").contains("a native-process app may declare only"),
-        "{egress:?}"
+        format!("{refused:?}").contains("a native-process app may declare only"),
+        "{refused:?}"
     );
 }

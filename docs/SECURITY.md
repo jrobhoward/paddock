@@ -25,7 +25,7 @@ Report it privately through the repository's Security tab ("Report a vulnerabili
 | An app | use what it was granted | reach other apps' data, the host, or other apps' messages beyond what routing allows |
 | A cluster member (a node whose key is in the peers file) | what its own instances could do on the node: call, cast, link and send exit signals within the messaging ACLs, as its stamp on each frame says; call an app by name from its host, as a standby's ingress does to forward an HTTP request (not subject to messaging ACLs, as host calls are not); take part in failover | speak for another node's instances (a frame whose sender pid is on another node is dropped); its stamps are trusted, so a member that lies about its senders' apps passes ACLs it should not |
 | The witness | arbitrate its pair | — |
-| An extension (host code built into the node by its operator: the Modbus extension, `examples/greeter`) | everything the node process can do; it runs as part of the node | — (apps reach it only through its package's declaration and grant, which the extension enforces itself) |
+| An extension (host code built into the node by its operator: the Modbus extension, `examples/greeter`) | everything the node process can do; it runs as part of the node | — (apps reach it only through its package's declaration and grant, which the extension enforces itself; a native program's calls come through the node with the same state, so the same checks) |
 | HTTP clients, listener clients, Modbus masters | nothing | anything beyond the routes, handlers and tables they reach |
 | Modbus devices polled | return register values | crash or stall the node |
 

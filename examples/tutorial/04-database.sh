@@ -7,6 +7,7 @@
 #
 #   examples/tutorial/04-database.sh          # pauses; you kill node 1
 #   AUTO=1 examples/tutorial/04-database.sh   # runs straight through
+#   BOARD=native examples/tutorial/04-database.sh   # the tally as a native program
 #
 # Needs Postgres's server programs (on Ubuntu: apt install postgresql; the
 # system service is not used and can be disabled). This script starts its
@@ -38,9 +39,7 @@ fi
   -o "-k $DEMO_DIR -p $PG_PORT -c listen_addresses=''" >/dev/null
 echo "Postgres is running in $DEMO_DIR/pg, on the socket in $DEMO_DIR"
 
-cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
-  --target wasm32-wasip2 -p example-tally
-TALLY_WASM="$ROOT/target/wasm32-wasip2/release/example_tally.wasm"
+TALLY_PROGRAM=$(example_program example-tally "$ROOT/target/tutorial-tally")
 
 cat > policy.toml <<'TOML'
 [apps.tally]
@@ -99,7 +98,8 @@ start_node 2
 # The tally, as a singleton: it runs on the primary only.
 cp "$ROOT/examples/tally/bulkhead.toml" tally.toml
 printf '\n[appserver.placement]\nmode = "singleton"\n' >> tally.toml
-"$BULKHEAD" bundle tally.toml "$TALLY_WASM" --key signer.key --out tally.rbp >/dev/null
+make_native tally.toml
+"$BULKHEAD" bundle tally.toml "$TALLY_PROGRAM" --key signer.key --out tally.rbp >/dev/null
 p 1 deploy tally.rbp >/dev/null
 p 2 deploy tally.rbp >/dev/null
 role() { p "$1" --json failover | grep -q "\"role\": \"$2\""; }

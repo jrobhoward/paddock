@@ -1,20 +1,16 @@
 //! An app that calls the `example:greeting` extension, written with
-//! `bulkhead-sdk` plus its own bindings for the extension's package.
+//! `bulkhead-sdk` plus a client module for the extension's package
+//! ([`greeting`]), so the same source builds as a component and as a
+//! native program.
 //!
 //! Commands: `hello:<name>` (the greeting) and `count` (greetings made on
 //! this node). Errors reply `err:<error>`.
 
 use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Reply};
 
-#[allow(missing_docs)]
-mod bindings {
-    wit_bindgen::generate!({
-        path: "../wit",
-        world: "example:greeting/client",
-    });
-}
+pub mod greeting;
 
-use bindings::example::greeting::greet;
+use greeting as greet;
 
 #[derive(Default)]
 struct Greeted;

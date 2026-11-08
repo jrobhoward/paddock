@@ -100,6 +100,30 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Every Rust example builds as a native program from the same source
+  (ROADMAP Z8i): `ping-pong`, `counter`, `chaos`, `ledger` and the three
+  `scada` apps gain a `native` feature and binary, beside `board`,
+  `http-counter`, `tally`, `line-server` and the greeter's app.
+  `examples.rs` and `scada.rs` (one node, and the pair's switchover) run
+  every case against both builds. The new `bulkhead-modbus-client` crate
+  is apps' client for the Modbus extension in both builds, and
+  `scada/control` uses it in place of its own bindings. The tutorial's
+  chapters 4 (tally) and 6 (counter) run natively with `BOARD=native`, and
+  `bulkhead-soak scada --native` (`scripts/soak.sh --native`) runs the
+  SCADA release cycle under faults with the native programs.
+- Native-process apps may declare extensions (ROADMAP Z8h), granted by
+  the operator by package as for a component. They call an extension's
+  functions through the node: `bulkhead_sdk::extension::call` (or
+  `Ctx::extension` on `bulkhead-native`'s app API) names the package and
+  the function (`greet#hello`), with the parameters and the WIT result in
+  CBOR. Extensions serve them with the new `Extension::call`, on the same
+  per-instance state, grant and scope (`NativeCall`, `reply`,
+  `NativeCallError`; an extension's `Crash` crashes the instance as a
+  trap does). The Modbus extension and `examples/greeter` implement it;
+  the greeter's app builds both ways through a client module, and its
+  node test runs against both builds. The protocol is version 12
+  (`Request::Extension`): native apps built against an earlier
+  `bulkhead-native` or `bulkhead-sdk` must be rebuilt.
 - Native-process executables may declare `listeners` (ROADMAP Z8g):
   each accepted connection goes to an instance of the app's pool, in turn
   or, with `instances.routing = "hash:..."`, by the peer's address; the

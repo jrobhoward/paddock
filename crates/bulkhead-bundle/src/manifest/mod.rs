@@ -234,7 +234,8 @@ impl AppSpec {
     }
 
     /// What a `native-process` app may not have: any capability outside
-    /// [`NATIVE_CAPABILITIES`]; for a rustbridge plugin, which takes no
+    /// [`NATIVE_CAPABILITIES`] (extensions it may declare: native apps
+    /// call them through the protocol, ROADMAP Z8h); for a rustbridge plugin, which takes no
     /// snapshot and no connection, passivation, snapshot upgrades and
     /// listeners too; and the `native` section on any other kind.
     fn check_native(&self, v: &mut Validator) {
@@ -256,12 +257,6 @@ impl AppSpec {
             if !NATIVE_CAPABILITIES.contains(&c) {
                 v.error_at(format!("capabilities.{}", c.key()), only.clone());
             }
-        }
-        for package in self.capabilities.extensions.keys() {
-            v.error_at(
-                format!("capabilities.extensions.\"{package}\""),
-                only.clone(),
-            );
         }
         let executable = self.native.unwrap_or_default().program == NativeProgram::Executable;
         if !self.listeners.is_empty() {

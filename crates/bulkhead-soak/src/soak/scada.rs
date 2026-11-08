@@ -27,6 +27,7 @@
 
 use std::fmt::Write as _;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -354,11 +355,67 @@ async fn probe(probes: Arc<Probes>, node: u32, port: u16, ask: Ask) {
     }
 }
 
+/// Which build of the apps a run deploys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Build {
+    /// Components, `target/wasm32-wasip2/release`'s.
+    Component,
+    /// Native programs, `target/release`'s (each app's `native` feature),
+    /// run through the `bulkhead-runner` beside the bulkhead binary.
+    Native,
+}
+
+impl Build {
+    /// The app `name`'s component or program.
+    fn program(self, root: &Path, name: &str) -> PathBuf {
+        match self {
+            Self::Component => root.join(format!(
+                "target/wasm32-wasip2/release/example_scada_{name}.wasm"
+            )),
+            Self::Native => root.join(format!("target/release/example-scada-{name}")),
+        }
+    }
+
+    /// Control's version 2 (`examples/scada/drill.sh` and `scripts/soak.sh`
+    /// build it into its own target directory).
+    fn control_v2(self, root: &Path) -> PathBuf {
+        match self {
+            Self::Component => root.join(
+                "target/fixtures/scada-drill-v2/wasm32-wasip2/release/example_scada_control.wasm",
+            ),
+            Self::Native => {
+                root.join("target/fixtures/scada-drill-v2-native/release/example-scada-control")
+            }
+        }
+    }
+
+    /// `manifest` for this build: natively with `kind = "native-process"`.
+    pub(crate) fn manifest(self, manifest: &str) -> anyhow::Result<String> {
+        if self == Self::Component {
+            return Ok(manifest.to_string());
+        }
+        let mut doc: toml::Table = manifest.parse()?;
+        let appserver = doc
+            .entry("appserver")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+            .as_table_mut()
+            .ok_or_else(|| anyhow::anyhow!("appserver is not a table"))?;
+        appserver.insert("kind".into(), "native-process".into());
+        appserver.insert(
+            "native".into(),
+            toml::Value::Table(toml::Table::from_iter([(
+                "program".to_string(),
+                toml::Value::from("executable"),
+            )])),
+        );
+        Ok(toml::to_string(&doc)?)
+    }
+}
+
 /// Run, check, and return whether the run passed.
-pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
+pub(crate) async fn run(build: Build, args: &Args) -> anyhow::Result<bool> {
     let events = Arc::new(EventLog::create(&args.dir.join("events.jsonl"))?);
     let root = &args.root;
-    let wasm = root.join("target/wasm32-wasip2/release");
     let ports = free_tcp(4)?;
     let (http_ports, device_ports) = ([ports[0], ports[1]], [ports[2], ports[3]]);
     let device_addrs: Vec<SocketAddr> = device_ports
@@ -366,25 +423,26 @@ pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
         .map(|p| SocketAddr::from(([127, 0, 0, 1], *p)))
         .collect();
     let read = |p: &str| -> anyhow::Result<String> {
-        std::fs::read_to_string(root.join("examples/scada").join(p))
-            .with_context(|| format!("reading examples/scada/{p}"))
+        let text = std::fs::read_to_string(root.join("examples/scada").join(p))
+            .with_context(|| format!("reading examples/scada/{p}"))?;
+        build.manifest(&text)
     };
     let setup = Setup {
         apps: vec![
             SetupApp {
                 name: "points",
                 manifest: read("points/bulkhead.toml")?,
-                wasm: wasm.join("example_scada_points.wasm"),
+                wasm: build.program(root, "points"),
             },
             SetupApp {
                 name: "hmi",
                 manifest: read("hmi/bulkhead.toml")?,
-                wasm: wasm.join("example_scada_hmi.wasm"),
+                wasm: build.program(root, "hmi"),
             },
             SetupApp {
                 name: CONTROL,
                 manifest: read("control/bulkhead.toml")?,
-                wasm: wasm.join("example_scada_control.wasm"),
+                wasm: build.program(root, "control"),
             },
         ],
         pair_config: [
@@ -406,8 +464,7 @@ pub(crate) async fn run(args: &Args) -> anyhow::Result<bool> {
     );
     // Version 2, signed by the key the cluster's bundles use.
     let mut cluster = Cluster::start(args, &setup, events.clone()).await?;
-    let v2 = root
-        .join("target/fixtures/scada-drill-v2/wasm32-wasip2/release/example_scada_control.wasm");
+    let v2 = build.control_v2(root);
     bundle(
         &args.bulkhead,
         &args.dir,

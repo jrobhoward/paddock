@@ -98,6 +98,11 @@ enum Command {
         lease_ms: u64,
         #[arg(long, default_value_t = 300)]
         margin_ms: u64,
+        /// Run the apps as native programs (Linux): `target/release`'s,
+        /// built with each app's `native` feature, and `bulkhead-runner`
+        /// beside the bulkhead binary.
+        #[arg(long)]
+        native: bool,
     },
     /// Three member nodes behind UDP proxies, their instances linking and
     /// monitoring each other at random, under link and node faults; fails
@@ -231,23 +236,32 @@ async fn execute(command: Command) -> anyhow::Result<bool> {
             node_timeout_ms,
             lease_ms,
             margin_ms,
+            native,
         } => {
             let (dir, root, bulkhead, seed, minutes) = prepare(run)?;
-            scada::run(&failover::Args {
-                dir,
-                root,
-                bulkhead,
-                seed,
-                minutes,
-                episode: Duration::from_secs(episode_s),
-                timings: failover::Timings {
-                    heartbeat_ms,
-                    node_timeout_ms,
-                    lease_ms,
-                    margin_ms,
+            let build = if native {
+                scada::Build::Native
+            } else {
+                scada::Build::Component
+            };
+            scada::run(
+                build,
+                &failover::Args {
+                    dir,
+                    root,
+                    bulkhead,
+                    seed,
+                    minutes,
+                    episode: Duration::from_secs(episode_s),
+                    timings: failover::Timings {
+                        heartbeat_ms,
+                        node_timeout_ms,
+                        lease_ms,
+                        margin_ms,
+                    },
+                    serial: None,
                 },
-                serial: None,
-            })
+            )
             .await
         }
         Command::Cluster {

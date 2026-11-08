@@ -150,8 +150,18 @@ pub fn effective_grant(
     }
 
     // Capabilities served without imports are used whenever declared, and
-    // a native program imports nothing: what it declares, it uses.
+    // a native program imports nothing: what it declares, it uses, its
+    // extensions included.
     let native = spec.kind == crate::manifest::Kind::NativeProcess;
+    if native {
+        for package in spec.capabilities.extensions.keys() {
+            if operator.extensions.contains(package) {
+                granted_extensions.insert(package.clone());
+            } else {
+                denied_extensions.insert(package.clone());
+            }
+        }
+    }
     imported.extend(
         declared
             .iter()

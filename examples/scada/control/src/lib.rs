@@ -43,15 +43,7 @@ use bulkhead_sdk::watch::{self, Change};
 use bulkhead_sdk::{App, CallRef, Ctx, Envelope, Info, Reply, Snapshot, config};
 use serde::{Deserialize, Serialize};
 
-#[allow(missing_docs)]
-mod bindings {
-    wit_bindgen::generate!({
-        path: "../../../crates/bulkhead-modbus/wit",
-        world: "bulkhead-modbus:modbus/modbus",
-    });
-}
-
-use bindings::bulkhead_modbus::modbus::client;
+use bulkhead_modbus_client::client;
 
 #[cfg(not(feature = "v2"))]
 const VERSION: &str = "1.0.0";

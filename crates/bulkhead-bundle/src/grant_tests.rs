@@ -209,6 +209,29 @@ fn effective_grant____extension_not_declared____refused() {
 }
 
 #[test]
+fn effective_grant____native_extensions_without_imports____granted_or_denied_by_policy() {
+    let spec = AppSpec::from_json_value(&json!({
+        "kind": "native-process",
+        "native": { "program": "executable" },
+        "capabilities": { "extensions": { "example:greeting": {}, "acme:other": {} } }
+    }))
+    .unwrap();
+    let mut operator = grants(&[]);
+    operator.extensions.insert("example:greeting".into());
+
+    let grant = effective_grant(&[], &spec, &operator).unwrap();
+
+    assert_eq!(
+        grant.granted_extensions,
+        BTreeSet::from(["example:greeting".to_string()])
+    );
+    assert_eq!(
+        grant.denied_extensions,
+        BTreeSet::from(["acme:other".to_string()])
+    );
+}
+
+#[test]
 fn effective_grant____shared_buckets____granted_only_with_keyvalue_and_policy() {
     let spec = spec(json!({ "wasi:keyvalue": { "shared": { "points": "rw", "alarms": "ro" } } }));
     let mut with_kv = grants(&[Capability::KeyValue]);

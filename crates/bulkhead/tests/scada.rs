@@ -11,6 +11,10 @@
 //! primary alone polls the device into the `cluster` point table, the
 //! standby's table comes from it, and `control`'s replicated alarms keep
 //! an acknowledgement through a planned switchover.
+//!
+//! Both run against the apps built as components and, from the same
+//! source, as native programs (Linux; their manifests with `kind =
+//! "native-process"` added).
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -22,12 +26,13 @@ mod common;
 use std::future::{Ready, ready};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bulkhead::node::{LogRing, Node, NodeConfig, builtin_extensions};
+use common::ExampleBuild as Build;
+use rstest::rstest;
 use serde_json::Value;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -38,38 +43,19 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn build() -> PathBuf {
-    let target = root().join("target/fixtures/examples-scada");
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let ok = StdCommand::new(cargo)
-        .current_dir(root())
-        .args(["build", "--release", "--target", "wasm32-wasip2"])
-        .args(["-p", "example-scada-points", "-p", "example-scada-hmi"])
-        .args(["-p", "example-scada-control"])
-        .arg("--target-dir")
-        .arg(&target)
-        .status()
-        .unwrap()
-        .success();
-    assert!(ok, "building the scada examples failed");
-    target.join("wasm32-wasip2/release")
-}
+const APPS: [&str; 3] = [
+    "example-scada-points",
+    "example-scada-hmi",
+    "example-scada-control",
+];
 
-/// `control` version 2, in its own target directory (features differ).
-fn build_v2() -> PathBuf {
-    let target = root().join("target/fixtures/examples-scada-v2");
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let ok = StdCommand::new(cargo)
-        .current_dir(root())
-        .args(["build", "--release", "--target", "wasm32-wasip2"])
-        .args(["-p", "example-scada-control", "--features", "v2"])
-        .arg("--target-dir")
-        .arg(&target)
-        .status()
-        .unwrap()
-        .success();
-    assert!(ok, "building control v2 failed");
-    target.join("wasm32-wasip2/release/example_scada_control.wasm")
+/// Whether `build` runs here: the native one on Linux only.
+fn runs(build: Build) -> bool {
+    let runs = build == Build::Component || cfg!(target_os = "linux");
+    if !runs {
+        eprintln!("not Linux: the native case is skipped");
+    }
+    runs
 }
 
 struct Run {
@@ -209,10 +195,24 @@ fn alarm<'a>(body: &'a Value, name: &str) -> &'a Value {
     &body["alarms"][name]
 }
 
+#[rstest]
+#[case::component(Build::Component)]
+#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded_rolled_back() {
-    let wasm = build();
-    let control_v2 = build_v2();
+async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded_rolled_back(
+    #[case] build: Build,
+) {
+    if !runs(build) {
+        return;
+    }
+    let built = build.packages(&APPS, &[], "scada");
+    let control_v2 = build
+        .packages(
+            &["example-scada-control"],
+            &["example-scada-control/v2"],
+            "scada-v2",
+        )
+        .of("example-scada-control");
     let dir = TempDir::new().unwrap();
     let socket = dir.path().join("a.sock");
     let holding = Arc::new(Mutex::new((100..110).collect::<Vec<u16>>()));
@@ -242,17 +242,13 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
         (
             "points",
             "points/bulkhead.toml",
-            wasm.join("example_scada_points.wasm"),
+            built.of("example-scada-points"),
         ),
-        (
-            "hmi",
-            "hmi/bulkhead.toml",
-            wasm.join("example_scada_hmi.wasm"),
-        ),
+        ("hmi", "hmi/bulkhead.toml", built.of("example-scada-hmi")),
         (
             "control",
             "control-bulkhead.toml",
-            wasm.join("example_scada_control.wasm"),
+            built.of("example-scada-control"),
         ),
         ("control-v2", "control-bulkhead-v2.toml", control_v2),
     ] {
@@ -262,6 +258,7 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
         } else {
             ex.join(manifest)
         };
+        let manifest = build.manifest(&manifest, dir.path(), name);
         let r = bulkhead(
             &socket,
             &[
@@ -297,10 +294,11 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
          [extensions.\"bulkhead-modbus:modbus\".devices.pump-1]\naddress = \"{device}\"\n\
          poll_ms = 50\ntimeout_ms = 500\ndeliver_to = \"points\"\n\
          primary_only = true\n\
-         holding = [{{ start = 0, count = 4 }}]\n",
+         holding = [{{ start = 0, count = 4 }}]\n{}",
         dir.path().join("data"),
         socket,
         keys.stdout,
+        build.node_extra(),
     );
     let node = Arc::new(
         Node::open_with(
@@ -516,11 +514,19 @@ async fn reads_in(reads: &AtomicUsize, secs: u64) -> usize {
     reads.load(Ordering::Relaxed) - before
 }
 
+#[rstest]
+#[case::component(Build::Component)]
+#[case::native(Build::Native)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchover() {
+async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchover(
+    #[case] build: Build,
+) {
     use std::os::unix::fs::PermissionsExt;
 
-    let wasm = build();
+    if !runs(build) {
+        return;
+    }
+    let built = build.packages(&APPS, &[], "scada");
     let dir = TempDir::new().unwrap();
     let d = dir.path();
     let cli = d.join("cli.sock");
@@ -537,12 +543,13 @@ async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchove
     let mut bundles = Vec::new();
     for app in ["points", "hmi", "control"] {
         let out = d.join(format!("{app}.rbp"));
-        let wasm_file = wasm.join(format!("example_scada_{app}.wasm"));
+        let wasm_file = built.of(&format!("example-scada-{app}"));
+        let manifest = build.manifest(&ex.join(app).join("bulkhead.toml"), d, app);
         let r = bulkhead(
             &cli,
             &[
                 "bundle",
-                s(&ex.join(app).join("bulkhead.toml")),
+                s(&manifest),
                 s(&wasm_file),
                 "--key",
                 s(&d.join("k.key")),
@@ -584,11 +591,12 @@ async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchove
         let i = usize::try_from(n - 1).unwrap();
         let mut t = format!(
             "node = {n}\ndata_dir = {:?}\nadmin_socket = {:?}\nmax_instances = 32\n\
-             trusted_keys = [{:?}]\npolicy = {:?}\n",
+             trusted_keys = [{:?}]\npolicy = {:?}\n{}",
             d.join(format!("data-{n}")),
             d.join(format!("n{n}.sock")),
             keys.stdout,
             d.join("policy.toml"),
+            build.node_extra(),
         );
         if n != 3 {
             t += &format!(

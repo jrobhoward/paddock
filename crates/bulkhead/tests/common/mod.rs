@@ -500,3 +500,104 @@ pub async fn wait_for_socket(child: &mut tokio::process::Child, socket: &Path, l
         std::fs::read_to_string(log).unwrap_or_default()
     );
 }
+
+/// Which build of the examples (`tests/examples.rs`, `tests/scada.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExampleBuild {
+    /// For `wasm32-wasip2`.
+    Component,
+    /// A native program (feature `native`), Linux only.
+    Native,
+}
+
+/// Where one build of some examples landed.
+pub struct Built {
+    dir: PathBuf,
+    build: ExampleBuild,
+}
+
+impl Built {
+    /// The component or program of the package `package`.
+    pub fn of(&self, package: &str) -> PathBuf {
+        match self.build {
+            ExampleBuild::Component => self.dir.join(format!("{}.wasm", package.replace('-', "_"))),
+            ExampleBuild::Native => self.dir.join(package),
+        }
+    }
+}
+
+impl ExampleBuild {
+    /// Build `packages` together into `target/fixtures/examples-<tag>`
+    /// (one directory per feature set, since features unify within a
+    /// build; the native build's in its own), with `features` (`package/name`).
+    pub fn packages(self, packages: &[&str], features: &[&str], tag: &str) -> Built {
+        let native = self == ExampleBuild::Native;
+        let target = workspace_root().join(format!(
+            "target/fixtures/examples-{tag}{}",
+            if native { "-native" } else { "" }
+        ));
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let mut cmd = Command::new(cargo);
+        cmd.current_dir(workspace_root())
+            .args(["build", "--release"]);
+        if !native {
+            cmd.args(["--target", "wasm32-wasip2"]);
+        }
+        for p in packages {
+            cmd.args(["-p", p]);
+        }
+        cmd.arg("--target-dir").arg(&target);
+        let mut features: Vec<String> = features.iter().map(ToString::to_string).collect();
+        if native {
+            features.extend(packages.iter().map(|p| format!("{p}/native")));
+        }
+        if !features.is_empty() {
+            cmd.args(["--features", &features.join(",")]);
+        }
+        assert!(
+            cmd.status().unwrap().success(),
+            "building {packages:?} ({self:?}) failed"
+        );
+        Built {
+            dir: if native {
+                target.join("release")
+            } else {
+                target.join("wasm32-wasip2/release")
+            },
+            build: self,
+        }
+    }
+
+    /// The manifest at `path`; for the native build, a copy in `into`
+    /// (named after `out`) that runs the program as a native process.
+    pub fn manifest(self, path: &Path, into: &Path, out: &str) -> PathBuf {
+        if self == ExampleBuild::Component {
+            return path.to_path_buf();
+        }
+        let mut doc: toml::Table = std::fs::read_to_string(path).unwrap().parse().unwrap();
+        let appserver = doc
+            .entry("appserver")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+            .as_table_mut()
+            .unwrap();
+        appserver.insert("kind".into(), "native-process".into());
+        appserver.insert(
+            "native".into(),
+            toml::Value::Table(toml::Table::from_iter([(
+                "program".to_string(),
+                toml::Value::from("executable"),
+            )])),
+        );
+        let native = into.join(format!("native-{out}.toml"));
+        std::fs::write(&native, toml::to_string(&doc).unwrap()).unwrap();
+        native
+    }
+
+    /// Node config this build needs: the native build's runner.
+    pub fn node_extra(self) -> String {
+        match self {
+            ExampleBuild::Native => format!("[native]\nrunner = {:?}\n", native_fixtures().0),
+            ExampleBuild::Component => String::new(),
+        }
+    }
+}

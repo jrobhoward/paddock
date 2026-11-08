@@ -39,6 +39,11 @@
 //! write = ["pump-1"]
 //! serve = true
 //! ```
+//!
+//! Native programs call the same functions through the node
+//! (`Extension::call`, ROADMAP Z8h), named by interface and function as
+//! in the WIT (`client#read-holding`, `server#set-coils`), with the
+//! parameters as a CBOR array and the WIT result back in CBOR.
 
 mod config;
 mod device;
@@ -56,7 +61,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
 use bulkhead_host::services::{
-    Extension, ExtensionApp, ExtensionCtx, ExtensionNode, ServiceCtx, StoreData, extension_ctx,
+    Extension, ExtensionApp, ExtensionCtx, ExtensionNode, NativeCall, NativeReply, ServiceCtx,
+    StoreData, extension_ctx, reply,
 };
 use bulkhead_host::wasmtime;
 use bulkhead_host::wasmtime::component::Linker;
@@ -77,7 +83,8 @@ mod bindings {
         path: "wit",
         world: "bulkhead-modbus:modbus/modbus",
         imports: { default: async | trappable },
-        additional_derives: [PartialEq, Eq],
+        // Serde for native programs' calls, whose results travel in CBOR.
+        additional_derives: [PartialEq, Eq, serde::Serialize, serde::Deserialize],
         wasmtime_crate: bulkhead_host::wasmtime,
     });
 }
@@ -171,6 +178,66 @@ impl Extension for Modbus {
             let _ = self.shared.server_address.set(bound);
         }
         Ok(())
+    }
+
+    /// The `client` and `server` functions for native programs, through
+    /// the `Host` methods components reach.
+    fn call<'a>(&'a self, data: &'a mut StoreData, call: NativeCall) -> NativeReply<'a> {
+        Box::pin(async move {
+            let mut ctx = extension_ctx::<State>(data);
+            let ctx = &mut ctx;
+            match call.function() {
+                "client#read-holding" => {
+                    let (device, address, count) = call.args()?;
+                    reply(&client::Host::read_holding(ctx, device, address, count).await?)
+                }
+                "client#read-input" => {
+                    let (device, address, count) = call.args()?;
+                    reply(&client::Host::read_input(ctx, device, address, count).await?)
+                }
+                "client#read-coils" => {
+                    let (device, address, count) = call.args()?;
+                    reply(&client::Host::read_coils(ctx, device, address, count).await?)
+                }
+                "client#read-discrete" => {
+                    let (device, address, count) = call.args()?;
+                    reply(&client::Host::read_discrete(ctx, device, address, count).await?)
+                }
+                "client#write-holding" => {
+                    let (device, address, values) = call.args()?;
+                    reply(&client::Host::write_holding(ctx, device, address, values).await?)
+                }
+                "client#write-coils" => {
+                    let (device, address, values) = call.args()?;
+                    reply(&client::Host::write_coils(ctx, device, address, values).await?)
+                }
+                "server#set-holding" => {
+                    let (address, values) = call.args()?;
+                    reply(&served::Host::set_holding(ctx, address, values).await?)
+                }
+                "server#set-input" => {
+                    let (address, values) = call.args()?;
+                    reply(&served::Host::set_input(ctx, address, values).await?)
+                }
+                "server#set-coils" => {
+                    let (address, values) = call.args()?;
+                    reply(&served::Host::set_coils(ctx, address, values).await?)
+                }
+                "server#set-discrete" => {
+                    let (address, values) = call.args()?;
+                    reply(&served::Host::set_discrete(ctx, address, values).await?)
+                }
+                "server#get-holding" => {
+                    let (address, count) = call.args()?;
+                    reply(&served::Host::get_holding(ctx, address, count).await?)
+                }
+                "server#get-coils" => {
+                    let (address, count) = call.args()?;
+                    reply(&served::Host::get_coils(ctx, address, count).await?)
+                }
+                _ => Err(call.no_such_function()),
+            }
+        })
     }
 }
 

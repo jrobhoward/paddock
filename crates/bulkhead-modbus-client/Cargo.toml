@@ -1,0 +1,18 @@
+[package]
+name = "bulkhead-modbus-client"
+version.workspace = true
+description = "Apps' client for the bulkhead-modbus:modbus extension, built as a component or a native program"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+bulkhead-sdk = { workspace = true }
+serde = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

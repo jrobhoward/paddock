@@ -14,6 +14,10 @@
 #   show CMD...      print a command, then run it
 #   showp N ARGS...  the same for `bulkhead ARGS` against node N
 #   deploy_board N MANIFEST [EXTRA]   sign and deploy a board manifest
+#   example_program PACKAGE TARGET_DIR [FEATURE]   build one of the Rust
+#                    examples (natively with BOARD=native) and print its path
+#   make_native FILE    with BOARD=native, make a manifest run its program as
+#                    a native process
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -122,6 +126,35 @@ showp() {
   echo
 }
 
+# With BOARD=native, give the manifest FILE the native build's kind: in its
+# own [appserver] table if it has one, else in a new one.
+make_native() {
+  [ -n "$BOARD_KIND" ] || return 0
+  if grep -q '^\[appserver\]$' "$1"; then
+    sed -i 's/^\[appserver\]$/[appserver]\nkind = "native-process"\nnative = { program = "executable" }/' "$1"
+  else
+    printf '\n%s\n' "$BOARD_KIND" >> "$1"
+  fi
+}
+
+# Build the Rust example PACKAGE (with FEATURE) into TARGET_DIR, as a
+# component, or as a native program with BOARD=native; print its path. The
+# Go build has only the board, so other examples stay components with it.
+example_program() {
+  local package=$1 target=$2 feature=${3:-}
+  if [ -n "$BOARD_KIND" ]; then
+    cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
+      -p "$package" --features "native${feature:+,$feature}" --bin "$package" \
+      --target-dir "$target"
+    echo "$target/release/$package"
+  else
+    cargo build --quiet --release --manifest-path "$ROOT/Cargo.toml" \
+      --target wasm32-wasip2 -p "$package" ${feature:+--features "$feature"} \
+      --target-dir "$target"
+    echo "$target/wasm32-wasip2/release/${package//-/_}.wasm"
+  fi
+}
+
 # Sign a board manifest (with extra TOML appended, and the native build's
 # kind) and deploy it to node N.
 deploy_board() {
@@ -130,7 +163,7 @@ deploy_board() {
   name=$(basename "$manifest" .toml)
   cp "$manifest" "$name.toml"
   [ -n "$extra" ] && printf '\n%s\n' "$extra" >> "$name.toml"
-  [ -n "$BOARD_KIND" ] && printf '\n%s\n' "$BOARD_KIND" >> "$name.toml"
+  make_native "$name.toml"
   "$BULKHEAD" bundle "$name.toml" "$BOARD_PROGRAM" --key signer.key --out "$name.rbp" >/dev/null
   p "$n" deploy "$name.rbp" >/dev/null
 }

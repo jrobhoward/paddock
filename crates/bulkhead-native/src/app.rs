@@ -51,10 +51,10 @@ use crate::channel::{AppEnd, FromNode, ToNode};
 
 use crate::hot::KvOp;
 use crate::protocol::{
-    self, Answer, Bytes, CallError, CastError, ConfigError, Envelope, ExitReason, FdRef, FromApp,
-    GroupsAnswer, GroupsError, GroupsRequest, HttpError, HttpRequest, HttpResponse, Info, KvAnswer,
-    KvError, KvRequest, Level, MetricError, MetricKind, MetricUpdate, NetAnswer, NetError,
-    NetRequest, NetStream, Pid, RegisterError, Request, ScanPage, ScanQuery, SecretError,
+    self, Answer, Bytes, CallError, CastError, ConfigError, Envelope, ExitReason, ExtensionError,
+    FdRef, FromApp, GroupsAnswer, GroupsError, GroupsRequest, HttpError, HttpRequest, HttpResponse,
+    Info, KvAnswer, KvError, KvRequest, Level, MetricError, MetricKind, MetricUpdate, NetAnswer,
+    NetError, NetRequest, NetStream, Pid, RegisterError, Request, ScanPage, ScanQuery, SecretError,
     SqlAnswer, SqlError, SqlRequest, ToApp, VERSION,
 };
 
@@ -726,6 +726,32 @@ impl Ctx {
     pub fn http(&mut self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
         match self.request(Request::Http(request)) {
             Answer::Http(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// Call `function` of the extension serving `package` (ROADMAP Z8h)
+    /// with `args` in CBOR; its result in CBOR. The extension checks the
+    /// app's grant and scope and puts its own errors in the result.
+    ///
+    /// # Errors
+    ///
+    /// [`ExtensionError::NoSuchExtension`] if the node runs none for
+    /// `package`, and the others if the extension has no such function or
+    /// cannot read `args`.
+    pub fn extension(
+        &mut self,
+        package: impl Into<String>,
+        function: impl Into<String>,
+        args: Vec<u8>,
+    ) -> Result<Vec<u8>, ExtensionError> {
+        let asked = Request::Extension {
+            package: package.into(),
+            function: function.into(),
+            args: Bytes(args),
+        };
+        match self.request(asked) {
+            Answer::Extension(result) => result.map(|b| b.0),
             other => unexpected(&other),
         }
     }

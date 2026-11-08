@@ -2,6 +2,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+use rstest::rstest;
+
 use super::*;
 
 fn points(at_ms: u64, node: u32, counter: Option<u64>) -> Sample {
@@ -115,4 +117,19 @@ fn counter_and_alarm_status____replies_of_the_apps____read() {
     let read = (counter(points), alarm_status(alarms), counter("{}"));
 
     assert_eq!(read, (Some(17), Some("acked".into()), None));
+}
+
+#[rstest]
+#[case::no_appserver_table("[app]\nname = \"x\"\n[appserver.capabilities.\"wasi:logging\"]\n")]
+#[case::appserver_table("[app]\nname = \"x\"\n[appserver]\nregistered_names = [\"x\"]\n")]
+fn Build____native_manifest____runs_the_program_as_a_native_process(#[case] manifest: &str) {
+    let native: toml::Table = Build::Native.manifest(manifest).unwrap().parse().unwrap();
+
+    assert_eq!(native["appserver"]["kind"].as_str(), Some("native-process"));
+    assert_eq!(
+        native["appserver"]["native"]["program"].as_str(),
+        Some("executable")
+    );
+    assert_eq!(native["app"]["name"].as_str(), Some("x"));
+    assert_eq!(Build::Component.manifest(manifest).unwrap(), manifest);
 }
