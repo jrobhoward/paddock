@@ -916,7 +916,7 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
             msg = inbox.recv() => {
                 let Some(msg) = msg else { return };
                 let now = Instant::now();
-                if !matches!(msg, FailoverMsg::LeaseOk { .. } | FailoverMsg::Recorded { .. }) {
+                if !matches!(msg, FailoverMsg::LeaseOk { .. }) {
                     tracing::debug!(
                         target: "bulkhead::lease",
                         ?msg,

@@ -59,6 +59,9 @@ pub(crate) const HANDOVER_MAX: Duration = Duration::from_secs(1);
 /// How long each planned step is watched after its command returns.
 const OBSERVE: Duration = Duration::from_secs(3);
 
+/// How long after a heal a node may take to stand by again.
+const STANDBY_WAIT: Duration = Duration::from_secs(30);
+
 /// How long a probe request may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -521,11 +524,8 @@ impl Soak<'_> {
             if !self.problems.is_empty() || Instant::now() >= deadline {
                 break;
             }
-            // Every other upgrade loses the primary between its steps.
-            if !self.at_v2 && round % 4 == 3 {
-                self.release_primary_lost(cluster, round).await?;
-            } else {
-                self.release(round).await?;
+            if !self.planned_release(cluster, round).await? {
+                break;
             }
             self.switchover(cluster, round).await?;
             self.check_alarm(round).await;
@@ -559,6 +559,40 @@ impl Soak<'_> {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
         anyhow::bail!("{ALARM} was not raised and acknowledged")
+    }
+
+    /// This round's release, once a node stands by. Whether it ran.
+    async fn planned_release(&mut self, cluster: &mut Cluster, round: u32) -> anyhow::Result<bool> {
+        if !Self::await_standby(cluster).await {
+            self.problem(format!(
+                "round {round}: no standby within {} s of the heal",
+                STANDBY_WAIT.as_secs()
+            ));
+            return Ok(false);
+        }
+        // Every other upgrade loses the primary between its steps.
+        if !self.at_v2 && round % 4 == 3 {
+            self.release_primary_lost(cluster, round).await?;
+        } else {
+            self.release(round).await?;
+        }
+        Ok(true)
+    }
+
+    /// Wait for a node to stand by, which `bulkhead release` needs and a
+    /// restarted node reaches only once it has found its partner again.
+    async fn await_standby(cluster: &Cluster) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < STANDBY_WAIT {
+            for node in &cluster.nodes[..2] {
+                let f = tokio::time::timeout(ADMIN_TIMEOUT, node.client().failover()).await;
+                if matches!(f, Ok(Ok(f)) if f.role == "standby") {
+                    return true;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        false
     }
 
     /// The primary's node number, from the admin API.

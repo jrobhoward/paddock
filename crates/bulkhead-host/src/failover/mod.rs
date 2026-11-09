@@ -500,7 +500,7 @@ impl std::fmt::Debug for Shared {
     }
 }
 
-/// Log what the witness did with a request or a release (debug, target
+/// Log what the witness did with a request, release or record (debug, target
 /// `bulkhead::lease`), and its state after: `decision` absent means nothing
 /// was answered. Renewals are left out, there being one every step.
 fn log_witness_decision(
@@ -511,7 +511,7 @@ fn log_witness_decision(
 ) {
     if matches!(
         msg,
-        FailoverMsg::Request { .. } | FailoverMsg::Release { .. }
+        FailoverMsg::Request { .. } | FailoverMsg::Release { .. } | FailoverMsg::Record { .. }
     ) {
         tracing::debug!(
             target: "bulkhead::lease",
