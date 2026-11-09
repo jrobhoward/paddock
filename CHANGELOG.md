@@ -18,6 +18,10 @@ All notable changes are recorded here. The format follows
 
 ### Removed
 
+- The manifest keys `limits.table_max` and `limits.fuel_per_message`, which
+  did nothing on a native app. A manifest setting either is refused as an
+  unknown key, including one a node already holds; rebuild and redeploy
+  such a bundle without the key.
 - The capabilities `bulkhead:runtime/supervisor` and `bulkhead:admin`,
   which were never enforced.
 - WebAssembly components from bundles, the SDK and the examples (ROADMAP
@@ -423,6 +427,12 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A cluster connection to a peer that has gone now closes about
+  `node_timeout_ms` × 2⅔ after the peer's last frame, even when its
+  handshake was slow. QUIC stretched the wait to about nine times the
+  handshake's round trip (16 s after a 1.8 s handshake), during which the
+  node did not redial and a planned switchover's release to the witness
+  could be lost, leaving the standby to wait out the lease.
 - A native-process app's TCP streams (`wasi:sockets`) now close when the
   app is passivated: the process that held them has gone, and the node's
   copies had kept them open, unseen by any later process.

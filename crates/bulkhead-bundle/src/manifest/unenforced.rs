@@ -47,7 +47,6 @@ impl AppSpec {
         out.add_if(self.instances.max.is_some(), "instances.max");
         let limits = &self.limits;
         let later_limits = [
-            ("fuel_per_message", limits.fuel_per_message.is_some()),
             ("storage_quota", limits.storage_quota.is_some()),
             ("open_files", limits.open_files.is_some()),
             (

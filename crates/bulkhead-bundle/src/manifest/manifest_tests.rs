@@ -158,6 +158,16 @@ fn AppSpec____json_round_trip____is_lossless() {
     "unknown field `memory`"
 )]
 #[case(
+    r#"{ "limits": { "table_max": 500 } }"#,
+    "limits.table_max",
+    "unknown field `table_max`"
+)]
+#[case(
+    r#"{ "limits": { "fuel_per_message": 10 } }"#,
+    "limits.fuel_per_message",
+    "unknown field `fuel_per_message`"
+)]
+#[case(
     r#"{ "limits": { "memory_max": "64 parsecs" } }"#,
     "limits.memory_max",
     "unknown unit"
@@ -326,7 +336,7 @@ fn unenforced_fields____phase1_only_manifest____returns_empty() {
     let spec = AppSpec::from_json_value(&json!({
         "registered_names": ["orders"],
         "instances": { "count": 2 },
-        "limits": { "memory_max": "32MiB", "table_max": 1000 },
+        "limits": { "memory_max": "32MiB" },
         "capabilities": {
             "bulkhead:logging": {},
             "bulkhead:config": {},
@@ -360,7 +370,7 @@ fn unenforced_fields____every_unenforced_field____listed() {
     let spec = AppSpec::from_json_value(&json!({
         "registered_names": [{ "name": "g", "scope": "global" }],
         "instances": { "min": 1, "max": 3 },
-        "limits": { "fuel_per_message": 10, "storage_quota": "1GiB", "open_files": 4, "outbound_connections": 2 },
+        "limits": { "storage_quota": "1GiB", "open_files": 4, "outbound_connections": 2 },
         "upgrade": { "mode": "blue-green" },
         "placement": { "mode": "all-nodes", "required_labels": { "zone": "a" }, "spread": "zone" },
         "health": {},
@@ -380,7 +390,6 @@ fn unenforced_fields____every_unenforced_field____listed() {
             "registered_names[0].scope".to_string(),
             "instances.min".to_string(),
             "instances.max".to_string(),
-            "limits.fuel_per_message".to_string(),
             "limits.storage_quota".to_string(),
             "limits.open_files".to_string(),
             "limits.outbound_connections".to_string(),

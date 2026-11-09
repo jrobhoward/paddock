@@ -7,6 +7,43 @@ use std::path::Path;
 use super::*;
 use crate::RuntimeConfig;
 
+const LIMIT: Duration = Duration::from_secs(2);
+
+#[test]
+fn Silence____nothing_heard_short_of_the_limit____not_passed() {
+    let start = Instant::now();
+    let mut silence = Silence::new(start, LIMIT);
+
+    let passed = silence.passed(0, start + LIMIT - Duration::from_millis(1));
+
+    assert!(!passed);
+}
+
+#[test]
+fn Silence____nothing_heard_for_the_limit____passed() {
+    let start = Instant::now();
+    let mut silence = Silence::new(start, LIMIT);
+
+    let passed = silence.passed(0, start + LIMIT);
+
+    assert!(passed);
+}
+
+#[test]
+fn Silence____a_frame_heard____counts_from_then() {
+    let start = Instant::now();
+    let mut silence = Silence::new(start, LIMIT);
+    let later = start + LIMIT + LIMIT;
+
+    let at_the_frame = silence.passed(1, later);
+    let just_short = silence.passed(1, later + LIMIT - Duration::from_millis(1));
+    let at_the_limit = silence.passed(1, later + LIMIT);
+
+    assert!(!at_the_frame);
+    assert!(!just_short);
+    assert!(at_the_limit);
+}
+
 /// Write node `n`'s private key, readable by its owner only, and return
 /// its public key.
 fn write_key(dir: &Path, n: u32) -> PublicKey {

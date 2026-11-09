@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{
@@ -78,6 +78,9 @@ const QUEUE: usize = 4_096;
 /// The close code of a connection a newer one to the same node replaced.
 const REPLACED: u32 = 2;
 
+/// The close code of a connection that heard nothing past its limit.
+const SILENT: u32 = 5;
+
 /// The first wait before a redial.
 const REDIAL_FIRST: Duration = Duration::from_millis(100);
 
@@ -96,7 +99,9 @@ pub struct QuicConfig {
     /// The node's key and its peers' keys.
     pub identity: NodeIdentity,
     /// A connection silent this long closes (QUIC's idle timeout, a
-    /// backstop to heartbeats).
+    /// backstop to heartbeats). QUIC stretches it on a connection with a
+    /// slow round trip, so the transport also closes one silent for a third
+    /// longer than this.
     pub idle_timeout: Duration,
     /// Bytes of messages (casts, calls, replies) queued for one peer before
     /// more are refused as busy: a cast is then dropped and counted, a call
@@ -785,7 +790,14 @@ async fn reader(
 /// rather than dialing a third connection, which would replace the new
 /// one and end the session again.
 async fn watch_close(inner: Arc<Inner>, conn: Connection, node: u32) {
-    let reason = conn.closed().await;
+    let reason = tokio::select! {
+        reason = conn.closed() => reason,
+        () = until_silent(&conn, inner.config.idle_timeout) => {
+            tracing::info!(node, "cluster connection silent past its idle timeout; closing it");
+            conn.close(VarInt::from_u32(SILENT), b"silent");
+            conn.closed().await
+        }
+    };
     let current = {
         let mut peers = inner.peers.lock().unwrap_or_else(PoisonError::into_inner);
         let current = peers
@@ -832,6 +844,56 @@ async fn watch_close(inner: Arc<Inner>, conn: Connection, node: u32) {
         && inner.node < node
     {
         tokio::spawn(redial(inner, address, Some(node), first));
+    }
+}
+
+/// Return once `conn` has heard no frame for a third longer than
+/// `idle_timeout`.
+///
+/// QUIC holds its idle timer at three probe timeouts or more, and the first
+/// round trip sets the probe timeout to three times itself, so a handshake
+/// that took 1.8 s (a link fault ending as it started) leaves a dead
+/// connection open for about 16 s. Meanwhile nothing redials and frames sent
+/// to the peer are lost. A third longer is the latest QUIC's own timer can
+/// fire with a normal round trip: it restarts on the first packet sent after
+/// a silence, and keep-alives go every third of the timeout. So this only
+/// acts on a connection QUIC has stretched.
+async fn until_silent(conn: &Connection, idle_timeout: Duration) {
+    let limit = idle_timeout + idle_timeout / 3;
+    let mut silence = Silence::new(Instant::now(), limit);
+    loop {
+        tokio::time::sleep(limit / 8).await;
+        let heard = conn.stats().frame_rx;
+        if silence.passed(heard.acks + heard.ping + heard.stream, Instant::now()) {
+            return;
+        }
+    }
+}
+
+/// How long a connection has heard nothing, from its count of frames heard.
+struct Silence {
+    heard: u64,
+    since: Instant,
+    limit: Duration,
+}
+
+impl Silence {
+    fn new(now: Instant, limit: Duration) -> Self {
+        Self {
+            heard: 0,
+            since: now,
+            limit,
+        }
+    }
+
+    /// Whether `heard`, the count now, shows silence for the limit or more.
+    fn passed(&mut self, heard: u64, now: Instant) -> bool {
+        if heard != self.heard {
+            self.heard = heard;
+            self.since = now;
+            return false;
+        }
+        now.duration_since(self.since) >= self.limit
     }
 }
 

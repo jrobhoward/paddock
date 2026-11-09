@@ -97,13 +97,26 @@ impl Node {
         identity: NodeIdentity,
         max_version: u16,
     ) -> Self {
+        Self::start_at(node, creation, address, address, identity, max_version)
+    }
+
+    /// [`Node::start_speaking`], binding `address` and telling other nodes
+    /// to reach it at `advertise`.
+    fn start_at(
+        node: u32,
+        creation: u32,
+        address: SocketAddr,
+        advertise: SocketAddr,
+        identity: NodeIdentity,
+        max_version: u16,
+    ) -> Self {
         let rt = Runtime::new(RuntimeConfig {
             node,
             creation,
             max_instances: 8,
             heartbeat_interval: Duration::from_millis(100),
             node_timeout: Duration::from_millis(1_000),
-            address: address.to_string(),
+            address: advertise.to_string(),
             ..RuntimeConfig::default()
         })
         .unwrap();
@@ -142,6 +155,73 @@ async fn restart(node: u32, creation: u32, address: SocketAddr, id: NodeIdentity
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("{address} stayed bound");
+}
+
+/// A UDP relay to `target`, for one client. The first datagram waits for
+/// `hold` and those behind it in that time are lost, as under a link fault
+/// that ends as the handshake starts: its round trip measures `hold`.
+/// Returns the relay's address and its task; abort the task and the path
+/// is gone without a word to either side.
+async fn relay_holding_the_first_datagram(
+    target: SocketAddr,
+    hold: Duration,
+) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let front = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let back = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    back.connect(target).await.unwrap();
+    let address = front.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let mut from_client = vec![0u8; 65_535];
+        let mut from_target = vec![0u8; 65_535];
+        let (n, client) = front.recv_from(&mut from_client).await.unwrap();
+        let first = from_client[..n].to_vec();
+        let _ = tokio::time::timeout(hold, async {
+            loop {
+                let _ = front.recv_from(&mut from_client).await;
+            }
+        })
+        .await;
+        let _ = back.send(&first).await;
+        loop {
+            tokio::select! {
+                Ok((n, _)) = front.recv_from(&mut from_client) => {
+                    let _ = back.send(&from_client[..n]).await;
+                }
+                Ok(n) = back.recv(&mut from_target) => {
+                    let _ = front.send_to(&from_target[..n], client).await;
+                }
+            }
+        }
+    });
+    (address, task)
+}
+
+/// quinn holds a connection's idle timer at three probe timeouts or more,
+/// which a handshake's one slow round trip stretches to about nine times
+/// that round trip (16 s in the soak that found it, for a 2 s idle
+/// timeout). A connection to a peer that has gone still closes near the
+/// configured timeout, so the node redials and stops sending into nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connection____path_gone_after_a_slow_handshake____closes_near_the_idle_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Keys::new(dir.path(), &[1, 2]);
+    let peers = keys.peers("peers", &[(1, 1), (2, 2)]);
+    let bind2 = free_udp();
+    let (relay, path) = relay_holding_the_first_datagram(bind2, Duration::from_millis(1_200)).await;
+    let n1 = Node::start(1, 1, free_udp(), keys.identity(1, &peers));
+    let n2 = Node::start_at(2, 1, bind2, relay, keys.identity(2, &peers), wire::VERSION);
+    assert_eq!(n1.quic.join_seed(relay).await.unwrap(), 2);
+    until("the connection", || n1.quic.connected() == vec![2]).await;
+
+    path.abort();
+
+    // `until` waits 6 s: past 2 s and its third, well short of the 10 s or so
+    // quinn would wait.
+    until("the silent connection to close", || {
+        n1.quic.connected().is_empty()
+    })
+    .await;
+    drop(n2);
 }
 
 async fn until(what: &str, mut done: impl FnMut() -> bool) {

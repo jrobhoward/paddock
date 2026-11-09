@@ -40,7 +40,7 @@ fn manifest(spec: serde_json::Value) -> AppManifest {
 fn from_manifest____limits_and_lifecycle____carried_over() {
     let m = manifest(serde_json::json!({
         "registered_names": ["orders", { "name": "orders-global", "scope": "global" }],
-        "limits": { "memory_max": "16MiB", "table_max": 500, "callback_deadline_ms": 250, "mailbox_max": 7, "mailbox_max_bytes": "1MiB", "message_max_bytes": "64KiB", "timers_max": 3, "links_max": 4 },
+        "limits": { "memory_max": "16MiB", "callback_deadline_ms": 250, "mailbox_max": 7, "mailbox_max_bytes": "1MiB", "message_max_bytes": "64KiB", "timers_max": 3, "links_max": 4 },
         "lifecycle": { "init_timeout_ms": 1500, "shutdown_timeout_ms": 900, "start_args": { "mode": "fast" } }
     }));
 
@@ -49,7 +49,6 @@ fn from_manifest____limits_and_lifecycle____carried_over() {
     assert_eq!(spec.app, "orders");
     assert_eq!(spec.version, "1.4.0");
     assert_eq!(spec.memory_max, 16 << 20);
-    assert_eq!(spec.table_max, Some(500));
     assert_eq!(spec.callback_deadline, Duration::from_millis(250));
     assert_eq!(spec.mailbox_max, 7);
     assert_eq!(spec.mailbox_max_bytes, 1 << 20);

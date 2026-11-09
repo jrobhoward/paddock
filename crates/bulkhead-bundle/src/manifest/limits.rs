@@ -12,17 +12,10 @@ pub struct Limits {
     /// Most linear memory one instance may grow to. Growth past it fails and
     /// the instance crashes with `memory_limit`.
     pub memory_max: ByteSize,
-    /// Most table elements one instance may grow to. Unset uses the engine
-    /// default.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub table_max: Option<u32>,
     /// Most guest execution time one callback may take before the instance is
     /// killed with reason `timeout`. Time spent in host calls (waiting on
     /// another instance) does not count.
     pub callback_deadline_ms: u64,
-    /// Fuel budget per message, for deterministic metering. Not enforced.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fuel_per_message: Option<u64>,
     /// Most messages waiting in one instance's mailbox. When full, casts are
     /// dropped and calls fail with `overloaded`.
     pub mailbox_max: u32,
@@ -74,9 +67,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             memory_max: ByteSize::mib(64),
-            table_max: None,
             callback_deadline_ms: 5_000,
-            fuel_per_message: None,
             mailbox_max: 10_000,
             mailbox_max_bytes: ByteSize::mib(64),
             message_max_bytes: ByteSize::mib(1),
@@ -117,7 +108,6 @@ impl Limits {
             );
         }
         for (field, value) in [
-            ("fuel_per_message", self.fuel_per_message),
             ("timers_max", self.timers_max.map(u64::from)),
             ("monitors_max", self.monitors_max.map(u64::from)),
             ("links_max", self.links_max.map(u64::from)),

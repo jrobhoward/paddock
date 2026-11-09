@@ -20,8 +20,6 @@ pub struct InstanceSpec {
     pub version: String,
     /// Most linear memory, in bytes.
     pub memory_max: u64,
-    /// Most table elements. `None` leaves the engine default.
-    pub table_max: Option<u32>,
     /// Guest execution time allowed per `handle-*` callback.
     pub callback_deadline: Duration,
     /// Mailbox capacity.
@@ -130,7 +128,6 @@ impl InstanceSpec {
             app,
             version,
             memory_max: spec.limits.memory_max.bytes(),
-            table_max: spec.limits.table_max,
             callback_deadline: Duration::from_millis(spec.limits.callback_deadline_ms),
             mailbox_max: usize::try_from(spec.limits.mailbox_max).unwrap_or(usize::MAX),
             mailbox_max_bytes: spec.limits.mailbox_max_bytes.bytes(),

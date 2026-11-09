@@ -138,7 +138,7 @@ The app's root supervisor, with OTP semantics.
 | `groups_max` | node's `[limits]` (1000) | Most process groups the instance is in (`bulkhead:groups`). One more `join` returns `limit-reached`. |
 | `watches_max` | node's `[limits]` (1000) | Most keyvalue watches the instance holds (`bulkhead:watch`). One more `watch` returns `limit-reached`. |
 | `pending_calls_max` | node's `[limits]` (10000) | Most calls answered `noreply` and not yet replied to. One more crashes the instance with `pending_call_limit`, and its waiting callers get `exited`. |
-| `table_max`, `fuel_per_message`, `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
+| `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
 
 A `send_after` timer never fires early, and on an idle node fires 1 to 2 ms late: the host's timers have a 1 ms grain and round a deadline up to it, then round the wait up to it again. A busy node adds more when every worker is busy (`docs/BASELINE.md`, 2026-10-24: `send_after` 1.0 to 1.2 ms late at p50 and about 2 ms at p99, idle, on a 16-core machine and on a Raspberry Pi 5).
 

@@ -142,7 +142,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | `lifecycle` | restart (permanent, transient, temporary), shutdown timeout, init timeout, start args | yes |
 | `supervision` | children (for supervisor apps): strategy, intensity, period | yes |
 | `instances` | count or min/max, pool routing (round-robin, hash key), passivation | count, routing and passivation; not min/max |
-| `limits` | memory_max, callback_deadline_ms, fuel_per_message, mailbox_max, mailbox_max_bytes, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, groups_max, watches_max, storage quota, open files, outbound connections | all but fuel, storage quota, open files and outbound connections |
+| `limits` | memory_max, callback_deadline_ms, mailbox_max, mailbox_max_bytes, message_max_bytes, timers_max, monitors_max, links_max, pending_calls_max, groups_max, watches_max, storage quota, open files, outbound connections | all but storage quota, open files and outbound connections |
 | `capabilities` | requested host services with scopes (table below) | yes |
 | `messaging_acl` | which apps may call, cast, link or send exit signals to this app, and which it may | yes |
 | `config` | schema for config keys, defaults, secret references (never secret values) | defaults; the schema is documentation; secrets are declared under `bulkhead:secrets` instead |
