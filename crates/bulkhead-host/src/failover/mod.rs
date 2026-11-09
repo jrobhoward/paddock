@@ -500,6 +500,33 @@ impl std::fmt::Debug for Shared {
     }
 }
 
+/// Log what the witness did with a request or a release (debug, target
+/// `bulkhead::lease`), and its state after: `decision` absent means nothing
+/// was answered. Renewals are left out, there being one every step.
+fn log_witness_decision(
+    from: u32,
+    msg: &FailoverMsg,
+    decision: Option<&Decision>,
+    (epoch, promoted, outdated, released): (u64, u32, bool, bool),
+) {
+    if matches!(
+        msg,
+        FailoverMsg::Request { .. } | FailoverMsg::Release { .. }
+    ) {
+        tracing::debug!(
+            target: "bulkhead::lease",
+            from,
+            ?msg,
+            ?decision,
+            epoch,
+            promoted,
+            outdated,
+            released,
+            "failover witness decided"
+        );
+    }
+}
+
 impl Shared {
     /// Until when singleton instances may run guest code, as it changes.
     pub(crate) fn run_until(&self) -> watch::Receiver<RunUntil> {
@@ -508,10 +535,20 @@ impl Shared {
 
     /// A failover message from node `from`.
     pub(crate) fn deliver(&self, rt: &RuntimeInner, from: u32, msg: FailoverMsg) {
-        let decision = {
+        let (decision, seen) = {
             let mut witness = self.witness.lock().unwrap_or_else(PoisonError::into_inner);
-            witness.as_mut().map(|w| w.handle(from, msg.clone()))
+            match witness.as_mut() {
+                Some(w) => {
+                    let decision = w.handle(from, msg.clone());
+                    let seen = (w.epoch, w.promoted, w.outdated, w.released);
+                    (Some(decision), Some(seen))
+                }
+                None => (None, None),
+            }
         };
+        if let (Some(decision), Some(seen)) = (&decision, seen) {
+            log_witness_decision(from, &msg, decision.as_ref(), seen);
+        }
         let reply = match decision {
             None => return self.forward(from, msg),
             Some(None) => return,

@@ -356,13 +356,23 @@ impl Ctx {
         let horizon = now.checked_sub(self.cfg.lease).unwrap_or(now);
         self.requests.retain(|_, sent| *sent >= horizon);
         let ago = now.duration_since(self.confirmed_at);
+        let confirmed_ago_ms = u64::try_from(ago.as_millis()).unwrap_or(u64::MAX);
+        tracing::debug!(
+            target: "bulkhead::lease",
+            seq,
+            resume,
+            epoch,
+            confirmed_ago_ms,
+            reachable = self.witness_reachable(env),
+            "failover asking the witness"
+        );
         self.to_witness(
             env,
             FailoverMsg::Request {
                 seq,
                 resume,
                 epoch,
-                confirmed_ago_ms: u64::try_from(ago.as_millis()).unwrap_or(u64::MAX),
+                confirmed_ago_ms,
             },
         );
     }
@@ -520,6 +530,13 @@ impl Standby {
         {
             // The partner yields (a planned switchover): `Ask` at once, as
             // on silence, and do not stand down for its `Down`.
+            if self.asking.is_none() {
+                tracing::debug!(
+                    target: "bulkhead::lease",
+                    epoch = self.epoch,
+                    "failover partner yields"
+                );
+            }
             self.awaiting = false;
             ctx.confirmed_by_operator = false;
             self.partner_down_since = None;
@@ -709,7 +726,18 @@ impl Node {
             yielding: false,
         });
         let state = std::mem::replace(&mut self.state, placeholder);
+        let before = state.standing();
         self.state = transition(state, &mut self.ctx);
+        let after = self.state.standing();
+        if after != before {
+            tracing::debug!(
+                target: "bulkhead::lease",
+                ?before,
+                ?after,
+                epoch = self.state.epoch(),
+                "failover standing changed"
+            );
+        }
     }
 
     /// Log a lease that ended well before this task noticed (the process
@@ -888,6 +916,14 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
             msg = inbox.recv() => {
                 let Some(msg) = msg else { return };
                 let now = Instant::now();
+                if !matches!(msg, FailoverMsg::LeaseOk { .. } | FailoverMsg::Recorded { .. }) {
+                    tracing::debug!(
+                        target: "bulkhead::lease",
+                        ?msg,
+                        standing = ?node.state.standing(),
+                        "failover witness answered"
+                    );
+                }
                 node.apply(|state, ctx| state.on_message(ctx, msg, now));
             }
             () = confirm.notified() => node.confirm(),
@@ -921,7 +957,15 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
             // waits the lease out, as for a release lost. Since version 8
             // such a witness cannot connect, so this is only a guard.
             let release = Frame::Failover(FailoverMsg::Release { epoch });
-            if transport::try_send(&rt, witness, release) == Err(SendError::Unsupported) {
+            let sent = transport::try_send(&rt, witness, release);
+            tracing::debug!(
+                target: "bulkhead::lease",
+                witness,
+                epoch,
+                ?sent,
+                "failover release sent to the witness"
+            );
+            if sent == Err(SendError::Unsupported) {
                 tracing::info!(
                     witness,
                     "the witness's version has no lease release; the standby waits the lease out"

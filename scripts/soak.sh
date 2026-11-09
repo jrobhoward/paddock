@@ -33,7 +33,8 @@
 #
 # Options:
 #   --hours N             how long to run (fractions allowed); the run in
-#                         progress at the deadline is shortened to fit
+#                         progress at the deadline is shortened to fit, and
+#                         no scada run starts with under 3 minutes left
 #   --dir DIR             where runs go (default target/soak/<UTC time>)
 #   --seed N              the first seed (default: random); each run takes
 #                         the next
@@ -145,10 +146,19 @@ fit() { awk -v m="$1" -v left="$(( deadline - $(now) ))" 'BEGIN { l = left / 60;
 passed=0
 failed=0
 round=1
+scada_shortest_s=180
 echo "soak: until $(date -d "@$deadline" 2>/dev/null || date -r "$deadline"), runs in $dir, first seed $seed" | tee "$summary"
 while [ "$(now)" -lt "$deadline" ]; do
+    ran=0
     for kind in $kinds; do
         [ "$(now)" -lt "$deadline" ] || break
+        # A scada run reaches its first planned step about 80 s in, and fails
+        # if it has none: one with less time would fail for that alone.
+        if [ "$kind" = scada ] && [ $(( deadline - $(now) )) -lt "$scada_shortest_s" ]; then
+            echo "soak: no scada run started with under $scada_shortest_s s left" | tee -a "$summary"
+            continue
+        fi
+        ran=1
         run=$dir/$round-$kind-$seed
         mkdir -p "$run"
         echo "$seed" > "$run/seed"
@@ -198,6 +208,7 @@ while [ "$(now)" -lt "$deadline" ]; do
         echo "$line" | tee -a "$summary"
         seed=$((seed + 1))
     done
+    [ "$ran" = 1 ] || break
     round=$((round + 1))
 done
 

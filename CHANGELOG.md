@@ -8,6 +8,12 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- The `bulkhead::lease` debug log also records a planned switchover's
+  steps: a standby hearing its partner yield, each request to the witness
+  and its answer, the witness's decision and state, the release, and each
+  change of standing.
+- `scripts/soak.sh` starts no `scada` run with under 3 minutes left, which
+  would fail for having reached no planned step.
 - Capability keys, in manifests and operator policies, are `bulkhead:`
   names (ROADMAP Z9g): `bulkhead:logging`, `bulkhead:config`,
   `bulkhead:keyvalue`, `bulkhead:files`, `bulkhead:http-routes`,
