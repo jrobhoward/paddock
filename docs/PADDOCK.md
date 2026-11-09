@@ -2,7 +2,7 @@
 
 Bulkhead is a fork of Paddock, made on 2026-10-31 at Paddock's commit 657ae61. Both are clustered application servers with Erlang/OTP-style semantics.
 - **Paddock** runs each app instance as a WebAssembly component inside the node.
-- **Bulkhead** runs each instance as a native OS process. Native apps reached parity on 2026-11-07 (ROADMAP Z8); it keeps components beside them until it drops them (Z9).
+- **Bulkhead** runs each instance as a native OS process. Native apps reached parity on 2026-11-07 (ROADMAP Z8), and components were removed on 2026-11-08 (Z9).
 
 This page says what the two share, where they differ, and what the differences cost. The figures are BASELINE.md's from 2026-11-01, on a 16-core machine and a Raspberry Pi 5. "Component" figures are Bulkhead's component path, the runtime Paddock runs.
 
@@ -12,7 +12,7 @@ This page says what the two share, where they differ, and what the differences c
 - **Upgrades:** hot upgrades with state carried through `save_snapshot` and `load_snapshot`, reverted if the new version refuses it, and blue-green upgrades.
 - **Manifests and grants:** capabilities each manifest declares and an operator grants, signed `.rbp` bundles verified against operator keys, the `bulkhead` (`paddock`) CLI and admin API.
 - **The cluster:** QUIC with mutual TLS and pinned keys, an HA pair and a witness with leases, replicated buckets, singletons, releases across the pair.
-- **The Rust SDK:** one source builds as a component and, in Bulkhead, as a native program.
+- **The Rust SDK:** the `App` trait, envelopes and snapshots; in Bulkhead over the native protocol.
 
 Paddock as forked already had a `native-process` kind: rustbridge plugins and executables run as ports over pipes. It could declare logging and nothing else, had no snapshots or passivation, and a call cost about 60 µs on the Pi. Bulkhead grew it into the main kind (ROADMAP Phase 5, the native-costs track).
 

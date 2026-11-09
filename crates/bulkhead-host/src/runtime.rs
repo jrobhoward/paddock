@@ -192,7 +192,7 @@ impl Runtime {
             let package = ext.package();
             if !bulkhead_bundle::manifest::is_extension_key(package) {
                 return Err(HostError::Engine(format!(
-                    "extension package '{package}' must be `namespace:package` outside wasi and bulkhead"
+                    "extension package '{package}' must be `namespace:package` outside bulkhead"
                 )));
             }
             if !packages.insert(package.to_string()) {

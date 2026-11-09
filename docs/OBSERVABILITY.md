@@ -12,7 +12,7 @@ What an operator can see on a running node: instance stats, events and log recor
 | `APP`, `VERSION`, `STATE` | What it runs, and its lifecycle state (`active`, `upgrading`, `passive`, ...). |
 | `QUEUED` | Messages waiting in its mailbox. |
 | `DROPPED` | Casts and timer messages dropped because its mailbox was full. |
-| `MEMORY` | A component: the linear memory it has grown to. Wasm memory does not shrink, so this is its high-water mark. A native app: its cgroup's `memory.current`, or without `[native] cgroup` the resident set of its process and that process's direct children, shared pages (the channel's rings, the program's libraries) included, read when asked. 0 while passivated. |
+| `MEMORY` | The app's cgroup's `memory.current`, or without `[native] cgroup` the resident set of its process and that process's direct children, shared pages (the channel's rings, the program's libraries) included, read when asked. 0 while passivated. |
 | `RESTARTS` | Times its supervisor restarted it (the incarnation minus one). |
 | `LAST EXIT` | Why the previous incarnation exited, as its supervisor saw it. |
 
@@ -73,11 +73,11 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `bulkhead_mailbox_depth` | gauge | | Messages waiting in live instances' mailboxes. |
 | `bulkhead_mailbox_bytes` | gauge | | Bytes of message bodies waiting in live instances' mailboxes (`mailbox_max_bytes` bounds each). |
 | `bulkhead_callbacks_total` | counter | `kind` (`call`, `cast`, `info`) | Callbacks run; a native app's `handle_connection` counts as `info`. |
-| `bulkhead_callback_guest_seconds` | histogram | | Guest execution time per callback: guest code and host work that did not wait (10 µs to 1 s buckets). |
+| `bulkhead_callback_guest_seconds` | histogram | | App execution time per callback, less time waiting for the node (10 µs to 1 s buckets). |
 | `bulkhead_cast_wait_seconds` | histogram | | Time a native app's `cast_timeout` waited for room in a full mailbox, zero included, by the sender's app (10 µs to 5 s buckets). Its count is the number of waited casts. |
 | `bulkhead_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox (by count or by bytes). |
 | `bulkhead_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
-| `bulkhead_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no Store, state in a snapshot. |
+| `bulkhead_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no process, state in a snapshot. |
 | `bulkhead_passivations_total` | counter | | Instances passivated. |
 | `bulkhead_wake_seconds` | histogram | | Time to wake a passivated instance: a new process and `load-snapshot` (10 µs to 1 s buckets). |
 | `bulkhead_egress_requests_total` | counter | `outcome` (`sent`: a response came; `denied`; `limited`: over `max_concurrent`; `failed`: connection, TLS or timeout) | Outgoing HTTP requests (`bulkhead:http-egress`); listed once an app has made one. |
@@ -106,7 +106,7 @@ An instance is identified by its pid's whole `id` (and `incarnation` where shown
 | `cast` | sender id, target id, body bytes, outcome |
 | `cast__wait` | sender id, target id, nanoseconds waited for room, outcome (`ok`, `timeout`, or why it was not queued); a native app's `cast_timeout`, which also fires `cast` |
 | `callback__start` | instance id, kind (`call`, `cast`, `info`, or `connection` for a native app's `handle_connection`) |
-| `callback__done` | instance id, kind, guest execution in nanoseconds (time spent waiting excluded), succeeded |
+| `callback__done` | instance id, kind, app execution in nanoseconds (time spent waiting excluded), succeeded |
 | `instance__exit` | instance id, incarnation, exit reason |
 | `supervisor__restart` | new instance id, incarnation, child id |
 | `upgrade__start` | app, target version |
@@ -131,7 +131,7 @@ sudo bpftrace -p $PID -e '
 usdt:*:bulkhead:call__start { @t[arg0] = nsecs; }
 usdt:*:bulkhead:call__done /@t[arg0]/ { @us[arg1] = hist((nsecs - @t[arg0]) / 1000); delete(@t[arg0]); }'
 
-# Guest execution per callback, by instance.
+# App execution per callback, by instance.
 sudo bpftrace -p $PID -e 'usdt:*:bulkhead:callback__done { @guest_us[arg0] = hist(arg3 / 1000); }'
 
 # Who casts to whom.
@@ -146,6 +146,6 @@ usdt:*:bulkhead:supervisor__restart { printf("restart %d.%d %r\n", arg0, arg1, b
 sudo bpftrace -p $PID -e 'usdt:*:bulkhead:mailbox__drop { @drops[arg0] = count(); }'
 ```
 
-Probes see what the host sees: pids, sizes, kinds, timings and outcomes. They do not see message bodies or guest internals.
+Probes see what the host sees: pids, sizes, kinds, timings and outcomes. They do not see message bodies or app internals.
 
 Verified so far: the probe notes are in the Linux x86-64 binary (`readelf`), and the cost with no tracer attached. Attaching bpftrace to a live node has not been run in this repository's tests; it needs root.

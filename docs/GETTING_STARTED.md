@@ -2,16 +2,15 @@
 
 This walks through running a Bulkhead node and deploying the counter example: build, sign, deploy, call, upgrade with state kept, and roll back. It takes about ten minutes, most of it compiling.
 
-A node runs on Linux or macOS: its admin API is a Unix socket, and on Windows `bulkhead node` stops at start.
+A node runs apps on Linux: each is a process started through `bulkhead-runner`.
 
 ## 1. Build
 
-Rust 1.99 or newer, plus the WebAssembly target that apps compile to:
+Rust 1.99 or newer:
 
 ```sh
-rustup target add wasm32-wasip2
-cargo build --release -p bulkhead
-export PATH="$PWD/target/release:$PATH"     # bulkhead
+cargo build --release -p bulkhead -p bulkhead-native   # bulkhead, and bulkhead-runner beside it
+export PATH="$PWD/target/release:$PATH"
 ```
 
 ## 2. Make a signing key
@@ -52,14 +51,14 @@ Only one node can use a data directory at a time; a second one is refused.
 From the Bulkhead checkout:
 
 ```sh
-cargo build -p example-counter --target wasm32-wasip2 --release
+cargo build -p example-counter --release
 bulkhead bundle examples/counter/bulkhead.toml \
-  target/wasm32-wasip2/release/example_counter.wasm \
+  target/release/example-counter \
   --key ~/bulkhead-demo/signer.key --out ~/bulkhead-demo/counter-1.0.0.rbp
 bulkhead deploy ~/bulkhead-demo/counter-1.0.0.rbp
 ```
 
-`bulkhead bundle` checks the component against its manifest, refusing any interface the component imports but the manifest does not declare. It then signs the bundle. `bulkhead deploy` uploads it, and the node verifies the signature against `trusted_keys` and starts the app.
+`bulkhead bundle` checks the manifest and signs the bundle. `bulkhead deploy` uploads it, and the node verifies the signature against `trusted_keys` and starts the app.
 
 ```sh
 bulkhead call counter inc           # 1
@@ -88,9 +87,9 @@ Version 2 also keeps the last three values, and reads version 1 snapshots:
 
 ```sh
 bulkhead call counter inc && bulkhead call counter inc
-cargo build -p example-counter --target wasm32-wasip2 --release --features v2
+cargo build -p example-counter --release --features v2
 bulkhead bundle examples/counter/bulkhead-v2.toml \
-  target/wasm32-wasip2/release/example_counter.wasm \
+  target/release/example-counter \
   --key ~/bulkhead-demo/signer.key --out ~/bulkhead-demo/counter-2.0.0.rbp
 bulkhead upgrade counter ~/bulkhead-demo/counter-2.0.0.rbp
 bulkhead call counter get           # 2.0.0 count=2 history=

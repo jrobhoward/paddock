@@ -9,9 +9,7 @@ semantics: mailboxes, call/cast, links, monitors, supervisors and hot
 upgrade with explicit state migration. Nodes connect over QUIC with mutual
 TLS. It is a fork of Paddock (2026-10-31) that runs each app instance as a
 native OS process, sandboxed by `bulkhead-runner` (Landlock, seccomp) and
-talking to its node over shared-memory rings; WebAssembly components (WASI
-0.2), Paddock's kind, still run beside them until they are removed (ROADMAP
-Z9; native apps reached parity in Z8). Apps see only the capabilities their manifest declares
+talking to its node over shared-memory rings. Apps see only the capabilities their manifest declares
 and an operator grants. Bundles use the rustbridge `.rbp` format.
 `docs/PADDOCK.md` compares the two.
 
@@ -112,22 +110,20 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   API's types and Unix-socket client. `node` (default `node` feature): the
   node daemon (config, deploy store, admin server, audit log, log ring), run
   by `bulkhead node`. `src/cli/`: the binary's own subcommands (bundle
-  building, output formatting, the node runner). Without the `node` feature
-  the crate does not build wasmtime. `tests/wit_rules.rs` enforces the rules
-  of `wit/runtime.wit`; the node and CLI tests require the `node` feature.
-- `crates/bulkhead-bundle`: no wasmtime. `manifest`: the app manifest model
+  building, output formatting, the node runner). The node and CLI tests
+  require the `node` feature.
+- `crates/bulkhead-bundle`: `manifest`: the app manifest model
   (`AppSpec` is the bundle's `appserver` section; `AppManifest` adds
-  identity, component and provenance), validation and capability/import
-  classification. The rest opens and verifies `.rbp` bundles, reads
-  component imports, operator policy and the effective grant.
-- `crates/bulkhead-host`: the runtime: engine and epoch ticker, pids and the
+  identity, program and provenance) and validation. The rest opens and
+  verifies `.rbp` bundles, operator policy and the effective grant.
+- `crates/bulkhead-host`: the runtime: pids and the
   process table, instances and their callback loop, links and monitors,
   supervisors, and app sets with pools. `src/services/`: host services, one
   module each on the `Service` pattern (DESIGN.md, "Host service pattern");
   a new service goes there, not into `state.rs` or `runtime.rs`.
   `src/probe.rs`: USDT probes (anyprobe, `probes` feature); host code calls
   its functions, never anyprobe directly.
-- `crates/bulkhead-sdk`, `crates/bulkhead-sdk-macros`: the Rust guest SDK and
+- `crates/bulkhead-sdk`, `crates/bulkhead-sdk-macros`: the Rust SDK and
   its `Snapshot` derive. The SDK's modules call the node over
   `bulkhead-native`'s protocol; `app!` adds `bulkhead_main()` for the app's
   binary. `bulkhead-fixture-conformance` is such a binary, and the
@@ -136,20 +132,12 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `bulkhead`'s `tests/examples.rs` builds, bundles, deploys and drives them.
   `examples/greeter/` is an extension (a host service from outside
   Bulkhead): `service` depends on `bulkhead-host` alone, `app` calls it
-  (both builds, through its client module `src/greeting.rs`), and
+  (through its client module `src/greeting.rs`), and
   `node` is a node binary with it, whose test runs all three.
   `examples/board` is the tutorial's app (a counter on a shared disk
   bucket over HTTP; `bulkhead.toml`, `watch.toml` and `hot-standby.toml`, one
-  component), run by `crates/bulkhead/tests/board.rs`; `examples/board-go`
-  is the same app in Go on the Go SDK (a Go module, not a crate; its
-  manifests add `bulkhead:files`), and `board.rs` runs every test against
-  the Rust component, the same Rust source built as a native program
-  (feature `native`; Linux, its manifests given `kind = "native-process"`
-  by the test) and the Go build (the Go cases pass with a note without
-  TinyGo, unless `BULKHEAD_REQUIRE_GO=1`). Keep the builds' behaviour the
-  same.
-  `examples/tutorial/` is its chapter scripts (`common.sh` shared,
-  `BOARD=native` for the native build, `BOARD=go` for the Go build), not a
+  program), run by `crates/bulkhead/tests/board.rs`.
+  `examples/tutorial/` is its chapter scripts (`common.sh` shared), not a
   crate. `examples/tally` keeps a
   counter in Postgres (`bulkhead:sql`, tutorial chapter 4), run by
   `crates/bulkhead/tests/tally.rs` against a scratch Postgres
@@ -166,18 +154,17 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   probes, not a crate.
 - `crates/bulkhead-fixture-conformance`: the Rust SDK's app for the
   conformance suite (`bulkhead-host`'s `tests/conformance.rs`); its crate
-  docs are the command protocol every SDK's conformance app speaks, and
-  `BULKHEAD_CONFORMANCE_APP=<component.wasm>` runs the suite against
-  another language's.
-- `crates/bulkhead-fixture-kvbench`: keyvalue loops timed inside a guest,
+  docs are the command protocol, and `BULKHEAD_CONFORMANCE_NATIVE=1` runs
+  the suite against it.
+- `crates/bulkhead-fixture-kvbench`: keyvalue loops timed inside an app,
   for `bulkhead-host`'s `kv_cost` benchmark; `scripts/beam_ets.escript`
   runs the same loops (keys, values, key sequence) against ETS. Keep the
   two in step.
-- `crates/bulkhead-fixture-sdk`: a guest that uses `bulkhead:config`,
+- `crates/bulkhead-fixture-sdk`: an app that uses `bulkhead:config`,
   `bulkhead:keyvalue`, `bulkhead:groups`, `bulkhead:http-egress` and the
   other services through `bulkhead-sdk`'s wrappers (`config`, `kv`,
   `groups`, `http_client`, ...). Node tests that deploy it declare every
-  capability it imports.
+  capability it uses.
 - `crates/bulkhead-fixture-net`: an app that connects, listens and binds
   UDP through `bulkhead-sdk`'s `net` module (`bulkhead-host`'s
   `tests/sockets.rs`).
@@ -241,8 +228,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   redb file; `mod.rs` the task around them. The rules are S20's R1 to R7
   and R13 in `docs/tla/VERIFICATION.md`; `tests/simulation/replication.rs`
   checks that no acknowledged write is lost under single faults.
-- `crates/bulkhead-modbus`: the Modbus TCP extension (`bulkhead-modbus:modbus`,
-  WIT in its `wit/`), depending on `bulkhead-host` alone; linked into
+- `crates/bulkhead-modbus`: the Modbus TCP extension (`bulkhead-modbus:modbus`),
+  depending on `bulkhead-host` alone; linked into
   `bulkhead node` by `bulkhead`'s `modbus` feature (off by default). Device tasks,
   change detection and the update format (`points`), the server.
   `examples/scada` is its demo and Phase 3's reference app (`points` pool,
@@ -260,17 +247,10 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   hyper listeners, each request a call to the owning app's pool; the
   request and response envelope formats). `examples/http-counter` is its
   example, `crates/bulkhead/tests/http.rs` runs it through a node.
-- `crates/bulkhead-host/src/listener.rs`: listeners and connection handlers,
-  an instance per connection, or a native app's instances, many each.
+- `crates/bulkhead-host/src/listener.rs`: listeners and connection handlers:
+  the app's instances, many connections each.
   `crates/bulkhead-fixture-conn` is its test fixture (the SDK's
-  `connection::Handler`, built as a component and with feature `native`
-  as a program); `examples/line-server` the SDK example.
-- `crates/bulkhead-host/src/http/handler.rs`: HTTP handlers, an unmodified
-  `wasi:http/proxy` component with an instance per request on its routes
-  (needs the `http` and `egress` features); the node side is
-  `crates/bulkhead/src/node/daemon/handlers.rs`. `crates/bulkhead-fixture-http`
-  is its test guest (built with `wasip2`'s `proxy::export!`, plus a
-  `bulkhead:runtime/process` import).
+  `connection::Handler`); `examples/line-server` the SDK example.
 - `crates/bulkhead/src/serial/`: the tty layer (raw termios on `rustix`,
   Unix only; `serialport`/`tokio-serial` are MPL-2.0), the serial heartbeat
   frame format and a cuttable relay between two ttys (tests, the soak);
@@ -284,7 +264,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   cluster with a `cluster` bucket the ledger example writes through both
   nodes, checked after each heal that the copies agree and hold every
   acknowledged write, `cluster` three member nodes
-  behind the same proxies whose `bulkhead-fixture-chaos` instances link and
+  behind the same proxies whose `bulkhead-fixture-conformance` instances link and
   monitor each other at random, checked after each heal for agreement
   between every node's `ps` links and monitors, `scada` the failover
   cluster running `examples/scada` against fake devices with HTTP probes, between
@@ -363,39 +343,13 @@ update `bulkhead-native`'s `tests/protocol/v<N>.txt` (`BULKHEAD_BLESS_PROTOCOL=1
 for the current version; the next version's file starts as a copy of the
 last one's lines). DESIGN.md, "The protocol as the contract".
 
-**A component imports only what its code calls.** An app that never calls a
-`process` function has no `process` import, so deploy-time checks treat an
-absent import as unused, not as an error.
-
-**`from` is a WIT keyword.** It can't be a parameter name (`handle-call` takes
-`caller`).
-
-**Guest ABI is synchronous WASI 0.2.** Host imports are async; guests are not.
-`bulkhead:runtime` never exposes `wasi:io` pollables or streams, so a later
-WASI 0.3 world is additive (S3, `docs/DESIGN.md` → WASI migration). The
-exception is a host function that never waits: keyvalue and watch reads
-(and `bulkhead:io`) are bound synchronously, since an async host function
-cost about a fifth of a read (S25). A sync host function must not block;
-its time counts against the callback deadline.
-
-**Capability functions return `result<T, error>` with an `access-denied`
-case.** That is what lets a generic deny stub return an error instead of
-trapping. The stub also accepts `permission-denied` and `access` for WASI and
-older interfaces (S4, S7).
-
-**Socket policy has separate bind and connect rules.** Rust std binds
-`0.0.0.0:0` before every connect, so a destination-only rule blocks every
-connection (S4).
+**Socket policy has separate bind and connect rules.** A destination-only
+rule cannot say where an app may listen (S4).
 
 **Bundles are verified against operator-trusted keys only.**
 `rustbridge-bundle` defaults to the key inside the bundle, which proves
 integrity, not authorship (S6). Use `verify_manifest_signature_trusted` and
 `read_variant_verified`, never `verify_manifest_signature`.
-
-**Import inspection skips type imports.** A world that uses interface types
-(`use types.{envelope}`) imports each type by its plain name (`envelope`); these
-are bound to the interface instance, not linked separately. Counting them as
-imports refuses every real component (found by the echo fixture).
 
 **Fixtures and examples build per feature set.** Cargo unifies features within
 one build, so each feature combination (counter v1/v2/v3, services with and
@@ -423,7 +377,7 @@ A crate-local `[lints]` table is not added; a lint that one crate needs to
 relax is relaxed with a scoped `#[allow]` and a comment.
 
 **Shared dependency versions** live in `[workspace.dependencies]`; crates use
-`dep = { workspace = true }`. The wasmtime crates move together as one group.
+`dep = { workspace = true }`.
 
 **Test file layout:** tests live in separate `*_tests.rs` files, registered at
 the bottom of the source file with:
@@ -479,8 +433,7 @@ and never call external code (guest calls, logging callbacks, channel sends
 that can block) while holding one.
 
 **Unsafe:** `unsafe_op_in_unsafe_fn` is `forbid`. The host should need almost
-no `unsafe`; the expected exception is loading pre-compiled components
-(`Component::deserialize`). Every `unsafe` block carries a `// SAFETY:`
+no `unsafe`. Every `unsafe` block carries a `// SAFETY:`
 comment saying why it is sound.
 
 **Public docs:** every public item needs a doc comment (`missing_docs` is on).
@@ -540,7 +493,7 @@ instead of rewriting it then:
 | `docs/SECURITY.md` | Threat model: what is protected, whom Bulkhead trusts, each boundary's controls and gaps, fuzz targets | Update when a boundary or a control changes; findings are fixed through ROADMAP items |
 | `docs/OBSERVABILITY.md` | `ps` columns, calling one instance, probe names and arguments, tracer one-liners | Update with every probe or `ps` change; probe names and arguments are an interface |
 | `docs/OPERATIONS.md` | Paths under `data_dir`, environment variables, signals, backups, running as a service | Update with every path, variable or signal change |
-| `docs/GUEST_FORMATS.md` | The bodies a guest exchanges with the host beyond the WIT (snapshots, HTTP, health, batches, hash routing, host events, Modbus updates), with examples | Update with every change to one of them; tests in `bulkhead-sdk`, `bulkhead-host` and `bulkhead-modbus` read its examples |
+| `docs/GUEST_FORMATS.md` | The bodies an app exchanges with the host beyond the frames (snapshots, HTTP, health, batches, hash routing, host events, Modbus updates), with examples | Update with every change to one of them; tests in `bulkhead-sdk`, `bulkhead-host` and `bulkhead-modbus` read its examples |
 | `docs/PADDOCK.md` | How Bulkhead differs from Paddock, what each difference costs, and when to choose which | Update when a difference closes (Z8, Z9) or a comparison is measured again |
 | `docs/GLOSSARY.md` | What each Bulkhead term means, with a pointer to the file that has the detail | Add a term when the docs start using it; a word with two meanings says so |
 | `docs/ROADMAP.md` | The single plan: open work in stages, doc debt, code areas, parked ideas, spike status | Remove items as they land (CHANGELOG records them); add new work here, never in a second plan file |

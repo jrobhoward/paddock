@@ -1,6 +1,6 @@
 # Writing an app
 
-A Bulkhead app implements a `gen_server`-style set of callbacks. In Rust, `bulkhead-sdk` gives you the `App` trait and the `app!` macro, and one source builds two ways: as a native program, run as one restricted process per instance (Linux; "Native-process apps" below), and as a WebAssembly component implementing the `bulkhead:runtime/app` world ([`wit/runtime.wit`](../wit/runtime.wit)). Native programs are where Bulkhead is going; components still run beside them until native apps reach parity (ROADMAP Z8 and Z9), and some features are components only until then. Go has an SDK of its own for components ([`sdks/go`](../sdks/go/README.md)); apps in other languages implement the WIT directly. An existing rustbridge plugin runs natively too.
+A Bulkhead app implements a `gen_server`-style set of callbacks. In Rust, `bulkhead-sdk` provides the `App` trait and the `app!` macro, and the app is a native program, run as one restricted process per instance (Linux; "Native-process apps" below). An existing rustbridge plugin runs too.
 
 ## The model
 
@@ -8,8 +8,8 @@ Like an Erlang `gen_server`:
 
 - The host keeps each instance's mailbox and hands it **one message at a time**. Callbacks never run concurrently within an instance, so state needs no locks.
 - **Calls** expect a reply and the caller waits, up to a timeout. **Casts** are fire and forget. **Infos** are notifications from the host: link exits, monitor downs, timers and named host events.
-- Each callback has a **deadline** (`limits.callback_deadline_ms`): CPU time for a component, wall time for a native process. Overrunning it kills the instance with reason `timeout`. Time spent waiting in a host call, such as a call to another instance, does not count.
-- A **trap** (a panic in Rust, or an abort in a native program), an out-of-memory error or a deadline kill ends the instance. Its supervisor restarts it from `init`, with fresh memory. State that must outlive a crash belongs in a keyvalue bucket or a file.
+- Each callback has a **deadline** (`limits.callback_deadline_ms`), in wall time. Overrunning it kills the instance with reason `timeout`. Time spent waiting for the node, such as a call to another instance, does not count.
+- A panic, an abort, an out-of-memory error or a deadline kill ends the instance. Its supervisor restarts it from `init`, with fresh memory. State that must outlive a crash belongs in a keyvalue bucket or a file.
 - Instances share nothing. They talk only through messages, by **pid** or by **registered name**.
 
 ## A minimal app
@@ -82,7 +82,7 @@ bulkhead call greeter world          # hello, world (#1)
 | `handle_call(&mut self, ctx, call, msg)` | yes | For each call. Return `Reply::Now(envelope)`, or `Reply::Later` and answer later with `ctx.reply(call, envelope)`, possibly from another callback. |
 | `handle_cast(&mut self, ctx, msg)` | no | For each cast. |
 | `handle_info(&mut self, ctx, info)` | no | For `Info::Exit`, `Info::Down`, `Info::Timer` and `Info::Event`. Ignore event names you don't know; later hosts add more. |
-| `terminate(&mut self, ctx, reason)` | no | Before a graceful stop, within `lifecycle.shutdown_timeout_ms`. Not called on kills or traps. |
+| `terminate(&mut self, ctx, reason)` | no | Before a graceful stop, within `lifecycle.shutdown_timeout_ms`. Not called on kills or crashes. |
 | `save_snapshot(&self)` / `load_snapshot(ctx, from_version, bytes)` | no | During a `snapshot`-mode upgrade; see below. The defaults refuse, so such an app upgrades in `restart` mode only. |
 
 ## Messages
@@ -111,13 +111,13 @@ ctx.register("orders")?;          // the name must be listed in registered_names
 let me = ctx.pid();
 ```
 
-A `CallError` is one of `Noproc` (dead pid or unknown name), `Noconnection` (the target's node was lost, or cannot be reached), `Timeout`, `Overloaded` (the target's mailbox is full), `TooLarge`, `AccessDenied` (refused by `messaging_acl`) or `Exited(reason)` (the target died while handling the call). A call to your own pid traps, because it could never be answered.
+A `CallError` is one of `Noproc` (dead pid or unknown name), `Noconnection` (the target's node was lost, or cannot be reached), `Timeout`, `Overloaded` (the target's mailbox is full), `TooLarge`, `AccessDenied` (refused by `messaging_acl`) or `Exited(reason)` (the target died while handling the call). A call to an instance's own pid ends it, because it could never be answered.
 
 A blocked `ctx.call` holds up only this instance. The host suspends it without tying up a thread.
 
 ### Casts that must arrive
 
-A `cast` is delivered at most once, and its sender is not told when it is dropped: at a full mailbox (`limits.mailbox_max` messages or `limits.mailbox_max_bytes` of bodies), at a dead pid, over `message_max_bytes`, refused by `messaging_acl`, or at a congested link to another node. A native program has two more sends, which a component does not (the app world stays frozen):
+A `cast` is delivered at most once, and its sender is not told when it is dropped: at a full mailbox (`limits.mailbox_max` messages or `limits.mailbox_max_bytes` of bodies), at a dead pid, over `message_max_bytes`, refused by `messaging_acl`, or at a congested link to another node. An app has two more sends:
 
 ```rust
 ctx.try_cast(to, msg)?;                                  // Result<(), CastError>: queued, or why not
@@ -148,7 +148,7 @@ ctx.demonitor(m);
 ctx.exit(other, &ExitReason::Shutdown);
 ```
 
-Exit reasons: `Normal`, `Shutdown`, `Killed`, `Noproc`, `Noconnection`, `Timeout` (the CPU deadline), and `Crashed(text)`. The text is the trap message, or one of the host's: `memory_limit`, `table_limit`, `init_timeout`, `unhealthy` (failed health checks), `lease_ended` (a singleton whose node lost its lease), `killed_at_lease_end` (a native singleton `bulkhead-runner` killed at its lease's end while its node did not run), `no_slot` (no Store slot for a start or wake), or a host-object limit (`timer_limit`, `monitor_limit`, `link_limit`, `pending_call_limit`).
+Exit reasons: `Normal`, `Shutdown`, `Killed`, `Noproc`, `Noconnection`, `Timeout` (the callback deadline), and `Crashed(text)`. The text is the panic message, or one of the host's: `memory_limit`, `init_timeout`, `unhealthy` (failed health checks), `lease_ended` (a singleton whose node lost its lease), `killed_at_lease_end` (a singleton `bulkhead-runner` killed at its lease's end while its node did not run), or a host-object limit (`timer_limit`, `monitor_limit`, `link_limit`, `pending_call_limit`).
 
 The supervisor restarts an app's instances according to `supervision` (strategy, intensity, backoff). It follows OTP: too many restarts within `period_ms` and it gives up. The app is then marked `failed`, with the reason in `bulkhead status`.
 
@@ -177,7 +177,7 @@ The check is a call through the mailbox, so an instance too busy to answer withi
 
 ## Idle instances
 
-An app with many instances that are mostly idle (one per device or per user) can let them give up their memory: with `instances.passivate_after_ms`, an instance with nothing to do for that long is passivated (`save_snapshot`, then its Store is dropped; its pid, mailbox, links, monitors, names, timers, watches and groups stay), and the next message wakes it with `load_snapshot`. It needs the snapshot callbacks (below). A wake costs about 60 to 100 µs, so passivate instances idle for seconds, not milliseconds.
+An app with many instances that are mostly idle (one per device or per user) can let them give up their memory: with `instances.passivate_after_ms`, an instance with nothing to do for that long is passivated (`save_snapshot`, then its process ends; its pid, mailbox, links, monitors, names, timers, watches and groups stay), and the next message wakes it with `load_snapshot`. It needs the snapshot callbacks (below). A wake starts a new process, a few milliseconds, so passivate instances idle for minutes, not seconds.
 
 ## Many small updates
 
@@ -210,7 +210,7 @@ if let Some(points) = batch::items::<Point>(&msg) {
 ```
 
 - `max_delay` bounds how stale an update can get: a lone point waits at most that long. Without it, call `flush` or `flush_all` (at the end of a burst, in `terminate`).
-- A batch is one message: it counts once against the receiver's mailbox, and a full mailbox drops it whole, unless a native program sends it with `cast_timeout`. Keep `max_bytes` well under the receiver's `limits.message_max_bytes`.
+- A batch is one message: it counts once against the receiver's mailbox, and a full mailbox drops it whole, unless the app sends it with `cast_timeout`. Keep `max_bytes` well under the receiver's `limits.message_max_bytes`.
 - Batch per destination, not per app: with `instances.routing = "hash:..."`, keep items that must stay in order on one key in one batch to one instance.
 - Items buffered when the sender exits are lost, as unsent casts would be.
 - Protocol extensions already batch: the Modbus extension sends one update per device and scan with every point that changed.
@@ -218,7 +218,7 @@ if let Some(points) = batch::items::<Point>(&msg) {
 
 ## State across upgrades
 
-In `snapshot` mode (`upgrade.mode = "snapshot"`), the host pauses the mailbox, calls `save_snapshot` on the old version and `load_snapshot` on the new one, then resumes. Pid, registered names, links, monitors and queued messages are kept. If `load_snapshot` returns `Err`, or the new version traps, the old version keeps running.
+In `snapshot` mode (`upgrade.mode = "snapshot"`), the host pauses the mailbox, calls `save_snapshot` on the old version and `load_snapshot` on the new one, then resumes. Pid, registered names, links, monitors and queued messages are kept. If `load_snapshot` returns `Err`, or the new version fails, the old version keeps running.
 
 `#[derive(Snapshot)]` writes `[format_version, state]` as CBOR, and migrates older formats through a function you provide:
 
@@ -260,7 +260,7 @@ The other modes need no snapshot: `restart` stops the old version and starts the
 
 ## Host services
 
-Each service must be declared under `capabilities` in the manifest **and** granted by the node's operator policy. A component that imports an undeclared interface is refused at bundle and deploy time. A declared but ungranted interface is linked to a stub that returns `access-denied` (or the interface's own permission error) at call time, so the app can degrade instead of failing to start. [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance) lists, for each service, what the operator configures on the node and which SDK feature wraps it.
+Each service must be declared under `capabilities` in the manifest **and** granted by the node's operator policy. A request to a service declared but not granted is answered `access-denied` (or the service's own permission error), so the app can degrade instead of failing to start. [MANIFEST.md](MANIFEST.md#capabilities-at-a-glance) lists, for each service, what the operator configures on the node and which SDK feature wraps it.
 
 | Capability | Use from Rust |
 | --- | --- |
@@ -273,16 +273,16 @@ Each service must be declared under `capabilities` in the manifest **and** grant
 | `bulkhead:secrets` | `bulkhead_sdk::secrets::get_string("db-password")` (or `get` for bytes), with the SDK's `secrets` feature. List the names in the manifest; the operator grants each and binds it to a file or variable. Read a secret when it is needed instead of keeping it in state (state goes into snapshots), and never log it. |
 | `bulkhead:http-routes` | Declare `routes` (and optionally `max_body`, `timeout_ms`); the node's HTTP ingress sends each request on them to the app as a call. With the SDK's `http` feature, `bulkhead_sdk::http::Request::from_envelope(&msg)` recognises one in `handle_call`; reply `Reply::Now(Response::text(200, "hi").into())` or `Response::json(...)`, or `Reply::Later` and answer with `ctx.reply`. `req.scheme` is `https` when the client came over TLS. The request is spread over the pool, or routed by `key` (a route's `hash_header`) with `instances.routing = "hash:key"`. A full mailbox answers 503, a slow reply 504, a crash 502. See `examples/http-counter`. |
 | `bulkhead:http-egress` | `bulkhead_sdk::http_client::get(url)`, `post`, or `send(&Request::new("PUT", url).header(...).body(...).timeout(...))`, with the SDK's `http-client` feature; the same natively, where the node sends each request (a response body up to 16 MiB). Only what the manifest's `allow` lists is reached; anything else is `HttpError::Denied`. Waiting for the response is host time, not counted against the deadline, but the instance handles nothing else meanwhile: use a pool for an app that must stay responsive. Prefer this to raw sockets for HTTP: the node pools connections, verifies TLS and refuses names that resolve to the node itself. |
-| `bulkhead:sockets` | `bulkhead_sdk::net::TcpStream::connect(addr)` (or `connect_host`), `write_all`, and a non-blocking `read`; `TcpListener::bind` and `accept`, with the SDK's `net` feature; the same natively, where the node makes each socket and passes the stream (UDP through `Ctx::net`; `notify` on a pollable and the `wasip2` re-export are component only). An instance never blocks waiting for bytes between callbacks: `stream.notify_readable(tag)` asks the host to deliver an `io-ready` event with that tag once bytes arrive, handled in `handle_info` (`net::ready_tag(&info)`); read what is there, then ask again. The manifest lists where the app may connect, bind and listen, and `max_sockets`. For a protocol the node does not terminate (MQTT, a database's wire protocol); prefer HTTP egress, listeners or an extension when one fits. UDP goes through the re-exported `wasip2` crate with `net::notify` on its pollables. |
-| `bulkhead:files` | `std::fs`, on the path `bulkhead_sdk::files::path("/data/orders.json")` returns: the guest path itself in a component, the host file under the runner's Landlock rules natively. `/priv` holds the bundle's files read-only (`bulkhead bundle --priv <dir>`), and each preopen maps a guest path to a volume the operator configures. Paths cannot escape their preopen. |
+| `bulkhead:sockets` | `bulkhead_sdk::net::TcpStream::connect(addr)` (or `connect_host`), `write_all`, and a non-blocking `read`; `TcpListener::bind` and `accept`, with the SDK's `net` feature. The node makes each socket and passes the stream (UDP through `Ctx::net`). An instance never blocks waiting for bytes between callbacks: `stream.notify_readable(tag)` asks the host to deliver an `io-ready` event with that tag once bytes arrive, handled in `handle_info` (`net::ready_tag(&info)`); read what is there, then ask again. The manifest lists where the app may connect, bind and listen, and `max_sockets`. For a protocol the node does not terminate (MQTT, a database's wire protocol); prefer HTTP egress, listeners or an extension when one fits. |
+| `bulkhead:files` | `std::fs`, on the path `bulkhead_sdk::files::path("/data/orders.json")` returns: the host file, under the runner's Landlock rules. `/priv` holds the bundle's files read-only (`bulkhead bundle --priv <dir>`), and each preopen maps a guest path to a volume the operator configures. Paths cannot escape their preopen. |
 
-The SDK's cargo features turn each wrapper on: `config`, `keyvalue`, `watch`, `groups`, `metrics`, `sql`, `secrets`, `http` (requests from the ingress), `http-client`, `net` and `connection`; logging and batches are always there. A component imports only the interfaces of the features it uses, so declare those and no more. An app may also generate its own bindings with `wit-bindgen` from the WIT in [`wit/`](../wit/) and [`wit/vendor/`](../wit/vendor/), as [`crates/bulkhead-fixture-services`](../crates/bulkhead-fixture-services/src/lib.rs) does.
+The SDK's cargo features turn each wrapper on: `config`, `keyvalue`, `watch`, `groups`, `metrics`, `sql`, `secrets`, `http` (requests from the ingress), `http-client`, `net` and `connection`; logging and batches are always there.
 
 Always available without a declaration: clocks, random, stdout and stderr (captured as log records), `bulkhead:runtime/process`, and `bulkhead:io` (readiness of pollables).
 
 ### Extensions
 
-An extension is a host service an operator builds into a node from outside Bulkhead (the Modbus extension, [`examples/greeter`](../examples/greeter/README.md)), serving one WIT package. Declare it under `capabilities.extensions."<package>"` with the table it reads; the operator grants it by package name. A component imports the package through bindings of its own (`wit_bindgen::generate!`). A native program calls the same functions through the node with `bulkhead_sdk::extension::call(package, "greet#hello", &(name,))`: the function named by its WIT interface and function, the parameters as a tuple, and the WIT result decoded from CBOR. To build one source both ways, give the app (or a crate the extension's author ships) a client module that generates the bindings with serde's traits derived (`additional_derives: [serde::Serialize, serde::Deserialize]`) and, natively, defines functions of the same names over `extension::call`; `examples/greeter/app/src/greeting.rs` is one, and `bulkhead-modbus-client` is the Modbus extension's (`bulkhead_modbus_client::client::write_holding(...)`, used by `examples/scada/control`).
+An extension is a host service an operator builds into a node from outside Bulkhead (the Modbus extension, [`examples/greeter`](../examples/greeter/README.md)), serving one package. Declare it under `capabilities.extensions."<package>"` with the table it reads; the operator grants it by package name. An app calls its functions through the node with `bulkhead_sdk::extension::call(package, "greet#hello", &(name,))`: the function by name, the parameters as a tuple, and the result decoded from CBOR. A client module gives the functions their names and types; `examples/greeter/app/src/greeting.rs` is one, and `bulkhead-modbus-client` is the Modbus extension's (`bulkhead_modbus_client::client::write_holding(...)`).
 
 ### Replicated buckets
 
@@ -296,15 +296,15 @@ On an HA pair with `[failover] replication = true`, a bucket declared with `dura
 
 Which way to read data several instances share, cheapest first (16-core machine and Raspberry Pi 5, BASELINE.md, 2026-11-01):
 
-| Way | Cost per read: component / native | For |
+| Way | Cost per read: native | For |
 | --- | --- | --- |
 | The instance's own state | nanoseconds | Data only this instance writes; it survives upgrades through `save_snapshot`, and restarts only if kept in a bucket |
-| A published bucket (`publish_ms`, MANIFEST.md) | as a bucket read / 0.16 to 0.39 µs, from the app's own memory | Data many instances read and few write: points, prices, settings, routing tables. Native reads scale with cores (30 million a second from 16 instances on the 16-core machine). Reads may be up to an interval old, except the instance's own writes |
-| A bucket read (`get`) | 0.7 to 1.6 µs / 2 to 3.5 µs, a request to the node (16-core machine, 2026-11-04; 5 to 7 µs before T7 on both machines) | Any data, always current |
-| A batch (`get_many`) or a scan page | about 0.9 to 1.4 µs / 1.3 to 2 µs per key, 100 at a time | Many keys at once; scan pages hold up to 1,000 entries or about 1 MiB |
-| A call to an instance that owns the data | about 5 to 7 µs / 13 µs within a node | Data one instance guards with rules of its own, where a read must see its latest decisions |
+| A published bucket (`publish_ms`, MANIFEST.md) | 0.16 to 0.39 µs, from the app's own memory | Data many instances read and few write: points, prices, settings, routing tables. Native reads scale with cores (30 million a second from 16 instances on the 16-core machine). Reads may be up to an interval old, except the instance's own writes |
+| A bucket read (`get`) | 2 to 3.5 µs, a request to the node (16-core machine, 2026-11-04; 5 to 7 µs before T7 on both machines) | Any data, always current |
+| A batch (`get_many`) or a scan page | 1.3 to 2 µs per key, 100 at a time | Many keys at once; scan pages hold up to 1,000 entries or about 1 MiB |
+| A call to an instance that owns the data | 13 µs within a node | Data one instance guards with rules of its own, where a read must see its latest decisions |
 
-A watch (`watch` feature) says when a key changes, for reacting to changes or keeping a copy of a few keys; a native app's notice carries the value. ARCHITECTURE.md's "A watch between two apps" shows a notice's path from the writer to the watcher's `handle_info`. Writes always go to the node: as requests natively (about 7 µs) and as host calls in a component (1.5 to 2 µs).
+A watch (`watch` feature) says when a key changes, for reacting to changes or keeping a copy of a few keys; a notice carries the value. ARCHITECTURE.md's "A watch between two apps" shows a notice's path from the writer to the watcher's `handle_info`. Writes always go to the node: as requests (about 7 µs).
 
 ## Connection handlers
 
@@ -338,65 +338,15 @@ bulkhead_sdk::connection_handler!(Lines);
 ```
 
 - `Self` is one connection's state: `open` makes it, `data` gets up to 64 KiB of what the peer sent at a time and answers through `out` (`std::io::Write`, blocking until the bytes are taken), and `closed` hears that the peer (or the node, after the idle timeout) closed. `Flow::Close` closes the connection.
-- The same source builds both ways. As a component, each connection gets its own instance, an error from `data` closes it as a crash, and a connection idle for the listener's `idle_timeout_ms` is closed by the host. As a native program (`connection_handler!` adds `bulkhead_main()`; a binary calls it, with `kind = "native-process"`), each instance of the app's pool holds many connections, `data` runs as a callback when the node says a connection has bytes, an error from it closes that connection (logged as a warning), a panic crashes the instance and closes all of its connections, and writes count against `callback_deadline_ms`.
-- The handler has a `Ctx` for calling and casting to apps (`ctx.whereis("counter")`). A component handler has no mailbox. Keep state that must outlive a connection in an app or a keyvalue bucket, and keep the protocol in the handler: [`examples/line-server`](../examples/line-server) forwards `inc` to the counter example.
+- `connection_handler!` adds `bulkhead_main()`, which a binary calls. Each instance of the app's pool holds many connections, `data` runs as a callback when the node says a connection has bytes, an error from it closes that connection (logged as a warning), a panic crashes the instance and closes all of its connections, and writes count against `callback_deadline_ms`. A connection idle for the listener's `idle_timeout_ms` is closed by the node.
+- The handler has a `Ctx` for calling and casting to apps (`ctx.whereis("counter")`). Keep state that must outlive a connection in an app or a keyvalue bucket, and keep the protocol in the handler: [`examples/line-server`](../examples/line-server) forwards `inc` to the counter example.
 - Declare the listeners in the manifest (`[[appserver.listeners]]`, see [MANIFEST.md](MANIFEST.md)); the operator binds each to an address in node config.
-- `connection::Connection` (with `bulkhead_sdk::connection!`) is the older form, components only: `serve` gets the connection as a blocking `Stream` (`std::io::Read` and `Write`) and returns when it is done.
-
-## HTTP handlers
-
-An unmodified `wasi:http` component, built with any toolchain that targets the `wasi:http/proxy` world, deploys as an HTTP handler: each request on its routes gets a new instance, and request and response bodies stream. In Rust, the `wasip2` crate's `wasip2::http::proxy::export!` exports one. Requests as calls to an app (above) are faster, so prefer them unless the component already exists or a body must stream (S15: about 15% of native throughput for a new instance per request).
-
-- Declare routes under `bulkhead:http-routes` as for an app; see [MANIFEST.md](MANIFEST.md#http-handlers) for what else the manifest may hold.
-- Nothing survives a request: keep state in an app (call it through `bulkhead:runtime/process`) or a keyvalue bucket.
-- A trap before the response's headers is a 500; after them, the client sees the stream cut.
-
-## Apps in other languages
-
-Go apps use the Go SDK, [`sdks/go`](../sdks/go/README.md), built with TinyGo: the same callbacks, process functions, envelopes, snapshot format and services as `bulkhead-sdk`, with S21's two fixes inside it (it frees what the host passes, and its `build.sh` sets `-scheduler=none`) and a manifest template that declares what TinyGo's runtime imports. [`examples/board-go`](../examples/board-go/main.go) is the tutorial's board app on it, run by the same node tests as the Rust board.
-
-Any language whose tooling builds a WASI 0.2 component can implement `bulkhead:runtime/app` from [`wit/runtime.wit`](../wit/runtime.wit). Go (TinyGo), Python (componentize-py) and JavaScript (jco) are tried: [`examples/ping-pong/languages`](../examples/ping-pong/languages/README.md) has the `pong` app in each, called by the Rust `ping`, with a demo that upgrades one app across all four languages on a running node. Each language's runtime brings a requirement of its own:
-
-- **Go:** without the SDK, build with `-scheduler=none`, and free each string and list the host passes to an export, or every message leaks.
-- **Python:** node config's `max_core_instances_per_component` at 14 or more.
-- **JavaScript:** `limits.memory_max` of about 96 MiB.
-- **All three:** their runtimes import capabilities the app may not use (`bulkhead:files`, and `bulkhead:sockets` or `wasi:http`). The manifest declares them, with no scope; ungranted, the node links deny stubs.
-
-These builds are not in CI. Spikes S21 to S23 measured what each costs next to Rust. [GUEST_FORMATS.md](GUEST_FORMATS.md) has the bodies an app in any language reads and writes beyond the WIT: snapshots, HTTP requests and responses, health checks, batches, hash routing and host events.
-
-### Conformance
-
-An SDK shows what it supports by passing the conformance suite, `bulkhead-host`'s [`tests/conformance.rs`](../crates/bulkhead-host/tests/conformance.rs). Its cases drive an app that speaks a small text command protocol (`echo:<text>`, `link:<pid>`, `kv-set:<bucket>:<key>:<value>` ...), given in full in [`bulkhead-fixture-conformance`](../crates/bulkhead-fixture-conformance/src/lib.rs), the Rust SDK's app. An SDK in another language builds the same app with its own API, and the suite runs against it:
-
-```bash
-BULKHEAD_CONFORMANCE_APP=path/to/app.wasm cargo test -p bulkhead-host --test conformance
-```
-
-A relative path is taken from the workspace root. Without the variable, the suite runs against the Rust app, as in CI. The snapshot the app writes is GUEST_FORMATS.md's `[1, state]` with a state the protocol fixes, so the snapshot cases also check that an SDK writes that format.
-
-| Cases (tests named) | What | Rust | Go |
-| --- | --- | --- | --- |
-| `init____*` | Init arguments, an init error, a trap in init | yes | yes |
-| `call____*`, `cast____*`, `reply____*`, `self____*`, `guest_call_and_cast____*` | Calls and casts both ways, envelopes kept, `noreply`, deferred and in-callback replies, the instance's pid | yes | yes |
-| `timers____*` | Timers fire in order; a cancelled one never does | yes | yes |
-| `register____*` | Names listed in the manifest; taken and unlisted names | yes | yes |
-| `link____*`, `unlink____*`, `monitor____*`, `exit_signal____*`, `terminate____*` | Links with and without trapped exits, monitors and demonitor, exit signals, `terminate` on a graceful stop | yes | yes |
-| `snapshot____*`, `upgrade____*`, `rollback____*` | The snapshot format, a snapshot upgrade that keeps state and deferred callers, a refused snapshot, a rollback | yes | yes |
-| `trap____*`, `memory_max____*`, `callback_deadline____*` | A trap, `memory_max` (128 MiB here) and the callback deadline end the instance with the right reason | yes | yes |
-| `memory____*` | 10,000 calls and casts leave memory where it was: what the host passes each callback is freed | yes | yes |
-| `health____*` | Health checks answered, and a failing one kills the instance | yes | yes |
-| `log_level____*` | Records reach the host at their level; the app follows the `log-level` event | yes | yes |
-| `keyvalue____*`, `watch____*`, `scan____*` | Keyvalue operations, an unlisted bucket, a watch's change notices, scans in key order with a prefix, bounds and either direction | yes | yes |
-| `groups____*` | Join, members, publish and leave, an unlisted group | yes | yes |
-| `config____*`, `secrets____*`, `metrics____*` | Config values, bound, unbound and unlisted secrets, counters, gauges and histograms as the node renders them | yes | yes |
-
-The Go column is from a local run (Linux x86-64, TinyGo 0.43.0, 2026-10-30); CI runs the Rust app only.
 
 ## Native-process apps
 
 Native code runs as a process the node spawns and supervises like an instance, an Erlang-style port: `kind = "native-process"` in the manifest. It has a pid, a mailbox, links, monitors and supervision, and handles one callback at a time; it can declare logging, keyvalue, process groups, config, secrets, metrics, HTTP routes, files, SQL, sockets, HTTP egress, listeners and extensions (MANIFEST.md). The node runs it through `bulkhead-runner`, which restricts it first: it reads only the system libraries, its own directory, the app's `priv/` files and its volumes, executes nothing else, opens no sockets of its own (the node makes them and passes the streams), and signals only itself. Linux only.
 
-An app written with `bulkhead-sdk` builds both ways from one source. The crate keeps its `app!` line; it adds `"rlib"` to its `crate-type`, a binary that calls the `bulkhead_main()` `app!` generates on Unix, and a feature that gates the binary, so a `wasm32-wasip2` build skips it:
+A crate on `bulkhead-sdk` keeps its `app!` line and has a binary that calls the `bulkhead_main()` it generates:
 
 ```rust
 // src/main.rs
@@ -405,7 +355,7 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
-`cargo build --release --bin my-app` builds the program, bundled with `native.program = "executable"`; every Rust example is built both ways (`examples/board`'s `bulkhead.toml` has the native lines), their node tests (`examples.rs`, `board.rs`, `tally.rs`, `scada.rs`, the greeter's) run each case against both, and `BOARD=native` runs [the tutorial](../examples/tutorial/README.md) with native programs. The SDK's calls go over the native protocol there, with these differences from a component: each host call is a request to the node (about 5 µs, against about 1.2 µs for a component's bucket read), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...` where a component's trap reads `crashed: trap: ...`; `save_snapshot` and `load_snapshot` work as for a component, each load in a new process (an upgrade starts the new version's process beside the old until it has loaded, and passivation ends the process until a message wakes it); a watch notice carries the key's value (`watch::Change::current` reads it either way); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite runs the same reference app both ways (`BULKHEAD_CONFORMANCE_NATIVE=1`).
+`cargo build --release --bin my-app` builds the program, bundled with `native.program = "executable"` (the default). The SDK's calls go over the protocol: each is a request to the node (about 5 µs), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...`; each snapshot load is in a new process (an upgrade starts the new version's process beside the old until it has loaded, and passivation ends the process until a message wakes it); a watch notice carries the key's value (`watch::Change::current` reads it); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite (`BULKHEAD_CONFORMANCE_NATIVE=1`) runs a reference app on a node's protocol.
 
 Two shapes, chosen by `native.program`:
 
@@ -442,7 +392,7 @@ Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent
 
 `bulkhead bundle bulkhead.toml <program> --key signer.key` writes a signed `.rbp`:
 
-- The program is the component (`.wasm`, built for `wasm32-wasip2`), or for a native-process app the `.so` or executable built for this machine's platform.
+- The program is the `.so` or executable built for this machine's platform.
 - A native-process app may instead carry a program per platform. Pass `--program linux-x86_64=PATH --program linux-aarch64=PATH` in place of the argument, for a cluster of both architectures or for nodes of another one. Each program must be an ELF file for its platform's architecture. A node runs the program for its own platform, and refuses a bundle without one with a message naming the platforms the bundle has.
 - Cross-building for a Raspberry Pi from an x86-64 machine needs the target and a cross linker:
   - `rustup target add aarch64-unknown-linux-gnu`;
@@ -450,24 +400,21 @@ Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent
   - `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu`.
 
   The program lands under `target/aarch64-unknown-linux-gnu/release/`. It needs a glibc no newer than the nodes'. Built on Ubuntu 24.04, `examples/board` asks for glibc 2.34 and ran on a Raspberry Pi 5 (2026-11-01). Building on a machine of each architecture works as well.
-- `--priv <dir>` adds a directory's files, which a component reads at `/priv` and a native app at `bulkhead_sdk::files::path("/priv/...")` (the directory `BULKHEAD_PRIV` names), when the manifest declares `bulkhead:files`.
-- The bundle is refused if the component imports an interface the manifest does not declare (`--skip-import-check` writes it anyway, for a node to refuse), and it is read back as a node would before the command succeeds.
+- `--priv <dir>` adds a directory's files, which the app reads at `bulkhead_sdk::files::path("/priv/...")` (the directory `BULKHEAD_PRIV` names), when the manifest declares `bulkhead:files`.
+- The bundle is read back as a node would before the command succeeds.
 - `bulkhead keygen <prefix>` makes the signing key pair; nodes trust the public key in `trusted_keys`.
 
 ## Testing
 
 Three levels, from fastest to most complete:
 
-- **The logic, natively.** Keep message handling in plain functions over plain types, and the `App` impl a thin shell that decodes the envelope, calls them and encodes the reply. `cargo test` runs them on the host target. The `Ctx` methods and the service wrappers call host imports, which only a node provides, so test code does not call them.
-- **The component, in a runtime.** A test can build the component (`cargo build`, as [`crates/bulkhead/tests/board.rs`](../crates/bulkhead/tests/board.rs) does from its `build()`) and run it in a `bulkhead_host::Runtime`: `Runtime::new(RuntimeConfig::default())`, `rt.load(&bytes)`, `rt.spawn(&app, InstanceSpec::new("name", "1.0.0"))`, then `handle.call(Envelope::new("text/plain", "inc"), timeout)`. That covers the callbacks, snapshots (`handle.upgrade`), traps and limits, with no services beyond the always-available ones. [`crates/bulkhead-host/examples/app_cost.rs`](../crates/bulkhead-host/examples/app_cost.rs) is a short example of the calls.
+- **The logic.** Keep message handling in plain functions over plain types, and the `App` impl a thin shell that decodes the envelope, calls them and encodes the reply. `cargo test` runs them on the host target. The `Ctx` methods and the service wrappers go to the node, which only a running instance has, so test code does not call them.
 - **The app on a node.** For services, manifests and policy, start a `bulkhead::node::Node` in a temporary directory with a node config written by the test, bundle the app with the CLI and drive it through `bulkhead::api::Client`, as `board.rs` (HTTP, a shared bucket, a node restart) and [`scada.rs`](../crates/bulkhead/tests/scada.rs) (an HA pair and a witness in one process) do.
 
-While debugging, `bulkhead state <pid>` shows an SDK app's state through its `save_snapshot`; an instance whose `save_snapshot` traps is restarted. `bulkhead logs <app> -f` follows its records, and `bulkhead events` shows exits and restarts as they happen.
+While debugging, `bulkhead state <pid>` shows an SDK app's state through its `save_snapshot`; an instance whose `save_snapshot` fails is restarted. `bulkhead logs <app> -f` follows its records, and `bulkhead events` shows exits and restarts as they happen.
 
 ## Limits to design around
 
-- Calls to a component cost about 2 µs, plus the copy. Bulkhead suits work that takes tens of microseconds or more per message, not chatty fine-grained calls.
-- A native instance is a process: a call to it costs 5 to 7 µs while it is busy and 27 to 28 µs once it has gone idle (two sleeping threads to wake), a keyvalue `get`, `set` or `delete` from it to the node 2 to 3.5 µs and other requests about 4 µs (16-core machine, 2026-11-04; the Pi not measured since T7), and an instance about 0.25 to 0.5 MiB (1.4 to 2.4 MiB on the Pi) and a few milliseconds to start (BASELINE.md, 2026-10-31 and 2026-11-01; spike S30). Its code runs at native speed. Keep instances long-lived, and batch reads (`get_many`, scans) rather than reading key by key. Data many instances read and few write belongs in a published bucket (MANIFEST.md, `publish_ms`), which a native app reads from a snapshot in its own memory in 0.1 to 0.4 µs, its own writes read back at once and others' up to an interval late.
-- A component's compute runs at about 1.4 to 2.6 times native time on ordinary app code (JSON with serde, regex, Markdown, maps; `app_cost`, [BASELINE.md](BASELINE.md)), and further behind when native code would use SHA or AES instructions ([spike S8](../spikes/s8/README.md)). Byte-at-a-time loops such as string comparison in sorted maps pay most.
+- An instance is a process: a call to it costs 5 to 7 µs while it is busy and 27 to 28 µs once it has gone idle (two sleeping threads to wake), a keyvalue `get`, `set` or `delete` from it to the node 2 to 3.5 µs and other requests about 4 µs (16-core machine, 2026-11-04; the Pi not measured since T7), and an instance about 0.25 to 0.5 MiB (1.4 to 2.4 MiB on the Pi) and a few milliseconds to start (BASELINE.md, 2026-10-31 and 2026-11-01; spike S30). Its code runs at native speed. Keep instances long-lived, and batch reads (`get_many`, scans) rather than reading key by key. Data many instances read and few write belongs in a published bucket (MANIFEST.md, `publish_ms`), which a native app reads from a snapshot in its own memory in 0.1 to 0.4 µs, its own writes read back at once and others' up to an interval late.
 - A message's body is at most `limits.message_max_bytes` (1 MiB by default); a larger one fails with `too-large`. A native app's frames to and from the node are at most 17 MiB each, so a message, a keyvalue value or a whole `set_many` or `get_many` over about 16 MiB ends the instance today (ROADMAP, "Smaller open items"): split large batches. A bucket's values are bounded by its quota alone.
 - A full mailbox drops casts and fails calls with `overloaded`. Size `limits.mailbox_max` to absorb bursts, and treat `Overloaded` as back-pressure.

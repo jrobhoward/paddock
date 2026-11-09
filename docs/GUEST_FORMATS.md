@@ -1,8 +1,8 @@
-# Bulkhead: Guest formats
+# Bulkhead: App message formats
 
-2026-10-29 · Companion to [`wit/runtime.wit`](../wit/runtime.wit) and [WRITING_APPS.md](WRITING_APPS.md)
+2026-10-29 · Companion to [`protocol.rs`](../crates/bulkhead-native/src/protocol.rs) and [WRITING_APPS.md](WRITING_APPS.md)
 
-The WIT packages fix the calls between a guest and the host. Several messages that cross them have a body whose shape is Bulkhead's: an HTTP request arrives as a call whose body is a CBOR map, a health check is a call with a reserved schema, and a key change arrives as a host event with a JSON body. This document gives each such format. An SDK in any language produces and reads them as written here.
+The protocol fixes the frames between an app and its node. Several messages that cross them have a body whose shape is Bulkhead's: an HTTP request arrives as a call whose body is a CBOR map, a health check is a call with a reserved schema, and a key change arrives as a host event with a JSON body. This document gives each such format.
 
 The examples are the reference. Each is a fenced block whose info string names its encoding and the example (` ```cbor-hex http-request `, ` ```json kv-changed `). Tests read the blocks from this file and check them against the code that writes or reads the format: `bulkhead-sdk`'s `formats_tests.rs`, `bulkhead-host`'s `http_tests.rs` and `bulkhead-modbus`'s `points_tests.rs`. An SDK in another language can test against the same blocks. CBOR is shown as hex, with its diagnostic notation ([RFC 8949](https://www.rfc-editor.org/rfc/rfc8949.html#section-8)) above it.
 
@@ -167,6 +167,5 @@ a5666465766963656670756d702d31646b696e64676f66666c696e656466756c
 
 ## Not covered here
 
-- The WIT packages themselves, and the WASI interfaces Bulkhead binds.
-- Native-process apps' frames between a node and its process (`crates/bulkhead-native/src/protocol.rs`, and the hot frames' fixed layouts in `hot.rs`'s module docs), the channel they travel over (`channel.rs`) and published buckets' snapshots (`snapshot.rs`, its layout in the module docs): a protocol for programs on `bulkhead-native`'s app API, not for components.
+- The frames between a node and its process (`crates/bulkhead-native/src/protocol.rs`, and the hot frames' fixed layouts in `hot.rs`'s module docs), the channel they travel over (`channel.rs`) and published buckets' snapshots (`snapshot.rs`, its layout in the module docs).
 - Bodies an app defines for its own messages.
