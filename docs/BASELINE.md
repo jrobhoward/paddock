@@ -2783,6 +2783,34 @@ Keyvalue, ns per operation from inside the app (100,000 keys and 16 B values unl
 - **Every `Ok` of `cast_timeout` arrived,** in all 26 runs.
 - **Not measured:** two processes and the Raspberry Pi, as I4 was; the hot `Answer::CastFailed` on its own (these runs fail no waited cast).
 
+## 2026-11-10: a counter for the mailbox's byte limit (I9)
+
+I6's byte limit was a semaphore: each send took its body's bytes as permits, which travelled with the message (a reference count on the semaphore), and the instance's taking of the message gave them back under the semaphore's lock. I9 makes it a counter of the bytes queued: a send that does not wait adds its bytes with one compare-and-swap, unless a sender is waiting for bytes, and the receiver subtracts them. Waited sends (`cast_timeout`) take turns behind a fair lock. Before is the commit without I9, built in its own worktree; the two builds alternated, run after run. 16-core machine, 4 tokio workers, `[native] spin_us` 20. `batch_cost`, which I6 measured with, left with the components (Z9e).
+
+The mailbox alone, timed in a test that was not kept (`try_send` and `recv` on a mailbox with room; a fresh 32-byte cast each send, whose allocation is in the times), seven rounds each, load 3 to 5 and falling from the runs before it; medians, and the range:
+
+| | Before | I9 |
+| --- | --- | --- |
+| A send and a take on one thread | 188.5 ns (188 to 201) | 167.5 ns (167 to 170) |
+| 1 sender to 1 receiver, 4 workers | 883,000 a second (839,000 to 1,010,000) | 999,000 (962,000 to 1,289,000) |
+| 4 senders to 1 receiver, 4 workers | 890,000 (872,000 to 903,000) | 1,190,000 (1,183,000 to 1,226,000) |
+
+`cluster_throughput 4`, both nodes in one process, six rounds each with mailboxes of 65,536 and of 64; casts handled per second, medians:
+
+| | 65,536, before | after | 64, before | after |
+| --- | --- | --- | --- | --- |
+| Casts from the host, one node | 923,000 | 926,000 | 760,000 | 864,000 |
+| Casts from instances, one node | 697,000 | 666,000 | 708,000 | 757,000 |
+| `cast`, one node | 704,000 | 688,000 | 638,000 | 694,000 |
+| `try_cast`, one node | 559,000 | 517,000 | 558,000 | 592,000 |
+| `cast_timeout`, one node | 474,000 | 477,000 | 483,000 | 465,000 |
+| `cast_timeout`, two nodes | 45,200 | 44,700 | 44,500 | 45,000 |
+
+- **The mailbox:** 21 ns less per message on one thread, and a third more messages a second with four senders, where the semaphore's lock was contended.
+- **A node:** no change shows. At 700,000 casts a second on 4 workers, a cast has about 5.7 µs of the workers' time, of which 21 ns is under 0.5%, well under the runs' spread (`cast` within a node ranged from 504,000 to 790,000 across them); the medians moved both ways, down by up to 7% with room and up by up to 14% with full mailboxes. Calls, which also pass through the mailbox, moved within the same spread.
+- **Every `Ok` of `cast_timeout` arrived,** in all 24 runs.
+- **Not measured:** the Raspberry Pi, and two processes or machines.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

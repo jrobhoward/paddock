@@ -8,6 +8,13 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- A mailbox's byte limit (`mailbox_max_bytes`) is a counter of the bytes
+  queued instead of a semaphore (ROADMAP I9): a send that does not wait
+  costs one compare-and-swap, and a message no reference count. The
+  mailbox alone moves a message 11% faster, and four senders into one
+  mailbox 34% faster; a node's casts are unchanged within the noise
+  (BASELINE.md, 2026-11-10). Sends that do not wait still never take room
+  a waiting `cast_timeout` is owed.
 - A native app's waited cast (`cast_timeout`) and a cast's failure travel
   as hot frames, as `cast` does: within a node about 30% more waited casts
   a second (BASELINE.md, 2026-11-09). Protocol version 12 gains the two

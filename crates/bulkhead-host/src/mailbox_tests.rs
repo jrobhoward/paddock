@@ -228,3 +228,156 @@ async fn send_timeout____mailbox_closed_while_waiting____closed() {
 
     assert_eq!(sent, Err(WaitError::Closed));
 }
+
+#[tokio::test]
+async fn send_timeout____two_waiting_for_bytes____queued_in_arrival_order() {
+    let (tx, mut rx) = channel(100, 10);
+    tx.try_send(cast(10)).unwrap();
+    let first = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(9), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+    let second = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(1), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    rx.recv().await.unwrap();
+    assert_eq!(first.await.unwrap(), Ok(()));
+    assert_eq!(second.await.unwrap(), Ok(()));
+    let a = rx.recv().await.unwrap();
+    let b = rx.recv().await.unwrap();
+
+    assert!(matches!(a, Message::Cast(m) if m.body.len() == 9));
+    assert!(matches!(b, Message::Cast(m) if m.body.len() == 1));
+}
+
+#[tokio::test(start_paused = true)]
+async fn send_timeout____timed_out_waiting_for_bytes____later_try_send_queued() {
+    let (tx, mut rx) = channel(100, 10);
+    tx.try_send(cast(8)).unwrap();
+
+    let sent = tx.send_timeout(cast(5), Duration::from_millis(50)).await;
+    rx.recv().await.unwrap();
+    let after = tx.try_send(cast(10));
+
+    assert_eq!(sent, Err(WaitError::Timeout));
+    assert!(after.is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn send_timeout____timed_out_waiting_for_a_slot____gives_its_bytes_back() {
+    let (tx, _rx) = channel(1, 10);
+    tx.try_send(cast(1)).unwrap();
+
+    let sent = tx.send_timeout(cast(5), Duration::from_millis(50)).await;
+
+    assert_eq!(sent, Err(WaitError::Timeout));
+    assert_eq!(tx.queued_bytes(), 1);
+}
+
+#[tokio::test]
+async fn send_timeout____closed_while_waiting_for_bytes____closed_without_draining() {
+    let (tx, mut rx) = channel(100, 10);
+    tx.try_send(cast(10)).unwrap();
+    let waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(1), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    rx.close();
+    let sent = waiter.await.unwrap();
+
+    assert_eq!(sent, Err(WaitError::Closed));
+}
+
+#[tokio::test]
+async fn receiver_dropped____messages_left____bytes_back_and_waiter_closed() {
+    let (tx, rx) = channel(100, 10);
+    tx.try_send(cast(10)).unwrap();
+    let waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(1), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    drop(rx);
+    let sent = waiter.await.unwrap();
+
+    assert_eq!(sent, Err(WaitError::Closed));
+    assert_eq!(tx.queued_bytes(), 0);
+}
+
+#[tokio::test]
+async fn raise_max_bytes____waiter_for_bytes____queued() {
+    let (tx, _rx) = channel(100, 10);
+    tx.try_send(cast(10)).unwrap();
+    let waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(5), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    tx.raise_max_bytes(15);
+    let sent = waiter.await.unwrap();
+
+    assert_eq!(sent, Ok(()));
+    assert_eq!(tx.queued_bytes(), 15);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn senders_of_both_kinds____many_threads____limit_held_and_every_byte_back() {
+    const MAX: u64 = 1_000;
+    let (tx, mut rx) = channel(64, MAX);
+    let mut senders = Vec::new();
+    for s in 0..8_usize {
+        let tx = tx.clone();
+        senders.push(tokio::spawn(async move {
+            let mut queued = 0_u64;
+            for i in 0..2_000_usize {
+                let bytes = 1 + (s * 31 + i * 17) % 200;
+                let sent = if (s + i) % 3 == 0 {
+                    // The receiver keeps taking: a waiter left asleep is a
+                    // lost wakeup.
+                    let waited = tx.send_timeout(cast(bytes), Duration::from_secs(10)).await;
+                    assert_eq!(waited, Ok(()));
+                    true
+                } else {
+                    tx.try_send(cast(bytes)).is_ok()
+                };
+                if sent {
+                    queued += 1;
+                }
+                assert!(tx.queued_bytes() <= MAX);
+                if i % 50 == 0 {
+                    tokio::task::yield_now().await;
+                }
+            }
+            queued
+        }));
+    }
+    let receiver = tokio::spawn({
+        let weak = tx.downgrade();
+        async move {
+            let mut taken = 0_u64;
+            while let Some(_message) = rx.recv().await {
+                taken += 1;
+                if let Some(tx) = weak.upgrade() {
+                    assert!(tx.queued_bytes() <= MAX);
+                }
+            }
+            taken
+        }
+    });
+    let mut queued = 0;
+    for sender in senders {
+        queued += sender.await.unwrap();
+    }
+    drop(tx);
+    let taken = receiver.await.unwrap();
+
+    assert_eq!(taken, queued);
+}
