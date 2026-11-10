@@ -434,6 +434,10 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Node tests and the soak no longer fail now and then with `Address already
+  in use`: the ports they give nodes come from below the kernel's ephemeral
+  range, held by a lock file per process (`tests/common/ports.rs`), where a
+  port picked by binding port 0 and released could be taken first.
 - A planned switchover, or a failover, on a pair with replicated buckets
   could be refused for as long as the primary led. When the witness's
   answer to the primary's record of its partner out of date was lost and

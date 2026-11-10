@@ -28,11 +28,7 @@ fn key(dir: &Path, name: &str) -> (PathBuf, PublicKey) {
 }
 
 fn free_tcp() -> String {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .to_string()
+    format!("127.0.0.1:{}", common::ports::free_port().unwrap())
 }
 
 fn operators(path: &Path, entries: &[(&str, &PublicKey)]) {

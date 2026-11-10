@@ -19,11 +19,7 @@ use bulkhead_host::transport::quic::generate_key;
 use common::{TestNode, app_bundle, fast, native_conformance};
 
 fn free_udp() -> String {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .to_string()
+    format!("127.0.0.1:{}", common::ports::free_port().unwrap())
 }
 
 /// Keys for nodes 1 and 2 in `dir`, and a peers file listing both.

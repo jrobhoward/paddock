@@ -168,11 +168,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
         "ledger.rbp",
     )
     .await;
-    let lines_port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let lines_port = common::ports::free_port().unwrap();
 
     let policy = dir.path().join("policy.toml");
     std::fs::write(

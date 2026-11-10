@@ -273,13 +273,9 @@ impl Drop for Devices {
     }
 }
 
-/// Free TCP ports on loopback (another process could take one first; rare
-/// enough in a soak run).
+/// Free TCP ports on loopback for the nodes and devices to bind (`ports`).
 fn free_tcp(n: usize) -> anyhow::Result<Vec<u16>> {
-    let held: Vec<_> = (0..n)
-        .map(|_| std::net::TcpListener::bind("127.0.0.1:0"))
-        .collect::<Result<_, _>>()?;
-    held.iter().map(|l| Ok(l.local_addr()?.port())).collect()
+    (0..n).map(|_| Ok(super::ports::free_port()?)).collect()
 }
 
 /// The pair's config for node `n` (1 or 2): its HTTP ingress, the point

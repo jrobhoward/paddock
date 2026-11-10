@@ -7,6 +7,8 @@ pub(crate) mod events;
 pub(crate) mod failover;
 pub(crate) mod memory;
 pub(crate) mod node;
+#[path = "../../../bulkhead-host/tests/common/ports.rs"]
+pub(crate) mod ports;
 pub(crate) mod proxy;
 pub(crate) mod replication;
 pub(crate) mod rng;

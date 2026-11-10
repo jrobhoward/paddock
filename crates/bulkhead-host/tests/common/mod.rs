@@ -5,6 +5,7 @@
 #![allow(clippy::expect_used)]
 
 pub mod pg;
+pub mod ports;
 
 use std::path::PathBuf;
 use std::process::Command;

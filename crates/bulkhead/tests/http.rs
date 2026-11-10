@@ -65,11 +65,7 @@ fn s(p: &Path) -> &str {
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    common::ports::free_port().unwrap()
 }
 
 /// One request on its own connection: (status, body).

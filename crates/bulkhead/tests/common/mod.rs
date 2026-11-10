@@ -4,6 +4,9 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+#[path = "../../../bulkhead-host/tests/common/ports.rs"]
+pub mod ports;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock};

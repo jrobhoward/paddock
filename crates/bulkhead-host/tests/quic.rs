@@ -71,10 +71,7 @@ impl Keys {
 }
 
 fn free_udp() -> SocketAddr {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
+    SocketAddr::from(([127, 0, 0, 1], common::ports::free_port().unwrap()))
 }
 
 struct Node {

@@ -776,11 +776,7 @@ async fn metrics____app_and_host____on_the_admin_api_and_the_scrape_endpoint() {
     let dir = tempfile::tempdir().unwrap();
     let policy = dir.path().join("policy.toml");
     std::fs::write(&policy, "[apps.shop]\ngrant = [\"bulkhead:metrics\"]\n").unwrap();
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let port = common::ports::free_port().unwrap();
     let mut n = TestNode::start_native(&format!(
         "policy = {policy:?}\n[metrics]\naddress = \"127.0.0.1:{port}\"\n"
     ))

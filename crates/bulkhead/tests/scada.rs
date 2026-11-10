@@ -144,11 +144,7 @@ async fn fake_device(device: FakeDevice) -> (SocketAddr, tokio::task::JoinHandle
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    common::ports::free_port().unwrap()
 }
 
 /// One request on its own connection: (status, body as JSON or a string).
@@ -565,13 +561,7 @@ async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchove
         peers.push_str(&format!("{n} = [\"{public}\"]\n"));
     }
     std::fs::write(d.join("peers.toml"), peers).unwrap();
-    let addresses = [0, 1, 2].map(|_| {
-        std::net::UdpSocket::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .to_string()
-    });
+    let addresses = [0, 1, 2].map(|_| format!("127.0.0.1:{}", common::ports::free_port().unwrap()));
     let ports = [free_port(), free_port()];
     let toml = |n: u32| {
         let i = usize::try_from(n - 1).unwrap();

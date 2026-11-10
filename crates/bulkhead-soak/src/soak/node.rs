@@ -208,10 +208,10 @@ fn stopped(pid: u32) -> Option<bool> {
     Some(state == "T" || state == "t")
 }
 
-/// A free UDP port on loopback. Another process could take it before the
-/// node binds it; on loopback in a soak run that is rare enough.
+/// A free UDP port on loopback for a node to bind (`ports`).
 pub(crate) fn free_udp() -> anyhow::Result<std::net::SocketAddr> {
-    Ok(std::net::UdpSocket::bind("127.0.0.1:0")?.local_addr()?)
+    let port = super::ports::free_port()?;
+    Ok(std::net::SocketAddr::from(([127, 0, 0, 1], port)))
 }
 
 /// The bulkhead binary's output for `args`, run in `dir`.

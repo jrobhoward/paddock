@@ -21,11 +21,7 @@ use bulkhead_host::transport::wire;
 use common::{TestNode, app_bundle, fast, native_conformance, native_sdk};
 
 fn free_udp() -> String {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .to_string()
+    format!("127.0.0.1:{}", common::ports::free_port().unwrap())
 }
 
 /// Keys for nodes 1 to 3 in `dir`, and a peers file listing them.

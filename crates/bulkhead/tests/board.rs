@@ -78,11 +78,7 @@ fn s(p: &Path) -> &str {
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    common::ports::free_port().unwrap()
 }
 
 /// One request on its own connection: (status, body), or `None` if the
@@ -427,13 +423,7 @@ async fn start_pair(
         format!("[apps.board]\ngrant = [{grant}]\nbuckets = [\"board\"]\n"),
     )
     .unwrap();
-    let addresses = [0, 1, 2].map(|_| {
-        std::net::UdpSocket::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .to_string()
-    });
+    let addresses = [0, 1, 2].map(|_| format!("127.0.0.1:{}", common::ports::free_port().unwrap()));
     let ports = [free_port(), free_port()];
     let toml = |n: u32| {
         let mut t = format!(
