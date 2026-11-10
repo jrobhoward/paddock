@@ -313,7 +313,7 @@ async fn metric(cx: &mut TestCtx, verb: &str, arg: &str) -> String {
     "ok".into()
 }
 
-async fn cast_wait(cx: &mut TestCtx, to: Pid, timeout_ms: u32, msg: Envelope) -> String {
+pub(super) async fn cast_wait(cx: &mut TestCtx, to: Pid, timeout_ms: u32, msg: Envelope) -> String {
     let answer = cx
         .request(Request::CastWait {
             to,

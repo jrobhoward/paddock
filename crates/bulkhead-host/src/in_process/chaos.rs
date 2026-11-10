@@ -193,6 +193,15 @@ impl Chaos {
                 let _ = cx.cast(parse_pid(pid), text(inner)).await;
                 reply("sent".into())
             }
+            // `cast-wait:<pid>:<ms>:<command>`: as the conformance app's.
+            "cast-wait" => {
+                let mut parts = arg.splitn(3, ':');
+                let pid = parse_pid(parts.next().unwrap_or(""));
+                let ms = parts.next().unwrap_or("").parse().unwrap_or(u32::MAX);
+                let inner = text(parts.next().unwrap_or(""));
+                let result = super::conformance::cast_wait(cx, pid, ms, inner).await;
+                reply(result)
+            }
             "register" => {
                 let result = register(cx, arg).await;
                 reply(result)

@@ -2,10 +2,12 @@
 //! (`Frame::CastWait`, ROADMAP I3): queued once room comes; a timeout the
 //! receiving node answers, with nothing queued; `overloaded` past the
 //! link's budget; `noconnection` when the session ends meanwhile or the
-//! peer's version cannot read the frame.
+//! peer's version cannot read the frame; and from an instance, checked by
+//! the target's messaging ACL on its own node (ROADMAP I8).
 
 use std::time::Duration;
 
+use bulkhead_host::acl::Acl;
 use bulkhead_host::transport::wire;
 use bulkhead_host::{CallError, InstanceHandle};
 use tokio::time::Instant;
@@ -136,4 +138,53 @@ fn cast_wait____peer_one_release_older____noconnection_and_plain_casts_still_go(
 
     assert_eq!(waited, Err(CallError::Noconnection));
     assert_eq!(plain, Ok(()));
+}
+
+/// Messaging routes that accept casts from `accept_from` only.
+fn accepting(accept_from: &[&str]) -> Acl {
+    Acl {
+        accept_from: accept_from.iter().map(|a| (*a).to_string()).collect(),
+        may_call: Vec::new(),
+    }
+}
+
+/// From an instance on node 1 to one on node 2 that accepts its app: the
+/// waited cast is queued and handled.
+#[test]
+fn cast_wait____from_an_instance_the_target_accepts____queued_on_the_other_node() {
+    let (sent, count) = simulate(86, 2, |sim| async move {
+        let sender = sim.node(1).spawn_as("sender", "", accepting(&[]));
+        let target = sim.node(2).spawn_as("target", "", accepting(&["sender"]));
+        pass(10).await;
+
+        let wait = format!("cast-wait:{}:1000:count", pid_text(target.pid()));
+        let sent = ask(&sender, &wait).await;
+        pass(50).await;
+        (sent, ask(&target, "count").await)
+    });
+
+    assert_eq!(sent, "ok");
+    assert_eq!(count, "2", "the waited cast was handled before the ask");
+}
+
+/// The target's node checks the sender's app against its `accept_from`, as
+/// for a call: refused, the waited cast answers `access-denied` and nothing
+/// is queued.
+#[test]
+fn cast_wait____from_an_app_the_target_does_not_accept____access_denied_and_nothing_queued() {
+    let (sent, count) = simulate(87, 2, |sim| async move {
+        let sender = sim.node(1).spawn_as("sender", "", accepting(&[]));
+        let target = sim
+            .node(2)
+            .spawn_as("guarded", "", accepting(&["someone-else"]));
+        pass(10).await;
+
+        let wait = format!("cast-wait:{}:1000:count", pid_text(target.pid()));
+        let sent = ask(&sender, &wait).await;
+        pass(50).await;
+        (sent, ask(&target, "count").await)
+    });
+
+    assert_eq!(sent, "err:access-denied");
+    assert_eq!(count, "1", "nothing was queued");
 }

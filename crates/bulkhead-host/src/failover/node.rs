@@ -22,7 +22,7 @@ use super::{
 };
 use crate::runtime::RuntimeInner;
 use crate::transport::liveness::Beat;
-use crate::transport::{self, Frame, SendError};
+use crate::transport::{self, Frame};
 
 /// What the transitions see of the node: liveness and the transport. The
 /// runtime in a node; a fake in the unit tests, which drive transitions
@@ -953,9 +953,9 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
         };
         node.publish(&rt, Instant::now());
         if let (Some(epoch), Arbiter::Witness(witness)) = (release, node.ctx.cfg.arbiter) {
-            // A witness older than version 7 cannot read a release; it then
-            // waits the lease out, as for a release lost. Since version 8
-            // such a witness cannot connect, so this is only a guard.
+            // Every witness that can connect reads it: `Release` came in
+            // version 7, and since version 8 no older peer connects. A
+            // release lost leaves the standby to wait the lease out.
             let release = Frame::Failover(FailoverMsg::Release { epoch });
             let sent = transport::try_send(&rt, witness, release);
             tracing::debug!(
@@ -965,12 +965,6 @@ pub(super) async fn run(mut node: Node, inputs: Inputs, interval: Duration) {
                 ?sent,
                 "failover release sent to the witness"
             );
-            if sent == Err(SendError::Unsupported) {
-                tracing::info!(
-                    witness,
-                    "the witness's version has no lease release; the standby waits the lease out"
-                );
-            }
         }
     }
 }
