@@ -8,6 +8,11 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- A native app's waited cast (`cast_timeout`) and a cast's failure travel
+  as hot frames, as `cast` does: within a node about 30% more waited casts
+  a second (BASELINE.md, 2026-11-09). Protocol version 12 gains the two
+  layouts; a node writes the failure's only to apps at 12, and an app built
+  as version 12 before this change needs a rebuild.
 - The `bulkhead::lease` debug log also records a planned switchover's
   steps: a standby hearing its partner yield, each request to the witness
   and its answer, the witness's decision and state, the release, the

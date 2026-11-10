@@ -22,6 +22,7 @@
 //! | `0x08` | [`Request::Cast`] | id `u64`, pid, envelope |
 //! | `0x09` | [`Request::Call`] | id `u64`, pid, timeout in ms `u32`, envelope |
 //! | `0x0a` | [`Request::Reply`] | id `u64`, call reference `u64`, envelope |
+//! | `0x0b` | [`Request::CastWait`] | id `u64`, pid, timeout in ms `u32`, envelope |
 //!
 //! The bucket is the handle [`Request::KvOpen`] returned; the key is UTF-8.
 //! A keyvalue request is answered, with the request's id, by one of tags
@@ -38,6 +39,13 @@
 //! | `0x06` | [`ToApp::Cast`] | envelope |
 //! | `0x07` | [`ToApp::Answer`] with [`Answer::Unit`] | id `u64` |
 //! | `0x08` | [`ToApp::Answer`] with a call's reply | id `u64`, envelope |
+//! | `0x09` | [`ToApp::Answer`] with [`Answer::CastFailed`] | id `u64`, reason `u8` |
+//!
+//! A cast's reason is `0` noproc, `1` noconnection, `2` overloaded, `3`
+//! too large, `4` access denied, `5` timeout ([`CastError`]). Tags `0x0b`
+//! from the app and `0x09` from the node came in protocol version 12
+//! (ROADMAP I7), after the others: the node writes `0x09` only to an app
+//! at 12 or later ([`write_to_app_at`]), and CBOR to an older one.
 //!
 //! A pid is its node `u32`, id `u64` and incarnation `u32`. An envelope is
 //! its content type (length `u16`, then UTF-8), its schema id (length
@@ -56,8 +64,13 @@
 //! [`ToApp::Call`]: crate::protocol::ToApp::Call
 //! [`ToApp::Cast`]: crate::protocol::ToApp::Cast
 //! [`Answer::Unit`]: crate::protocol::Answer::Unit
+//! [`Answer::CastFailed`]: crate::protocol::Answer::CastFailed
+//! [`Request::CastWait`]: crate::protocol::Request::CastWait
+//! [`CastError`]: crate::protocol::CastError
 
-use crate::protocol::{Answer, Envelope, FrameError, FromApp, MAX_FRAME, Pid, Request, ToApp};
+use crate::protocol::{
+    Answer, CastError, Envelope, FrameError, FromApp, MAX_FRAME, Pid, Request, ToApp, VERSION,
+};
 
 /// The highest tag byte of a hot frame; `0x01` is the lowest.
 pub const LAST_TAG: u8 = 0x17;
@@ -78,11 +91,17 @@ const REPLY: u8 = 0x07;
 const CAST_TO: u8 = 0x08;
 const CALL_TO: u8 = 0x09;
 const REPLY_TO: u8 = 0x0a;
+const CAST_WAIT_TO: u8 = 0x0b;
 
 const CALL: u8 = 0x05;
 const CAST: u8 = 0x06;
 const ANSWER_DONE: u8 = 0x07;
 const ANSWER_CALLED: u8 = 0x08;
+const ANSWER_CAST_FAILED: u8 = 0x09;
+
+/// The protocol version that added the waited cast's and the failed cast's
+/// hot layouts.
+const CAST_LAYOUTS_SINCE: u16 = 12;
 
 /// An envelope's absent schema id.
 const NO_SCHEMA: u16 = u16::MAX;
@@ -237,7 +256,10 @@ pub fn write_from_app(out: &mut Vec<u8>, frame: &FromApp) -> Option<()> {
         FromApp::Reply(Some(msg))
         | FromApp::Request {
             request:
-                Request::Cast { msg, .. } | Request::Call { msg, .. } | Request::Reply { msg, .. },
+                Request::Cast { msg, .. }
+                | Request::CastWait { msg, .. }
+                | Request::Call { msg, .. }
+                | Request::Reply { msg, .. },
             ..
         } => envelope_fits(msg),
         _ => false,
@@ -259,6 +281,21 @@ pub fn write_from_app(out: &mut Vec<u8>, frame: &FromApp) -> Option<()> {
             out.push(CAST_TO);
             out.extend_from_slice(&id.to_le_bytes());
             write_pid(out, *to);
+            write_envelope(out, msg);
+        }
+        FromApp::Request {
+            id,
+            request:
+                Request::CastWait {
+                    to,
+                    msg,
+                    timeout_ms,
+                },
+        } => {
+            out.push(CAST_WAIT_TO);
+            out.extend_from_slice(&id.to_le_bytes());
+            write_pid(out, *to);
+            out.extend_from_slice(&timeout_ms.to_le_bytes());
             write_envelope(out, msg);
         }
         FromApp::Request {
@@ -292,14 +329,26 @@ pub fn write_from_app(out: &mut Vec<u8>, frame: &FromApp) -> Option<()> {
 }
 
 /// Append `frame` to `out` as a hot frame, if it is one of those the hot
-/// layouts cover; `None`, writing nothing, otherwise: send it as CBOR.
+/// layouts cover, for an app at this crate's [`VERSION`]; `None`, writing
+/// nothing, otherwise: send it as CBOR.
 #[must_use]
 pub fn write_to_app(out: &mut Vec<u8>, frame: &ToApp) -> Option<()> {
+    write_to_app_at(out, frame, VERSION)
+}
+
+/// [`write_to_app`] for an app that speaks protocol `version`: a frame
+/// whose hot layout came after that version goes as CBOR (`None`).
+#[must_use]
+pub fn write_to_app_at(out: &mut Vec<u8>, frame: &ToApp, version: u16) -> Option<()> {
     let fits = match frame {
         ToApp::Answer {
             answer: Answer::Unit,
             ..
         } => true,
+        ToApp::Answer {
+            answer: Answer::CastFailed(_),
+            ..
+        } => version >= CAST_LAYOUTS_SINCE,
         ToApp::Call { msg, .. }
         | ToApp::Cast { msg }
         | ToApp::Answer {
@@ -335,6 +384,14 @@ pub fn write_to_app(out: &mut Vec<u8>, frame: &ToApp) -> Option<()> {
             out.push(ANSWER_CALLED);
             out.extend_from_slice(&id.to_le_bytes());
             write_envelope(out, msg);
+        }
+        ToApp::Answer {
+            id,
+            answer: Answer::CastFailed(why),
+        } => {
+            out.push(ANSWER_CAST_FAILED);
+            out.extend_from_slice(&id.to_le_bytes());
+            out.push(cast_reason(why));
         }
         // Checked above.
         _ => {}
@@ -403,6 +460,20 @@ pub fn parse_from_app(body: &[u8]) -> Result<FromAppHot<'_>, FrameError> {
                         },
                     }
                 }
+                CAST_WAIT_TO => {
+                    let id = r.u64()?;
+                    let to = r.pid()?;
+                    let timeout_ms = r.u32()?;
+                    let msg = r.envelope()?;
+                    FromApp::Request {
+                        id,
+                        request: Request::CastWait {
+                            to,
+                            msg,
+                            timeout_ms,
+                        },
+                    }
+                }
                 REPLY_TO => {
                     let id = r.u64()?;
                     let call_ref = r.u64()?;
@@ -452,6 +523,10 @@ pub fn parse_to_app(body: &[u8]) -> Result<ToAppHot<'_>, FrameError> {
                         answer: Answer::Called(Ok(msg)),
                     }
                 }
+                ANSWER_CAST_FAILED => ToApp::Answer {
+                    id: r.u64()?,
+                    answer: Answer::CastFailed(cast_error(r.u8()?)?),
+                },
                 _ => return Err(malformed("unknown hot frame from the node")),
             };
             r.end()?;
@@ -537,6 +612,31 @@ impl<'a> Reader<'a> {
             Err(malformed("bytes after a hot frame"))
         }
     }
+}
+
+/// A failed cast's reason as its byte in the hot layout.
+fn cast_reason(why: &CastError) -> u8 {
+    match why {
+        CastError::Noproc => 0,
+        CastError::Noconnection => 1,
+        CastError::Overloaded => 2,
+        CastError::TooLarge => 3,
+        CastError::AccessDenied => 4,
+        CastError::Timeout => 5,
+    }
+}
+
+/// [`cast_reason`]'s byte back to the reason.
+fn cast_error(byte: u8) -> Result<CastError, FrameError> {
+    Ok(match byte {
+        0 => CastError::Noproc,
+        1 => CastError::Noconnection,
+        2 => CastError::Overloaded,
+        3 => CastError::TooLarge,
+        4 => CastError::AccessDenied,
+        5 => CastError::Timeout,
+        _ => return Err(malformed("unknown cast error")),
+    })
 }
 
 fn malformed(why: &str) -> FrameError {

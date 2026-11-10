@@ -2760,6 +2760,29 @@ Keyvalue, ns per operation from inside the app (100,000 keys and 16 B values unl
 - **The request's own work is small next to the waiting:** the bucket lookup and apply 3.9% and 4.8% of all samples; the node's copies and the answer's writing (`memmove`, mostly `Port::read` copying the app's frame out of the ring so the node decodes only its own copy, then `send_kv` and `Ring::write`) 12.8% on the 16-core machine and about 5% on the Pi; the app's encoding and decoding a few percent. T7b's candidates (a `&str` key, a copy of the value under the bucket's read lock, cheaper cold frames) are each under 1 to 2% of samples.
 - **In time:** about 4.2 µs of CPU per `get` on the 16-core machine and 3.0 on the Pi, of which the work is well under 1 µs; the rest is each side waiting for the other while it spins, as before, at a third of the CPU it took on 2026-11-01.
 
+## 2026-11-09: a waited cast as a hot frame (I7)
+
+`cluster_throughput`'s sends by kind, as in I4 (16 instances on node 1 each sending 25,000 `count` messages to its own target), before and after I7, which gives `Request::CastWait` and `Answer::CastFailed` hot layouts. 16-core machine, idle apart from the runs, 4 tokio workers, `[native] spin_us` 20. Before is the commit without I7, built in its own worktree; the two builds alternated, run after run. Ten rounds each for one node with mailboxes of 65,536; three rounds each for the rest. Casts handled per second, medians, and the range:
+
+| One node, mailboxes of 65,536 (10 rounds) | Before | After |
+| --- | --- | --- |
+| `cast` | 569,000 (488,000 to 712,000) | 624,000 (524,000 to 778,000) |
+| `try_cast` | 523,000 (467,000 to 694,000) | 508,000 (428,000 to 759,000) |
+| `cast_timeout` | 365,000 (329,000 to 573,000) | 476,000 (398,000 to 756,000) |
+| `cast_timeout` against `cast` in the same run | 0.66 (0.46 to 0.84) | 0.83 (0.64 to 1.22) |
+
+| Three rounds | `cast_timeout` before | after | against `cast`, before | after |
+| --- | --- | --- | --- | --- |
+| One node, mailboxes of 64 | 377,000 | 404,000 | 0.70 | 0.74 |
+| Two nodes in one process, 65,536 | 43,400 | 44,500 | 0.38 | 0.37 |
+| Two nodes in one process, 64 | 43,100 | 44,600 | 0.40 | 0.41 |
+
+- **Within a node with room,** a waited cast moved about 30% more casts a second (median), and from two thirds of `cast`'s rate to five sixths. The runs vary widely (`cast`, which I7 does not change, ranged from 488,000 to 778,000 across them), and the ranges overlap; the shift held across the rounds. `try_cast`, also unchanged, moved 3%.
+- **With full mailboxes** the wait for room dominates, and the change is within the noise.
+- **Between nodes** nothing changed: each waited cast is a round trip to the other node, and the frames between nodes are the transport's, not the app's.
+- **Every `Ok` of `cast_timeout` arrived,** in all 26 runs.
+- **Not measured:** two processes and the Raspberry Pi, as I4 was; the hot `Answer::CastFailed` on its own (these runs fail no waited cast).
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

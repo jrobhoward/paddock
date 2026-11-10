@@ -28,7 +28,9 @@
 //! requests (ROADMAP Z8d to Z8f), version 11 [`ToApp::Connection`],
 //! a connection accepted on one of the app's listeners (ROADMAP Z8g), and
 //! version 12 [`Request::Extension`], a call to a function of an
-//! extension the node runs (ROADMAP Z8h).
+//! extension the node runs (ROADMAP Z8h), and hot layouts for
+//! [`Request::CastWait`] and [`Answer::CastFailed`] (ROADMAP I7), which a
+//! node writes only to an app at 12.
 //!
 //! A node accepts apps on [`VERSION`] and on [`MIN_VERSION`], the one
 //! before, and sends an app only frames its version has

@@ -500,7 +500,7 @@ mod linux {
             // A hot frame where the layouts cover it (T7), CBOR otherwise.
             let mut out = std::mem::take(&mut self.out);
             out.clear();
-            if bulkhead_native::hot::write_to_app(&mut out, frame).is_some() {
+            if bulkhead_native::hot::write_to_app_at(&mut out, frame, self.version).is_some() {
                 self.send_bytes(&out);
             } else {
                 self.send_bytes(&protocol::encode(frame));

@@ -7,7 +7,8 @@ use rstest::rstest;
 
 use super::*;
 use crate::protocol::{
-    Answer, Bytes, Envelope, FromApp, KvAnswer, KvError, KvRequest, Pid, Request, ToApp, encode,
+    Answer, Bytes, CastError, Envelope, FromApp, KvAnswer, KvError, KvRequest, Pid, Request, ToApp,
+    encode,
 };
 
 /// A frame's body: what follows its length prefix, checked against it.
@@ -225,6 +226,7 @@ fn to() -> Pid {
 #[case(FromApp::Reply(Some(env(Some("app.v1.Point"), b""))))]
 #[case(FromApp::Request { id: 9, request: Request::Cast { to: to(), msg: env(None, b"x") } })]
 #[case(FromApp::Request { id: 9, request: Request::Call { to: to(), msg: env(Some(""), b"x"), timeout_ms: 5000 } })]
+#[case(FromApp::Request { id: 9, request: Request::CastWait { to: to(), msg: env(None, b"w"), timeout_ms: 250 } })]
 #[case(FromApp::Request { id: 9, request: Request::Reply { call_ref: 77, msg: env(None, b"") } })]
 fn write_from_app____hot_frames____parse_back_unchanged(#[case] frame: FromApp) {
     let mut out = Vec::new();
@@ -243,6 +245,12 @@ fn write_from_app____hot_frames____parse_back_unchanged(#[case] frame: FromApp) 
 #[case(ToApp::Cast { msg: env(Some("s"), b"cast") })]
 #[case(ToApp::Answer { id: 4, answer: Answer::Unit })]
 #[case(ToApp::Answer { id: 4, answer: Answer::Called(Ok(env(None, b"reply"))) })]
+#[case(ToApp::Answer { id: 4, answer: Answer::CastFailed(CastError::Noproc) })]
+#[case(ToApp::Answer { id: 4, answer: Answer::CastFailed(CastError::Noconnection) })]
+#[case(ToApp::Answer { id: 4, answer: Answer::CastFailed(CastError::Overloaded) })]
+#[case(ToApp::Answer { id: 4, answer: Answer::CastFailed(CastError::TooLarge) })]
+#[case(ToApp::Answer { id: 4, answer: Answer::CastFailed(CastError::AccessDenied) })]
+#[case(ToApp::Answer { id: u64::MAX, answer: Answer::CastFailed(CastError::Timeout) })]
 fn write_to_app____hot_frames____parse_back_unchanged(#[case] frame: ToApp) {
     let mut out = Vec::new();
 
@@ -322,7 +330,8 @@ fn write_from_app____cast____layout_as_documented() {
 #[case::body_past_end(&[0x07, 0, 0, 0xff, 0xff, 9, 0, 0, 0])]
 #[case::cast_truncated_pid(&[0x08, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0])]
 #[case::bytes_after_done(&[0x05, 0])]
-#[case::unknown_tag(&[0x0b])]
+#[case::cast_wait_truncated_timeout(&[0x0b, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 9])]
+#[case::unknown_tag(&[0x0c])]
 fn parse_from_app____malformed____error(#[case] bytes: &[u8]) {
     let found = parse_from_app(bytes);
 
@@ -339,4 +348,45 @@ proptest! {
     fn parse_to_app____any_bytes____never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..96)) {
         let _ = parse_to_app(&bytes);
     }
+}
+
+#[test]
+fn write_to_app____cast_failed____layout_as_documented() {
+    let frame = ToApp::Answer {
+        id: 7,
+        answer: Answer::CastFailed(CastError::Timeout),
+    };
+    let mut out = Vec::new();
+
+    write_to_app(&mut out, &frame).unwrap();
+
+    assert_eq!(body(&out), [0x09, 7, 0, 0, 0, 0, 0, 0, 0, 5]);
+}
+
+/// An app at version 11 cannot read the failed cast's hot layout (version
+/// 12), so it gets CBOR.
+#[rstest]
+#[case(11, false)]
+#[case(12, true)]
+fn write_to_app_at____cast_failed____hot_from_version_12(#[case] version: u16, #[case] hot: bool) {
+    let frame = ToApp::Answer {
+        id: 1,
+        answer: Answer::CastFailed(CastError::Overloaded),
+    };
+    let mut out = Vec::new();
+
+    let written = write_to_app_at(&mut out, &frame, version);
+
+    assert_eq!(written.is_some(), hot);
+    assert_eq!(out.is_empty(), !hot);
+}
+
+#[rstest]
+#[case::cast_failed_unknown_reason(&[0x09, 1, 0, 0, 0, 0, 0, 0, 0, 6])]
+#[case::cast_failed_no_reason(&[0x09, 1, 0, 0, 0, 0, 0, 0, 0])]
+#[case::unknown_tag(&[0x0a])]
+fn parse_to_app____malformed____error(#[case] bytes: &[u8]) {
+    let found = parse_to_app(bytes);
+
+    assert!(matches!(found, Err(FrameError::Decode(_))), "{found:?}");
 }

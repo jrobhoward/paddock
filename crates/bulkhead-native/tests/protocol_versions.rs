@@ -490,6 +490,34 @@ fn hot_samples() -> Vec<(String, String, Vec<u8>)> {
     hot::write_from_app(&mut b, &FromApp::Done).unwrap();
     push("FromApp.Done", b);
     let mut b = Vec::new();
+    hot::write_from_app(
+        &mut b,
+        &FromApp::Request {
+            id: 2,
+            request: Request::CastWait {
+                to: Pid {
+                    node: 1,
+                    id: 7,
+                    incarnation: 2,
+                },
+                msg: env(),
+                timeout_ms: 100,
+            },
+        },
+    )
+    .unwrap();
+    push("FromApp.CastWait", b);
+    let mut b = Vec::new();
+    hot::write_to_app(
+        &mut b,
+        &ToApp::Answer {
+            id: 2,
+            answer: Answer::CastFailed(CastError::Timeout),
+        },
+    )
+    .unwrap();
+    push("ToApp.CastFailed", b);
+    let mut b = Vec::new();
     hot::write_kv_request(
         &mut b,
         &KvFrame {
