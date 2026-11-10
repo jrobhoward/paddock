@@ -434,6 +434,13 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- A planned switchover, or a failover, on a pair with replicated buckets
+  could be refused for as long as the primary led. When the witness's
+  answer to the primary's record of its partner out of date was lost and
+  the partner then caught up, the witness kept the record while the
+  primary took it for clear and never cleared it. The primary now counts an
+  unanswered record as possibly held and clears it once the partner is in
+  sync (found by the `scada` soak; S20's `RecordKnown`).
 - A cluster connection to a peer that has gone now closes about
   `node_timeout_ms` × 2⅔ after the peer's last frame, even when its
   handshake was slow. QUIC stretched the wait to about nine times the

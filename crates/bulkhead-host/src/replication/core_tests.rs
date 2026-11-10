@@ -108,6 +108,14 @@ impl Pair {
         self.route(node, out);
     }
 
+    /// A record the witness did not answer (the answer lost, or none in time).
+    fn unanswered(&mut self, node: usize, epoch: u64, outdated: bool) {
+        let out = self.nodes[node]
+            .recorded(epoch, outdated, false, Instant::now())
+            .unwrap();
+        self.route(node, out);
+    }
+
     /// Deliver what is in flight, both ways, until nothing is.
     fn pump(&mut self) {
         while self.inbox.iter().any(|q| !q.is_empty()) {
@@ -238,6 +246,53 @@ async fn primary____standby_back____caught_up_then_sync_and_the_record_cleared()
     assert_eq!(report, [(1, true), (1, false)]);
     assert_eq!(pair.value(B, "b"), Some(b"2".to_vec()));
     assert_eq!(pair.buckets(A), pair.buckets(B));
+}
+
+/// The witness may have kept a record whose answer was lost; once the
+/// standby is in sync again the primary clears it, or the witness would
+/// refuse the standby (a switchover or a failover) for as long as the
+/// primary leads. S20's `GoAloneUnanswered`, `RecordKnown`.
+#[tokio::test(start_paused = true)]
+async fn primary____record_unanswered_then_standby_caught_up____clears_the_record() {
+    let mut pair = Pair::running();
+    pair.write(A, vec![set(7, "a", "1")]);
+    pair.drop_all();
+    pair.tick(A, false);
+    pair.unanswered(A, 1, true);
+
+    tokio::time::advance(Duration::from_millis(600)).await;
+    pair.tick(A, true);
+    pair.pump();
+    pair.tick(A, true);
+    let asked = pair.records[A].clone();
+    pair.recorded(A, 1, false);
+    pair.tick(A, true);
+    let after_clear = pair.records[A].len();
+
+    assert!(!pair.nodes[A].alone());
+    assert_eq!(pair.replies, [(7, Ok(Outcome::Done))]);
+    assert_eq!(asked, [(1, true), (1, false)]);
+    assert_eq!(after_clear, 2, "nothing more to report once clear");
+}
+
+/// A clear that went unanswered is sent again: the primary still counts the
+/// record held. S20's `ReportSyncedUnanswered`.
+#[tokio::test(start_paused = true)]
+async fn primary____clear_unanswered____asks_again() {
+    let mut pair = Pair::running();
+    pair.write(A, vec![set(7, "a", "1")]);
+    pair.drop_all();
+    pair.tick(A, false);
+    pair.recorded(A, 1, true);
+    tokio::time::advance(Duration::from_millis(600)).await;
+    pair.tick(A, true);
+    pair.pump();
+    pair.tick(A, true);
+
+    pair.unanswered(A, 1, false);
+    pair.tick(A, true);
+
+    assert_eq!(pair.records[A], [(1, true), (1, false), (1, false)]);
 }
 
 #[tokio::test(start_paused = true)]

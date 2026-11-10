@@ -79,6 +79,14 @@ CONSTANTS PromoteAlone
 \* EagerSync: an alone primary may return to sync mode at any time, not only
 \* once the partner holds the whole log (under steady writes it never does).
 CONSTANTS EagerSync
+\* LostAnswers: the witness acts on a primary's record and the answer is lost
+\* (the connection drops, or the answer comes after the primary stopped
+\* waiting), so the primary does not learn the record changed. Added
+\* 2026-11-09, from the scada soak.
+\* UnsureRecord: a primary whose record of its partner out of date went
+\* unanswered counts the record as possibly set, and so reports once its
+\* partner is in sync; otherwise it keeps what it believed before.
+CONSTANTS LostAnswers, UnsureRecord
 
 Nodes == {A, B}
 \* MaxFaults <- NoBound in a config (TLC configs take no negative numbers).
@@ -114,6 +122,8 @@ VARIABLES
     mode,         \* a primary's commit rule: "sync" or "alone"
     next,         \* a primary's next index to send to its partner
     match,        \* a primary's highest index its partner acked at its epoch
+    known,        \* what a node believes of the witness's record while it
+                  \* leads: "clear", "set", or "unsure" after a lost answer
     q,            \* LAN queue per direction
     \* Bookkeeping.
     acked,        \* every committed write in order (what clients were told)
@@ -121,7 +131,8 @@ VARIABLES
 
 foVars == <<role, epoch, alive, lease, yielding>>
 netVars == <<lanUp, serUp, wanUp, wAlive>>
-witVars == <<wEpoch, wPromoted, wAlone>>
+\* The witness's state, with each node's belief of its record.
+witVars == <<wEpoch, wPromoted, wAlone, known>>
 dataVars == <<log, dur, commit, base>>
 primVars == <<mode, next, match>>
 vars == <<foVars, netVars, witVars, dataVars, primVars, q, acked, writes, faults,
@@ -142,6 +153,7 @@ Init ==
     /\ mode = [n \in Nodes |-> "sync"]
     /\ next = [n \in Nodes |-> 1]
     /\ match = [n \in Nodes |-> 0]
+    /\ known = [n \in Nodes |-> "clear"]
     /\ q = [c \in Chans |-> <<>>]
     /\ acked = <<>>
     /\ writes = 0 /\ faults = 0 /\ switchovers = 0
@@ -195,6 +207,7 @@ Promote(n) ==
     /\ wEpoch' = epoch[n] + 1
     /\ wPromoted' = n
     /\ wAlone' = (Outdated /\ PromoteAlone)
+    /\ known' = [known EXCEPT ![n] = IF Outdated /\ PromoteAlone THEN "set" ELSE "clear"]
     /\ mode' = [mode EXCEPT ![n] = IF Outdated /\ ~PromoteAlone THEN "sync" ELSE "alone"]
     /\ TakeOver(n)
     /\ UNCHANGED <<alive, yielding, netVars, dataVars, q, acked, writes, faults, switchovers>>
@@ -236,8 +249,10 @@ Resume(n) ==
     /\ lease' = [lease EXCEPT ![n] = TRUE]
     /\ yielding' = [yielding EXCEPT ![n] = FALSE]
     /\ mode' = [mode EXCEPT ![n] = IF wAlone /\ PromoteAlone THEN "alone" ELSE "sync"]
+    /\ known' = [known EXCEPT ![n] = IF wAlone THEN "set" ELSE "clear"]
     /\ TakeOver(n)
-    /\ UNCHANGED <<alive, netVars, witVars, dataVars, q, acked, writes, faults, switchovers>>
+    /\ UNCHANGED <<alive, netVars, wEpoch, wPromoted, wAlone, dataVars, q, acked, writes,
+                   faults, switchovers>>
 
 \* A planned switchover: a running primary that hears its partner as a
 \* standby at its epoch steps down and yields. Not a fault.
@@ -349,8 +364,9 @@ GoAlone(n) ==
     /\ IF Outdated
        THEN /\ ReachW(n) /\ epoch[n] = wEpoch /\ wPromoted = n
             /\ wAlone' = TRUE
+            /\ known' = [known EXCEPT ![n] = "set"]
        ELSE /\ ~PeerLan(n)
-            /\ UNCHANGED wAlone
+            /\ UNCHANGED <<wAlone, known>>
     /\ mode' = [mode EXCEPT ![n] = "alone"]
     /\ UNCHANGED <<foVars, netVars, wEpoch, wPromoted, dataVars, next, match, q,
                    acked, writes, faults, switchovers>>
@@ -362,15 +378,38 @@ GoSync(n) ==
     /\ UNCHANGED <<foVars, netVars, witVars, dataVars, next, match, q, acked,
                    writes, faults, switchovers>>
 
-\* Tell the witness the partner is in sync again: it may be promoted.
-ReportSynced(n) ==
+\* Tell the witness the partner is in sync again: it may be promoted. The
+\* primary goes by what it believes of the record, not the record itself.
+ReportSyncedWhen(n) ==
     /\ Outdated /\ Leads(n) /\ ReachW(n)
-    /\ wAlone /\ wPromoted = n /\ wEpoch = epoch[n]
+    /\ known[n] # "clear" /\ wPromoted = n /\ wEpoch = epoch[n]
     /\ ReportOnlyInSync => mode[n] = "sync"
     /\ match[n] >= commit[n]
+
+ReportSynced(n) ==
+    /\ ReportSyncedWhen(n)
     /\ wAlone' = FALSE
+    /\ known' = [known EXCEPT ![n] = "clear"]
     /\ UNCHANGED <<foVars, netVars, wEpoch, wPromoted, dataVars, primVars, q, acked, writes,
                    faults, switchovers>>
+
+\* GoAlone's record, its answer lost: the witness records the partner out of
+\* date, and the primary, not hearing it, stays in sync mode.
+GoAloneUnanswered(n) ==
+    /\ LostAnswers /\ Outdated /\ Leads(n) /\ mode[n] = "sync"
+    /\ ReachW(n) /\ epoch[n] = wEpoch /\ wPromoted = n
+    /\ wAlone' = TRUE
+    /\ known' = [known EXCEPT ![n] = IF UnsureRecord THEN "unsure" ELSE @]
+    /\ UNCHANGED <<foVars, netVars, wEpoch, wPromoted, dataVars, primVars, q, acked, writes,
+                   faults, switchovers>>
+
+\* ReportSynced, its answer lost: the witness clears the record, and the
+\* primary, still counting it, reports again later.
+ReportSyncedUnanswered(n) ==
+    /\ LostAnswers /\ ReportSyncedWhen(n)
+    /\ wAlone' = FALSE
+    /\ UNCHANGED <<foVars, netVars, wEpoch, wPromoted, known, dataVars, primVars, q, acked,
+                   writes, faults, switchovers>>
 
 Compact(n) ==
     /\ Compaction /\ alive[n] /\ base[n] < commit[n] /\ commit[n] <= dur[n]
@@ -491,6 +530,7 @@ Node(n) ==
     \/ Rejoin(n) \/ Resume(n)
     \/ ClientWrite(n) \/ NoOp(n) \/ Persist(n) \/ Commit(n) \/ GoAlone(n) \/ GoSync(n)
     \/ ReportSynced(n) \/ Compact(n) \/ Send(n) \/ Retransmit(n)
+    \/ GoAloneUnanswered(n) \/ ReportSyncedUnanswered(n)
 
 Env ==
     \/ \E n \in Nodes : Switchover(n) \/ Crash(n) \/ Restart(n) \/ WanFail(n) \/ WanHeal(n)
@@ -527,7 +567,16 @@ NoLostWrite == [][IsPrefix(acked, acked')]_vars
 CommittedStable ==
     [][\A n \in Nodes : alive[n] /\ alive'[n] => IsPrefix(Prefix(log[n], commit[n]), log'[n])]_vars
 
+\* A primary at the witness's epoch never takes the record for clear while
+\* the witness holds it: such a primary never reports, and the witness then
+\* refuses its partner, planned switchover or failover, for as long as it
+\* leads.
+RecordKnown ==
+    \A n \in Nodes : Leads(n) /\ wPromoted = n /\ wEpoch = epoch[n] /\ wAlone
+                     => known[n] # "clear"
+
 TypeOK ==
+    /\ known \in [Nodes -> {"clear", "set", "unsure"}]
     /\ \A n \in Nodes : base[n] <= commit[n] /\ commit[n] <= Len(log[n]) /\ dur[n] <= Len(log[n])
     /\ \A n \in Nodes : Leads(n) => next[n] >= 1 /\ next[n] <= Len(log[n]) + 1
 

@@ -213,6 +213,12 @@ struct Primary {
     acked_at: Option<Instant>,
     /// A record asked of the witness and not yet answered.
     recording: bool,
+    /// A record of the partner out of date went unanswered
+    /// (`GoAloneUnanswered`): the witness may hold it although
+    /// `partner_outdated` says not, so the record is cleared once the partner
+    /// is in sync, as if held. Otherwise the witness would refuse the
+    /// partner for as long as this primary leads.
+    record_unsure: bool,
     /// A snapshot being sent.
     sending: Option<Sending>,
     /// Where the last nack sent `next`; a second nack to the same place
@@ -370,6 +376,7 @@ impl Replica {
             progress_at: now,
             acked_at: None,
             recording: false,
+            record_unsure: false,
             sending: None,
             last_nack: None,
             held: false,
@@ -428,11 +435,15 @@ impl Replica {
             p.recording = false;
             if ok {
                 p.partner_outdated = outdated;
+                p.record_unsure = false;
                 if outdated {
                     // `GoAlone`.
                     p.sync = false;
                     p.acked_at = None;
                 }
+            } else if outdated {
+                // `GoAloneUnanswered`: the witness may have kept it.
+                p.record_unsure = true;
             }
         }
         self.progress(now, &mut out)?;
@@ -792,8 +803,10 @@ impl Replica {
         if !p.sync && acking && last.saturating_sub(p.matched) <= self.cfg.batch as u64 {
             p.sync = true;
         }
-        // `ReportSynced` (R2): only in sync mode.
-        if p.sync && p.partner_outdated && p.matched >= commit && !p.recording {
+        // `ReportSynced` (R2): only in sync mode, and also when the record
+        // may be held (`record_unsure`).
+        if p.sync && (p.partner_outdated || p.record_unsure) && p.matched >= commit && !p.recording
+        {
             p.recording = true;
             out.push(Effect::Record {
                 epoch,

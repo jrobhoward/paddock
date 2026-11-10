@@ -12,6 +12,7 @@ cfg() {
         [DurableAck]=TRUE [ReadBarrier]=TRUE [LeaseReads]=TRUE [KeepSuffix]=TRUE
         [Crashes]=TRUE [LanFaults]=TRUE [SerialFaults]=TRUE [WanFaults]=TRUE
         [WitnessCrashes]=TRUE [Compaction]=TRUE [PromoteAlone]=TRUE [EagerSync]=FALSE
+        [LostAnswers]=FALSE [UnsureRecord]=TRUE
     )
     local kv
     for kv in $overrides; do c[${kv%%=*}]=${kv#*=}; done
@@ -32,7 +33,7 @@ cfg() {
         local k
         for k in Crashes LanFaults SerialFaults WanFaults WitnessCrashes Compaction \
                  Outdated ReportOnlyInSync CommitWhileRunning DurableAck ReadBarrier LeaseReads KeepSuffix \
-                 PromoteAlone EagerSync; do
+                 PromoteAlone EagerSync LostAnswers UnsureRecord; do
             echo "    $k = ${c[$k]}"
         done
         echo
@@ -40,7 +41,7 @@ cfg() {
     } > "$name.cfg"
 }
 
-SAFETY="INVARIANT TypeOK;INVARIANT AtMostOneRunning;INVARIANT CommittedAgree;INVARIANT LeaderComplete;INVARIANT ReadLinearizable;PROPERTY NoLostWrite;PROPERTY CommittedStable"
+SAFETY="INVARIANT TypeOK;INVARIANT RecordKnown;INVARIANT AtMostOneRunning;INVARIANT CommittedAgree;INVARIANT LeaderComplete;INVARIANT ReadLinearizable;PROPERTY NoLostWrite;PROPERTY CommittedStable"
 
 # The guarantee: one failure at a time, any number over time, and a planned
 # switchover. Design1: one fault in the whole run (a subset of DesignSeq).
@@ -88,3 +89,10 @@ cfg EagerSeq -1 1 1 "PromoteAlone=FALSE EagerSync=TRUE" "$SAFETY"
 cfg Eager1 1 9 1 "PromoteAlone=FALSE EagerSync=TRUE" "$SAFETY"
 cfg EagerNoReportInSync -1 1 1 "PromoteAlone=FALSE EagerSync=TRUE ReportOnlyInSync=FALSE" "$SAFETY"
 cfg EagerVac_Report -1 1 0 "PromoteAlone=FALSE EagerSync=TRUE" "PROPERTY NoReport"
+
+# A record's answer lost (2026-11-09): without UnsureRecord the primary takes
+# the record for clear while the witness holds it (RecordKnown fails); with
+# it, the safety properties and RecordKnown hold.
+cfg LostNoUnsure -1 1 0 "PromoteAlone=FALSE EagerSync=TRUE LostAnswers=TRUE UnsureRecord=FALSE" "INVARIANT RecordKnown"
+cfg Lost1 1 9 1 "PromoteAlone=FALSE EagerSync=TRUE LostAnswers=TRUE" "$SAFETY"
+cfg LostSim2 2 2 1 "PromoteAlone=FALSE EagerSync=TRUE LostAnswers=TRUE" "$SAFETY"
