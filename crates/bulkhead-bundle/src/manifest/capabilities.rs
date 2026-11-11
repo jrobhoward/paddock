@@ -785,7 +785,7 @@ impl From<PortRange> for String {
 }
 
 /// Scope of `bulkhead:sql`. Declared with no datasources, it grants
-/// nothing: for a component that imports the interface without using it.
+/// nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SqlScope {

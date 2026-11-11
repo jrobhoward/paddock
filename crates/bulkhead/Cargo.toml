@@ -18,8 +18,7 @@ doc = false
 
 [features]
 default = ["node", "http", "tls", "sql", "egress", "probes"]
-# The node daemon (`bulkhead node`) and everything it runs on, wasmtime
-# included. Without it, the CLI and bundle tooling only. Alone, a node with
+# The node daemon (`bulkhead node`) and everything it runs on. Without it, the CLI and bundle tooling only. Alone, a node with
 # no optional capability: no HTTP ingress, no probes, no Modbus.
 node = [
     "dep:bulkhead-host",

@@ -7,7 +7,7 @@
 //! a JSON string (as manifest `start_args` arrive). The whole argument
 //! bytes are kept for `args`.
 //! - `fail`: `init` returns the error `asked to fail`.
-//! - `trap`: `init` traps.
+//! - `trap`: `init` panics.
 //! - `register:<name>`: register `<name>` during `init`; an error fails
 //!   `init`.
 //! - `trap-exits`: trap exits from `init` on.
@@ -63,7 +63,7 @@
 //!   events are not listed.
 //! - `on-terminate:<pid>`: when `terminate` runs, cast
 //!   `note:terminate:<reason>` to `<pid>`; `ok`.
-//! - `trap`: trap. `spin`: loop forever. `alloc:<mib>`: allocate and keep
+//! - `trap`: panic. `spin`: loop forever. `alloc:<mib>`: allocate and keep
 //!   `<mib>` MiB; `ok`.
 //! - `refuse-upgrade`: the next `load-snapshot` of this state refuses; `ok`.
 //! - `loaded-from`: the version `load-snapshot` was given, or `none`.

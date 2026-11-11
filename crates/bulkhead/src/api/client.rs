@@ -281,7 +281,7 @@ impl Client {
     }
 
     /// An instance's state, from its `save-snapshot`. If `save-snapshot`
-    /// traps, the instance exits and its supervisor restarts it.
+    /// fails, the instance exits and its supervisor restarts it.
     ///
     /// # Errors
     ///

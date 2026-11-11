@@ -29,7 +29,7 @@ pub(super) fn check_names(st: &NodeState, app: &str, names: &[String]) -> Result
     Ok(())
 }
 
-/// A verified, compiled bundle ready to run.
+/// A verified bundle, its program written out, ready to run.
 pub(super) struct Built {
     pub(super) bundle: VerifiedBundle,
     pub(super) run: AppDeployment,
@@ -140,8 +140,7 @@ impl Node {
         // A program is written where only the node can change it.
         let path = self
             .store
-            .compiled_path(&name, &version, &manifest.program.checksum)
-            .with_extension("native");
+            .program_path(&name, &version, &manifest.program.checksum);
         let kind = manifest.spec.native.unwrap_or_default().program;
         let app = tokio::task::spawn_blocking(move || {
             write_program(&path, &program)

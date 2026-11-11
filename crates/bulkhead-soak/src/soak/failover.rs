@@ -131,7 +131,7 @@ pub(crate) struct Setup {
     pub policy: Option<String>,
 }
 
-/// An app of a [`Setup`]: its name, manifest and component.
+/// An app of a [`Setup`]: its name, manifest and program.
 #[derive(Debug)]
 pub(crate) struct SetupApp {
     pub name: &'static str,

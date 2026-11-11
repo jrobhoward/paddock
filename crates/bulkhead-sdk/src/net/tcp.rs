@@ -81,8 +81,7 @@ impl TcpStream {
     /// # Errors
     ///
     /// As [`TcpStream::connect`]. A name lookup the manifest does not
-    /// allow (no `connect` rules) fails with `permanent-resolver-failure`,
-    /// as in a component.
+    /// allow (no `connect` rules) fails with `permanent-resolver-failure`.
     pub fn connect_host(host: &str, port: u16) -> Result<Self, NetError> {
         Self::from_answer(ask(p::NetRequest::ConnectHost {
             host: host.into(),
@@ -136,7 +135,7 @@ impl TcpStream {
     ///
     /// # Errors
     ///
-    /// None natively; kept for the component build's signature.
+    /// None: the address is known. A `Result` keeps `std`'s signature.
     pub fn peer_addr(&self) -> Result<SocketAddr, NetError> {
         Ok(self.peer)
     }
@@ -145,7 +144,7 @@ impl TcpStream {
     ///
     /// # Errors
     ///
-    /// None natively; kept for the component build's signature.
+    /// None: the address is known. A `Result` keeps `std`'s signature.
     pub fn local_addr(&self) -> Result<SocketAddr, NetError> {
         Ok(self.local)
     }
@@ -211,7 +210,7 @@ impl TcpListener {
     ///
     /// # Errors
     ///
-    /// None natively; kept for the component build's signature.
+    /// None: the address is known. A `Result` keeps `std`'s signature.
     pub fn local_addr(&self) -> Result<SocketAddr, NetError> {
         Ok(self.local)
     }

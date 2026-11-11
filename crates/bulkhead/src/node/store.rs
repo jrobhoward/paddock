@@ -190,10 +190,10 @@ impl Store {
         self.root.join("priv").join(app).join(version)
     }
 
-    /// Where `app`'s `version` keeps its compiled component, named after
-    /// the component's checksum (`sha256:<hex>`), so a different component
-    /// under the same version never reads it.
-    pub(crate) fn compiled_path(&self, app: &str, version: &str, checksum: &str) -> PathBuf {
+    /// Where `app`'s `version` keeps its program, named after the
+    /// program's checksum (`sha256:<hex>`), so a different program under
+    /// the same version never reads it.
+    pub(crate) fn program_path(&self, app: &str, version: &str, checksum: &str) -> PathBuf {
         let hex: String = checksum
             .trim_start_matches("sha256:")
             .chars()
@@ -204,10 +204,10 @@ impl Store {
             .join("compiled")
             .join(app)
             .join(version)
-            .join(format!("{hex}.cwasm"))
+            .join(format!("{hex}.native"))
     }
 
-    /// Delete compiled components of apps and versions `state` no longer
+    /// Delete the programs of apps and versions `state` no longer
     /// holds, as current or previous: those left by refused deploys and
     /// upgrades.
     pub(crate) fn prune_compiled(&self, state: &State) {
@@ -260,7 +260,7 @@ impl Store {
         std::fs::rename(upload, &target).map_err(internal)
     }
 
-    /// Delete one version's bundle, `priv/` files and compiled component.
+    /// Delete one version's bundle, `priv/` files and program.
     pub(crate) fn remove_version(&self, app: &str, version: &str) {
         let _ = std::fs::remove_file(self.bundle_path(app, version));
         let _ = std::fs::remove_dir_all(self.priv_dir(app, version));

@@ -50,7 +50,7 @@ pub trait App: Sized + 'static {
         let _ = (ctx, info);
     }
 
-    /// Clean up before a graceful stop. Not called on kills or traps.
+    /// Clean up before a graceful stop. Not called on kills or crashes.
     fn terminate(&mut self, ctx: &mut Ctx, reason: ExitReason) {
         let _ = (ctx, reason);
     }
@@ -75,8 +75,8 @@ pub trait App: Sized + 'static {
     ///
     /// # Errors
     ///
-    /// A message if the state cannot be serialized; the instance then traps
-    /// and its supervisor restarts the old version.
+    /// A message if the state cannot be serialized; the instance then
+    /// crashes and its supervisor restarts the old version.
     fn save_snapshot(&self) -> Result<Vec<u8>, String> {
         Ok(Vec::new())
     }

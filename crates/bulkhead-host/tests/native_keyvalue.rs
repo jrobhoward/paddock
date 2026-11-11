@@ -1,6 +1,5 @@
 //! Keyvalue for native-process apps (`bulkhead_native::app::Bucket`):
-//! the fixture executable's `kv` commands through `bulkhead-runner`, on
-//! the terms a component gets.
+//! the fixture executable's `kv` commands through `bulkhead-runner`.
 
 #![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
@@ -93,7 +92,7 @@ fn up(app: &str, mode: AccessMode) -> InstanceHandle {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_kv____operations____answered_as_for_a_component() {
+async fn native_kv____operations____answered() {
     let a = up("nk-ops", AccessMode::Rw);
 
     let set = ask(&a, "kv set data o-1 one").await;

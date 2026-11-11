@@ -1,16 +1,16 @@
 //! `bulkhead:http-egress`: HTTP requests from apps.
 //!
-//! wasmtime-wasi-http implements the interface; its send hook is this
-//! module's filter. A request goes out only if the operator granted the
+//! An app sends a request as a frame, and this module's filter (`Hooks`)
+//! checks it. A request goes out only if the operator granted the
 //! capability, its scheme, host and port match an entry of the manifest's
 //! `allow` (the `policy` module), and its method is in `methods` (when listed). It
 //! then goes through the node's connection pool (the `client` module), at most
 //! `max_concurrent` per app at once (node config's default otherwise). A
 //! host name that resolves only to loopback or link-local addresses is
 //! refused unless node config sets `allow_loopback`; an address written in
-//! an allow entry is reached as written. Refusals are error codes
-//! (`HTTP-request-denied`, `connection-limit-reached`,
-//! `destination-IP-prohibited`), never traps.
+//! an allow entry is reached as written. Refusals are answers
+//! (`HttpError::Denied`, `Limited`, `Prohibited`), never a crash of the
+//! instance.
 //!
 //! Node config's `[egress] allow` is a ceiling every app's `allow` must fit
 //! inside; the node checks it at deploy ([`within`]).
@@ -113,7 +113,7 @@ impl Service for Egress {
 }
 
 impl Instance {
-    /// A native app's HTTP request (ROADMAP Z8f), on a component's rules.
+    /// An app's HTTP request (ROADMAP Z8f).
     pub(crate) async fn native(
         &self,
         request: bulkhead_native::protocol::HttpRequest,
@@ -136,7 +136,7 @@ impl Instance {
 mod hooks {
     use std::sync::{Arc, PoisonError};
 
-    use super::client::{Error, WasiBody};
+    use super::client::{Error, HttpBody};
     use tokio::sync::Semaphore;
 
     use bulkhead_native::protocol as p;
@@ -201,7 +201,7 @@ mod hooks {
         }
 
         /// Why `request` may not go out, if it may not.
-        fn refuse(&self, request: &hyper::Request<WasiBody>) -> Option<&'static str> {
+        fn refuse(&self, request: &hyper::Request<HttpBody>) -> Option<&'static str> {
             if !self.granted {
                 return Some("the capability is not granted");
             }
@@ -234,9 +234,8 @@ mod hooks {
     const MAX_NATIVE_BODY: usize = 16 << 20;
 
     impl Hooks {
-        /// A native app's request: refused as a component's would be
-        /// (forbidden headers too), then sent through the pool, and the
-        /// whole response read.
+        /// An app's request: checked against the filter (forbidden headers
+        /// too), then sent through the pool, and the whole response read.
         pub(crate) async fn native(
             &self,
             request: p::HttpRequest,
@@ -260,7 +259,7 @@ mod hooks {
                     .map_err(|e| invalid("header", &e))?;
                 builder = builder.header(name, value);
             }
-            let body: WasiBody = http_body_util::Full::new(bytes::Bytes::from(request.body.0))
+            let body: HttpBody = http_body_util::Full::new(bytes::Bytes::from(request.body.0))
                 .map_err(|never| match never {})
                 .boxed_unsync();
             let request_out = builder.body(body).map_err(|e| invalid("request", &e))?;
@@ -316,8 +315,7 @@ mod hooks {
         }
     }
 
-    /// An egress error as the native protocol's, as the SDK classifies a
-    /// component's.
+    /// An egress error as the native protocol's.
     fn native_error(e: &Error) -> p::HttpError {
         match e {
             Error::DestinationIpProhibited => p::HttpError::Prohibited,

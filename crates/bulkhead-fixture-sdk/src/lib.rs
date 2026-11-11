@@ -47,7 +47,7 @@
 //! - `busy:<ms>`: spin for that long, then `ok` (notices queue meanwhile).
 //! - HTTP requests (`bulkhead_sdk::http`), by the end of the path: `/plain`
 //!   replies a plain text envelope; `/status/<n>` replies status n;
-//!   `/crash` traps; `/never` never replies; `/big/<n>` replies n bytes; anything else replies 200 with
+//!   `/crash` panics; `/never` never replies; `/big/<n>` replies n bytes; anything else replies 200 with
 //!   `<method> <path>?<query> key=<key> body=<body> scheme=<scheme> pid=<pid>`.
 //! - `changes`: every change notice received, `<key>@<revision>`, joined
 //!   by `,`.

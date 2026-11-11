@@ -9,8 +9,10 @@ use crate::manifest::validate::Validator;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Limits {
-    /// Most linear memory one instance may grow to. Growth past it fails and
-    /// the instance crashes with `memory_limit`.
+    /// Most memory one instance's process may use: its cgroup's
+    /// `memory.max`, past which the instance crashes with `memory_limit`,
+    /// or `RLIMIT_DATA` without a cgroup, past which an allocation in the
+    /// app fails.
     pub memory_max: ByteSize,
     /// Most guest execution time one callback may take before the instance is
     /// killed with reason `timeout`. Time spent in host calls (waiting on

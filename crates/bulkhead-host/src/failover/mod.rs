@@ -43,7 +43,7 @@
 //! Timing assumption (R11 in `docs/tla/VERIFICATION.md`): over one lease,
 //! the clocks of the pair and the witness drift apart by less than twice
 //! `margin` less the time a node takes to stop its singletons once its
-//! lease ends (an epoch tick of guest code and a host call in flight; see
+//! lease ends (a kill of the app's process and a host call in flight; see
 //! `RunUntil`). Message delay is not part of it, but for one bound: a lease
 //! runs from when its renewal, or the stamp a confirmation echoes, was
 //! sent, and the witness counts from when it received, so a delay only

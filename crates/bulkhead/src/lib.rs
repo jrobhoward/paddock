@@ -1,6 +1,6 @@
-//! Bulkhead: a clustered application server for sandboxed WebAssembly
-//! components, with Erlang/OTP-style mailboxes, links, supervision and hot
-//! upgrade.
+//! Bulkhead: a clustered application server for apps run as sandboxed
+//! native processes, with Erlang/OTP-style mailboxes, links, supervision
+//! and hot upgrade.
 //!
 //! This crate is the `bulkhead` command and the library behind it:
 //!

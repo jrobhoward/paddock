@@ -2,7 +2,7 @@
 //! (on one node and across nodes, as OTP's `pg`).
 //!
 //! Each node owns its own members. The table is keyed by pid, so an upgrade
-//! (same pid, new Store) keeps an instance's groups, and an exit removes them
+//! (same pid, new version) keeps an instance's groups, and an exit removes them
 //! (the services' exit hook). Joins count against `limits.groups_max`
 //! ([`HostObjects::groups`](crate::HostObjects)).
 //!
@@ -394,9 +394,8 @@ impl Service for Groups {
     }
 }
 
-/// The groups functions on the host's own types: what a component's
-/// `bulkhead:groups` import and a native app's requests both run (ROADMAP
-/// Z9b).
+/// The groups functions on the host's own types, which an app's requests
+/// run (ROADMAP Z9b).
 impl Instance {
     /// Join `group`.
     pub(crate) fn join_group(&self, group: &str) -> Result<(), GroupsError> {

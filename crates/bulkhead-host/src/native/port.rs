@@ -21,8 +21,7 @@
 //! Except after a callback hinted idle (nothing queued behind it, and it
 //! came longer than the spin after the frame before): then neither the
 //! task nor the app spins until the next one (ROADMAP T1b).
-//! What the app prints, on stdout or stderr, becomes log lines, as a
-//! component's stderr does. Between fork and exec the child gets the
+//! What the app prints, on stdout or stderr, becomes log lines. Between fork and exec the child gets the
 //! parent-death signal (`SIGKILL`), no core dumps, its memory limit (the
 //! cgroup it starts in, or `RLIMIT_DATA` without one) and its channel. It
 //! runs in a process group of its own, with an environment of

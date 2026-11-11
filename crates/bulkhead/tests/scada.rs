@@ -12,9 +12,7 @@
 //! standby's table comes from it, and `control`'s replicated alarms keep
 //! an acknowledgement through a planned switchover.
 //!
-//! Both run against the apps built as components and, from the same
-//! source, as native programs (Linux; their manifests with `kind =
-//! "native-process"` added).
+//! Both run the apps as native programs, so on Linux only.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]
@@ -226,7 +224,7 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
         std::fs::write(dir.path().join(format!("control-{v}")), single).unwrap();
     }
     let mut bundles = Vec::new();
-    for (name, manifest, wasm_file) in [
+    for (name, manifest, program_file) in [
         (
             "points",
             "points/bulkhead.toml",
@@ -251,7 +249,7 @@ async fn scada____device_pool_hmi_and_control____polled_watched_alarmed_upgraded
             &[
                 "bundle",
                 s(&manifest),
-                s(&wasm_file),
+                s(&program_file),
                 "--key",
                 s(&key),
                 "-o",
@@ -525,14 +523,14 @@ async fn scada____on_a_pair____primary_alone_polls_and_an_ack_survives_switchove
     let mut bundles = Vec::new();
     for app in ["points", "hmi", "control"] {
         let out = d.join(format!("{app}.rbp"));
-        let wasm_file = built.of(&format!("example-scada-{app}"));
+        let program_file = built.of(&format!("example-scada-{app}"));
         let manifest = ex.join(app).join("bulkhead.toml");
         let r = bulkhead(
             &cli,
             &[
                 "bundle",
                 s(&manifest),
-                s(&wasm_file),
+                s(&program_file),
                 "--key",
                 s(&d.join("k.key")),
                 "-o",

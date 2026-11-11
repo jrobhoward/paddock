@@ -11,8 +11,7 @@
 //! `access-denied`; a shared bucket the node does not configure returns
 //! `no-such-store`. Every operation runs
 //! in the shared store and its time counts as host time, not against the
-//! callback deadline. Bulkhead's own host on the vendored
-//! `bulkhead:keyvalue@0.2.0-draft` WIT; wasmtime's crate is a demo (spike S7).
+//! callback deadline.
 
 mod native;
 pub(crate) mod publish;

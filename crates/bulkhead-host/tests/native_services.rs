@@ -1,6 +1,5 @@
 //! Groups, config, secrets and metrics for native-process apps: the
-//! fixture executable's commands through `bulkhead-runner`, on the terms
-//! a component gets.
+//! fixture executable's commands through `bulkhead-runner`.
 
 #![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
@@ -177,7 +176,7 @@ async fn native_config____granted_or_not____values_or_access_denied() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_secrets____listed_unbound_unlisted_or_not_granted____as_for_a_component() {
+async fn native_secrets____listed_unbound_unlisted_or_not_granted____value_not_found_or_denied() {
     let a = up("ns-a", ALL);
     let ungranted = up("ns-denied", &[]);
 

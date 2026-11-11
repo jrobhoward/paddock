@@ -140,7 +140,7 @@ impl TryFrom<Vec<String>> for Granted {
                 granted.extensions.insert(key);
             } else {
                 return Err(format!(
-                    "unknown capability '{key}' (not a capability key or an extension package outside wasi and bulkhead)"
+                    "unknown capability '{key}' (not a capability key or an extension package outside the bulkhead namespace)"
                 ));
             }
         }

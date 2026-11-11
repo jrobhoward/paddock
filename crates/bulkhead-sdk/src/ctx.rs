@@ -84,7 +84,7 @@ impl Ctx {
     ///
     /// [`CallError`] for a dead pid, a timeout, a full mailbox, an oversized
     /// body, or a target that exits first. A call to this instance's own pid
-    /// traps instead: it could never be answered.
+    /// crashes the instance instead: it could never be answered.
     pub fn call(
         &mut self,
         to: Pid,

@@ -1,8 +1,7 @@
 //! Connection-handler apps on a node: listeners bound from node config,
-//! deploy, upgrade, rollback, stop, start, restart and remove; for the
-//! component (an instance per connection) and, on Linux, the same fixture
-//! built as a native program, whose instances take the connections
-//! (ROADMAP Z8g).
+//! deploy, upgrade, rollback, stop, start, restart and remove, with the
+//! connection fixture built as a native program, whose instances take the
+//! connections (ROADMAP Z8g). Linux only.
 
 #![cfg(unix)]
 #![allow(non_snake_case)]

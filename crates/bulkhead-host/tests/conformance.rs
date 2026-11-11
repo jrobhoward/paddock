@@ -83,8 +83,8 @@ fn shared() -> &'static (Runtime, LoadedApp) {
                 ),
             ]),
             native: native_config(),
-            // Published (T4): a native app reads it from a snapshot, a
-            // component through the host; the answers are the same.
+            // Published (T4): a native app reads it from a snapshot, an
+            // in-process one through the node; the answers are the same.
             buckets: BTreeMap::from([(
                 "published".to_string(),
                 bulkhead_host::SharedBucket {
@@ -195,7 +195,7 @@ fn pid(h: &InstanceHandle) -> String {
     h.pid().text()
 }
 
-/// An app-level deployment of the component under test at `version`.
+/// An app-level deployment of the app under test at `version`.
 fn deployment(name: &str, version: &str, appserver: serde_json::Value) -> AppDeployment {
     let mut manifest = app_manifest(name, appserver);
     manifest.app.version = version.parse().unwrap();

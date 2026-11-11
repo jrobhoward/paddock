@@ -63,11 +63,11 @@ impl From<hyper::Error> for Error {
 }
 
 /// A request or response body.
-pub(crate) type WasiBody = http_body_util::combinators::UnsyncBoxBody<Bytes, Error>;
+pub(crate) type HttpBody = http_body_util::combinators::UnsyncBoxBody<Bytes, Error>;
 
 /// The pool every app's requests go through.
 pub(crate) struct Pool {
-    client: Client<HttpsConnector<HttpConnector<Guard>>, WasiBody>,
+    client: Client<HttpsConnector<HttpConnector<Guard>>, HttpBody>,
 }
 
 impl Pool {
@@ -131,11 +131,11 @@ impl Pool {
     /// than `between` to come. `permit` is held until the body ends.
     pub(crate) fn send(
         &self,
-        request: hyper::Request<WasiBody>,
+        request: hyper::Request<HttpBody>,
         first_byte: Duration,
         between: Duration,
         permit: OwnedSemaphorePermit,
-    ) -> impl Future<Output = Result<hyper::Response<WasiBody>, Error>> + Send + 'static {
+    ) -> impl Future<Output = Result<hyper::Response<HttpBody>, Error>> + Send + 'static {
         let sent = self.client.request(request);
         async move {
             let response = tokio::time::timeout(first_byte, sent)

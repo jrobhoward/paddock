@@ -200,15 +200,12 @@ pub enum SqlTls {
 pub struct RuntimeConfig {
     /// This node's id, carried in every pid.
     pub node: u32,
-    /// Most instances alive at once. Sizes the pooling allocator, including
-    /// one fiber stack per instance. With passivation
-    /// ([`crate::InstanceSpec::passivate_after`]) it counts instances that
-    /// hold a Store; a passivated one holds none.
+    /// Most instances in the process table when `max_processes` is unset.
     pub max_instances: u32,
-    /// Most instances in the process table, passivated or not; `None` is
-    /// `max_instances`. Above `max_instances` only with passivation: an
-    /// instance starting or waking while every Store slot is taken waits
-    /// for one (spike S11).
+    /// Most instances in the process table, passivated ones included
+    /// ([`crate::InstanceSpec::passivate_after`]); `None` is
+    /// `max_instances`. A start past it fails with
+    /// [`HostError::InstanceLimit`](crate::HostError::InstanceLimit).
     pub max_processes: Option<u32>,
     /// Where node state lives (`disk` keyvalue buckets). `None` disables
     /// disk buckets.

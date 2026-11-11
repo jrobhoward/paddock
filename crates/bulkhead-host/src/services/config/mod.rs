@@ -3,8 +3,7 @@
 //! The values are the manifest's `config.defaults` with the node's per-app
 //! overrides merged in ([`ConfigSpec::values`]). Without the capability
 //! granted, both functions return `io("access-denied")`: the interface has
-//! no denial case of its own. Bulkhead's own host rather than
-//! `wasmtime-wasi-config`, which cannot deny (spike S7).
+//! no denial case of its own.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -58,8 +57,7 @@ impl Service for Config {
 }
 
 impl ServiceCtx<'_, Instance> {
-    /// A configuration value for a native app (`None` for every value),
-    /// as a component's `bulkhead:config` import reads it.
+    /// A configuration value for an app (`None` for every value).
     pub(crate) fn native(
         &self,
         key: Option<&str>,

@@ -29,7 +29,7 @@ use crate::services::sql::Sql;
 use crate::services::{HostState, Service, ServiceCtx, States};
 use crate::spec::InstanceSpec;
 
-/// What an instance's host functions reach outside its own Store.
+/// What an instance's host functions reach outside its own state.
 pub(crate) struct ProcessContext {
     pub(crate) rt: Arc<RuntimeInner>,
     /// This instance's own handle, for its trap-exits flag and signals.
@@ -65,9 +65,6 @@ pub struct InstanceState {
     /// The node's failover lease, for an instance bound to it
     /// ([`InstanceSpec::bound_to_lease`]).
     pub(crate) lease: Option<watch::Receiver<RunUntil>>,
-    /// The lease ended while guest code ran, and the epoch callback
-    /// interrupted it.
-    pub(crate) lease_ended: bool,
     services: States,
 }
 
@@ -102,7 +99,6 @@ impl InstanceState {
             host_objects,
             announce_role: spec.announce_role,
             lease,
-            lease_ended: false,
             services,
         })
     }
@@ -135,7 +131,8 @@ impl InstanceState {
         events
     }
 
-    /// A context for a new Store of the same instance (an upgrade).
+    /// A context for the new version's state of the same instance (an
+    /// upgrade).
     pub(crate) fn context(&self) -> ProcessContext {
         ProcessContext {
             rt: self.ctx.rt.clone(),
@@ -146,7 +143,7 @@ impl InstanceState {
         }
     }
 
-    /// Move what belongs to the instance rather than to one Store (callers
+    /// Move what belongs to the instance rather than to one version (callers
     /// awaiting deferred replies, pending timers) into `to`.
     pub(crate) fn hand_over(&mut self, to: &mut Self) {
         to.current = self.current.take();

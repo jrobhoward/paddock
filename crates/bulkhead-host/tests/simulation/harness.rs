@@ -6,15 +6,10 @@
 //! time, and the order in which tasks run depends only on what they do. The
 //! mesh draws its faults from the seed, so a run is repeatable from its seed.
 //!
-//! Two departures from the other host tests, both because tokio's paused
-//! clock needs a `current_thread` runtime:
-//!
-//! - CLAUDE.md requires the multi-threaded runtime for instances, since a
-//!   guest that yields every epoch tick starves timers on `current_thread`
-//!   (S1). These runs use no spinning guest, so nothing yields that way.
-//! - The epoch ticker is a real-time OS thread. A tick landing inside a
-//!   callback would yield it and reorder ready tasks, so the tick is an hour:
-//!   no preemption, and no callback deadline in practice.
+//! One departure from the other host tests: tokio's paused clock needs a
+//! `current_thread` runtime, where CLAUDE.md requires the multi-threaded
+//! runtime for instances. These runs use in-process apps only, none of
+//! which spin, so nothing holds the one thread.
 //!
 //! Heartbeats are faster than a node's defaults ([`HEARTBEAT`] and
 //! [`NODE_TIMEOUT`]), so detection tests stay short in virtual time.

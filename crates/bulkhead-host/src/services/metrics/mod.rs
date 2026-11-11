@@ -80,9 +80,8 @@ fn refused(r: Refused) -> MetricError {
     }
 }
 
-/// The metrics functions on the host's own types: what a component's
-/// `bulkhead:metrics` import and a native app's requests both run (ROADMAP
-/// Z9b).
+/// The metrics functions on the host's own types, which an app's requests
+/// run (ROADMAP Z9b).
 impl Instance {
     fn series(&self, id: u32) -> std::result::Result<&Arc<Series>, MetricError> {
         if !self.granted {

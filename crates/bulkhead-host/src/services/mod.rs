@@ -80,7 +80,7 @@ pub(crate) trait Service: Sized + 'static {
     /// that cannot open.
     fn shared(config: &RuntimeConfig) -> Result<Self::Shared, HostError>;
 
-    /// State for a new instance (or for the new Store of an upgrade).
+    /// State for a new instance (or for the new version of an upgrade).
     fn instance(
         shared: &Arc<Self::Shared>,
         spec: &Self::Spec,
@@ -159,7 +159,7 @@ impl<'a, I> ServiceCtx<'a, I> {
     }
 }
 
-/// Store data that holds the state of service `S`.
+/// An instance's state that holds the state of service `S`.
 pub(crate) trait HostState<S: Service>: Send + 'static {
     /// The context `S`'s host functions run with.
     fn service(&mut self) -> ServiceCtx<'_, S::Instance>;

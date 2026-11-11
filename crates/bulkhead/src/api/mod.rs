@@ -124,7 +124,7 @@ pub struct InstanceInfo {
     /// Casts and timer messages dropped because its mailbox was full.
     #[serde(default)]
     pub dropped: u64,
-    /// Bytes of linear memory it has grown to.
+    /// Bytes of memory its process holds, read when asked.
     #[serde(default)]
     pub memory_bytes: u64,
     /// Times it has been restarted (its incarnation minus one).

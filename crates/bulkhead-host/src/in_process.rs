@@ -9,8 +9,7 @@
 //! differs. Its code is an async Rust value the instance polls while it
 //! waits for a frame, and its requests to the node ([`TestCtx`]) are
 //! frames whose answers it awaits. Nothing runs on another thread, so a
-//! paused clock moves only when the instance's task is idle, as it did for
-//! components.
+//! paused clock moves only when the instance's task is idle.
 //!
 //! An in-process app cannot be stopped while its code runs without
 //! awaiting: a spin holds the worker. Tests of deadlines, kills of runaway

@@ -1,11 +1,11 @@
-//! A native-process instance's lifecycle: the app's process,
-//! through its [`Port`], in place of a Store.
+//! A native-process instance's lifecycle: the app's process, through its
+//! [`Port`].
 //!
-//! Same pid, mailbox, signals, operations, links, monitors and exit
-//! reasons as a component's instance; one callback at a time. While a
-//! callback runs the app may ask for process functions, answered with the
-//! same host code a component's imports run (`process::Host` on the
-//! instance's [`InstanceState`]). Differences:
+//! The pid, mailbox, signals, operations, links, monitors and exit
+//! reasons are the instance's (`instance`); one callback at a time. While
+//! a callback runs the app may ask for process functions, answered by the
+//! host's process functions (`process::Host` on the instance's
+//! [`InstanceState`]). How the process is run:
 //!
 //! - A callback's deadline is wall time less the time spent answering the
 //!   app's requests; past it the process is killed (`timeout`, or
@@ -136,13 +136,12 @@ impl Pings {
 /// The lease timer fired: a lease that has ended kills the app
 /// (`crashed: lease_ended`); otherwise the timer moves to its end.
 fn lease_due(
-    state: &mut InstanceState,
     port: &mut Port,
     lease: Option<&watch::Receiver<RunUntil>>,
     timer: std::pin::Pin<&mut tokio::time::Sleep>,
 ) -> Result<(), ExitReason> {
     match lease_end(lease) {
-        Some(end) if end <= Instant::now() => Err(lease_ended(state, port)),
+        Some(end) if end <= Instant::now() => Err(lease_ended(port)),
         end => {
             timer.reset(end.unwrap_or_else(far_off));
             Ok(())
@@ -153,8 +152,7 @@ fn lease_due(
 /// The lease has ended: kill the app (`crashed: lease_ended`), unless the
 /// runner's watchdog already did while this node did not run (a stopped
 /// node), whose exit then says so (`crashed: killed_at_lease_end`).
-fn lease_ended(state: &mut InstanceState, port: &mut Port) -> ExitReason {
-    state.lease_ended = true;
+fn lease_ended(port: &mut Port) -> ExitReason {
     port.exited_reason().unwrap_or_else(|| {
         port.kill();
         ExitReason::Crashed("lease_ended".into())
@@ -282,9 +280,9 @@ fn cast_answer(sent: Result<(), CallError>) -> Answer {
     }
 }
 
-/// Answer a request with the process functions a component's imports run.
-/// An error (over a host-object limit, a call to itself) crashes the
-/// instance with its message, as a trap does. `deadline` is the callback's
+/// Answer a request with the host's process functions. An error (over a
+/// host-object limit, a call to itself) crashes the instance with its
+/// message. `deadline` is the callback's
 /// deadline, which caps how long a cast waits for room.
 async fn answer(
     state: &mut InstanceState,
@@ -386,8 +384,7 @@ fn pass_socket(
 }
 
 /// Answer a request for a host service the app may declare (keyvalue,
-/// groups, config, secrets, metrics, SQL), on the checks a component's
-/// imports run. [`answer`] handles the process functions first, so any
+/// groups, config, secrets, metrics, SQL), on each service's checks. [`answer`] handles the process functions first, so any
 /// other request here is an error.
 async fn service_answer(state: &mut InstanceState, request: Request) -> Result<Answer, String> {
     Ok(match request {
@@ -443,7 +440,7 @@ async fn service_answer(state: &mut InstanceState, request: Request) -> Result<A
 }
 
 /// Call `function` of the extension serving `package` (ROADMAP Z8h). An
-/// extension's crash is the instance's, as a trap is a component's.
+/// extension's crash is the instance's.
 async fn extension_call(
     state: &mut InstanceState,
     package: &str,
@@ -964,7 +961,7 @@ impl InstanceTask {
                     port.kill();
                     return Err(timeout.clone());
                 }
-                Ok(Step::LeaseEnded) => return Err(lease_ended(state, port)),
+                Ok(Step::LeaseEnded) => return Err(lease_ended(port)),
                 Ok(Step::LeaseChanged) => continue,
                 Ok(Step::Incoming(incoming)) => incoming,
             };
@@ -1075,8 +1072,8 @@ impl InstanceTask {
         let mut ping_timer =
             std::pin::pin!(tokio::time::sleep_until(pings.idle_since + ping_interval));
         // A singleton's lease. A native process can run threads between
-        // callbacks, where a component runs nothing, so a lease ending
-        // while it is idle kills it as one ending in a callback does.
+        // callbacks, so a lease ending while it is idle kills it as one
+        // ending in a callback does.
         let mut lease = state.lease.clone();
         let mut lease_timer = std::pin::pin!(tokio::time::sleep_until(
             lease_end(lease.as_ref()).unwrap_or_else(far_off)
@@ -1111,7 +1108,7 @@ impl InstanceTask {
                         continue;
                     }
                     () = lease_timer.as_mut(), if lease.is_some() => {
-                        lease_due(state, port, lease.as_ref(), lease_timer.as_mut())?;
+                        lease_due(port, lease.as_ref(), lease_timer.as_mut())?;
                         continue;
                     }
                     () = lease_changed(lease.as_mut()) => {

@@ -13,7 +13,7 @@ pub enum LifecycleState {
     Active,
     /// Swapping to a new version between messages.
     Upgrading,
-    /// Idle, with its Store dropped and its state in a snapshot; the next
+    /// Idle, with its process ended and its state in a snapshot; the next
     /// message wakes it (spike S11).
     Passive,
     /// Running `terminate` before a graceful stop.

@@ -7,15 +7,13 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum HostError {
-    /// The engine could not be created from the configuration.
-    #[error("cannot create engine: {0}")]
+    /// The runtime cannot start as configured: a creation number out of
+    /// range, an extension package refused, a second transport, or node
+    /// stores in a format newer than this build reads.
+    #[error("cannot start the runtime: {0}")]
     Engine(String),
 
-    /// The component failed to compile or to link against the host.
-    #[error("cannot load component: {0}")]
-    Load(String),
-
-    /// Every instance slot is in use.
+    /// The process table already holds `max_processes` instances.
     #[error("instance limit reached ({0} instances)")]
     InstanceLimit(u32),
 

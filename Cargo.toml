@@ -48,8 +48,6 @@ license = "MIT OR Apache-2.0"
 authors = ["James Howard <jrobhoward@gmail.com>"]
 repository = "https://github.com/jrobhoward/bulkhead"
 
-# Versions pinned by spike S3 (spikes/S3-wasi-target.md). The wasmtime crates are
-# released together and move as a group.
 [workspace.dependencies]
 # 1.54: the current line (`AsyncFd::register`, which the serial tty uses, is 1.53.3 on).
 tokio = "1.54"
@@ -113,9 +111,9 @@ bulkhead-modbus-client = { path = "crates/bulkhead-modbus-client" }
 bulkhead-native = { path = "crates/bulkhead-native", default-features = false }
 bulkhead-sdk = { path = "crates/bulkhead-sdk" }
 bulkhead-sdk-macros = { path = "crates/bulkhead-sdk-macros" }
-# rustbridge's `experiment/wasm` branch adds bundle format 1.2 (wasm32-wasip2
-# components, manifest extensions, trusted-key verification, signed file
-# checksums). Cargo.lock pins the commit. Move to a crates.io release once one
+# rustbridge's `experiment/wasm` branch adds bundle format 1.2 (manifest
+# extensions, trusted-key verification, signed file checksums; Bulkhead refuses
+# its wasm32-wasip2 programs). Cargo.lock pins the commit. Move to a crates.io release once one
 # includes format 1.2.
 rustbridge-bundle = { git = "https://github.com/jrobhoward/rustbridge", branch = "experiment/wasm" }
 # Loads a rustbridge plugin in bulkhead-runner (bulkhead-native).
@@ -136,8 +134,9 @@ regex = "1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "env-filter", "ansi", "json"] }
 proptest = "1"
 rstest = "0.28"
-# Safe system calls: the effective uid for the compiled-component cache's
-# owner check (bulkhead-host, unix only).
+# Safe system calls: limits and the parent-death signal before an app's exec,
+# the rings' memory and pipes, the serial tty; each crate adds the features it
+# uses.
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
 # `TCP_INFO`, which rustix does not read: a native listener's idle
 # timeout (bulkhead-host, Linux).

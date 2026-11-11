@@ -91,7 +91,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
     );
     let encrypted_key = dir.path().join("signer.key");
     let plain_key = dir.path().join("fast.key");
-    let bundle_with = |key_file: PathBuf, manifest: PathBuf, wasm: PathBuf, out: &str| {
+    let bundle_with = |key_file: PathBuf, manifest: PathBuf, program: PathBuf, out: &str| {
         let out = dir.path().join(out);
         let socket = socket.clone();
         async move {
@@ -100,7 +100,7 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
                 &[
                     "bundle",
                     s(&manifest),
-                    s(&wasm),
+                    s(&program),
                     "--key",
                     s(&key_file),
                     "-o",
@@ -112,8 +112,8 @@ async fn examples____bundled_with_the_cli____run_upgrade_and_fail_as_designed() 
             out
         }
     };
-    let bundle = |manifest: PathBuf, wasm: PathBuf, out: &'static str| {
-        bundle_with(plain_key.clone(), manifest, wasm, out)
+    let bundle = |manifest: PathBuf, program: PathBuf, out: &'static str| {
+        bundle_with(plain_key.clone(), manifest, program, out)
     };
     let c1 = bundle_with(
         encrypted_key.clone(),

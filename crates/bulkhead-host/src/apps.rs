@@ -23,13 +23,13 @@ use crate::supervisor::{
 };
 use crate::upgrade::{UpgradeError, validate_blue_green, validate_upgrade};
 
-/// An app ready to run: its verified manifest, compiled component, and the
+/// An app ready to run: its verified manifest, its program, and the
 /// spec its instances run with.
 #[derive(Debug, Clone)]
 pub struct AppDeployment {
     /// The manifest.
     pub manifest: AppManifest,
-    /// The compiled component.
+    /// The app's program.
     pub app: LoadedApp,
     /// Limits, grants, buckets, config and preopens for each instance. The
     /// node narrows grants to the operator's and resolves preopens and

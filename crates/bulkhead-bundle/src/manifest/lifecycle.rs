@@ -275,7 +275,7 @@ pub struct Instances {
     /// How a pool picks an instance.
     pub routing: Routing,
     /// Passivate an instance after this long with nothing to do: its state
-    /// is kept as a snapshot and its Store dropped, and the next message
+    /// is kept as a snapshot and its process ended, and the next message
     /// wakes it with `load-snapshot` of its own version. Only for an app
     /// whose `load-snapshot` reads its own snapshots. Unset: never.
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,7 +1,7 @@
 //! Host services from outside `bulkhead-host`: extensions.
 //!
-//! An extension serves one package outside the reserved `wasi` and
-//! `bulkhead` namespaces (`example:greeting`). Apps declare it under
+//! An extension serves one package outside the reserved `bulkhead`
+//! namespace (`example:greeting`). Apps declare it under
 //! `capabilities.extensions."<package>"` with a scope table the extension
 //! reads, and the operator grants it by package name in the policy's
 //! `grant` lists, like a built-in capability.
@@ -112,7 +112,8 @@ impl NativeCall {
         &self.function
     }
 
-    /// The arguments as `T`: by convention a tuple of the WIT parameters.
+    /// The arguments as `T`: by convention a tuple of the function's
+    /// parameters.
     ///
     /// # Errors
     ///

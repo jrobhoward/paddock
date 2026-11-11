@@ -22,7 +22,7 @@
 //! }
 //! ```
 //!
-//! The node runs one callback at a time, as for a component. The process
+//! The node runs one callback at a time. The process
 //! functions are on [`Ctx`], valid during a callback; [`log`] works from
 //! any thread at any time. Frames go over the channel the node gave the
 //! process (`crate::channel`, Linux only): two rings in shared memory,

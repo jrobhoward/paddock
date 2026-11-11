@@ -561,7 +561,7 @@ pub(crate) fn apply(txn: &mut dyn Txn, op: Op, quota: Option<u64>) -> Result<App
             Outcome::Done
         }
         Op::Increment(key, delta) => {
-            // Counters are decimal strings, as in wasmtime's keyvalue host.
+            // Counters are decimal strings, so a `get` reads one as text.
             let current = match txn.get(&key)? {
                 None => 0,
                 Some(v) => std::str::from_utf8(&v)

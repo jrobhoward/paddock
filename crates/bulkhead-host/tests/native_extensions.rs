@@ -1,6 +1,6 @@
 //! Extensions for native-process apps (ROADMAP Z8h): the fixture
 //! executable's `ext` command calls a test extension through the node,
-//! with the grant and scope a component's import gets.
+//! with the app's grant and scope.
 
 #![cfg(target_os = "linux")]
 #![allow(non_snake_case)]
@@ -147,7 +147,7 @@ fn up(app: &str, probing: Probing) -> InstanceHandle {
 #[case::not_granted(Probing::NotGranted, r#"[false,{"word":"hi"},"not_granted"]"#)]
 #[case::undeclared(Probing::Undeclared, r#"[false,null,"undeclared"]"#)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ext____grant_and_scope____as_a_component_gets(
+async fn ext____grant_and_scope____seen_by_the_extension(
     #[case] probing: Probing,
     #[case] expected: &str,
 ) {

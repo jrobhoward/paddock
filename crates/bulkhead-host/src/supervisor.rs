@@ -1,7 +1,7 @@
 //! Host-native supervisors.
 //!
-//! A supervisor is a host task, not Wasm: trusted, cheap, and immune to guest
-//! bugs. It starts its children in order, watches each one, and restarts them
+//! A supervisor is a host task, not an app process: trusted, cheap, and
+//! immune to app bugs. It starts its children in order, watches each one, and restarts them
 //! by OTP's rules:
 //!
 //! - Strategies: `one_for_one` restarts the child that exited; `one_for_all`

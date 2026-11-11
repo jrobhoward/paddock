@@ -46,7 +46,7 @@ Non-goals:
 | 2b: cluster | Failover on node loss, no promotion with the network cut, at most one singleton with network and serial cut, three-node partitions | Met 2026-10-16 |
 | 3: application server | The SCADA app's release cycle with zero downtime under faults | Met 2026-10-22 |
 | 5, 5b: native apps, native parity | Every example as a native program, the scada soak natively | Met 2026-11-01 and 2026-11-07 |
-| 5c: native only (Z9) | No WebAssembly in the workspace; soaks an hour each on both machines | Met 2026-11-09, but for CI on the pushed commits (below) |
+| 5c: native only (Z9) | No WebAssembly in the workspace; soaks an hour each on both machines; CI green on the pushed commits | Met 2026-11-09 (CI 2026-11-11) |
 
 Measured against the goals on 2026-11-10:
 
@@ -66,14 +66,11 @@ Measured against the goals on 2026-11-10:
 
 ```mermaid
 flowchart LR
-    z9["Finish Z9 (S)"] --> p6a["6a Privilege separation (L)"]
-    z9 --> p6b["6b FreeBSD (L)"]
-    z9 --> p7["7 Protocols out of the core (L)"]
-    p6a --> p6b
+    p6a["6a Privilege separation (L)"] --> p6b["6b FreeBSD (L)"]
     p6a --> zfs["ZFS volumes (M)"]
     p6a --> p9["9 Platform for apps (M–L)"]
-    p7 --> p9
-    z9 --> p8["8 Disaster recovery (L)"]
+    p7["7 Protocols out of the core (L)"] --> p9
+    p8["8 Disaster recovery (L)"]
     zfs --> p8
 ```
 
@@ -88,11 +85,6 @@ flowchart LR
 
 - **V1 The rule for failover and replication changes.** A change to a transition in `failover/` updates the matching action in `FailoverL2.tla`, and one in `replication/` the matching action in `spikes/s20/PairReplication.tla` (CLAUDE.md). Before it lands, rerun the configurations it can affect: `L2_Crashes_Fixed1` (about 20 minutes) for anything touching restarts, epochs or the witness, and `L2_Links_Fixed_holds1` (about 2.5 hours) for heartbeats, leases or links. Random simulation of the two-fault configurations runs for at least 20 minutes. The vacuity checks, `L2_Vacuity` and `L2_Switchover_Reach`, must still fail (seconds each): a model in which nothing runs on a lease passes every safety property (VERIFICATION.md, bug 5). Record the results in VERIFICATION.md.
 - **V2 The two-fault runs.** `L2_NoSerial` (about 1 hour), `L2_Links_Fixed_loss2` (about 12 hours) and `L2_Crashes_Fixed` (about 18 hours, 250 GB of disk), exhaustive, on an idle machine, each with a fingerprint polynomial (`-fp`) not used before. Rerun after Phase 8 changes failover, and before a release.
-
-## Finishing Z9
-
-- [ ] **Z9 CI** (S). Phase 5c's exit is met but for CI: the Linux jobs (x86-64 and arm64) green on the pushed commits through `scripts/check.sh test`.
-- [ ] **Z9k Comments and strings that still describe components** (S; found finishing Z9h, 2026-11-08). About 100 code comments in `bulkhead-host` and the SDK (Store slots, epoch ticks, "as a component's"), two metrics' help text (`bulkhead_instances_passive`, the wake histogram), `HostError::Engine`'s neighbours' messages ("cannot load component"), `WasiBody`, and two `Cargo.toml` comments that name wasmtime (the root's and `bulkhead`'s). Areas: `bulkhead-host`, `bulkhead-bundle`, `bulkhead-sdk`.
 
 ## Phase 6: a hardened core
 
@@ -264,6 +256,7 @@ Alongside the phases, measuring every new boundary first (S36, S37, S39, S40); o
 - **B6 A node watchdog:** a wedged node restarted by its service manager (`sd_notify` watchdog on Linux; the rc.d equivalent on FreeBSD).
 - **Blue-green** (U2): apps with `registered_names` (move the names at promotion); a version whose HTTP routes change; a weight shared by the two nodes of a pair.
 - **Releases** (U1): a version for a node's own stores without replication, once one of their formats changes; stopping a node whose older build cannot decode the frame that carries a raise of the pair's version.
+- **`max_instances` and `max_processes`** (found finishing Z9k, 2026-11-11): with the pooling allocator gone, node config's `max_instances` only sets `max_processes`' default, so two keys say one thing. Keep `max_processes` and refuse `max_instances` with a message, as other removed keys are. Areas: node config, host config, MANIFEST.md.
 - **syn 3 for `bulkhead-sdk-macros`** (2026-10-25): wait until the proc-macros the workspace builds on syn 2 move to it.
 
 ## Doc debt

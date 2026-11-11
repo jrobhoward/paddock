@@ -235,8 +235,7 @@ fn bound_instances____lease_moves_with_no_gate____guest_code_runs_only_under_the
     assert_eq!(before.as_deref(), Ok("one"));
     assert_eq!(standby_before, Err(CallError::Timeout));
     // A native instance may run threads between callbacks, so the lease's
-    // end ends it, idle or not (a component's only stopped running guest
-    // code, its calls timing out).
+    // end ends it, idle or not.
     assert_eq!(
         cut_off,
         Err(CallError::Exited(ExitReason::Crashed("lease_ended".into())))

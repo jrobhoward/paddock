@@ -13,12 +13,12 @@ pub enum UpgradeError {
     /// The instance had already exited.
     #[error("instance is not running")]
     NotRunning,
-    /// `save-snapshot` failed. The old version cannot continue after a trap,
-    /// so the instance exited with this reason and its supervisor restarts it.
+    /// `save-snapshot` failed. The old version's state is then unknown, so
+    /// the instance exited with this reason and its supervisor restarts it.
     #[error("save-snapshot failed: {0}")]
     SaveFailed(ExitReason),
-    /// The new version could not be instantiated; the old version kept
-    /// running.
+    /// The new version's process could not be started; the old version
+    /// kept running.
     #[error("new version failed to start: {0}")]
     Instantiate(String),
     /// The new version's `load-snapshot` refused the snapshot or failed; the
@@ -56,8 +56,8 @@ fn keys(caps: &[Capability]) -> String {
 ///
 /// # Errors
 ///
-/// [`UpgradeError::Invalid`] for a different app name, the same version, a
-/// different WIT world, or an old version outside the new manifest's
+/// [`UpgradeError::Invalid`] for a different app name, the same version,
+/// or an old version outside the new manifest's
 /// `upgrade.from_versions`; [`UpgradeError::NeedsApproval`] for new
 /// capabilities without `approve`.
 pub fn validate_upgrade(

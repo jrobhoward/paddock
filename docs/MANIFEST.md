@@ -127,7 +127,7 @@ The app's root supervisor, with OTP semantics.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `memory_max` | `"64MiB"` | Most linear memory per instance. Growing past it crashes the instance with `memory_limit`. |
+| `memory_max` | `"64MiB"` | Most memory per instance's process: its cgroup's `memory.max`, past which the instance crashes with `memory_limit`, or `RLIMIT_DATA` without a cgroup, past which an allocation in the app fails. |
 | `callback_deadline_ms` | `5000` | Most wall time per callback, less time answering the app's requests. Past it, the process is killed with reason `timeout`. |
 | `mailbox_max` | `10000` | Most queued messages per instance. When full (or past `mailbox_max_bytes`), casts are dropped (and counted under `DROPPED` in `bulkhead ps`), and calls fail at once with `overloaded`. |
 | `mailbox_max_bytes` | `"64MiB"` | Most bytes of message bodies queued per instance: casts, calls and timer messages (replies go straight to the caller). A message that would go past it is treated as at a full mailbox. Must be at least `message_max_bytes`. An upgrade that raises it applies at once; a lower value takes effect at the next start, as `mailbox_max` does. |

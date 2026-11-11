@@ -18,7 +18,8 @@ pub struct InstanceSpec {
     pub app: String,
     /// App version, for log records.
     pub version: String,
-    /// Most linear memory, in bytes.
+    /// Most memory the instance's process may use, in bytes (the
+    /// manifest's `limits.memory_max`).
     pub memory_max: u64,
     /// Guest execution time allowed per `handle-*` callback.
     pub callback_deadline: Duration,
@@ -56,13 +57,14 @@ pub struct InstanceSpec {
     /// `init` and on every change ([`crate::Runtime::set_failover_role`]):
     /// a `hot-standby` app.
     pub announce_role: bool,
-    /// Run guest code only while this node's failover lease is current: a
+    /// Run app code only while this node's failover lease is current: a
     /// `singleton` app. The instance checks the lease against the
-    /// monotonic clock before `init`, each callback and `terminate`, and
-    /// at every epoch tick. Out of lease, it waits before a callback (the
-    /// message stays queued) until the lease is renewed or the node's gate
-    /// kills it, and a callback running when the lease ends is ended with
-    /// `crashed: lease_ended` at the next tick. No effect on a node without
+    /// monotonic clock before `init`, each callback and `terminate`. Out of
+    /// lease, it waits before a callback (the message stays queued) until
+    /// the lease is renewed or the node's gate kills it. The lease ending
+    /// kills the process, in a callback or between callbacks
+    /// (`crashed: lease_ended`), and the runner's watchdog kills it at the
+    /// lease's end should the node not. No effect on a node without
     /// failover.
     pub bound_to_lease: bool,
     /// Check the instance's health on a timer (the manifest's `health`
@@ -72,9 +74,9 @@ pub struct InstanceSpec {
     /// manifest's `messaging_acl`; [`crate::acl`]).
     pub acl: Acl,
     /// Passivate the instance after this long with nothing to do (spike
-    /// S11): run `save-snapshot`, drop the Store and keep the pid, mailbox,
+    /// S11): run `save-snapshot`, end its process and keep the pid, mailbox,
     /// links, monitors, names and timers; the next message, signal or
-    /// operation builds a new Store and runs `load-snapshot` with the
+    /// operation starts a new process and runs `load-snapshot` with the
     /// instance's own version. Only for an app whose `load-snapshot` reads
     /// its own snapshots. An instance waiting to answer a deferred call or
     /// holding a host resource (a bucket, a watch) stays live. `None`

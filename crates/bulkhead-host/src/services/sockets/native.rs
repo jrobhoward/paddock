@@ -1,5 +1,5 @@
-//! Sockets for native-process apps (ROADMAP Z8e), on the policy and count
-//! a component's sockets get.
+//! Sockets for native-process apps (ROADMAP Z8e), on the manifest's
+//! `bind` and `connect` rules and the app's `max_sockets`.
 //!
 //! The node makes every socket. A TCP stream is connected (or accepted)
 //! here and passed to the app on its descriptor socket; the node keeps a
@@ -18,8 +18,8 @@
 //! `max_sockets`.
 //!
 //! A readiness notice is a task on a copy of the socket's descriptor that
-//! delivers the host event `io-ready` (`{"tag": n}`, as a component's
-//! `bulkhead:io` sends) once the socket is readable; it ends with the
+//! delivers the host event `io-ready` (`{"tag": n}`) once the socket is
+//! readable; it ends with the
 //! socket or the instance.
 
 use std::collections::BTreeMap;

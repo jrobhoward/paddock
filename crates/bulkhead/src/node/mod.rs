@@ -2,7 +2,7 @@
 //! API on a Unix socket, and the audit log.
 //!
 //! A node verifies each bundle against its trusted keys, checks the
-//! component's imports against the manifest and the operator policy, keeps
+//! manifest's capabilities against the operator policy, keeps
 //! the bundle on disk, and runs the app under a root supervisor. On restart
 //! it re-verifies and restarts every app that was running.
 //!

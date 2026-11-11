@@ -221,7 +221,7 @@ async fn connect_host____no_connect_rules____name_lookup_denied() {
 
     let reply = ask(&h, "connect-host localhost 9").await;
 
-    // wasmtime-wasi reports a lookup it may not make as a resolver failure.
+    // A lookup the app may not make is reported as a resolver failure.
     assert!(reply.contains("permanent-resolver-failure"), "{reply}");
     h.kill();
 }

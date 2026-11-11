@@ -1,6 +1,6 @@
 //! `bulkhead:sql` for native-process apps (ROADMAP Z8d): the fixture
-//! executable's SQL commands through `bulkhead-runner`, on the terms a
-//! component gets (`tests/sql.rs`). Access checks run anywhere; the rest
+//! executable's SQL commands through `bulkhead-runner` (the service's own
+//! tests are `tests/sql.rs`). Access checks run anywhere; the rest
 //! run against a scratch Postgres and are skipped, saying so, when none is
 //! installed.
 

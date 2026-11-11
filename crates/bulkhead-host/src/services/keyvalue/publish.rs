@@ -3,7 +3,7 @@
 //! read into a snapshot (`bulkhead_native::snapshot`) in a sealed memfd.
 //! Native instances that read the bucket get each one through their
 //! descriptor socket (`instance::native`) and read the bucket there
-//! without asking the node; components keep their host calls.
+//! without asking the node.
 //!
 //! One thread per store does it, started with the first published bucket
 //! an instance reads, and ending with the store: a thread, not a task, so

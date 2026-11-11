@@ -39,8 +39,7 @@
 //!   filling a bucket with 100,000 keys.
 //! - A published bucket of 100,000 keys (ROADMAP T4): `get`, a missing key
 //!   and `get_many` from one instance, and reads per second from 1 to 16
-//!   at once; a native program reads its mapped snapshot, a component
-//!   calls the host as for any shared bucket.
+//!   at once, each read from the instance's mapped snapshot.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 

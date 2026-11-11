@@ -85,6 +85,14 @@ All notable changes are recorded here. The format follows
   listener `CRASHED` column, and `stubbed` in `status` are gone with
   what they counted. `Extension::link`, `ExtensionCtx` and the wasmtime
   re-export are gone: an extension is `Extension::call`.
+- What components left behind in code and messages (ROADMAP Z9k):
+  `HostError::Load`, which nothing returned. `HostError::Engine`'s message
+  reads `cannot start the runtime`, and a policy granting an unknown key
+  names the `bulkhead` namespace alone as reserved. The help text of
+  `bulkhead_instances_passive`, `bulkhead_wake_seconds` and
+  `bulkhead_memory_bytes` describes processes, not Stores and linear
+  memory; `limits.memory_max` is documented as the cgroup's `memory.max`
+  or `RLIMIT_DATA`.
 
 ### Security
 

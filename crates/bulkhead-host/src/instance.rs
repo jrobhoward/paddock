@@ -1,23 +1,21 @@
-//! One instance: a Store, its limits, a bounded mailbox and the task that
-//! runs the callback loop.
+//! One instance: its app's process, its limits, a bounded mailbox and the
+//! task that runs the callback loop.
 //!
-//! The task instantiates the component and runs `init`, then handles one
+//! The task starts the app's process and runs `init`, then handles one
 //! message at a time until it is stopped or a callback fails, then runs
 //! `terminate` if the stop is graceful. Every failure becomes an
-//! [`ExitReason`]; nothing in a guest can panic the host.
+//! [`ExitReason`]; nothing in an app can panic the host.
 //!
-//! Killing an instance drops the in-flight call future and discards the
-//! Store. A Store whose call was dropped is poisoned, so it is never reused
-//! (spike S1).
+//! Killing an instance kills its process; a new incarnation starts a new
+//! one.
 //!
 //! An instance with [`InstanceSpec::passivate_after`] is passivated after
-//! that long with nothing to do (spike S11): `save-snapshot`, then the Store
-//! is dropped and its data kept (timers, waiting callers, services; the pid,
-//! mailbox, links, monitors and names live outside it). It holds no Store
-//! slot then. The next message, signal or operation takes a slot, builds a
-//! new Store on the kept data and runs `load-snapshot` with the instance's
-//! own version; a `snapshot` operation is answered from the kept bytes
-//! without waking it.
+//! that long with nothing to do (spike S11): `save-snapshot`, then its
+//! process ends and its host-side state is kept (timers, waiting callers,
+//! services; the pid, mailbox, links, monitors and names live outside it).
+//! The next message, signal or operation starts a new process and runs
+//! `load-snapshot` with the instance's own version; a `snapshot` operation
+//! is answered from the kept bytes without waking it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -72,8 +70,8 @@ enum Op {
     },
     /// Send the services' current host events again.
     Announce,
-    /// Take a connection a listener accepted (a native app's
-    /// `handle_connection`); a component drops it, closing it.
+    /// Take a connection a listener accepted, for the app's
+    /// `handle_connection`.
     Connection(crate::listener::Accepted),
 }
 
@@ -84,7 +82,7 @@ pub enum SnapshotError {
     /// The instance had exited.
     #[error("instance is not running")]
     NotRunning,
-    /// `save-snapshot` failed. The Store cannot continue after a trap, so the
+    /// `save-snapshot` failed. The app's state is then unknown, so the
     /// instance exited with this reason and its supervisor restarts it.
     #[error("save-snapshot failed: {0}")]
     Failed(ExitReason),
@@ -142,9 +140,6 @@ struct Shared {
     /// Whether the callback running now sent something that woke another
     /// task (a cast, a reply, an exit signal, a publish).
     woke: AtomicBool,
-    /// Bytes of linear memory, as the Store's limiter last allowed it to
-    /// grow.
-    memory: Arc<AtomicU64>,
     /// Where a native instance's memory is read, while it has a process.
     native_memory: std::sync::Mutex<Option<crate::native::memory::MemorySource>>,
     /// Why the previous incarnation exited, when a supervisor restarted it.
@@ -248,11 +243,10 @@ impl InstanceHandle {
         self.shared.dropped.load(Ordering::Relaxed)
     }
 
-    /// Bytes of memory the instance holds. A component: the linear memory
-    /// it has grown to (its largest as last grown). A native app: its
-    /// cgroup's `memory.current`, or else the resident set of its process
-    /// and that process's direct children, read now. 0 before it starts and
-    /// while it is passivated.
+    /// Bytes of memory the instance holds: its cgroup's `memory.current`,
+    /// or else the resident set of its process and that process's direct
+    /// children, read now. 0 before it starts, while it is passivated, and
+    /// for an in-process test app.
     #[must_use]
     pub fn memory_bytes(&self) -> u64 {
         let source = self
@@ -261,10 +255,7 @@ impl InstanceHandle {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        source.map_or_else(
-            || self.shared.memory.load(Ordering::Relaxed),
-            |source| source.read(),
-        )
+        source.map_or(0, |source| source.read())
     }
 
     /// How many times this instance has been restarted: its incarnation
@@ -508,7 +499,7 @@ impl InstanceHandle {
         });
     }
 
-    /// Swap this instance to another component, keeping its pid, mailbox,
+    /// Swap this instance to another version, keeping its pid, mailbox,
     /// links, monitors, registered names, timers and callers awaiting
     /// deferred replies. Between callbacks, the old version's
     /// `save-snapshot` output is passed to the new version's
@@ -544,7 +535,7 @@ impl InstanceHandle {
 
     /// The instance's state as its `save-snapshot` writes it, taken between
     /// callbacks (OTP's `sys:get_state`). `save-snapshot` must not change
-    /// state, so the instance carries on. If it traps, the instance exits and
+    /// state, so the instance carries on. If it fails, the instance exits and
     /// its supervisor restarts it, as after a failed upgrade.
     ///
     /// # Errors
@@ -698,8 +689,7 @@ pub(crate) struct InstanceTask {
     held: Option<Message>,
     held_op: Option<Box<Op>>,
     /// The code the instance runs, once started: what a wake from
-    /// passivation instantiates. A successful upgrade replaces it, so the
-    /// old version's code and memory image go with its Store.
+    /// passivation starts. A successful upgrade replaces it.
     app: Option<LoadedApp>,
     /// The next call reference, unique for the instance's whole life: a
     /// guest woken from a snapshot may still hold the reference of a call
@@ -748,7 +738,6 @@ pub(crate) fn prepare(
             signals: signals_tx,
             trap_exits: AtomicBool::new(false),
             woke: AtomicBool::new(false),
-            memory: Arc::new(AtomicU64::new(0)),
             native_memory: std::sync::Mutex::new(None),
             last_exit: std::sync::Mutex::new(None),
         }),

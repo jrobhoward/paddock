@@ -542,14 +542,14 @@ pub enum Request {
     Http(HttpRequest),
     /// A call to a function of an extension the node runs (ROADMAP Z8h):
     /// [`Answer::Extension`]. The extension checks the app's grant and
-    /// scope, as for a component's import of its package.
+    /// scope.
     Extension {
         /// The extension's package (`example:greeting`).
         package: String,
-        /// The function, by the extension's name for it: by convention the
-        /// WIT interface and function, `greet#hello`.
+        /// The function, by the extension's name for it: by convention an
+        /// interface and a function, `greet#hello`.
         function: String,
-        /// The arguments in CBOR: by convention an array of the WIT
+        /// The arguments in CBOR: by convention an array of the function's
         /// parameters, in order.
         args: Bytes,
     },
@@ -567,8 +567,8 @@ pub enum ExtensionError {
     BadArguments(String),
 }
 
-/// An HTTP request a native app asks the node to send (ROADMAP Z8f), on a
-/// component's terms: the `allow` list, the methods, the forbidden
+/// An HTTP request a native app asks the node to send (ROADMAP Z8f), on
+/// the manifest's terms: the `allow` list, the methods, the forbidden
 /// headers, the app's requests in flight, no redirects.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpRequest {

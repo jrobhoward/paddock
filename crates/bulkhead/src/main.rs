@@ -325,8 +325,8 @@ enum Command {
         #[command(subcommand)]
         action: Option<ReleaseCommand>,
     },
-    /// Show an instance's state (through its save-snapshot; an instance that
-    /// traps there restarts).
+    /// Show an instance's state (through its save-snapshot; an instance
+    /// whose save-snapshot fails restarts).
     State {
         /// `node.id.incarnation`.
         pid: String,

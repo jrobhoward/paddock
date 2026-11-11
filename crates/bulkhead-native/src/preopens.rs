@@ -1,11 +1,10 @@
 //! Where a native app finds its preopened directories (ROADMAP Z8b).
 //!
-//! A component sees each directory its manifest preopens at the guest
-//! path (`/data`, `/priv`). A native app sees the host's filesystem,
-//! narrowed by Landlock to those directories, so the node tells it where
-//! each one is: [`ENV`] holds every preopen's guest path and host
-//! directory, and [`path`] maps a guest path (`/data/orders.db`) to the
-//! file on the host. The same source then builds both ways, through
+//! A manifest preopens each directory at a guest path (`/data`, `/priv`).
+//! A native app sees the host's filesystem, narrowed by Landlock to those
+//! directories, so the node tells it where each one is: [`ENV`] holds
+//! every preopen's guest path and host directory, and [`path`] maps a
+//! guest path (`/data/orders.db`) to the file on the host, through
 //! `bulkhead_sdk::files::path`.
 //!
 //! The value is one line per preopen, the guest path and the host
@@ -121,8 +120,7 @@ pub fn from_env() -> &'static [Preopen] {
 
 /// The host file for `guest` in this process ([`resolve`] over
 /// [`from_env`]), or `guest` itself when no preopen covers it: the
-/// sandbox then refuses it, as WASI refuses a path outside every
-/// preopen.
+/// sandbox then refuses it.
 #[must_use]
 pub fn path(guest: &str) -> PathBuf {
     resolve(from_env(), guest).unwrap_or_else(|| PathBuf::from(guest))

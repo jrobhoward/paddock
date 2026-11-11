@@ -356,7 +356,6 @@ pub(crate) struct AppStats {
     /// Passivations, wakes and their time (spike S11).
     passivations: AtomicU64,
     wake_time: Histogram,
-    /// Starts, wakes and upgrades that found no Store slot in time.
     /// Outgoing HTTP requests by outcome ([`EGRESS_OUTCOMES`]).
     egress: [AtomicU64; 4],
     /// Sockets the app's instances hold open (`bulkhead:sockets`).
@@ -410,7 +409,7 @@ impl AppStats {
         self.passivations.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// A passivated instance woke, in `took` (a slot, a Store, and
+    /// A passivated instance woke, in `took` (a new process and
     /// `load-snapshot`).
     pub(crate) fn woke(&self, took: Duration) {
         self.wake_time.record(took.as_secs_f64());
@@ -589,7 +588,7 @@ impl Metrics {
             &mut out,
             "bulkhead_instances_passive",
             "gauge",
-            "Live instances passivated: no Store, state in a snapshot.",
+            "Live instances passivated: no process, state in a snapshot.",
         );
         for (app, n) in &passive {
             let _ = writeln!(
@@ -616,7 +615,7 @@ impl Metrics {
             &mut out,
             "bulkhead_wake_seconds",
             "histogram",
-            "Time to wake a passivated instance: a Store slot, a Store and load-snapshot.",
+            "Time to wake a passivated instance: a new process and load-snapshot.",
         );
         for (app, (_, s)) in &apps {
             s.wake_time.write(
@@ -670,7 +669,7 @@ fn render_live(out: &mut String, live: &BTreeMap<&str, Live>) {
         ("bulkhead_instances", "Live instances.", |l| l.instances),
         (
             "bulkhead_memory_bytes",
-            "Memory of live instances: linear memory, or a native process's.",
+            "Memory of live instances' processes.",
             |l| l.memory,
         ),
         (

@@ -92,8 +92,7 @@ async fn read(name: &str, source: &SecretSource) -> std::result::Result<Vec<u8>,
 
 impl Instance {
     /// The secret `name`, if the manifest lists it and the operator granted
-    /// it: what a component's `bulkhead:secrets` import and a native app's
-    /// request both read (ROADMAP Z9b).
+    /// it: what an app's request reads (ROADMAP Z9b).
     pub(crate) async fn get_secret(&self, name: &str) -> std::result::Result<Vec<u8>, SecretError> {
         if !self.granted || !self.names.iter().any(|n| n == name) {
             return Err(SecretError::AccessDenied);

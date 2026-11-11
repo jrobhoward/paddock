@@ -63,7 +63,7 @@ async fn ask(instance: &InstanceHandle, function: &str, args: &str) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_app____client_and_server_functions____as_a_components_imports() {
+async fn native_app____client_and_server_functions____answered() {
     let (runner, fixture) = native_fixtures();
     let modbus = Modbus::default();
     let mut native = NativeConfig::default();
