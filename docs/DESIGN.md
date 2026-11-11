@@ -26,6 +26,7 @@ The model is coarse-grained: tens to a few thousand long-lived instances per nod
 - Millions of lightweight processes per node.
 - Running unmodified Erlang or BEAM bytecode.
 - Shared memory between apps, or threads shared across app boundaries.
+- Supervision trees beyond the node's own supervision of the instances it starts: apps start no apps (2026-11-10).
 - Strong consistency or exactly-once delivery by default. Delivery is at most once, ordered per sender/receiver pair, as in Erlang. Durable delivery, when it comes, is an opt-in capability (a persisted queue, or keyvalue plus a watch), never a change to `process`.
 - Distributed transactions (JTA-style).
 
@@ -228,9 +229,9 @@ This is stronger than BEAM in one way: BEAM cannot stop a NIF stuck in a loop, w
 - Restart types per child: `permanent`, `transient`, `temporary`.
 - Intensity and period, for example 5 restarts in 10 s. Past it, the supervisor gives up and escalates to its parent. At the top, the app is marked `failed`, with the reason in `bulkhead status`.
 - Restart backoff with jitter is an addition beyond OTP, to avoid hot crash loops against a failing dependency.
-- Each app gets a root supervisor. Dynamic children started by an app are designed but not built (ROADMAP E8).
+- Each app gets a root supervisor, and supervision is flat: the node supervises the instances it starts, and apps do not start, stop or supervise other apps (dynamic children were dropped on 2026-11-10). An app uses threads for concurrency; it may fork inside its own fence, but the SDK offers no API for it.
 - Unlike an OTP permanent application, a Bulkhead app whose root supervisor gives up does not stop the node: the app is marked `failed`, its dependents are not started, and other apps keep running. A node-level watchdog (OTP's `heart`) is a separate concern.
-- The root supervisor runs `instances.count` instances of the app, then any `supervision.children` (instances of other deployed apps, with optional restart, shutdown and start-argument overrides). Under `simple_one_for_one`, `supervision.children[0]` is the pool template and `instances.count` copies start from it.
+- The root supervisor runs `instances.count` instances of the app, then any `supervision.children` (instances of other deployed apps, with optional restart, shutdown and start-argument overrides; to be removed by ROADMAP AP3, as supervision is flat). Under `simple_one_for_one`, `supervision.children[0]` is the pool template and `instances.count` copies start from it.
 - A restarted instance keeps its id with the next incarnation. Siblings stopped by a group restart stop gracefully in reverse start order and start again in start order.
 - Escalation exits with `crashed`, naming the supervisor, the intensity and the last child exit, so `bulkhead status` shows why an app failed.
 - Apps start in dependency order and stop in reverse. An app counts as started once every instance is `Active`. An app that fails to start is marked `failed`, and apps depending on it are not started; unrelated apps still start.
@@ -332,15 +333,14 @@ An upgrade moves an instance to a new process between messages, carrying state t
 
 **An instance handles one callback at a time.** As in Erlang, parallelism comes from many instances: an app runs as a pool (`instances.count`), and `instances.routing = "hash:<key>"` keeps each key's messages on one instance, in order. Sharding by device, account or session gives per-key state and ordering with parallelism across keys.
 
-**Terminate I/O and protocols in the host; decide in apps.** High-rate work with little logic stays in the node and multi-core, and logic that benefits from isolation, supervision and hot upgrade runs in apps. Host-terminated HTTP calling a pooled instance kept about 75% of native throughput (spike S15, measured on components).
+**Protocols outside the core; decisions in apps.** Decided on 2026-11-10, reversing the earlier rule (terminate I/O and protocols in the host), which came from components' I/O costs: an instance per HTTP request kept about 15% of native throughput, host-terminated HTTP about 75% (spike S15). A native process does not pay them, and the node is the process whose compromise costs most: it holds every secret, the cluster key and all bucket data. So a protocol that parses input from outside the node runs in a driver app, a process of its own with its own user and sandbox profile, supervised as any instance is (ROADMAP Phase 7). The node keeps what every app relies on. Until Phase 7 lands, HTTP ingress, SQL, HTTP egress and Modbus still run in the node.
 
-| Host | Apps |
-| --- | --- |
-| Accepting connections, TLS, framing, high-rate parsing | Per-key state machines, rules, alarms, control decisions |
-| Protocol stacks (Modbus, DNP3, ICCP), serial ports, as extensions | Calculations, routing between subsystems |
-| Bulk paths that need no app logic (device data to a historian) | Anything that must be upgraded live or isolated from other apps |
+| Node (the core) | Driver apps | Apps |
+| --- | --- | --- |
+| Mailboxes and routing, supervision, keyvalue and replication, logging, failover and the cluster transport, deploys and policy, the admin API | HTTP ingress and TLS, SQL clients, HTTP egress, protocol stacks (Modbus, DNP3, ICCP) | Per-key state machines, rules, alarms, control decisions, calculations, routing between subsystems |
+| Listening sockets and the address rules for outgoing connections | The parsing of bytes from outside, with only the descriptors and secrets the job needs | Anything that must be upgraded live or isolated from other apps |
 
-**Getting data in and out.** The host owns listeners: several accept tasks per listener, the Ranch pattern, kept across instance restarts and upgrades. A connection goes to an instance of a pool, or becomes framed messages to a hash-routed pool. Devices such as serial lines are never opened by apps: a node binds a named port to a device path, apps declare the name, and an extension owns the device (the same rule as volumes and datasources).
+**Getting data in and out.** The host owns listeners: several accept tasks per listener, the Ranch pattern, kept across instance restarts and upgrades. A connection goes to an instance of a pool, or becomes framed messages to a hash-routed pool. Devices such as serial lines are never opened by apps: a node binds a named port to a device path, apps declare the name, and an extension owns the device, a driver app once Phase 7 moves protocol stacks out (the same rule as volumes and datasources).
 
 **Throughput comes from batching and cores, not clock rate.** A message costs about the same whatever it carries, so high-rate data moves in batches (many point updates per cast). Scale up adds cores to tokio's worker pool and instances to pools; past 16 cores this is not yet measured, and two-socket machines may need a runtime per socket or several nodes per machine (ROADMAP G1, tabled until such a machine is available). Until then, designs must not be inherently single-core: no global lock or single task on a message or I/O path that every request crosses, listeners with several accept tasks, and pools rather than single instances for high-rate apps.
 
@@ -433,7 +433,7 @@ The server provides OTP's runtime services and JBoss's managed resources as host
 | --- | --- | --- | --- | --- |
 | Deploy, start, stop, upgrade, rollback | Admin API (not app-facing) | `application`, `release_handler` | Deployment scanner, management CLI | 1 |
 | Messaging, timers | `bulkhead:runtime/process` | `gen_server`, `send_after` | JMS (loosely) | 1 |
-| Supervision | Host-native; `bulkhead:runtime/supervisor` for dynamic children | `supervisor` | — | 1 |
+| Supervision | Host-native and flat: the node supervises the instances it starts | `supervisor` | — | 1 |
 | Failure detection | Host-native | Links, `heart` | Health checks | 1 |
 | Registry | `process` (local); groups below; global names parked | `register`, `pg`, `global` | JNDI | 1 |
 | Process groups and publish | `bulkhead:groups`: join, leave, members, and `publish`, which the host fans out to every member; members leave when they exit. Each node owns its members and sends a snapshot per session and every join and leave to the others; a publish sends one copy per node with members, which fans it out under the messaging ACLs | `pg`, `gen_event` | JMS topics (loosely) | 2a (local), 2b (cluster) |
