@@ -274,6 +274,47 @@ async fn executable____idle_with_pings____stays_up() {
     assert_eq!(instance.exit_reason(), None);
 }
 
+/// The node reads the rings through a mapping of the memfd the app holds:
+/// were the app able to shrink it, the node's next read would fault.
+#[tokio::test]
+async fn executable____shrinks_its_channel____refused_and_the_node_runs_on() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+
+    let shrunk = ask(&instance, "shrink-channel").await;
+    let after = ask(&instance, "echo still here").await;
+
+    assert!(shrunk.contains("Operation not permitted"), "{shrunk}");
+    assert_eq!(after, "still here");
+}
+
+#[tokio::test]
+async fn executable____call_outside_the_allow_list____crashed_naming_the_call() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+
+    let answer = instance.call(common::text("memfd"), LONG).await;
+    let exit = instance.wait().await;
+
+    assert!(answer.is_err(), "{answer:?}");
+    assert_eq!(exit, ExitReason::Crashed("syscall memfd_create".into()));
+}
+
+#[tokio::test]
+async fn executable____user_namespace____refused_and_the_app_runs_on() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+
+    let namespace = ask(&instance, "user-namespace").await;
+    let after = ask(&instance, "echo still here").await;
+
+    assert!(namespace.contains("Operation not permitted"), "{namespace}");
+    assert_eq!(after, "still here");
+}
+
 #[tokio::test]
 async fn executable____sandboxed____files_sockets_and_node_signals_refused() {
     let rt = runtime(|_| {});

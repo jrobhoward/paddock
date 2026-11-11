@@ -23,7 +23,7 @@ Paddock as forked already had a `native-process` kind: rustbridge plugins and ex
 | An instance | A wasmtime Store inside the node's process | A process of its own, started through `bulkhead-runner` and kept for the instance's life |
 | Languages | Anything that builds a WASI 0.2 component: Rust on `bulkhead-sdk`, Go on TinyGo, and Python and JavaScript demos | Rust on `bulkhead-sdk` or `bulkhead-native`, and rustbridge plugins; Rust only: other languages are not planned |
 | Where it runs | Any node: Linux or macOS; one bundle runs everywhere | Linux only, x86-64 and aarch64; a bundle carries a program per platform |
-| Fence | WebAssembly's sandbox: linear memory with a limit, and only the imports its grant links | Landlock (files), seccomp (no new sockets, no signals or ptrace to others), not dumpable; memory and process limits from a cgroup or `RLIMIT_DATA`; the rest of the kernel's interface is reachable |
+| Fence | WebAssembly's sandbox: linear memory with a limit, and only the imports its grant links | Landlock (files), seccomp (an allow-list of system calls; no new sockets, no signals or ptrace to others), not dumpable; memory and process limits from a cgroup or `RLIMIT_DATA` |
 | Runaway code | The epoch interrupts a callback past its deadline; nothing runs between callbacks | A callback past its wall-clock deadline is killed; threads may run between callbacks, with no CPU quota |
 | Its code's speed | 1.4 to 2.6 times native time on ordinary app code, more for code using SHA or AES instructions | Native |
 | Starting one | About 77 µs, and 56 KiB when idle | A few milliseconds, and 0.25 to 0.5 MiB (1.4 to 2.4 MiB on the Pi) |

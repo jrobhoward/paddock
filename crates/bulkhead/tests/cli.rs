@@ -304,3 +304,58 @@ async fn shell____lines_on_stdin____each_runs_and_errors_do_not_end_the_session(
     let _ = stop.send(());
     server.await.unwrap();
 }
+
+/// Start `bulkhead node` on a config with `extra`, and answer what
+/// another process of the same user finds: whether it may read the node's
+/// environment, and the node's `NoNewPrivs` line.
+#[cfg(target_os = "linux")]
+async fn node_process_fence(extra: &str) -> (bool, String) {
+    let dir = TempDir::new().unwrap();
+    let config = dir.path().join("node.toml");
+    std::fs::write(
+        &config,
+        format!("data_dir = {:?}\n{extra}", dir.path().join("data")),
+    )
+    .unwrap();
+    let log_path = dir.path().join("node.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_bulkhead"))
+        .args(["node", "--config"])
+        .arg(&config)
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    common::wait_for_socket(&mut child, &dir.path().join("data/admin.sock"), &log_path).await;
+    let proc = PathBuf::from(format!("/proc/{}", child.id().unwrap()));
+
+    let environ = std::fs::read(proc.join("environ")).is_ok();
+    let status = std::fs::read_to_string(proc.join("status")).unwrap();
+    let no_new_privs = status
+        .lines()
+        .find(|l| l.starts_with("NoNewPrivs:"))
+        .unwrap_or_default()
+        .to_string();
+
+    child.kill().await.unwrap();
+    (environ, no_new_privs)
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node____started____not_dumpable_and_no_new_privs() {
+    let (environ_readable, no_new_privs) = node_process_fence("").await;
+
+    assert!(!environ_readable, "the node's environment was readable");
+    assert_eq!(no_new_privs, "NoNewPrivs:\t1");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node____debuggable____dumpable_and_no_new_privs() {
+    let (environ_readable, no_new_privs) = node_process_fence("debuggable = true\n").await;
+
+    assert!(environ_readable, "the node's environment was not readable");
+    assert_eq!(no_new_privs, "NoNewPrivs:\t1");
+}

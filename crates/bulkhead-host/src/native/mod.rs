@@ -14,6 +14,8 @@ pub(crate) mod cgroup;
 pub(crate) mod convert;
 pub(crate) mod memory;
 pub(crate) mod port;
+#[cfg(target_os = "linux")]
+pub(crate) mod syscalls;
 
 use std::path::PathBuf;
 

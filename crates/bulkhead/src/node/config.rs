@@ -8,6 +8,7 @@
 //! policy = "/etc/bulkhead/policy.toml"
 //! max_instances = 1000           # default of max_processes
 //! max_processes = 20000          # all instances
+//! debuggable = false             # true: gdb may attach, crashes dump core
 //!
 //! [volumes]
 //! orders-data = "/srv/bulkhead/volumes/orders-data"
@@ -138,6 +139,11 @@ pub struct NodeConfig {
     /// How the node writes its log to stderr.
     #[serde(default)]
     pub log_format: LogFormat,
+    /// Leave the node's process dumpable, so a debugger of the node's
+    /// user can attach and a crash leaves a core. Off by default: the
+    /// process holds every secret and the cluster key (Linux).
+    #[serde(default)]
+    pub debuggable: bool,
     /// Host directories backing volume names in manifests.
     #[serde(default)]
     pub volumes: BTreeMap<String, PathBuf>,

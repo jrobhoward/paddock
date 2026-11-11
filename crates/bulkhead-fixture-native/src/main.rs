@@ -22,7 +22,8 @@
 //! | `fd ID` | what the descriptor the node passed as `ID` reads (up to 1 KiB), or `err:` |
 //! | `alloc MIB` | `ok` once allocated and touched |
 //! | `hold MIB` | `ok` once allocated, touched and kept |
-//! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID`, `io-uring` (set up a ring) | `ok` or `err:` and the OS error |
+//! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID`, `io-uring` (set up a ring), `shrink-channel` (truncate the channel's memfd to nothing), `user-namespace` (fork into a new user namespace) | `ok` or `err:` and the OS error |
+//! | `memfd` | nothing: making a memfd is outside the seccomp allow-list, and the instance ends |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
 //! | `udp-bind ADDR`; `udp-send S ADDR TEXT`; `udp-recv S`; `net-watch S TAG` | a UDP socket the node holds (its number); a datagram sent; one received as `FROM TEXT`, or `none`; an `io-ready` notice tagged `TAG` (recorded as `event io-ready {"tag":TAG}`) |
 //! | `tcp-connect ADDR`; `tcp-write S TEXT`; `tcp-close S`; `tcp-close-keep S` | a stream passed by the node and kept (its number); bytes written on it; dropped and closed at the node; closed at the node but kept |

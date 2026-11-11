@@ -316,6 +316,7 @@ policy = "/etc/bulkhead/policy.toml"    # without one, only the always-available
 max_instances = 1000                   # default of max_processes
 max_processes = 20000                  # all instances; default max_instances
 log_format = "text"                    # the node's own log on stderr; or "json", one object per line
+debuggable = false                     # true leaves the node dumpable: a debugger of its user may attach, a crash dumps core (Linux)
 
 [volumes]
 orders-data = "/srv/bulkhead/orders"    # backs manifest preopens with volume = "orders-data"; give it a filesystem quota

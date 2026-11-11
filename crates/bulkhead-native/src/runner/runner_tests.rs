@@ -98,6 +98,57 @@ fn rules____signals_and_tracing____listed() {
 }
 
 #[test]
+fn rules____arguments_decide____one_rule_each_and_one_per_namespace_flag() {
+    let found = super::seccomp::rules(&[1234]).unwrap();
+
+    assert_eq!(found[&libc::SYS_clone].len(), 8);
+    assert_eq!(found[&libc::SYS_socketpair].len(), 1);
+    assert_eq!(found[&libc::SYS_ioctl].len(), 1);
+}
+
+#[test]
+fn allowed____what_an_app_needs____listed_and_what_leaves_its_fence_not() {
+    let found = super::seccomp::allowed();
+
+    for call in [
+        libc::SYS_read,
+        libc::SYS_futex,
+        libc::SYS_openat,
+        libc::SYS_execve,
+    ] {
+        assert!(found.contains(&call), "{call}");
+    }
+    for call in [
+        libc::SYS_bind,
+        libc::SYS_listen,
+        libc::SYS_unshare,
+        libc::SYS_setns,
+        libc::SYS_mount,
+        libc::SYS_bpf,
+        libc::SYS_keyctl,
+        libc::SYS_perf_event_open,
+        libc::SYS_memfd_create,
+        libc::SYS_seccomp,
+        libc::SYS_setuid,
+    ] {
+        assert!(!found.contains(&call), "{call}");
+    }
+}
+
+#[test]
+fn allowed____every_call_the_rules_refuse____listed() {
+    let allowed = super::seccomp::allowed();
+
+    let rules = super::seccomp::rules(&[1234]).unwrap();
+
+    // Otherwise the allow-list's trap, the stricter answer, would win.
+    for call in rules.keys() {
+        assert!(allowed.contains(call), "{call}");
+    }
+    assert!(allowed.contains(&libc::SYS_clone3));
+}
+
+#[test]
 fn interpreter____this_test_binary____dynamic_loader() {
     let me = std::env::current_exe().unwrap();
 

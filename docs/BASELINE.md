@@ -2829,6 +2829,38 @@ The mailbox alone, timed in a test that was not kept (`try_send` and `recv` on a
 - **Every `Ok` of `cast_timeout` arrived,** in all 36 runs, with credit and without, and every waited cast returned `Ok`. `cast` and `try_cast`, which credit does not change, moved within their run-to-run spread (to the Pi with mailboxes of 64, 72 to 86% of the casts `try_cast` sent arrived in both settings, as I4 found).
 - **Not measured:** credit with many senders sharing one target, where the half-mailbox cap is divided among them.
 
+## 2026-11-11: the seccomp allow-list (PS4)
+
+`native_cost 4` with the runner before the allow-list (commit c9b6f85: 13 refused calls, one filter) and with it (three filters: `clone3`, the refusals, the allow-list), the same app and node, three rounds each in turn. Release builds.
+
+Raspberry Pi 5 (Linux 7.0), idle but for the builds just before:
+
+| | before | with the allow-list |
+| --- | --- | --- |
+| start, to the first reply (p50, ms) | 4.3, 4.3, 4.2 | 5.0, 4.9, 4.9 |
+| call from the host, one at a time (p50, µs) | 18.0, 17.9, 17.7 | 17.9, 18.2, 17.8 |
+| call between instances (p50, µs) | 44.3, 44.7, 43.8 | 44.8, 44.4, 43.7 |
+| request from a callback, its own pid (µs) | 2.9, 3.2, 3.0 | 3.1, 3.0, 3.0 |
+| bucket get from a callback (µs) | 1.3, 1.3, 1.3 | 1.3, 1.3, 1.3 |
+| casts to one instance (per second) | 446,712, 442,250, 448,026 | 445,306, 446,650, 449,142 |
+| 16 calls in flight (calls a second; µs of CPU per call) | 117,936; 30.0, 118,985; 30.3, 116,901; 30.6 | 117,270; 30.0, 117,290; 30.3, 116,463; 29.7 |
+| 64 calls in flight (calls a second; µs of CPU per call) | 119,509; 30.7, 119,202; 30.7, 119,483; 31.1 | 120,941; 30.7, 119,424; 30.7, 121,156; 30.6 |
+
+16-core machine (Linux 6.8), not idle (a VM and a browser running; load about 3), so only the comparison within the run stands:
+
+| | before | with the allow-list |
+| --- | --- | --- |
+| start, to the first reply (p50, ms) | 4.1, 4.2, 4.2 | 5.2, 5.1, 4.7 |
+| request from a callback, its own pid (µs) | 3.8, 4.4, 4.6 | 4.5, 4.4, 3.8 |
+| bucket get from a callback (µs) | 3.1, 3.0, 3.0 | 3.0, 3.0, 3.0 |
+| casts to one instance (per second) | 293,125, 416,458, 268,348 | 260,860, 265,173, 242,204 |
+| 16 calls in flight (calls a second) | 296,884, 267,410, 265,520 | 299,940, 271,721, 278,107 |
+| 64 calls in flight (calls a second) | 337,380, 312,959, 332,894 | 343,903, 369,423, 343,854 |
+
+- **A request, a call and a cast cost the same** on the Pi, to within the rounds' spread.
+- **A start takes 0.6 to 0.7 ms longer** on the Pi (0.5 to 1.0 ms on the 16-core machine): the runner builds and installs three filters where it installed one.
+- **The 16-core machine's casts** read lower with the allow-list (243,000 to 265,000 against 268,000 to 416,000 a second), on a machine that was not idle and with one round of the three far from the others; to be measured again on it idle.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

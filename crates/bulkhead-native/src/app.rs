@@ -1517,6 +1517,55 @@ fn open_channel() -> Result<(), String> {
     Err("native apps run on Linux only".into())
 }
 
+/// The `SIGSYS` handler: the seccomp filter refused a system call
+/// (`bulkhead-runner`'s allow-list). Record its number in the channel,
+/// for the node's exit reason, and die of the signal.
+#[cfg(target_os = "linux")]
+extern "C" fn refused_call(
+    _signal: libc::c_int,
+    info: *mut libc::siginfo_t,
+    _context: *mut libc::c_void,
+) {
+    // For `SIGSYS` the kernel's `siginfo_t` holds, after its three leading
+    // ints padded to a pointer's alignment, the address of the call and
+    // then its number (`_sigsys` in `siginfo.h`); the `libc` crate has no
+    // accessor for it.
+    let offset = (3 * size_of::<libc::c_int>()).next_multiple_of(align_of::<*mut libc::c_void>())
+        + size_of::<*mut libc::c_void>();
+    // SAFETY: the kernel passes a valid `siginfo_t`, which is larger than
+    // `offset` plus an int; the read is unaligned-safe.
+    let number = unsafe {
+        info.cast::<u8>()
+            .add(offset)
+            .cast::<libc::c_int>()
+            .read_unaligned()
+    };
+    if let Some(end) = END.get() {
+        end.refused_call(u32::try_from(number).unwrap_or(u32::MAX - 1));
+    }
+    // SAFETY: both calls are async-signal-safe and take no pointers into
+    // this process; the signal, blocked while this handler runs, is
+    // delivered with its default action (ending the process) on return.
+    unsafe {
+        libc::signal(libc::SIGSYS, libc::SIG_DFL);
+        libc::raise(libc::SIGSYS);
+    }
+}
+
+/// Handle `SIGSYS` with [`refused_call`].
+#[cfg(target_os = "linux")]
+fn watch_refused_calls() {
+    // SAFETY: a zeroed `sigaction` is valid; the handler touches only an
+    // atomic in the channel's mapping and async-signal-safe calls.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = refused_call as *const () as usize;
+        action.sa_flags = libc::SA_SIGINFO;
+        libc::sigemptyset(&raw mut action.sa_mask);
+        libc::sigaction(libc::SIGSYS, &raw const action, std::ptr::null_mut());
+    }
+}
+
 /// Serve `A` to the node over its channel until the node stops it.
 #[must_use]
 pub fn serve<A: App>() -> ExitCode {
@@ -1535,6 +1584,8 @@ pub fn serve<A: App>() -> ExitCode {
         eprintln!("bulkhead-native: channel: {e}");
         return ExitCode::from(2);
     }
+    #[cfg(target_os = "linux")]
+    watch_refused_calls();
     send(&FromApp::Hello { version: VERSION });
     CONN.with(|cell| {
         *cell.borrow_mut() = Some(Conn {

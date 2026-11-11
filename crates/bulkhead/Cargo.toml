@@ -73,7 +73,7 @@ tokio-rustls = { workspace = true, optional = true }
 # The serial tty layer (raw termios, ptys for tests and the soak's relay);
 # Unix only.
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["fs", "pty", "termios"] }
+rustix = { workspace = true, features = ["fs", "pty", "termios", "thread"] }
 
 [dev-dependencies]
 rcgen = { workspace = true }

@@ -50,6 +50,7 @@
 //! | 192 | `writer_waiting` (u32): 1 while the writer waits for room | the writer; cleared by the reader that wakes it |
 //! | 256 | `closed` (u32): 1 once the writer will write no more | the writer |
 //! | 320 | `idle_hint` (u32), in the ring to the app: 1 when the node expects no callback soon | the node |
+//! | 384 | `refused_call` (u32), in the ring to the node: 1 plus the number of the system call the app's filter refused, as the app ends | the app |
 //!
 //! Positions only grow; a byte at position `p` is at `HEADER + p % RING_CAP`.
 //! A side that finds the other's word set after writing (or reading)
@@ -57,7 +58,9 @@
 //! a byte on the bell for the node. Neither side trusts the positions the
 //! other writes: [`Ring::read`] and [`Ring::write`] refuse a ring holding
 //! more than [`RING_CAP`] bytes ([`Corrupt`]), every copy stays inside the
-//! data area, and the node decodes frames only from its own copy.
+//! data area, and the node decodes frames only from its own copy. The
+//! memfd's size is sealed ([`Channel::create`]), so the app cannot shrink
+//! the file under the node's mapping.
 
 use std::collections::HashMap;
 use std::io::{self, IoSlice, IoSliceMut, Read, Write};
@@ -106,6 +109,7 @@ const READER_WAITING: usize = 128;
 const WRITER_WAITING: usize = 192;
 const CLOSED: usize = 256;
 const IDLE_HINT: usize = 320;
+const REFUSED_CALL: usize = 384;
 
 /// The other side broke the ring's rules: more queued than the ring
 /// holds. The node ends such an app.
@@ -147,8 +151,20 @@ impl Channel {
     ///
     /// The memfd could not be made or mapped.
     pub fn create() -> io::Result<(Self, OwnedFd)> {
-        let fd = memfd_create("bulkhead-channel", MemfdFlags::CLOEXEC)?;
+        let fd = memfd_create(
+            "bulkhead-channel",
+            MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
+        )?;
         rustix::fs::ftruncate(&fd, CHANNEL_BYTES as u64)?;
+        // The app holds this memfd too. Were it to shrink it, the node's
+        // next read of a ring would fault (`SIGBUS`), so its size is
+        // fixed here; both sides write, so writes are not sealed.
+        rustix::fs::fcntl_add_seals(
+            &fd,
+            rustix::fs::SealFlags::SHRINK
+                | rustix::fs::SealFlags::GROW
+                | rustix::fs::SealFlags::SEAL,
+        )?;
         Ok((Self::map(fd.as_fd())?, fd))
     }
 
@@ -248,6 +264,15 @@ impl Ring<'_> {
     #[must_use]
     pub fn idle_hint(&self) -> &AtomicU32 {
         self.word32(IDLE_HINT)
+    }
+
+    /// 1 plus the number of the system call the app's seccomp filter
+    /// refused, written by the app's `SIGSYS` handler as it ends (the ring
+    /// to the node only); 0 otherwise. Only a reason to show: an app can
+    /// write anything here.
+    #[must_use]
+    pub fn refused_call(&self) -> &AtomicU32 {
+        self.word32(REFUSED_CALL)
     }
 
     /// 1 while the writer waits for room.
@@ -723,6 +748,16 @@ impl AppEnd {
             rustix::io::fcntl_setfd(fd, rustix::io::FdFlags::CLOEXEC)?;
         }
         Ok(Self::new(channel, bell, door, fds, Spin::from_env()))
+    }
+
+    /// Record that the seccomp filter refused system call `number`, for
+    /// the node to read once this process has ended. Only an atomic
+    /// store, so a signal handler may call it.
+    pub fn refused_call(&self, number: u32) {
+        self.channel
+            .to_node()
+            .refused_call()
+            .store(number.saturating_add(1), Ordering::SeqCst);
     }
 
     /// An app's end of `channel`, for tests: `bell` is the bell's write

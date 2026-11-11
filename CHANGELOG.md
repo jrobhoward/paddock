@@ -104,6 +104,33 @@ All notable changes are recorded here. The format follows
 
 ### Security
 
+- A native app's system calls are an allow-list (ROADMAP PS4), in place
+  of 13 refused calls with every other allowed. A call outside the list
+  ends the app: its instance exits `crashed: syscall <name>` (or
+  `crashed: syscall refused` for a program that does not use
+  `bulkhead_native::app::serve`). Not allowed, among others: `bind`,
+  `listen`, `unshare`, `setns`, `mount`, `bpf`, `keyctl`,
+  `perf_event_open`, `userfaultfd`, `memfd_create`, `execveat` and the
+  credential calls. The calls refused before still answer `EPERM`, and
+  now also `clone` into a new namespace, `socketpair` outside `AF_UNIX`
+  and `ioctl` beyond the descriptor requests; `clone3` answers `ENOSYS`,
+  so libc falls back to `clone`. An app whose libraries make a call
+  outside the list (SECURITY.md, "Native-process apps") no longer runs.
+  The channel's header gains a word for the refused call's number;
+  the frames are unchanged.
+  Measured on a Raspberry Pi 5: requests, calls and casts cost the
+  same, and a start 0.6 to 0.7 ms more (BASELINE.md, 2026-11-11).
+- The node fences its own process at start (ROADMAP PS3a): it sets
+  `no_new_privs` and, on Linux, marks itself not dumpable, so it leaves no
+  core and other processes of its user cannot trace it or read its memory
+  or environment. Node config's `debuggable = true` leaves it dumpable
+  for a debugger.
+- A native app could end the node: the memfd holding an instance's rings
+  was not sealed, so an app that kept a copy of it and truncated it made
+  the node's next read of the ring fault (`SIGBUS`), taking the node and
+  every app down (SECURITY.md, S11). The memfd's size is now sealed when
+  the channel is made.
+
 - A native app whose manifest declares `wasi:filesystem` no longer gets
   its volumes or `priv/` files when the operator's policy denies that
   capability (ROADMAP Z9i): the node passed them to `bulkhead-runner`

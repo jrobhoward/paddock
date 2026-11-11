@@ -44,6 +44,7 @@ pub fn builtin_extensions() -> Vec<Arc<dyn Extension>> {
 /// or an admin socket that cannot be served.
 pub fn run(config: &Path, extensions: Vec<Arc<dyn Extension>>) -> anyhow::Result<()> {
     let config = NodeConfig::from_file(config)?;
+    fence(config.debuggable)?;
     let ring = LogRing::new(10_000);
     // Colour only on a terminal: journald and files get plain text.
     let (text, json) = match config.log_format {
@@ -78,6 +79,35 @@ pub fn run(config: &Path, extensions: Vec<Arc<dyn Extension>>) -> anyhow::Result
         .build()
         .context("cannot start the async runtime")?
         .block_on(serve(config, ring, extensions))
+}
+
+/// Fence the node's own process before it starts a thread or reads a
+/// secret (ROADMAP PS3a). `no_new_privs`: nothing the node executes gains
+/// privileges from a set-uid or file-capability program. Not dumpable,
+/// unless `debuggable`: no core dump and no ptrace or `/proc/<pid>/mem`
+/// from other processes of the node's user, since this process holds
+/// every secret and the cluster key.
+#[cfg(target_os = "linux")]
+fn fence(debuggable: bool) -> anyhow::Result<()> {
+    use rustix::process::{DumpableBehavior, set_dumpable_behavior};
+
+    rustix::thread::set_no_new_privs(true).context("cannot set no_new_privs")?;
+    if !debuggable {
+        set_dumpable_behavior(DumpableBehavior::NotDumpable)
+            .context("cannot mark the node not dumpable")?;
+    }
+    Ok(())
+}
+
+/// Linux only so far; FreeBSD's `procctl(PROC_TRACE_CTL)` comes with the
+/// node's OS layer there (ROADMAP FB1).
+#[cfg(not(target_os = "linux"))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the Linux function of the same name can fail"
+)]
+fn fence(_debuggable: bool) -> anyhow::Result<()> {
+    Ok(())
 }
 
 async fn serve(

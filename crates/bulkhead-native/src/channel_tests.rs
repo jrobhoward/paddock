@@ -273,6 +273,19 @@ fn app_end____node_waits_for_room____read_rings_the_bell() {
 }
 
 #[test]
+fn create____memfd_resized____refused() {
+    let (_channel, fd) = Channel::create().unwrap();
+
+    let shrunk = rustix::fs::ftruncate(&fd, 0);
+    let grown = rustix::fs::ftruncate(&fd, 2 * CHANNEL_BYTES as u64);
+    let unsealed = rustix::fs::fcntl_add_seals(&fd, rustix::fs::SealFlags::WRITE);
+
+    assert_eq!(shrunk, Err(rustix::io::Errno::PERM));
+    assert_eq!(grown, Err(rustix::io::Errno::PERM));
+    assert_eq!(unsealed, Err(rustix::io::Errno::PERM));
+}
+
+#[test]
 fn open____not_a_channel_sized_file____refused() {
     let fd = memfd_create("small", MemfdFlags::CLOEXEC).unwrap();
     rustix::fs::ftruncate(&fd, 100).unwrap();

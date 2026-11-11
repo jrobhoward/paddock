@@ -855,6 +855,11 @@ mod linux {
                         "killed_at_lease_end".into()
                     }
                     (Some(code), _) => format!("exited with status {code}"),
+                    (_, Some(libc::SIGSYS)) => {
+                        let ring = self.channel.to_node();
+                        let refused = ring.refused_call().load(Ordering::SeqCst);
+                        crate::native::syscalls::reason(refused)
+                    }
                     (_, Some(signal)) => format!("killed by signal {signal}"),
                     _ => "exited".into(),
                 },

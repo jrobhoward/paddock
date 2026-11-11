@@ -350,6 +350,37 @@ impl Fixture {
                 // descriptor, if one came, is dropped without being mapped.
                 outcome(unsafe { rustix::io_uring::io_uring_setup(1, &mut params) })
             }
+            #[cfg(target_os = "linux")]
+            #[cfg(target_os = "linux")]
+            "memfd" => outcome(rustix::fs::memfd_create(
+                "fixture",
+                rustix::fs::MemfdFlags::CLOEXEC,
+            )),
+            #[cfg(target_os = "linux")]
+            "user-namespace" => {
+                // SAFETY: `clone` with a null stack acts as `fork`; with
+                // the namespace flag refused nothing is made, and a child
+                // that was made exits at once.
+                let r = unsafe {
+                    libc_syscall(
+                        SYS_CLONE,
+                        CLONE_NEWUSER | SIGCHLD,
+                        0usize,
+                        0usize,
+                        0usize,
+                        0usize,
+                    )
+                };
+                match r {
+                    0 => std::process::exit(0),
+                    -1 => format!("err:{}", std::io::Error::last_os_error()),
+                    _ => "ok".into(),
+                }
+            }
+            "shrink-channel" => match CHANNEL_MEMFD.get() {
+                Some(memfd) => outcome(rustix::fs::ftruncate(memfd, 0)),
+                None => "err:no copy of the channel's memfd".into(),
+            },
             "vread" => outcome(std::fs::read(bulkhead_native::preopens::path(rest))),
             "vwrite" => outcome(std::fs::write(bulkhead_native::preopens::path(rest), b"x")),
             "vcat" => match std::fs::read_to_string(bulkhead_native::preopens::path(rest)) {
@@ -400,7 +431,21 @@ impl Fixture {
 unsafe extern "C" {
     #[link_name = "kill"]
     fn libc_kill(pid: i32, sig: i32) -> i32;
+    #[cfg(target_os = "linux")]
+    #[link_name = "syscall"]
+    fn libc_syscall(number: std::ffi::c_long, ...) -> std::ffi::c_long;
 }
+
+/// `clone`'s number, its flag for a new user namespace, and the signal a
+/// forked child sends at its end.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const SYS_CLONE: std::ffi::c_long = 56;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const SYS_CLONE: std::ffi::c_long = 220;
+#[cfg(target_os = "linux")]
+const CLONE_NEWUSER: usize = 0x1000_0000;
+#[cfg(target_os = "linux")]
+const SIGCHLD: usize = 17;
 
 impl App for Fixture {
     fn init(_ctx: &mut Ctx, args: Vec<u8>) -> Result<Self, String> {
@@ -481,8 +526,24 @@ impl App for Fixture {
     }
 }
 
+/// A copy of the channel's memfd, kept as an app that means harm could
+/// (`serve` closes the one it inherits once it is mapped), for
+/// `shrink-channel`.
+#[cfg(target_os = "linux")]
+static CHANNEL_MEMFD: std::sync::OnceLock<std::os::fd::OwnedFd> = std::sync::OnceLock::new();
+
 /// Serve the fixture on stdin and stdout.
 pub(crate) fn main() -> ExitCode {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: the node put the channel's memfd at this number before
+        // exec, and it stays open until `serve` takes it below.
+        let inherited =
+            unsafe { std::os::fd::BorrowedFd::borrow_raw(bulkhead_native::channel::MEMFD_FD) };
+        if let Ok(copy) = inherited.try_clone_to_owned() {
+            let _ = CHANNEL_MEMFD.set(copy);
+        }
+    }
     app::serve::<Fixture>()
 }
 
