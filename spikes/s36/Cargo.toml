@@ -1,0 +1,15 @@
+[package]
+name = "s36"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "S36: a privileged helper that starts app processes under a user of their own (Linux cgroups and namespaces, FreeBSD jails and rctl)"
+
+[dependencies]
+libc = "0.2.177"
+
+[profile.release]
+debug = 1
+
+# Standalone: built on the Pi and the FreeBSD VM from this directory alone.
+[workspace]
