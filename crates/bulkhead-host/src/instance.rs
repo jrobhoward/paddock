@@ -380,6 +380,53 @@ impl InstanceHandle {
         result
     }
 
+    /// Reserve room in the mailbox for credit to a sender on another node
+    /// ([`crate::credit`]): up to `slots` messages and `bytes` bytes,
+    /// without waiting.
+    pub(crate) fn reserve(&self, slots: usize, bytes: u64) -> Option<mailbox::Reservation> {
+        self.shared.mailbox.reserve(slots, bytes)
+    }
+
+    /// Add to a reservation of this mailbox, as [`InstanceHandle::reserve`]
+    /// takes room.
+    pub(crate) fn top_up(
+        &self,
+        reservation: &mut mailbox::Reservation,
+        slots: usize,
+        bytes: u64,
+    ) -> (usize, u64) {
+        self.shared.mailbox.top_up(reservation, slots, bytes)
+    }
+
+    /// The largest body the instance takes.
+    pub(crate) fn message_max_bytes(&self) -> u64 {
+        self.shared.message_max_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Queue a cast from `from` on another node, sent on credit, into the
+    /// room `reservation` holds for it. A cast that does not fit (a body
+    /// over `message_max_bytes`, or more than the reservation holds) is
+    /// dropped and counted: its sender was already told `Ok`.
+    pub(crate) fn cast_credited(
+        &self,
+        from: Pid,
+        msg: Envelope,
+        reservation: &mut mailbox::Reservation,
+    ) -> Result<(), CallError> {
+        let bytes = msg.body.len();
+        let result = self.check_size(&msg).and_then(|()| {
+            reservation
+                .send(Message::Cast(msg))
+                .map_err(|_| CallError::Overloaded)
+        });
+        if result.is_err() {
+            self.shared.dropped.fetch_add(1, Ordering::Relaxed);
+            probe::mailbox_drop(self.pid(), "cast");
+        }
+        probe::cast_sent(Some(from), self.pid(), bytes, &result);
+        result
+    }
+
     fn check_size(&self, msg: &Envelope) -> Result<(), CallError> {
         let len = u64::try_from(msg.body.len()).unwrap_or(u64::MAX);
         if len > self.shared.message_max_bytes.load(Ordering::Relaxed) {

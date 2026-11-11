@@ -28,6 +28,9 @@ pub struct Chaos {
     fired: Vec<String>,
     infos: Vec<String>,
     health_checks: u64,
+    /// The last `seq:<n>` cast taken, and how many came out of order.
+    seq: u64,
+    seq_errors: u64,
     health: Option<String>,
     due: HashMap<u64, Instant>,
     late: Vec<u64>,
@@ -132,6 +135,19 @@ impl Chaos {
                 self.count += 1;
                 reply(self.count.to_string())
             }
+            // `seq:<n>`: one of a numbered run, which must come in order;
+            // `seq` alone answers `last:<n> errors:<out of order>`.
+            "seq" if arg.is_empty() => {
+                reply(format!("last:{} errors:{}", self.seq, self.seq_errors))
+            }
+            "seq" => {
+                let n: u64 = arg.parse().unwrap_or(0);
+                if n != self.seq + 1 {
+                    self.seq_errors += 1;
+                }
+                self.seq = n;
+                Ok(None)
+            }
             "trap" => Err("asked to trap".into()),
             "spin" => std::future::pending().await,
             "sleep" => {
@@ -201,6 +217,25 @@ impl Chaos {
                 let inner = text(parts.next().unwrap_or(""));
                 let result = super::conformance::cast_wait(cx, pid, ms, inner).await;
                 reply(result)
+            }
+            // `cast-waits:<pid>:<ms>:<n>`: `n` waited casts, `seq:1` to
+            // `seq:<n>`, one after another; answers `ok:<Ok count> ms:<time
+            // taken on the runtime's clock>`.
+            "cast-waits" => {
+                let mut parts = arg.splitn(3, ':');
+                let pid = parse_pid(parts.next().unwrap_or(""));
+                let ms = parts.next().unwrap_or("").parse().unwrap_or(u32::MAX);
+                let n: u64 = parts.next().unwrap_or("").parse().unwrap_or(0);
+                let started = tokio::time::Instant::now();
+                let mut ok = 0;
+                for i in 1..=n {
+                    let sent =
+                        super::conformance::cast_wait(cx, pid, ms, text(format!("seq:{i}"))).await;
+                    if sent == "ok" {
+                        ok += 1;
+                    }
+                }
+                reply(format!("ok:{ok} ms:{}", started.elapsed().as_millis()))
             }
             "register" => {
                 let result = register(cx, arg).await;

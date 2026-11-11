@@ -2811,6 +2811,24 @@ The mailbox alone, timed in a test that was not kept (`try_send` and `recv` on a
 - **Every `Ok` of `cast_timeout` arrived,** in all 24 runs.
 - **Not measured:** the Raspberry Pi, and two processes or machines.
 
+## 2026-11-10: credit for waited casts between nodes (I14)
+
+`cluster_throughput`'s sends by kind between nodes, as in I4 (16 instances on node 1, each sending 25,000 `count` messages to its own target on node 2), with the target's node granting no credit (`CAST_CREDIT=0`: every waited cast a round trip, as before I12) and the default 64 casts and 1 MiB per sender. One build, the two settings alternating run after run; three rounds each. 4 tokio workers per node, `[native] spin_us` 20. Both machines idle at the start (load 4.5 here after the checks, falling, and 0.9 for the Pi's runs; the Pi 0.0); the load during the runs, 9 to 23 on the 16-core machine, is the runs' own spinning. Casts handled per second, medians, and the range:
+
+| Placement, mailbox | `cast` | `cast_timeout`, no credit | `cast_timeout`, credit 64 | against `cast` |
+| --- | --- | --- | --- | --- |
+| Two nodes in one process, 65,536 | 123,000 | 43,200 (39,100 to 46,000) | 112,000 (109,000 to 120,000) | 0.91 |
+| Two nodes in one process, 64 | 122,000 | 40,800 (37,800 to 44,800) | 75,900 (73,000 to 82,200) | 0.62 |
+| Two processes, 65,536 | 222,000 | 31,400 (30,200 to 35,000) | 149,000 (148,000 to 158,000) | 0.67 |
+| Two processes, 64 | 218,000 | 30,400 (27,400 to 32,000) | 90,000 (87,800 to 90,100) | 0.41 |
+| 16-core machine to the Pi, 65,536 | 203,000 | 30,300 (29,900 to 30,400) | 146,000 (144,000 to 148,000) | 0.72 |
+| 16-core machine to the Pi, 64 | 190,000 | 30,200 (29,800 to 31,300) | 80,400 (79,900 to 80,800) | 0.42 |
+
+- **With room,** credit moves 2.6 to 4.8 times the waited casts a second, two thirds to nine tenths of `cast`'s rate; between processes and machines, where a round trip costs most, the most.
+- **With mailboxes of 64,** credit holds at most 32 casts per target (half the mailbox), so a sender waits for the target to take some before more is granted: 1.9 to 3.0 times.
+- **Every `Ok` of `cast_timeout` arrived,** in all 36 runs, with credit and without, and every waited cast returned `Ok`. `cast` and `try_cast`, which credit does not change, moved within their run-to-run spread (to the Pi with mailboxes of 64, 72 to 86% of the casts `try_cast` sent arrived in both settings, as I4 found).
+- **Not measured:** credit with many senders sharing one target, where the half-mailbox cap is divided among them.
+
 ## Not measured yet
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).

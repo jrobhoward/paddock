@@ -453,6 +453,22 @@ pub struct ClusterConfig {
     /// notices are queued past it.
     #[serde(default = "default_send_buffer_bytes")]
     pub send_buffer_bytes: u64,
+    /// Waited casts (`cast_timeout`) an instance on another node may send
+    /// to one of this node's instances ahead of answers: room reserved in
+    /// the target's mailbox for each such sender. 0 reserves none.
+    #[serde(default = "default_cast_credit")]
+    pub cast_credit: u32,
+    /// Bytes of bodies reserved with `cast_credit`.
+    #[serde(default = "default_cast_credit_bytes")]
+    pub cast_credit_bytes: u64,
+}
+
+fn default_cast_credit() -> u32 {
+    bulkhead_host::RuntimeConfig::default().cast_credit
+}
+
+fn default_cast_credit_bytes() -> u64 {
+    bulkhead_host::RuntimeConfig::default().cast_credit_bytes
 }
 
 fn default_send_buffer_bytes() -> u64 {
@@ -481,6 +497,8 @@ impl Default for ClusterConfig {
             identity_reload_s: default_identity_reload_s(),
             incoming_calls_max: default_incoming_calls_max(),
             send_buffer_bytes: default_send_buffer_bytes(),
+            cast_credit: default_cast_credit(),
+            cast_credit_bytes: default_cast_credit_bytes(),
         }
     }
 }

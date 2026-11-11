@@ -33,6 +33,7 @@ Two words have more than one meaning:
 - **Envelope:** a message: content type, an optional schema id and a body of bytes. Calls, casts, replies, timer messages and HTTP requests are all envelopes.
 - **Call:** a message that waits for a reply, with a timeout; OTP's `gen_server:call`. Handled by `handle_call`.
 - **Cast:** a message with no reply; OTP's `gen_server:cast`. Handled by `handle_cast`. A cast to a full mailbox is dropped and counted. A native app's `try_cast` is told whether it was queued, and its `cast_timeout` (a waited cast) waits for room in a full mailbox, on any node (WRITING_APPS.md, "Casts that must arrive").
+- **Credit:** room a node reserves in one of its instances' mailboxes for a sender on another node, so the sender's waited casts (`cast_timeout`) to it return `Ok` without a round trip (`[cluster] cast_credit`). WRITING_APPS.md, "Casts that must arrive".
 - **Info:** anything else an instance is told, handled by `handle_info`: a link's `exit`, a monitor's `down`, a `timer` message, or a `host-event`.
 - **Host event:** an info with a name and an envelope, sent by the host: `log-level`, `failover-role`, `io-ready`, watch notices. Apps ignore names they do not know.
 - **Signal:** exits, timer messages and watch notices, which reach an instance ahead of its mailbox, on a queue of their own.

@@ -1,9 +1,10 @@
 //! A cast that waits on another node for room in a full mailbox
 //! (`Frame::CastWait`, ROADMAP I3): queued once room comes; a timeout the
 //! receiving node answers, with nothing queued; `overloaded` past the
-//! link's budget; `noconnection` when the session ends meanwhile or the
-//! peer's version cannot read the frame; and from an instance, checked by
-//! the target's messaging ACL on its own node (ROADMAP I8).
+//! link's budget; `noconnection` when the session ends meanwhile; queued
+//! by a peer one release older; and from an instance, checked by the
+//! target's messaging ACL on its own node (ROADMAP I8). Credit for waited
+//! casts is in `credit.rs`.
 
 use std::time::Duration;
 
@@ -121,7 +122,7 @@ fn cast_wait____session_ends_while_waiting____noconnection() {
 }
 
 #[test]
-fn cast_wait____peer_one_release_older____noconnection_and_plain_casts_still_go() {
+fn cast_wait____peer_one_release_older____queued_and_plain_casts_still_go() {
     let (waited, plain) = simulate(85, 2, |sim| async move {
         sim.mesh.set_version(2, wire::VERSION - 1);
         let b = sim.node(2).spawn("");
@@ -136,7 +137,8 @@ fn cast_wait____peer_one_release_older____noconnection_and_plain_casts_still_go(
         (waited, plain)
     });
 
-    assert_eq!(waited, Err(CallError::Noconnection));
+    // Version 8 brought `CastWait`; version 9's credit is in `credit.rs`.
+    assert_eq!(waited, Ok(()));
     assert_eq!(plain, Ok(()));
 }
 

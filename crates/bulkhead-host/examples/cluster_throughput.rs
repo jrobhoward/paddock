@@ -53,7 +53,9 @@
 //!
 //! `CLUSTER_MAILBOX=<n>` gives every instance a mailbox of `n` messages
 //! (65,536 by default), on the node it is set for, so casts outrun their
-//! targets: set it the same on both nodes.
+//! targets: set it the same on both nodes. `CAST_CREDIT=<n>` sets the
+//! credit a node grants each sender of waited casts from another node (64
+//! by default; 0 for none, a round trip per waited cast).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -204,14 +206,22 @@ fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
     {
         native.spin = Duration::from_micros(us);
     }
-    let rt = Runtime::new(RuntimeConfig {
+    let mut config = RuntimeConfig {
         node: n,
         max_instances: 64,
         address: address.to_string(),
         native,
         ..RuntimeConfig::default()
-    })
-    .unwrap();
+    };
+    // `CAST_CREDIT`: the node's `[cluster] cast_credit` (ROADMAP I12);
+    // unset, the default. Set it on the target's node.
+    if let Some(credit) = std::env::var("CAST_CREDIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        config.cast_credit = credit;
+    }
+    let rt = Runtime::new(config).unwrap();
     let quic = QuicTransport::start(
         &rt,
         QuicConfig {

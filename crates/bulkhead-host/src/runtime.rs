@@ -51,6 +51,8 @@ pub(crate) struct RuntimeInner {
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
     pub(crate) incoming_calls: IncomingCalls,
+    /// Credit for waited casts between nodes, both ways (ROADMAP I12).
+    pub(crate) credits: crate::credit::Credits,
     pub(crate) liveness: Liveness,
     pub(crate) membership: Membership,
     pub(crate) failover: crate::failover::Shared,
@@ -214,6 +216,7 @@ impl Runtime {
             transport: std::sync::OnceLock::new(),
             pending_calls: PendingCalls::default(),
             incoming_calls: IncomingCalls::new(config.incoming_calls_per_peer),
+            credits: crate::credit::Credits::new(config.cast_credit, config.cast_credit_bytes),
             liveness: Liveness::new(config.heartbeat_interval, config.node_timeout),
             membership: Membership::new(Member::new(
                 config.node,

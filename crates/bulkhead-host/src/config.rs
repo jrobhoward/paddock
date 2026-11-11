@@ -248,6 +248,13 @@ pub struct RuntimeConfig {
     /// instances' `pending_calls_max`; this bounds a faulty one. 0 for no
     /// limit.
     pub incoming_calls_per_peer: u32,
+    /// Waited casts (`cast_timeout`) a sender on another node may have
+    /// sent ahead of answers, per target: room this node reserves in the
+    /// target's mailbox for each such sender (ROADMAP I12). 0 reserves none,
+    /// and every waited cast from another node waits for its answer.
+    pub cast_credit: u32,
+    /// Bytes of bodies reserved with [`RuntimeConfig::cast_credit`].
+    pub cast_credit_bytes: u64,
     /// Native-process apps.
     pub native: NativeConfig,
 }
@@ -369,6 +376,8 @@ impl Default for RuntimeConfig {
             egress: Egress::default(),
             log_records_per_sec: 1_000,
             incoming_calls_per_peer: 10_000,
+            cast_credit: 64,
+            cast_credit_bytes: 1 << 20,
             native: NativeConfig::default(),
         }
     }

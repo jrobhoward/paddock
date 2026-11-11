@@ -21,6 +21,7 @@ mod backpressure;
 mod cast_wait;
 #[path = "../common/mod.rs"]
 mod common;
+mod credit;
 mod failover;
 mod groups;
 mod harness;

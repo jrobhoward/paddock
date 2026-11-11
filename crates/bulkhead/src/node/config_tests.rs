@@ -544,6 +544,20 @@ fn NodeConfig____incoming_calls_max____10000_by_default_and_settable() {
 }
 
 #[test]
+fn NodeConfig____cast_credit____64_and_1MiB_by_default_and_settable() {
+    let default = NodeConfig::from_toml_str("data_dir = \"/d\"\n").unwrap();
+    let set = NodeConfig::from_toml_str(
+        "data_dir = \"/d\"\n[cluster]\ncast_credit = 0\ncast_credit_bytes = 4096\n",
+    )
+    .unwrap();
+
+    assert_eq!(default.cluster.cast_credit, 64);
+    assert_eq!(default.cluster.cast_credit_bytes, 1 << 20);
+    assert_eq!(set.cluster.cast_credit, 0);
+    assert_eq!(set.cluster.cast_credit_bytes, 4096);
+}
+
+#[test]
 fn NodeConfig____max_processes____read_or_refused_below_max_instances() {
     let read =
         NodeConfig::from_toml_str("data_dir = \"/d\"\nmax_instances = 100\nmax_processes = 5000\n")

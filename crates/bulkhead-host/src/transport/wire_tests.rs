@@ -71,6 +71,29 @@ fn encode____every_kind_of_frame____decodes_to_the_same_packet() {
             msg: Envelope::new("text/plain", "wait"),
             timeout_ms: 250,
         },
+        Frame::CastCredited {
+            from: pid(1),
+            sender: None,
+            to: pid(2),
+            msg: Envelope::new("text/plain", "credited"),
+        },
+        Frame::Credit {
+            from: pid(1),
+            to: pid(2),
+            messages: 64,
+            bytes: 1 << 20,
+            message_max: 1 << 16,
+        },
+        Frame::CreditReturn {
+            from: pid(1),
+            to: pid(2),
+            messages: 3,
+            bytes: 300,
+        },
+        Frame::CreditVoid {
+            from: pid(1),
+            to: pid(2),
+        },
         Frame::Reply {
             id: 11,
             result: Err(CallError::Exited(ExitReason::Crashed("boom".into()))),
@@ -187,10 +210,14 @@ fn since____every_kind____at_most_this_build_s_version() {
         Frame::Replication { body: vec![1] },
         Frame::Failover(FailoverMsg::Release { epoch: 1 }),
         Frame::Failover(FailoverMsg::Renew { seq: 1, epoch: 1 }),
+        Frame::CreditVoid {
+            from: pid(1),
+            to: pid(2),
+        },
     ];
 
     let versions: Vec<u16> = frames.iter().map(since).collect();
 
-    assert_eq!(versions, [1, 6, 7, 1]);
+    assert_eq!(versions, [1, 6, 7, 1, 9]);
     assert!(versions.iter().all(|&v| v <= VERSION));
 }

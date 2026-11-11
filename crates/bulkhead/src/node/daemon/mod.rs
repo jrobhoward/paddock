@@ -196,6 +196,8 @@ impl Node {
                 },
                 log_records_per_sec: config.limits.log_records_per_sec,
                 incoming_calls_per_peer: config.cluster.incoming_calls_max,
+                cast_credit: config.cluster.cast_credit,
+                cast_credit_bytes: config.cluster.cast_credit_bytes,
                 native: config.native.runtime(),
                 secrets: config
                     .secrets

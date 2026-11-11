@@ -301,13 +301,9 @@ async fn join_seed____peer_one_release_older____its_version_and_newer_frames_ref
     };
     let refused = n2.quic.send(
         1,
-        packet(Frame::CastWait {
-            id: 1,
-            from: None,
-            sender: None,
-            to: a.pid(),
-            msg: text("echo:waited"),
-            timeout_ms: 100,
+        packet(Frame::CreditVoid {
+            from: a.pid(),
+            to: b.pid(),
         }),
     );
     let back = ask(&b, &format!("call:{}:2000:echo:back", pid_text(a.pid()))).await;

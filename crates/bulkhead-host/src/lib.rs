@@ -25,6 +25,7 @@
 pub mod acl;
 mod apps;
 mod config;
+mod credit;
 mod delivery;
 mod error;
 pub mod failover;

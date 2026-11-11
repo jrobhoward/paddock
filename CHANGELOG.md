@@ -6,6 +6,25 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Credit for waited casts between nodes (ROADMAP I11 to I13): once a
+  native app's `cast_timeout` to an instance on another node is queued,
+  that node reserves room in the target's mailbox for the sender, and the
+  sender's next waited casts to it return `Ok` without a round trip. `Ok`
+  on credit means room was reserved and the cast is on the link: it is
+  lost only if the session between the nodes ends first, the target exits
+  first, or a messaging ACL changed since refuses it. `[cluster]
+  cast_credit` (64 casts, 0 for none) and `cast_credit_bytes` (1 MiB) set
+  the room per sender and target; all senders' credit together holds at
+  most half of a mailbox. The cluster protocol is version 9 (it adds
+  `CastCredited`, `Credit`, `CreditReturn` and `CreditVoid`); a node at
+  version 8 grants none, and a node at 7 can no longer join. With room in
+  the targets' mailboxes, 16 senders' waited casts between two node
+  processes, or to a Raspberry Pi 5, went from about 30,000 a second to
+  146,000 to 149,000 (BASELINE.md, 2026-11-10). `cluster_throughput` reads
+  `CAST_CREDIT`.
+
 ### Changed
 
 - A mailbox's byte limit (`mailbox_max_bytes`) is a counter of the bytes

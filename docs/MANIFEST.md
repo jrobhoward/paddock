@@ -407,6 +407,8 @@ peers = "/etc/bulkhead/peers.toml"      # every node's public key: [peers] 2 = [
 identity_reload_s = 60                 # reload key and peers on change; also SIGHUP, bulkhead reload-tls
 incoming_calls_max = 10000             # calls from one peer handled at once; beyond: overloaded; 0: no limit
 send_buffer_bytes = 67108864           # messages queued for one peer; beyond: cast dropped, call overloaded (notices still queued)
+cast_credit = 64                       # waited casts a sender on another node may send ahead of answers, per target; 0: none
+cast_credit_bytes = 1048576            # bytes of bodies reserved with cast_credit
 
 [failover]                             # one node of an HA pair (needs cluster.address)
 partner = 2                            # the other node of the pair

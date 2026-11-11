@@ -63,6 +63,7 @@ impl Class {
             Frame::Cast { .. }
             | Frame::Call { .. }
             | Frame::CastWait { .. }
+            | Frame::CastCredited { .. }
             | Frame::Reply { .. }
             | Frame::AppCall { .. }
             | Frame::GroupPublish { .. } => Self::Message,

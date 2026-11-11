@@ -51,7 +51,7 @@ Cluster members trust one another fully, as nodes of an Erlang cluster do: mutua
 ### Node and node
 
 - **Controls.** QUIC with TLS 1.3 and raw public keys pinned per node id; a hello naming the node id, checked against its key; frames of at most 64 MiB; a versioned CBOR wire format; sessions that discard frames from an ended session or an earlier start.
-- **Gaps.** None beyond the trust above; S5 and S8 are fixed. Calls from one peer in progress at once are capped (`[cluster] incoming_calls_max`).
+- **Gaps.** None beyond the trust above; S5 and S8 are fixed. Calls from one peer in progress at once are capped (`[cluster] incoming_calls_max`). Credit for waited casts lets a peer's instances hold room in a local mailbox (`[cluster] cast_credit` casts and `cast_credit_bytes` per sender and target); all the credit in one mailbox holds at most half of its messages and bytes, and room a local sender waits for is never granted.
 
 ### Ingress clients
 

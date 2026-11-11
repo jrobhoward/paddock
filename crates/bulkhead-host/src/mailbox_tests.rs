@@ -381,3 +381,114 @@ async fn senders_of_both_kinds____many_threads____limit_held_and_every_byte_back
 
     assert_eq!(taken, queued);
 }
+
+#[test]
+fn reserve____more_than_half____capped_at_half_and_not_queued() {
+    let (tx, _rx) = channel(10, 100);
+
+    let reservation = tx.reserve(10, 100).unwrap();
+
+    assert_eq!(reservation.slots(), 5);
+    assert_eq!(reservation.bytes(), 50);
+    assert_eq!(tx.queued(), 0);
+    assert_eq!(tx.queued_bytes(), 0);
+}
+
+#[test]
+fn reserve____two_reservations____share_the_cap() {
+    let (tx, _rx) = channel(10, 100);
+
+    let first = tx.reserve(3, 30).unwrap();
+    let second = tx.reserve(3, 30).unwrap();
+    let third = tx.reserve(1, 1);
+
+    assert_eq!((first.slots(), first.bytes()), (3, 30));
+    assert_eq!((second.slots(), second.bytes()), (2, 20));
+    assert!(third.is_none());
+}
+
+#[test]
+fn reservation_send____mailbox_otherwise_full____queued() {
+    let (tx, _rx) = channel(4, 100);
+    let mut reservation = tx.reserve(2, 20).unwrap();
+    while tx.try_send(cast(1)).is_ok() {}
+
+    let first = reservation.send(cast(10));
+    let second = reservation.send(cast(10));
+    let third = reservation.send(cast(0));
+
+    assert!(first.is_ok());
+    assert!(second.is_ok());
+    assert!(third.is_err());
+    assert_eq!(tx.queued(), 4);
+    assert_eq!(tx.queued_bytes(), 22);
+}
+
+#[test]
+fn reservation_send____body_over_bytes_left____handed_back() {
+    let (tx, _rx) = channel(10, 100);
+    let mut reservation = tx.reserve(2, 10).unwrap();
+
+    let sent = reservation.send(cast(11));
+
+    assert!(matches!(sent, Err(Message::Cast(m)) if m.body.len() == 11));
+    assert_eq!(reservation.slots(), 2);
+}
+
+#[test]
+fn reservation____dropped____room_back() {
+    let (tx, _rx) = channel(4, 100);
+    let mut reservation = tx.reserve(2, 50).unwrap();
+    reservation.send(cast(5)).unwrap();
+
+    drop(reservation);
+    let mut queued = 0;
+    while tx.try_send(cast(1)).is_ok() {
+        queued += 1;
+    }
+
+    assert_eq!(queued, 3);
+    assert_eq!(tx.queued_bytes(), 8);
+}
+
+#[tokio::test]
+async fn reservation_send____taken____gives_its_bytes_back() {
+    let (tx, mut rx) = channel(10, 100);
+    let mut reservation = tx.reserve(1, 40).unwrap();
+    reservation.send(cast(30)).unwrap();
+    drop(reservation);
+
+    let taken = rx.recv().await;
+
+    assert!(matches!(taken, Some(Message::Cast(m)) if m.body.len() == 30));
+    assert_eq!(tx.queued_bytes(), 0);
+    assert!(tx.try_send(cast(100)).is_ok());
+}
+
+#[tokio::test]
+async fn reserve____waiter_for_bytes____none() {
+    let (tx, _rx) = channel(100, 10);
+    tx.try_send(cast(10)).unwrap();
+    let _waiter = tokio::spawn({
+        let tx = tx.clone();
+        async move { tx.send_timeout(cast(5), Duration::from_secs(5)).await }
+    });
+    tokio::task::yield_now().await;
+
+    let reservation = tx.reserve(1, 1);
+
+    assert!(reservation.is_none());
+}
+
+#[test]
+fn top_up____after_use____adds_within_the_cap() {
+    let (tx, _rx) = channel(10, 100);
+    let mut reservation = tx.reserve(4, 40).unwrap();
+    reservation.send(cast(10)).unwrap();
+    reservation.send(cast(10)).unwrap();
+
+    let added = tx.top_up(&mut reservation, 10, 100);
+
+    assert_eq!(added, (3, 30));
+    assert_eq!((reservation.slots(), reservation.bytes()), (5, 50));
+}

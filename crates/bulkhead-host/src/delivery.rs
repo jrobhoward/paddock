@@ -28,6 +28,7 @@
 use std::time::Duration;
 
 use crate::acl::{self, Stamp};
+use crate::credit;
 use crate::instance::InstanceHandle;
 use crate::message::{CallError, Envelope, ExitReason, Info};
 use crate::pid::Pid;
@@ -144,7 +145,9 @@ pub(crate) fn cast(
 /// cast to another node waits there ([`transport::cast_wait`], ROADMAP I3):
 /// `Ok` once that node queued it; `noconnection` if the node cannot be
 /// reached, the session ends meanwhile, or its version cannot read the
-/// frame; `overloaded` past the link's budget.
+/// frame; `overloaded` past the link's budget. An instance holding credit
+/// for the target ([`crate::credit`]) sends on credit instead: `Ok` once
+/// the link took it.
 pub(crate) async fn cast_wait(
     rt: &RuntimeInner,
     from: Origin<'_>,
@@ -163,6 +166,13 @@ pub(crate) async fn cast_wait(
         Route::Local(target) => target.cast_wait_from(from.pid(), msg, timeout).await,
         Route::Dead => Err(CallError::Noproc),
         Route::Remote(node) => {
+            let msg = match from {
+                Origin::Local(me) => match credit::send(rt, node, me.pid(), stamp(from), to, msg) {
+                    Ok(sent) => return sent,
+                    Err(msg) => msg,
+                },
+                _ => msg,
+            };
             transport::cast_wait(rt, node, from.pid(), stamp(from), to, msg, timeout).await
         }
     }
@@ -321,6 +331,7 @@ pub(crate) fn demonitor(rt: &RuntimeInner, watcher: Pid, reference: u64) {
 /// and drop the monitors it held on other nodes.
 pub(crate) fn notify_exit(rt: &RuntimeInner, pid: Pid, reason: &ExitReason) {
     rt.services.exited(pid);
+    credit::exited(rt, pid);
     let notices = rt.links.on_exit(pid);
     for other in notices.linked {
         match route(rt, other) {

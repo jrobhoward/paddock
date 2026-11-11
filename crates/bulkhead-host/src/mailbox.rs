@@ -17,6 +17,13 @@
 //! never takes room a waiter is owed. A send that does not wait costs one
 //! compare-and-swap on the counter and the receiver one subtraction (ROADMAP
 //! I9; I6's semaphore cost unbatched casts 3 to 6% of their rate).
+//!
+//! A [`Reservation`] (ROADMAP I11) takes slots and bytes ahead of the
+//! messages that will use them, for credit granted to a sender on another
+//! node: a message queued into it always fits. It is taken as a send that
+//! does not wait is, so never from room a waiter is owed, and all of a
+//! mailbox's reservations together hold at most half of its slots and half
+//! of its bytes. Reserved room not yet used is not counted as queued.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -50,6 +57,10 @@ struct Budget {
     /// Bytes came back, the limit rose, or the mailbox closed: wakes the
     /// waiter whose turn it is.
     freed: Notify,
+    /// Slots held by reservations and not yet used.
+    reserved_slots: AtomicU64,
+    /// Bytes held by reservations and not yet used (counted in `used`).
+    reserved_bytes: AtomicU64,
 }
 
 impl Budget {
@@ -60,6 +71,43 @@ impl Budget {
             waiters: AtomicUsize::new(0),
             turn: Mutex::new(()),
             freed: Notify::new(),
+            reserved_slots: AtomicU64::new(0),
+            reserved_bytes: AtomicU64::new(0),
+        }
+    }
+
+    /// Take up to `bytes` of the budget for a reservation: what is free,
+    /// within half the limit for all reservations, and none while anyone
+    /// waits for bytes. Returns what was taken.
+    fn reserve_bytes(&self, bytes: u64) -> u64 {
+        if bytes == 0 || self.waiters.load(Ordering::SeqCst) != 0 {
+            return 0;
+        }
+        let max = self.max.load(Ordering::Relaxed);
+        let cap = max / 2;
+        let Some(claimed) = claim(&self.reserved_bytes, bytes, cap) else {
+            return 0;
+        };
+        let mut used = self.used.load(Ordering::Relaxed);
+        loop {
+            let take = claimed.min(max.saturating_sub(used));
+            if take == 0 {
+                self.reserved_bytes.fetch_sub(claimed, Ordering::SeqCst);
+                return 0;
+            }
+            match self.used.compare_exchange_weak(
+                used,
+                used + take,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.reserved_bytes
+                        .fetch_sub(claimed - take, Ordering::SeqCst);
+                    return take;
+                }
+                Err(now) => used = now,
+            }
         }
     }
 
@@ -128,6 +176,30 @@ impl Budget {
     }
 }
 
+/// Add up to `want` to `counter`, keeping it at most `cap`: the amount
+/// added, or `None` if none could be.
+fn claim(counter: &AtomicU64, want: u64, cap: u64) -> Option<u64> {
+    let mut now = counter.load(Ordering::Relaxed);
+    loop {
+        let add = want.min(cap.saturating_sub(now));
+        if add == 0 {
+            return None;
+        }
+        match counter.compare_exchange_weak(now, now + add, Ordering::SeqCst, Ordering::Relaxed) {
+            Ok(_) => return Some(add),
+            Err(seen) => now = seen,
+        }
+    }
+}
+
+fn as_u64(n: usize) -> u64 {
+    u64::try_from(n).unwrap_or(u64::MAX)
+}
+
+fn as_usize(n: u64) -> usize {
+    usize::try_from(n).unwrap_or(usize::MAX)
+}
+
 /// The bytes a message holds of its mailbox's budget: its body's. Only
 /// timer messages arrive as info through the mailbox; the rest hold none.
 fn size(message: &Message) -> u64 {
@@ -136,7 +208,7 @@ fn size(message: &Message) -> u64 {
         Message::Info(Info::Timer { msg, .. }) => msg.body.len(),
         Message::Info(_) => 0,
     };
-    u64::try_from(len).unwrap_or(u64::MAX)
+    as_u64(len)
 }
 
 /// A mailbox of at most `max` messages and `max_bytes` bytes of bodies.
@@ -237,12 +309,66 @@ impl Sender {
 
     /// Messages waiting.
     pub(crate) fn queued(&self) -> usize {
-        self.tx.max_capacity().saturating_sub(self.tx.capacity())
+        self.tx
+            .max_capacity()
+            .saturating_sub(self.tx.capacity())
+            .saturating_sub(as_usize(self.budget.reserved_slots.load(Ordering::Relaxed)))
     }
 
     /// Bytes of bodies waiting.
     pub(crate) fn queued_bytes(&self) -> u64 {
-        self.budget.used.load(Ordering::Relaxed)
+        self.budget
+            .used
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.budget.reserved_bytes.load(Ordering::Relaxed))
+    }
+
+    /// Reserve up to `slots` messages and `bytes` bytes of bodies without
+    /// waiting: what is free now, under the rules in the module's docs.
+    /// `None` if no slot could be taken.
+    pub(crate) fn reserve(&self, slots: usize, bytes: u64) -> Option<Reservation> {
+        let mut reservation = Reservation {
+            permits: Vec::new(),
+            bytes: 0,
+            budget: self.budget.clone(),
+        };
+        self.top_up(&mut reservation, slots, bytes);
+        (!reservation.permits.is_empty()).then_some(reservation)
+    }
+
+    /// Add up to `slots` messages and `bytes` bytes to `reservation`, as
+    /// [`Sender::reserve`] takes them. Returns what was added.
+    pub(crate) fn top_up(
+        &self,
+        reservation: &mut Reservation,
+        slots: usize,
+        bytes: u64,
+    ) -> (usize, u64) {
+        if slots == 0 || self.budget.waiters.load(Ordering::SeqCst) != 0 {
+            return (0, 0);
+        }
+        let cap = as_u64(self.tx.max_capacity() / 2);
+        let Some(claimed) = claim(&self.budget.reserved_slots, as_u64(slots), cap) else {
+            return (0, 0);
+        };
+        let claimed = as_usize(claimed);
+        let before = reservation.permits.len();
+        while reservation.permits.len() - before < claimed {
+            match self.tx.clone().try_reserve_owned() {
+                Ok(permit) => reservation.permits.push(permit),
+                Err(_) => break,
+            }
+        }
+        let added = reservation.permits.len() - before;
+        self.budget
+            .reserved_slots
+            .fetch_sub(as_u64(claimed - added), Ordering::SeqCst);
+        if added == 0 {
+            return (0, 0);
+        }
+        let taken = self.budget.reserve_bytes(bytes);
+        reservation.bytes += taken;
+        (added, taken)
     }
 
     /// Raise the byte limit to `max_bytes` (an upgrade to a version that
@@ -271,6 +397,77 @@ impl Held<'_> {
 
 impl Drop for Held<'_> {
     fn drop(&mut self) {
+        self.budget.give(self.bytes);
+    }
+}
+
+/// Slots and bytes of a mailbox taken ahead of the messages that will use
+/// them ([`Sender::reserve`]); what is left goes back when it drops.
+#[derive(Debug)]
+pub(crate) struct Reservation {
+    permits: Vec<mpsc::OwnedPermit<Queued>>,
+    bytes: u64,
+    budget: Arc<Budget>,
+}
+
+impl Reservation {
+    /// Slots left.
+    pub(crate) fn slots(&self) -> usize {
+        self.permits.len()
+    }
+
+    /// Bytes left.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// Queue `message` into a reserved slot, if one is left and its body
+    /// fits the bytes left; otherwise hand it back.
+    pub(crate) fn send(&mut self, message: Message) -> Result<(), Message> {
+        let bytes = size(&message);
+        if bytes > self.bytes {
+            return Err(message);
+        }
+        let Some(permit) = self.permits.pop() else {
+            return Err(message);
+        };
+        self.bytes -= bytes;
+        self.budget.reserved_slots.fetch_sub(1, Ordering::SeqCst);
+        self.budget
+            .reserved_bytes
+            .fetch_sub(bytes, Ordering::SeqCst);
+        permit.send(Queued { message, bytes });
+        Ok(())
+    }
+}
+
+impl Reservation {
+    /// Give back up to `slots` slots and `bytes` bytes not yet used.
+    pub(crate) fn release(&mut self, slots: usize, bytes: u64) {
+        let slots = slots.min(self.permits.len());
+        let bytes = bytes.min(self.bytes);
+        self.permits.truncate(self.permits.len() - slots);
+        self.bytes -= bytes;
+        self.budget
+            .reserved_slots
+            .fetch_sub(as_u64(slots), Ordering::SeqCst);
+        self.budget
+            .reserved_bytes
+            .fetch_sub(bytes, Ordering::SeqCst);
+        self.budget.give(bytes);
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let slots = self.permits.len();
+        self.permits.clear();
+        self.budget
+            .reserved_slots
+            .fetch_sub(as_u64(slots), Ordering::SeqCst);
+        self.budget
+            .reserved_bytes
+            .fetch_sub(self.bytes, Ordering::SeqCst);
         self.budget.give(self.bytes);
     }
 }

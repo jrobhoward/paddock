@@ -30,6 +30,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::acl::{self, Stamp};
+use crate::credit;
 use crate::delivery::{self, Origin, Route};
 use crate::links::LinkFrom;
 use crate::message::{CallError, Envelope, ExitReason, Info};
@@ -124,6 +125,54 @@ pub enum Frame {
         msg: Envelope,
         /// How long the receiving node waits for room.
         timeout_ms: u64,
+    },
+    /// A waited cast sent on credit (ROADMAP I12): the
+    /// receiving node reserved room for it in `to`'s mailbox, and the sender
+    /// was told `Ok` when it was sent. Not answered.
+    CastCredited {
+        /// The sender.
+        from: Pid,
+        /// The sender's app and routes ([`crate::acl`]).
+        sender: Option<Stamp>,
+        /// The target, on the receiving node.
+        to: Pid,
+        /// The message.
+        msg: Envelope,
+    },
+    /// `from`, on the receiving node, may send `messages` more casts of
+    /// `bytes` more bytes to `to`, on the sending node, as
+    /// [`Frame::CastCredited`], each body at most `message_max` bytes.
+    Credit {
+        /// The sender the credit is for.
+        from: Pid,
+        /// The target whose mailbox holds the room.
+        to: Pid,
+        /// Casts added.
+        messages: u32,
+        /// Bytes of bodies added.
+        bytes: u64,
+        /// The largest body `to` takes.
+        message_max: u64,
+    },
+    /// Credit `from` (on the sending node) held for `to` and gives back,
+    /// unused: sent after every [`Frame::CastCredited`] that used the rest.
+    CreditReturn {
+        /// The sender that held it.
+        from: Pid,
+        /// The target.
+        to: Pid,
+        /// Casts given back.
+        messages: u32,
+        /// Bytes given back.
+        bytes: u64,
+    },
+    /// All of `from`'s credit for `to` (on the sending node) is void: `to`
+    /// exited, or refuses `from`.
+    CreditVoid {
+        /// The sender that held it, on the receiving node.
+        from: Pid,
+        /// The target.
+        to: Pid,
     },
     /// The answer to [`Frame::Call`], [`Frame::AppCall`] or
     /// [`Frame::CastWait`] `id`.
@@ -463,9 +512,11 @@ fn incoming_call(
                     }
                     CallTo::CastWait { from, to } => {
                         let origin = from.map_or(Origin::Host, Origin::Remote);
-                        delivery::cast_wait(rt, origin, to, msg, timeout)
-                            .await
-                            .map(|()| Envelope::new("", Vec::new()))
+                        let queued = delivery::cast_wait(rt, origin, to, msg, timeout).await;
+                        if let (Ok(()), Some(from)) = (&queued, from) {
+                            credit::grant(rt, from_node, from, to);
+                        }
+                        queued.map(|()| Envelope::new("", Vec::new()))
                     }
                     CallTo::App(app) => match rt.route_app(&app, &msg) {
                         Some(target) => target.call(msg, timeout).await,
@@ -687,6 +738,9 @@ fn admits(rt: &RuntimeInner, from: Option<Pid>, stamp: Option<&Stamp>, to: Pid) 
 fn sender_on(frame: &Frame, from_node: u32) -> bool {
     let sender = match frame {
         Frame::Cast { from, .. } | Frame::Call { from, .. } | Frame::CastWait { from, .. } => *from,
+        Frame::CastCredited { from, .. } | Frame::CreditReturn { from, .. } => Some(*from),
+        // Credit is granted and voided by the target's node.
+        Frame::Credit { to, .. } | Frame::CreditVoid { to, .. } => Some(*to),
         Frame::Exit { from, .. }
         | Frame::LinkExit { from, .. }
         | Frame::Link { from, .. }
@@ -826,6 +880,10 @@ pub(crate) fn deliver(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, packet:
                 );
             }
         }
+        frame @ (Frame::CastCredited { .. }
+        | Frame::Credit { .. }
+        | Frame::CreditReturn { .. }
+        | Frame::CreditVoid { .. }) => deliver_credit(rt, from_node, frame),
         Frame::Reply { id, result } => {
             if let Some(tx) = rt.pending_calls.take(id) {
                 let _ = tx.send(result);
@@ -984,6 +1042,39 @@ pub(crate) fn leave(rt: &RuntimeInner) {
     }
 }
 
+/// Handle a frame about credit for waited casts ([`crate::credit`]).
+fn deliver_credit(rt: &std::sync::Arc<RuntimeInner>, from_node: u32, frame: Frame) {
+    match frame {
+        Frame::CastCredited {
+            from,
+            sender,
+            to,
+            msg,
+        } => {
+            if admits(rt, Some(from), sender.as_ref(), to) {
+                credit::arrived(rt, from_node, from, to, msg);
+            } else {
+                credit::refused(rt, from_node, from, to);
+            }
+        }
+        Frame::Credit {
+            from,
+            to,
+            messages,
+            bytes,
+            message_max,
+        } => credit::credited(rt, from_node, from, to, messages, bytes, message_max),
+        Frame::CreditReturn {
+            from,
+            to,
+            messages,
+            bytes,
+        } => credit::returned(rt, from, to, messages, bytes),
+        Frame::CreditVoid { from, to } => credit::voided(rt, from, to),
+        _ => {}
+    }
+}
+
 /// End the session with `node`: raise its number, so frames from the old
 /// one are discarded, and end every link and monitor with it.
 pub(crate) fn end_session(rt: &RuntimeInner, node: u32) {
@@ -1010,6 +1101,7 @@ fn ended(rt: &RuntimeInner, node: u32, session: u64) {
         }
     }
     rt.pending_calls.fail_node(node);
+    credit::forget_node(rt, node);
     rt.services.groups().forget(node);
     probe::node_down(node, session);
     rt.liveness.announce(NodeEvent::Down { node, session });
