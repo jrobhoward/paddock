@@ -250,7 +250,6 @@ fn AppSpec____memory_max_above_4_gib____accepted() {
 #[case(json!({ "instances": { "count": 2, "max": 4 } }), "instances.count")]
 #[case(json!({ "instances": { "min": 4, "max": 2 } }), "instances.max")]
 #[case(json!({ "instances": { "count": 0 } }), "instances.count")]
-#[case(json!({ "instances": { "passivate_after_ms": 0 } }), "instances.passivate_after_ms")]
 #[case(json!({ "capabilities": { "bulkhead:sql": { "datasources": { "main": { "max_connections": 0 } } } } }), "capabilities.bulkhead:sql.datasources.main.max_connections")]
 #[case(json!({ "registered_names": ["Orders"] }), "registered_names[0]")]
 #[case(json!({ "registered_names": ["a", "a"] }), "registered_names[1]")]
@@ -434,10 +433,8 @@ fn AppManifest____invalid_app_name____invalid_at_plugin_name() {
 }
 
 #[rstest]
-#[case(json!({ "native": { "program": "library" }, "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
 #[case(json!({ "native": { "program": "library" }, "upgrade": { "mode": "snapshot", "snapshot_version": 1 } }), "upgrade.mode")]
 #[case(json!({ "native": { "program": "library" }, "listeners": [{ "name": "lines" }] }), "listeners")]
-#[case(json!({ "kind": "native-process", "native": { "program": "executable" }, "listeners": [{ "name": "lines" }], "instances": { "passivate_after_ms": 10 } }), "instances.passivate_after_ms")]
 #[case(json!({ "kind": "native-process", "native": { "program": "executable" }, "listeners": [{ "name": "lines" }], "placement": { "mode": "singleton" } }), "placement.mode")]
 fn validate____native_process_outside_its_rules____refused_at_path(
     #[case] section: serde_json::Value,
@@ -470,7 +467,6 @@ fn validate____native_executable_with_snapshots____accepted() {
     let found = AppSpec::from_json_value(&json!({
         "kind": "native-process",
         "native": { "program": "executable" },
-        "instances": { "passivate_after_ms": 10 },
         "upgrade": { "mode": "snapshot", "snapshot_version": 1 }
     }));
 

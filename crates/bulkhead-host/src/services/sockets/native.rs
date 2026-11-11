@@ -170,16 +170,6 @@ impl Instance {
         }
     }
 
-    /// Shut down every stream and drop every socket: the process that held
-    /// them has gone (passivation), and no later one knows them.
-    pub(crate) fn close_native(&mut self) {
-        for (_, s) in std::mem::take(&mut self.native.sockets) {
-            if let Kind::Stream(stream) = &s.kind {
-                let _ = stream.shutdown(Shutdown::Both);
-            }
-        }
-    }
-
     /// Keep a connection a listener accepted for the app, answering with
     /// the stream to pass and its copy's descriptor.
     pub(crate) fn connection(

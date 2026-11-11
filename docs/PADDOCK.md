@@ -14,7 +14,7 @@ This page says what the two share, where they differ, and what the differences c
 - **The cluster:** QUIC with mutual TLS and pinned keys, an HA pair and a witness with leases, replicated buckets, singletons, releases across the pair.
 - **The Rust SDK:** the `App` trait, envelopes and snapshots; in Bulkhead over the native protocol.
 
-Paddock as forked already had a `native-process` kind: rustbridge plugins and executables run as ports over pipes. It could declare logging and nothing else, had no snapshots or passivation, and a call cost about 60 µs on the Pi. Bulkhead grew it into the main kind (ROADMAP Phase 5, the native-costs track).
+Paddock as forked already had a `native-process` kind: rustbridge plugins and executables run as ports over pipes. It could declare logging and nothing else, had no snapshots, and a call cost about 60 µs on the Pi. Bulkhead grew it into the main kind (ROADMAP Phase 5, the native-costs track).
 
 ## Where they differ
 
@@ -32,7 +32,7 @@ Paddock as forked already had a `native-process` kind: rustbridge plugins and ex
 | A bucket read | A host call, 0.7 to 1.6 µs | A request, 1.4 to 3.1 µs; from a published bucket's snapshot in the app's own memory, 0.16 to 0.39 µs (T4) |
 | A crash | A trap ends the instance; its Store is discarded | An abort, segfault or panic ends the process; supervision is the same |
 | Upgrade | The new component is swapped in between messages | The new version's process starts beside the old and loads the snapshot (executables); plugins upgrade by restart or blue-green |
-| Passivation | The Store is freed and the state kept as a snapshot | The process ends and the state is kept as a snapshot; a message starts a new one |
+| Passivation | The Store is freed and the state kept as a snapshot | None (removed 2026-11-11): instances are long-lived processes |
 | Services | All of them: keyvalue and watches, groups, config, secrets, metrics, HTTP routes and egress, SQL, sockets, listeners and connection handlers, volumes, extensions, HTTP handlers | Logging, keyvalue and watches, published buckets, groups, config, secrets, metrics, HTTP routes, volumes, SQL, sockets (UDP relayed by the node), HTTP egress (sent by the node), listeners (each connection passed to an instance of the pool, which holds many), extensions (named functions called through the node); no dynamic children (dropped 2026-11-10); HTTP handlers go with WebAssembly |
 | Casts to a busy node | Refused once the link's queue is full: 17% of a component's casts from instances arrived between two node processes | Each cast is a request to the node, which paces the sender: nearly all arrived |
 | Casts that must arrive | A cast is not told whether it was queued | `try_cast` is told, and `cast_timeout` waits for room in the target's mailbox on any node: every one that returned `Ok` arrived (BASELINE.md, 2026-11-05) |

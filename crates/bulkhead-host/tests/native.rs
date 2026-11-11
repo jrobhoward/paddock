@@ -387,38 +387,6 @@ async fn executable____holding_memory____resident_set_reported() {
 }
 
 #[tokio::test]
-async fn executable____passivated_then_woken____memory_zero_then_reported() {
-    let rt = runtime(|_| {});
-    let app = executable(&rt);
-    let instance = rt
-        .spawn(
-            &app,
-            InstanceSpec {
-                passivate_after: Some(Duration::from_millis(30)),
-                ..spec("")
-            },
-        )
-        .unwrap();
-    ask(&instance, "echo up").await;
-    let mut state = instance.subscribe_state();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        state.wait_for(|s| *s == bulkhead_host::LifecycleState::Passive),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-
-    let passive = instance.memory_bytes();
-    ask(&instance, "echo awake").await;
-    let woken = instance.memory_bytes();
-
-    assert_eq!(passive, 0);
-    assert!(woken > 0);
-    instance.kill();
-}
-
-#[tokio::test]
 async fn executable____after_the_runner_execs_it____not_dumpable() {
     let rt = runtime(|_| {});
     let app = executable(&rt);

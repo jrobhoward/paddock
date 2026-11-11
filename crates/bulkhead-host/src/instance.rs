@@ -8,14 +8,6 @@
 //!
 //! Killing an instance kills its process; a new incarnation starts a new
 //! one.
-//!
-//! An instance with [`InstanceSpec::passivate_after`] is passivated after
-//! that long with nothing to do (spike S11): `save-snapshot`, then its
-//! process ends and its host-side state is kept (timers, waiting callers,
-//! services; the pid, mailbox, links, monitors and names live outside it).
-//! The next message, signal or operation starts a new process and runs
-//! `load-snapshot` with the instance's own version; a `snapshot` operation
-//! is answered from the kept bytes without waking it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -90,14 +82,6 @@ pub enum SnapshotError {
     /// over the protocol).
     #[error("a rustbridge plugin takes no snapshot")]
     NotSupported,
-}
-
-/// How [`InstanceTask::serve`] ended without a failure.
-enum Served {
-    /// A stop was requested, with this reason.
-    Stop(ExitReason),
-    /// Nothing to do for `passivate_after`.
-    Idle,
 }
 
 /// A stop request. A kill overrides a graceful shutdown; nothing overrides a
@@ -245,8 +229,8 @@ impl InstanceHandle {
 
     /// Bytes of memory the instance holds: its cgroup's `memory.current`,
     /// or else the resident set of its process and that process's direct
-    /// children, read now. 0 before it starts, while it is passivated, and
-    /// for an in-process test app.
+    /// children, read now. 0 before it starts and for an in-process
+    /// test app.
     #[must_use]
     pub fn memory_bytes(&self) -> u64 {
         let source = self
@@ -685,14 +669,11 @@ pub(crate) struct InstanceTask {
     exit: watch::Sender<Option<ExitReason>>,
     /// The app's host counters.
     stats: Arc<AppStats>,
-    /// What woke a passivated instance, handled first once it is awake.
-    held: Option<Message>,
-    held_op: Option<Box<Op>>,
-    /// The code the instance runs, once started: what a wake from
-    /// passivation starts. A successful upgrade replaces it.
+    /// The code the instance runs, once started: whether it takes
+    /// snapshots. A successful upgrade replaces it.
     app: Option<LoadedApp>,
-    /// The next call reference, unique for the instance's whole life: a
-    /// guest woken from a snapshot may still hold the reference of a call
+    /// The next call reference, unique for the instance's whole life: an
+    /// app started from a snapshot may still hold the reference of a call
     /// whose caller gave up.
     next_ref: u64,
     /// A native instance's callback deadline: one timer for all its
@@ -755,8 +736,6 @@ pub(crate) fn prepare(
         kill,
         state: state_tx,
         exit: exit_tx,
-        held: None,
-        held_op: None,
         app: None,
         native_timer: None,
         native_spawns: 0,
@@ -830,7 +809,6 @@ impl InstanceTask {
         spec: &InstanceSpec,
     ) -> ExitReason {
         let code = app.native().clone();
-        // What a wake from passivation starts; an upgrade replaces it.
         self.app = Some(app);
         Box::pin(self.native(rt, &code, spec)).await
     }
@@ -881,49 +859,6 @@ impl InstanceTask {
     /// Whether a message, signal or operation is waiting.
     fn has_work(&self) -> bool {
         !self.mailbox.is_empty() || !self.signals.is_empty() || !self.ops.is_empty()
-    }
-
-    /// Wait, passivated, for something to wake the instance; it is kept in
-    /// `held` or `held_op`. A `snapshot` operation is answered from
-    /// `snapshot` without waking. Returns the reason of a kill, which ends
-    /// the instance without waking it; a graceful stop wakes it to run
-    /// `terminate`.
-    async fn passive(&mut self, snapshot: &[u8]) -> Option<ExitReason> {
-        loop {
-            match self.control.borrow_and_update().clone() {
-                Control::Run => {}
-                Control::Shutdown(_) => return None,
-                Control::Kill(reason) => return Some(reason),
-            }
-            tokio::select! {
-                biased;
-                changed = self.control.changed() => if changed.is_err() {
-                    return Some(ExitReason::Killed);
-                },
-                Some(op) = self.ops.recv() => match *op {
-                    Op::Snapshot { reply } => {
-                        let _ = reply.send(Ok(snapshot.to_vec()));
-                    }
-                    Op::MoveOut { reply } => {
-                        let _ = reply.send(Ok(snapshot.to_vec()));
-                        return Some(self.frozen().await);
-                    }
-                    op => {
-                        self.held_op = Some(Box::new(op));
-                        return None;
-                    }
-                },
-                Some(info) = self.signals.recv() => if let Some(info) = info.resolve() {
-                    self.held = Some(Message::Info(info));
-                    return None;
-                },
-                // `None`: the mailbox closed, and `serve` stops.
-                message = self.mailbox.recv() => {
-                    self.held = message;
-                    return None;
-                }
-            }
-        }
     }
 
     /// Wait until guest code may run: the instance's lease, if it is bound

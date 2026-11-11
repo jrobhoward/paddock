@@ -604,7 +604,7 @@ impl Runtime {
         self.inner.metrics.render(&self.instances())
     }
 
-    /// Number of live instances, passivated or not.
+    /// Number of live instances.
     #[must_use]
     pub fn instance_count(&self) -> usize {
         self.inner.table.len()

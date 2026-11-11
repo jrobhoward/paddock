@@ -56,6 +56,14 @@ All notable changes are recorded here. The format follows
 
 ### Removed
 
+- Passivation: the aim is long-lived processes, not many idle ones. The
+  manifest key `instances.passivate_after_ms` is refused as an unknown
+  key, including in a manifest a node already holds; rebuild and redeploy
+  such a bundle without it. The `passive` lifecycle state (`ps`,
+  `LifecycleState::Passive`), `InstanceSpec::passivate_after` and the
+  metrics `bulkhead_instances_passive`, `bulkhead_passivations_total` and
+  `bulkhead_wake_seconds` are gone with it. Snapshot upgrades and moving
+  a singleton with its state are unchanged.
 - The manifest keys `limits.table_max` and `limits.fuel_per_message`, which
   did nothing on a native app. A manifest setting either is refused as an
   unknown key, including one a node already holds; rebuild and redeploy

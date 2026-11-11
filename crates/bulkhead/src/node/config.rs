@@ -7,7 +7,7 @@
 //! trusted_keys = ["RWQ..."]
 //! policy = "/etc/bulkhead/policy.toml"
 //! max_instances = 1000           # default of max_processes
-//! max_processes = 20000          # all instances, passivated ones too
+//! max_processes = 20000          # all instances
 //!
 //! [volumes]
 //! orders-data = "/srv/bulkhead/volumes/orders-data"
@@ -131,8 +131,7 @@ pub struct NodeConfig {
     /// Most instances on the node when `max_processes` is unset.
     #[serde(default = "default_max_instances")]
     pub max_instances: u32,
-    /// Most instances in all, passivated ones included (apps with
-    /// `instances.passivate_after_ms`); at least `max_instances`. Unset:
+    /// Most instances in all; at least `max_instances`. Unset:
     /// `max_instances`.
     #[serde(default)]
     pub max_processes: Option<u32>,

@@ -192,17 +192,11 @@ impl AppSpec {
     }
 
     /// Listeners on a native app: an executable's instances take the
-    /// connections, so never passivated and not a singleton (a listener
+    /// connections, so the app is not a singleton (a listener
     /// binds on every node the app is deployed to).
     fn check_native_listeners(&self, executable: bool, v: &mut Validator) {
         if !executable {
             v.error_at("listeners", "a rustbridge plugin takes no connections");
-        }
-        if self.instances.passivate_after_ms.is_some() {
-            v.error_at(
-                "instances.passivate_after_ms",
-                "a native app with listeners is never passivated",
-            );
         }
         if self
             .placement
@@ -217,8 +211,8 @@ impl AppSpec {
     }
 
     /// What a `native-process` app may not have: for a rustbridge plugin,
-    /// which takes no snapshot and no connection, passivation, snapshot
-    /// upgrades and listeners; and the `native` section on any other kind.
+    /// which takes no snapshot and no connection, snapshot upgrades and
+    /// listeners; and the `native` section on any other kind.
     fn check_native(&self, v: &mut Validator) {
         if self.kind != Kind::NativeProcess {
             v.error_at(
@@ -234,12 +228,6 @@ impl AppSpec {
         }
         if executable {
             return;
-        }
-        if self.instances.passivate_after_ms.is_some() {
-            v.error_at(
-                "instances.passivate_after_ms",
-                "a rustbridge plugin is never passivated",
-            );
         }
         if self.upgrade.mode == UpgradeMode::Snapshot {
             v.error_at(

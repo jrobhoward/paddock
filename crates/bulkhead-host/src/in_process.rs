@@ -114,8 +114,7 @@ pub trait TestApp: Sized + Send + 'static {
         async {}
     }
 
-    /// The state to carry through a snapshot upgrade, passivation or a
-    /// move. Refused by default.
+    /// The state to carry through a snapshot upgrade or a move. Refused by default.
     ///
     /// # Errors
     ///

@@ -32,7 +32,7 @@ Solid arrows point from a crate to the crates it depends on; dotted arrows are w
 | --- | --- | --- |
 | `bulkhead` | binary and library | `api` (admin API types, and the client over the Unix socket or TLS), `node` (the daemon, feature `node`), `serial` (the tty layer and frames for the failover serial line), `cli` (commands, bundle building, the shell). |
 | `bulkhead-bundle` | library | The app manifest model and validation, `.rbp` opening and signature checks against operator keys (the program's platform variant), operator policy and the effective grant. |
-| `bulkhead-host` | library | The runtime: process table, instances, passivation, links and monitors, supervisors, app sets and pools, host services, the HTTP ingress, listeners, the cluster transport, liveness, membership, failover, replication, moving singletons and release versions. |
+| `bulkhead-host` | library | The runtime: process table, instances, links and monitors, supervisors, app sets and pools, host services, the HTTP ingress, listeners, the cluster transport, liveness, membership, failover, replication, moving singletons and release versions. |
 | `bulkhead-native` | library and `bulkhead-runner` | The frame protocol between a node and a native app, the channel it travels over (shared-memory rings, the pipes that wake each side, the descriptor socket; feature `channel`), published buckets' snapshot format, the app API for native executables (feature `app`), and `bulkhead-runner` (feature `runner`, default), the launcher that sandboxes itself and loads or executes a native app. `bulkhead-host` takes the protocol, the channel and the snapshot format. |
 | `bulkhead-modbus` | library | The Modbus TCP extension; depends on `bulkhead-host` alone. |
 | `bulkhead-modbus-client` | app library | Apps' client for the Modbus extension: calls through the node (`bulkhead_sdk::extension`). |
@@ -48,7 +48,7 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 | Area | Modules | Role |
 | --- | --- | --- |
 | Engine | `runtime`, `config` | `Runtime` and its `RuntimeInner`: the configuration, the process table, the services and the transport |
-| Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `instance_native`, `state`, `process`, `delivery`, `acl`, `lifecycle`, `output`, `health` | Instances, their mailboxes and callback loop, passivation, the per-instance host state and `process` functions, pid routing, messaging ACLs (checked on the target's node), links and monitors, health checks |
+| Process core | `pid`, `table`, `registry`, `links`, `message`, `instance`, `instance_native`, `state`, `process`, `delivery`, `acl`, `lifecycle`, `output`, `health` | Instances, their mailboxes and callback loop, the per-instance host state and `process` functions, pid routing, messaging ACLs (checked on the target's node), links and monitors, health checks |
 | Orchestration | `apps`, `pool`, `supervisor`, `upgrade`, `spec` | App sets in dependency order, a root supervisor per app, pools with routing and a blue-green second side, snapshot, restart and blue-green upgrades |
 | Services | `services::{config, keyvalue, groups, logging, secrets, metrics, egress, sockets, sql, extension}`, `metrics` | What apps reach, on the `Service` pattern; extensions from other crates |
 | I/O | `http` (`http::tls`), `listener` | The HTTP ingress (a request is a call to a pool) and listeners (connections passed to the app's instances, many each) |
@@ -174,12 +174,6 @@ A listener (`listener`) hands each accepted connection to an instance of the app
 - **Waiting on a socket:** the app asks with a tag; the node watches the socket and delivers the host event `io-ready` once it is ready.
 - **SQL** (`services::sql`, feature `sql`): a Postgres pool per datasource, with a connection cap per app.
 
-## Passivation
-
-An app with `instances.passivate_after_ms` lets an idle instance end its process. After that long with nothing to do, the instance runs `save_snapshot`, ends its process and keeps its data (`InstanceState`: timers, waiting callers, services' state); its pid, mailbox, links, monitors and names live on the node and stay. Its state is `Passive`.
-
-`max_processes` bounds instances. The next message, signal or operation for a passive instance starts a new process and runs `load_snapshot`. A snapshot operation on a passive instance is answered from the kept bytes without waking it.
-
 ## Native-process apps
 
 A native app (`kind = "native-process"`) runs as a process, one per instance, through `bulkhead-runner`:
@@ -204,7 +198,7 @@ sequenceDiagram
 - **The lifecycle** (`instance_native`, a child module of `instance`) uses the instance's own channels, so pids, links, monitors, supervision and exit reasons work through the node. Requests are answered on an `InstanceState` the task holds; metric updates come in one unanswered frame before the callback's result. One callback-deadline timer and one ping timer per instance are re-armed when they fire early, rather than a timer per frame. A callback's deadline is wall time less the time spent answering requests; past it, or past a ping's deadline while idle, the process is killed (`timeout`). Its exit is a crash with its status or signal, a panic is a crash with the panic's message, and an OOM kill in its cgroup is `memory_limit`.
 - **Limits** (`native::cgroup`): with node config `[native] cgroup`, the node moves itself into `<cgroup>/node` at start and gives each instance `<cgroup>/native/<pid>` with `memory.max`, no swap and `pids.max`; the child is placed there between fork and exec. Without it, `memory_max` is the process's `RLIMIT_DATA`.
 
-Snapshots are frames (`SaveSnapshot` between callbacks, `LoadSnapshot` in place of `Init`), and every load is in a new process: a snapshot upgrade starts the new version's process (with a cgroup of its own) beside the old and swaps the port once it has loaded, handing the `InstanceState`'s timers and pending callers over; passivation saves, kills and reaps the process, and `passive` waits, answering snapshots from the kept bytes; a wake or a moved singleton starts a new process from the snapshot. A rustbridge plugin's instance refuses snapshot operations. A singleton's process is killed when the node's lease ends, idle or not (`crashed: lease_ended`), since it can run threads between callbacks.
+Snapshots are frames (`SaveSnapshot` between callbacks, `LoadSnapshot` in place of `Init`), and every load is in a new process: a snapshot upgrade starts the new version's process (with a cgroup of its own) beside the old and swaps the port once it has loaded, handing the `InstanceState`'s timers and pending callers over; a moved singleton starts a new process from the snapshot. A rustbridge plugin's instance refuses snapshot operations. A singleton's process is killed when the node's lease ends, idle or not (`crashed: lease_ended`), since it can run threads between callbacks.
 
 ### Processes and shared memory
 
@@ -352,7 +346,7 @@ sequenceDiagram
 ```
 
 - **The watch** (`services::keyvalue::watches`) names the bucket by its storage key, so an app's own bucket and a shared bucket of the same name are told apart; an app's own buckets are its alone, so only a shared bucket (or a `cluster` one) links two apps. It ends with `unwatch` or when the instance exits; an upgrade keeps it, and a restarted instance watches again in `init`, with `after` set to the last revision it saw to replay what it missed (`too-old` if the bucket can no longer replay that far).
-- **Notices are conflated per key, never dropped:** a slow watcher misses intermediate values but always gets the latest. A notice that waits on a passivated instance wakes it.
+- **Notices are conflated per key, never dropped:** a slow watcher misses intermediate values but always gets the latest.
 - **The data stays in the node.** The writer's value is copied out of its ring into the bucket (the node's heap, or its redb file for a disk bucket); the watcher's copy is read from the bucket and copied into the watcher's ring. Neither app maps the other's memory or the bucket's (a published bucket's snapshot is the exception, read-only).
 - **The value comes with the notice** (`Change::carried`, `Change::value`; `None` for a delete), read by the watcher's task when it delivers the notice, so the revision is the value's own and may be past the write that queued it.
 - **A replicated bucket** (`scope = "cluster"`, or an app's `replicated` one) notifies watches when the write commits on each node, from that node's copy (below), so a watcher on either node of the pair hears of it.
@@ -458,7 +452,7 @@ No std lock is held across an `.await` (`await_holding_lock` is denied).
 | State | Where |
 | --- | --- |
 | App memory and globals | its process |
-| Timers, pending `noreply` callers, the callback clock, service instance states | `state::InstanceState`, held by the task (kept while passive) |
+| Timers, pending `noreply` callers, the callback clock, service instance states | `state::InstanceState`, held by the task |
 | A native app's channel: a memfd with a 64 KiB ring each way, the bell and door pipes, the descriptor socket | shared by the node and that app's process only; ends with the process |
 | Mailbox | bounded `mpsc` (`limits.mailbox_max`) |
 | Signals (exits, timers, watch notices) | unbounded `mpsc` |
@@ -466,7 +460,7 @@ No std lock is held across an `.await` (`await_holding_lock` is denied).
 | Run, shutdown or kill | `watch` channel |
 | Lifecycle state, exit reason, counters | `InstanceHandle`, shared |
 
-An app's state lives only in its process. A crash or restart starts from `init`; a snapshot upgrade, a passivation and a singleton moved in a planned switchover carry it across. State that must survive anything else goes in a `disk` or replicated bucket.
+An app's state lives only in its process. A crash or restart starts from `init`; a snapshot upgrade and a singleton moved in a planned switchover carry it across. State that must survive anything else goes in a `disk` or replicated bucket.
 
 ### In the node daemon (`node::Node`)
 

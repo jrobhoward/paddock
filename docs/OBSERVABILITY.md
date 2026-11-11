@@ -9,10 +9,10 @@ What an operator can see on a running node: instance stats, events and log recor
 | Column | Meaning |
 | --- | --- |
 | `PID` | `node.serial.incarnation@creation`. The serial stays across restarts of the instance; the incarnation grows by one each time; the creation counts the node's starts, so a pid from before a node restart never names a later instance. The instance id is the creation in its high 24 bits and the serial in its low 40. |
-| `APP`, `VERSION`, `STATE` | What it runs, and its lifecycle state (`active`, `upgrading`, `passive`, ...). |
+| `APP`, `VERSION`, `STATE` | What it runs, and its lifecycle state (`active`, `upgrading`, `stopping`, ...). |
 | `QUEUED` | Messages waiting in its mailbox. |
 | `DROPPED` | Casts and timer messages dropped because its mailbox was full. |
-| `MEMORY` | The app's cgroup's `memory.current`, or without `[native] cgroup` the resident set of its process and that process's direct children, shared pages (the channel's rings, the program's libraries) included, read when asked. 0 while passivated. |
+| `MEMORY` | The app's cgroup's `memory.current`, or without `[native] cgroup` the resident set of its process and that process's direct children, shared pages (the channel's rings, the program's libraries) included, read when asked. |
 | `RESTARTS` | Times its supervisor restarted it (the incarnation minus one). |
 | `LAST EXIT` | Why the previous incarnation exited, as its supervisor saw it. |
 
@@ -77,9 +77,6 @@ The host's metrics, every one with an `app` label. The names and labels are an i
 | `bulkhead_cast_wait_seconds` | histogram | | Time a native app's `cast_timeout` waited for room in a full mailbox, zero included, by the sender's app (10 µs to 5 s buckets). Its count is the number of waited casts. |
 | `bulkhead_mailbox_dropped_total` | counter | | Messages dropped at a full mailbox (by count or by bytes). |
 | `bulkhead_instance_exits_total` | counter | `reason` (`normal`, `shutdown`, `killed`, `noproc`, `noconnection`, `timeout`, `crashed`) | Instance exits. |
-| `bulkhead_instances_passive` | gauge | | Live instances passivated (`instances.passivate_after_ms`): no process, state in a snapshot. |
-| `bulkhead_passivations_total` | counter | | Instances passivated. |
-| `bulkhead_wake_seconds` | histogram | | Time to wake a passivated instance: a new process and `load-snapshot` (10 µs to 1 s buckets). |
 | `bulkhead_egress_requests_total` | counter | `outcome` (`sent`: a response came; `denied`; `limited`: over `max_concurrent`; `failed`: connection, TLS or timeout) | Outgoing HTTP requests (`bulkhead:http-egress`); listed once an app has made one. |
 | `bulkhead_sockets_open` | gauge | | Sockets the app's instances hold open (`bulkhead:sockets`), TCP and UDP, accepted ones included; listed once an app has opened or been refused one. |
 | `bulkhead_sockets_refused_total` | counter | | Socket addresses the app's policy refused (bind, listen, connect, send, receive) and sockets refused over `max_sockets`. |

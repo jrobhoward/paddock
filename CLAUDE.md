@@ -193,9 +193,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `crates/bulkhead-fixture-plugin` (a rustbridge `.so`): native test apps,
   built natively into `target/fixtures/native` by the tests that use them.
 - `crates/bulkhead-fixture-counter`: a stateful counter on the SDK, built
-  three ways by feature (v1, v2, a broken v3), for upgrade and passivation tests
-  (`tests/passivation.rs`, `examples/passivation_cost.rs`); each version
-  builds into its own target directory.
+  three ways by feature (v1, v2, a broken v3), for upgrade tests; each
+  version builds into its own target directory.
 - The SQL service (`crates/bulkhead-host/src/services/sql`, cargo feature
   `sql`) runs Postgres through `tokio-postgres` and `deadpool-postgres`; its
   tests start a scratch Postgres as the current user and skip when none is

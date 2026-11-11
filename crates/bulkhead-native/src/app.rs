@@ -95,8 +95,8 @@ pub trait App: Sized {
     /// Stop gracefully.
     fn terminate(&mut self, _ctx: &mut Ctx, _reason: ExitReason) {}
 
-    /// Write the state, for a snapshot upgrade, passivation or a move to
-    /// another node, without changing it: if what follows fails, this
+    /// Write the state, for a snapshot upgrade or a move to another
+    /// node, without changing it: if what follows fails, this
     /// instance keeps running. Empty by default.
     ///
     /// # Errors
@@ -112,7 +112,7 @@ pub trait App: Sized {
     /// # Errors
     ///
     /// Why it is refused: an upgrade keeps the old version running; a
-    /// wake from passivation or a move ends the instance.
+    /// move ends the instance.
     fn load_snapshot(
         _ctx: &mut Ctx,
         from_version: &str,

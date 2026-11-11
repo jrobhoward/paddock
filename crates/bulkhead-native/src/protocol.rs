@@ -17,7 +17,7 @@
 //! declare: keyvalue ([`Request::Kv`], [`Info::KvChanged`]), groups,
 //! config, secrets and metrics. Version 3 added snapshots
 //! ([`ToApp::SaveSnapshot`], [`ToApp::LoadSnapshot`]), for snapshot
-//! upgrades, passivation and moving a singleton with its state. Version 5
+//! upgrades and moving a singleton with its state. Version 5
 //! added bucket handles ([`Request::KvOpen`]) and the hot frames of
 //! [`hot`](crate::hot): the most frequent keyvalue requests and their
 //! answers in fixed layouts, beside the CBOR frames. Version 6 answers a

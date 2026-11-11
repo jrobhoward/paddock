@@ -202,9 +202,7 @@ pub struct RuntimeConfig {
     pub node: u32,
     /// Most instances in the process table when `max_processes` is unset.
     pub max_instances: u32,
-    /// Most instances in the process table, passivated ones included
-    /// ([`crate::InstanceSpec::passivate_after`]); `None` is
-    /// `max_instances`. A start past it fails with
+    /// Most instances in the process table; `None` is `max_instances`. A start past it fails with
     /// [`HostError::InstanceLimit`](crate::HostError::InstanceLimit).
     pub max_processes: Option<u32>,
     /// Where node state lives (`disk` keyvalue buckets). `None` disables

@@ -53,7 +53,6 @@ Two words have more than one meaning:
 - **Trap exits:** an instance that traps exits turns exit signals from links into `exit` infos.
 - **Supervisor:** a host task that starts children and restarts them by its strategy (`one_for_one`, `one_for_all`, `rest_for_one`, `simple_one_for_one`), within `intensity` restarts per `period`, after a backoff. Each app has a root supervisor.
 - **Health check:** a call the host makes to an instance on a timer; `failure_threshold` failures in a row kill it as `crashed: unhealthy`.
-- **Passivation:** an idle instance saving its state with `save_snapshot` and ending its process, keeping its pid, mailbox, links, monitors, names and timers. The next message wakes it with `load_snapshot`. A passivated instance's snapshot is held in host memory. [ARCHITECTURE.md](ARCHITECTURE.md), "Passivation".
 - **Upgrade modes:** `restart` (stop, then start the new version from `init`), `snapshot` (each instance in place: `save_snapshot` in the old version, `load_snapshot` in the new, keeping pid and mailbox) and `blue-green` (the new version beside the old, traffic moved by weight). [MANIFEST.md](MANIFEST.md).
 - **Weight:** during a blue-green upgrade, the percentage of messages a pool sends to the new side.
 - **Rollback:** going back to the previous version, in the same mode as an upgrade.

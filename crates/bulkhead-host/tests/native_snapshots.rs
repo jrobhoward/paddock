@@ -1,6 +1,6 @@
 //! Snapshots for native-process apps: the fixture executable's
 //! `save_snapshot` and `load_snapshot` over the protocol, for reading an
-//! instance's state, snapshot upgrades, passivation and moves, each into a
+//! instance's state, snapshot upgrades and moves, each into a
 //! new process; and a rustbridge plugin, which takes none.
 
 #![cfg(target_os = "linux")]
@@ -53,17 +53,6 @@ async fn gone(os_pid: &str) -> bool {
     let path = format!("/proc/{os_pid}");
     let deadline = Instant::now() + Duration::from_secs(5);
     while std::path::Path::new(&path).exists() {
-        if Instant::now() > deadline {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    true
-}
-
-async fn reaches(h: &InstanceHandle, state: LifecycleState) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while h.state() != state {
         if Instant::now() > deadline {
             return false;
         }
@@ -142,49 +131,6 @@ async fn native_upgrade____snapshot_refused____old_process_keeps_running() {
     assert_eq!(h.version(), "1.0.0");
     assert_eq!(h.state(), LifecycleState::Active);
     h.kill();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_passivation____idle____process_ends_and_a_message_wakes_it_with_state() {
-    let rt = runtime();
-    let mut idle = spec("1.0.0");
-    idle.passivate_after = Some(Duration::from_millis(100));
-    let h = rt.spawn(&executable(&rt), idle).unwrap();
-    ask(&h, "note kept").await;
-    let before = ask(&h, "os-pid").await;
-
-    let passive = reaches(&h, LifecycleState::Passive).await;
-    let ended = gone(&before).await;
-    let read = h.snapshot().await.unwrap();
-    let still = h.state();
-    let notes = ask(&h, "notes").await;
-
-    assert!(passive, "not passivated");
-    assert!(ended, "the process outlived passivation");
-    assert_eq!(read, b"kept");
-    assert_eq!(still, LifecycleState::Passive);
-    assert_eq!(notes, "kept");
-    assert_eq!(ask(&h, "loaded-from").await, "1.0.0");
-    assert_ne!(ask(&h, "os-pid").await, before);
-    h.kill();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_passivation____snapshot_refused_on_wake____crashed() {
-    let rt = runtime();
-    let mut idle = spec("1.0.0");
-    idle.passivate_after = Some(Duration::from_millis(100));
-    let h = rt.spawn(&executable(&rt), idle).unwrap();
-    ask(&h, "note refuse").await;
-    assert!(reaches(&h, LifecycleState::Passive).await);
-
-    h.cast(common::text("wake")).unwrap();
-    let reason = h.wait().await;
-
-    assert_eq!(
-        reason,
-        ExitReason::Crashed("wake: load-snapshot refused: asked to refuse".into())
-    );
 }
 
 fn deployment(rt: &Runtime, name: &str, version: &str) -> AppDeployment {

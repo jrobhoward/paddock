@@ -19,8 +19,7 @@
 //! - Snapshots are frames: `SaveSnapshot` between callbacks, and
 //!   `LoadSnapshot` in place of `Init` in a new process, for a snapshot
 //!   upgrade (the new version's process beside the old until it has
-//!   loaded), a wake from passivation (the process ends while passive)
-//!   and a singleton moved here. A rustbridge plugin takes none.
+//!   loaded) and a singleton moved here. A rustbridge plugin takes none.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -32,7 +31,7 @@ use bulkhead_native::protocol::{self as p, Answer, FromApp, Request, ToApp};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::{AbortOnDrop, Control, InstanceTask, Message, Op, Served, SnapshotError};
+use super::{AbortOnDrop, Control, InstanceTask, Message, Op, SnapshotError};
 use crate::failover::RunUntil;
 use crate::health;
 use crate::lifecycle::LifecycleState;
@@ -571,18 +570,12 @@ impl InstanceTask {
         let native = rt.native_config();
         let (interval, timeout) = (native.ping_interval, native.ping_timeout);
         let mut spec = spec.clone();
-        let stop = loop {
-            match self
-                .native_serve(state, port, &mut spec, interval, timeout)
-                .await
-            {
-                Ok(Served::Stop(stop)) => break stop,
-                Ok(Served::Idle) => {}
-                Err(reason) => return reason,
-            }
-            if let Some(reason) = self.native_passivate(state, port, &spec).await {
-                return reason;
-            }
+        let stop = match self
+            .native_serve(state, port, &mut spec, interval, timeout)
+            .await
+        {
+            Ok(stop) => stop,
+            Err(reason) => return reason,
         };
         self.set_state(LifecycleState::Stopping);
         self.mailbox.close();
@@ -630,8 +623,7 @@ impl InstanceTask {
         }
     }
 
-    /// An operation between callbacks, in `native_serve`: the time the
-    /// instance was last active after it.
+    /// An operation between callbacks, in `native_serve`.
     async fn native_serve_op(
         &mut self,
         state: &mut InstanceState,
@@ -639,8 +631,7 @@ impl InstanceTask {
         spec: &mut InstanceSpec,
         op: Op,
         pings: &mut Pings,
-        idle_timer: std::pin::Pin<&mut tokio::time::Sleep>,
-    ) -> Result<Instant, ExitReason> {
+    ) -> Result<(), ExitReason> {
         // `Some` is the reason the instance cannot continue.
         self.native_op(state, port, spec, op)
             .await
@@ -648,13 +639,7 @@ impl InstanceTask {
         // The app answered, or was not asked: either way a ping in flight
         // is moot.
         pings.answered();
-        let active_at = pings.idle_since;
-        // An upgrade may have set `passivate_after`.
-        idle_timer.reset(
-            spec.passivate_after
-                .map_or_else(far_off, |after| active_at + after),
-        );
-        Ok(active_at)
+        Ok(())
     }
 
     /// Pass the running process each published bucket's latest snapshot
@@ -708,77 +693,6 @@ impl InstanceTask {
                 format!("expected snapshot, got {}", frame_name(&other)),
             )),
         }
-    }
-
-    /// Passivate an idle instance: save its state, end its process, wait
-    /// for something to wake it, then start a new process from the
-    /// snapshot (`load_snapshot` with its own version). Returns the reason
-    /// the instance ends instead: a failed save or wake, or a kill while
-    /// passive.
-    async fn native_passivate(
-        &mut self,
-        state: &mut InstanceState,
-        port: &mut Port,
-        spec: &InstanceSpec,
-    ) -> Option<ExitReason> {
-        let snapshot = match self.native_save(state, port, spec).await {
-            Ok(snapshot) => snapshot,
-            Err(reason) => return Some(reason),
-        };
-        if self.has_work() {
-            // Something arrived during the save: stay live.
-            return None;
-        }
-        port.kill();
-        port.finish().await;
-        // The streams went with the process; the node's copies go too, so
-        // their peers see the end.
-        #[cfg(unix)]
-        HostState::<Sockets>::service(state).state.close_native();
-        self.me.set_native_memory(None);
-        self.set_state(LifecycleState::Passive);
-        self.stats.passivated();
-        tracing::debug!(bytes = snapshot.len(), "passivated");
-        if let Some(reason) = self.passive(&snapshot).await {
-            return Some(reason);
-        }
-        let started = std::time::Instant::now();
-        if let Some(stop) = self.await_lease(state.lease.clone()).await {
-            return Some(stop);
-        }
-        // Set once started; the version running when it passivated.
-        let Some(code) = self.app.as_ref().map(LoadedApp::native).cloned() else {
-            return Some(ExitReason::Crashed("no_code".into()));
-        };
-        let rt = state.ctx.rt.clone();
-        let fresh = match self.native_port(&rt, &code, spec) {
-            Ok(fresh) => fresh,
-            Err(why) => return Some(ExitReason::Crashed(why)),
-        };
-        *port = fresh;
-        self.me.set_native_memory(port.memory_source());
-        let version = spec.version.clone();
-        match self
-            .native_start(state, port, spec, Some((&version, &snapshot)))
-            .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(msg)) => {
-                return Some(ExitReason::Crashed(format!(
-                    "wake: load-snapshot refused: {msg}"
-                )));
-            }
-            Err(ExitReason::Crashed(why)) if why == "init_timeout" => {
-                return Some(ExitReason::Crashed("wake_timeout".into()));
-            }
-            Err(reason) => return Some(reason),
-        }
-        self.stats.woke(started.elapsed());
-        tracing::debug!(wake_us = started.elapsed().as_micros(), "woken");
-        self.set_state(LifecycleState::Active);
-        // The new process starts with fresh statics, as after an upgrade.
-        self.native_announce(state);
-        None
     }
 
     /// Snapshot upgrade: `SaveSnapshot` in the running process, then the
@@ -1049,9 +963,8 @@ impl InstanceTask {
         }
     }
 
-    /// Handle messages until a stop is requested, the instance has been
-    /// idle for `passivate_after` and may be passivated (`Ok`), or it fails
-    /// (`Err`). What woke a passivated instance is handled first.
+    /// Handle messages until a stop is requested (`Ok`, with its reason)
+    /// or the instance fails (`Err`).
     async fn native_serve(
         &mut self,
         state: &mut InstanceState,
@@ -1059,7 +972,7 @@ impl InstanceTask {
         spec: &mut InstanceSpec,
         ping_interval: Duration,
         ping_timeout: Duration,
-    ) -> Result<Served, ExitReason> {
+    ) -> Result<ExitReason, ExitReason> {
         let mut pings = Pings {
             in_flight: None,
             sent: 0,
@@ -1078,26 +991,16 @@ impl InstanceTask {
         let mut lease_timer = std::pin::pin!(tokio::time::sleep_until(
             lease_end(lease.as_ref()).unwrap_or_else(far_off)
         ));
-        // When the instance last handled something, for `passivate_after`;
-        // one timer, moved when it fires early.
-        let mut active_at = Instant::now();
-        let mut idle_timer = std::pin::pin!(tokio::time::sleep_until(
-            spec.passivate_after
-                .map_or_else(far_off, |after| active_at + after)
-        ));
         loop {
             match self.control.borrow_and_update().clone() {
                 Control::Run => {}
-                Control::Shutdown(reason) => return Ok(Served::Stop(reason)),
+                Control::Shutdown(reason) => return Ok(reason),
                 Control::Kill(reason) => {
                     port.kill();
                     return Err(reason);
                 }
             }
-            // What woke a passivated instance comes first.
-            let woke = if let Some(held) = self.native_held() {
-                held
-            } else {
+            let woke = {
                 tokio::select! {
                     biased;
                     changed = self.control.changed() => {
@@ -1126,7 +1029,7 @@ impl InstanceTask {
                     },
                     message = self.mailbox.recv() => match message {
                         Some(message) => Woke::Next(message),
-                        None => return Ok(Served::Stop(ExitReason::Shutdown)),
+                        None => return Ok(ExitReason::Shutdown),
                     },
                     incoming = port.recv() => {
                         between_callbacks(state, port, incoming, &mut pings).await?;
@@ -1136,19 +1039,12 @@ impl InstanceTask {
                         pings.due(port, ping_timer.as_mut())?;
                         continue;
                     }
-                    () = idle_timer.as_mut(), if spec.passivate_after.is_some() => {
-                        if self.idle_due(state, spec, active_at, idle_timer.as_mut()) {
-                            return Ok(Served::Idle);
-                        }
-                        continue;
-                    }
                 }
             };
             let message = match woke {
                 Woke::Next(message) => message,
                 Woke::Op(op) => {
-                    active_at = self
-                        .native_serve_op(state, port, spec, *op, &mut pings, idle_timer.as_mut())
+                    self.native_serve_op(state, port, spec, *op, &mut pings)
                         .await?;
                     continue;
                 }
@@ -1156,7 +1052,7 @@ impl InstanceTask {
             // Out of lease, the message waits here; a stop drops it.
             if let Some(stop) = self.await_lease(state.lease.clone()).await {
                 return match *self.control.borrow() {
-                    Control::Shutdown(_) => Ok(Served::Stop(stop)),
+                    Control::Shutdown(_) => Ok(stop),
                     Control::Run | Control::Kill(_) => {
                         port.kill();
                         Err(stop)
@@ -1165,37 +1061,6 @@ impl InstanceTask {
             }
             self.native_handle(state, port, spec, message).await?;
             pings.answered();
-            active_at = pings.idle_since;
-        }
-    }
-
-    /// What woke the instance while passive, if it is still to handle.
-    fn native_held(&mut self) -> Option<Woke> {
-        self.held_op
-            .take()
-            .map(Woke::Op)
-            .or_else(|| self.held.take().map(Woke::Next))
-    }
-
-    /// Whether an instance idle since `active_at` may now be passivated;
-    /// if not, `timer` is moved to when to look again.
-    fn idle_due(
-        &self,
-        state: &mut InstanceState,
-        spec: &InstanceSpec,
-        active_at: Instant,
-        timer: std::pin::Pin<&mut tokio::time::Sleep>,
-    ) -> bool {
-        let after = spec.passivate_after.unwrap_or_default();
-        if Instant::now() < active_at + after {
-            timer.reset(active_at + after);
-            false
-        } else if state.passivable() && !self.has_work() {
-            true
-        } else {
-            // Calls still wait on its replies: look again later.
-            timer.reset(Instant::now() + after);
-            false
         }
     }
 

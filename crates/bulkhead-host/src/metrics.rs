@@ -23,7 +23,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::instance::InstanceHandle;
-use crate::lifecycle::LifecycleState;
 use crate::message::ExitReason;
 
 /// Histogram buckets when an app gives none, and for callback time (the
@@ -353,9 +352,6 @@ pub(crate) struct AppStats {
     pub(crate) dropped: AtomicU64,
     /// Instance exits by reason class.
     exits: Mutex<BTreeMap<&'static str, u64>>,
-    /// Passivations, wakes and their time (spike S11).
-    passivations: AtomicU64,
-    wake_time: Histogram,
     /// Outgoing HTTP requests by outcome ([`EGRESS_OUTCOMES`]).
     egress: [AtomicU64; 4],
     /// Sockets the app's instances hold open (`bulkhead:sockets`).
@@ -378,8 +374,6 @@ impl Default for AppStats {
             cast_wait: Histogram::new(&CAST_WAIT_BUCKETS),
             dropped: AtomicU64::new(0),
             exits: Mutex::default(),
-            passivations: AtomicU64::new(0),
-            wake_time: Histogram::new(&CALLBACK_BUCKETS),
             egress: Default::default(),
             sockets_open: AtomicU64::new(0),
             sockets_refused: AtomicU64::new(0),
@@ -402,17 +396,6 @@ impl AppStats {
     /// A cast that waits for room waited `waited`.
     pub(crate) fn cast_waited(&self, waited: Duration) {
         self.cast_wait.record(waited.as_secs_f64());
-    }
-
-    /// An instance was passivated.
-    pub(crate) fn passivated(&self) {
-        self.passivations.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// A passivated instance woke, in `took` (a new process and
-    /// `load-snapshot`).
-    pub(crate) fn woke(&self, took: Duration) {
-        self.wake_time.record(took.as_secs_f64());
     }
 
     /// An outgoing HTTP request ended with `outcome`, an index into
@@ -504,7 +487,6 @@ impl Metrics {
             .collect();
         let mut live: BTreeMap<&str, Live> = BTreeMap::new();
         let mut live_dropped: BTreeMap<&str, u64> = BTreeMap::new();
-        let mut passive: BTreeMap<&str, u64> = BTreeMap::new();
         for h in instances {
             let e = live.entry(h.app()).or_default();
             e.instances += 1;
@@ -512,10 +494,6 @@ impl Metrics {
             e.queued += u64::try_from(h.queued()).unwrap_or(u64::MAX);
             e.queued_bytes += h.queued_bytes();
             *live_dropped.entry(h.app()).or_default() += h.dropped_messages();
-            let p = passive.entry(h.app()).or_default();
-            if h.state() == LifecycleState::Passive {
-                *p += 1;
-            }
         }
         let mut out = String::new();
         render_live(&mut out, &live);
@@ -583,46 +561,6 @@ impl Metrics {
                     escape(app)
                 );
             }
-        }
-        header(
-            &mut out,
-            "bulkhead_instances_passive",
-            "gauge",
-            "Live instances passivated: no process, state in a snapshot.",
-        );
-        for (app, n) in &passive {
-            let _ = writeln!(
-                out,
-                "bulkhead_instances_passive{{app=\"{}\"}} {n}",
-                escape(app)
-            );
-        }
-        header(
-            &mut out,
-            "bulkhead_passivations_total",
-            "counter",
-            "Instances passivated.",
-        );
-        for (app, (_, s)) in &apps {
-            let _ = writeln!(
-                out,
-                "bulkhead_passivations_total{{app=\"{}\"}} {}",
-                escape(app),
-                s.passivations.load(Ordering::Relaxed)
-            );
-        }
-        header(
-            &mut out,
-            "bulkhead_wake_seconds",
-            "histogram",
-            "Time to wake a passivated instance: a new process and load-snapshot.",
-        );
-        for (app, (_, s)) in &apps {
-            s.wake_time.write(
-                &mut out,
-                "bulkhead_wake_seconds",
-                &format!("app=\"{}\"", escape(app)),
-            );
         }
         header(
             &mut out,

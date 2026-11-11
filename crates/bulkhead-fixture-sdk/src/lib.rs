@@ -528,8 +528,8 @@ impl App for Fixture {
         Reply::Now(Envelope::text(reply))
     }
 
-    /// The casts and change notices received, so they survive an upgrade
-    /// or a passivation: each list's entries joined by a record separator,
+    /// The casts and change notices received, so they survive an
+    /// upgrade: each list's entries joined by a record separator,
     /// the two lists by a group separator.
     fn save_snapshot(&self) -> Result<Vec<u8>, String> {
         Ok(format!(

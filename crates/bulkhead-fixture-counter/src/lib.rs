@@ -9,7 +9,7 @@
 //!
 //! Commands: `inc` (reply the new count), `get` (reply
 //! `<version> count=<n>` and, from v2 on, ` history=<h1,h2,...>`), `self`
-//! (reply the pid), `trap` (panic). For passivation tests: a cast `inc`, and
+//! (reply the pid), `trap` (panic). Also a cast `inc`, and
 //! the calls `after:<ms>` (a timer that adds one when it fires),
 //! `trap-link:<name>` (trap exits and link to the instance registered as
 //! `<name>`; its exit adds one), `hold` (no reply until `release`) and

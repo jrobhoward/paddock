@@ -1,6 +1,6 @@
 # Bulkhead: Roadmap
 
-2026-10-16, rewritten 2026-11-10 · Companion to [DESIGN.md](DESIGN.md)
+2026-10-16, rewritten 2026-11-10, revised 2026-11-11 · Companion to [DESIGN.md](DESIGN.md)
 
 The single plan for remaining work: what is left, in what order, and which part of the code each piece touches. Finished work is not tracked here: [CHANGELOG.md](../CHANGELOG.md) records what landed and DESIGN.md why. The plan was rewritten on 2026-11-10 around the goals below; the plan before that, with every finished phase's narrative, is in git history (`git log -- docs/ROADMAP.md`, commit 107aab2 and earlier).
 
@@ -22,9 +22,10 @@ The single plan for remaining work: what is left, in what order, and which part 
 Set with the user on 2026-11-10. Bulkhead takes its failure model from Erlang/OTP and its shape from microkernels: a small trusted core, and everything else in processes of its own, talking by messages.
 
 1. **Security first.** The core (the node) does as little as it can, parses as little untrusted input as it can, and runs without root. A compromised app must still escape its process's fence before it can do much damage, and the core kills and restarts an app that misbehaves. Apps differ in what they may do.
-2. **Performance second.** IPC and data paths are spiked and replaced when something measures better; the project is not production software, so the implementation changes when the numbers say so.
-3. **Compartmentalization, redundancy, fault tolerance and observability.**
-4. **A common platform:** the SDK's traits and macros for writing an app, node and cluster configuration, keyvalue buckets (memory, disk, replicated; Bulkhead's ETS, DETS and Mnesia) and common logging.
+2. **Compartmentalization second.** Each app, each driver and the helper is a process of its own with only the rights its job needs, and what passes between them goes through the node, which checks it.
+3. **Performance third.** IPC and data paths are spiked and replaced when something measures better; the project is not production software, so the implementation changes when the numbers say so. A faster path that takes the node's checks out of the way (a direct channel between two apps, a fence turned off) is not a default: it is an opt-in per profile, and only once the checked path has been measured and missed a stated target.
+4. **Redundancy, fault tolerance and observability.**
+5. **A common platform:** the SDK's traits and macros for writing an app, node and cluster configuration, keyvalue buckets (memory, disk, replicated; Bulkhead's ETS, DETS and Mnesia) and common logging.
 
 Decided with them:
 
@@ -32,6 +33,8 @@ Decided with them:
 - **Topology:** an HA pair at one site, whose standby takes over almost at once when the primary fails, and a third node at a remote site for disaster recovery, activated by hand when the first site is lost, with at most about 5 minutes of data lost (Phase 8). Bigger machines rather than more nodes; clusters of dozens of nodes stay possible, not the target.
 - **Privileges:** a small root helper is acceptable; the node and every app run unprivileged, each app under a user of its own (Phase 6).
 - **Protocols leave the core:** HTTP first, then SQL, HTTP egress and Modbus, each as a driver app (Phase 7).
+- **The order of the goals** (2026-11-11): security, then compartmentalization, then performance.
+- **Instances are long-lived processes:** passivation was removed on 2026-11-11 (CHANGELOG.md); density is not an aim.
 
 Non-goals:
 
@@ -54,11 +57,11 @@ Measured against the goals on 2026-11-10:
 | Goal | Fit | What is missing |
 | --- | --- | --- |
 | Fault tolerance, the pair | Strong: TLA+-checked failover and replication, leases, serial heartbeat, releases without downtime, soaks | A faster takeover profile, measured (FO1) |
-| Compartmentalization between apps | Strong: a process per instance, Landlock, seccomp, node-made sockets, messaging ACLs, grants | Apps share the node's user (PS2) |
+| Compartmentalization between apps | Strong: a process per instance, Landlock, seccomp, node-made sockets, messaging ACLs, grants | Apps share the node's user (PS2); an app can shrink its channel's memfd under the node (CH1) |
 | Performance | Good: a request 1.3 to 4.3 µs, a call between instances 5 to 8 µs, a published read 0.16 to 0.39 µs | Each new boundary's cost (S36, S37, S39) |
 | Platform: SDK, keyvalue, logging | Good | Sends from an app's own threads (AP1); client libraries that open their own sockets (S40) |
 | Observability | Good: probes, metrics, audit, events, `ps`, `state` | A trace id across calls and nodes (O1) |
-| A small, protected core | Weak: the node parses HTTP and TLS, Postgres replies, egress responses and Modbus in the process holding every secret, the cluster key and all bucket data | Phase 7 |
+| A small, protected core | Weak: the node parses HTTP and TLS, Postgres replies, egress responses and Modbus in the process holding every secret, the cluster key and all bucket data; what else it parses from outside is not yet listed (DA0) | Phase 7 |
 | No root; apps unprivileged | Half: nothing runs as root, but apps run as the node's user, and seccomp is a deny-list of 13 calls | Phase 6a |
 | FreeBSD, jails, ZFS | Missing: native apps are Linux only; PB5 (`paddock-b/spikes/pb5`) showed jails and Capsicum working | Phase 6b, ZFS volumes |
 | A disaster-recovery site | Partial: the third node is a witness and holds no data | Phase 8 |
@@ -67,7 +70,9 @@ Measured against the goals on 2026-11-10:
 
 ```mermaid
 flowchart LR
-    p6a["6a Privilege separation (L)"] --> p6b["6b FreeBSD (L)"]
+    first["CH1, PS4, PS3a, FB1, DA0 (S–M each)"] --> p6a["6a Privilege separation (L)"]
+    first --> p7
+    p6a --> p6b["6b FreeBSD (L)"]
     p6a --> zfs["ZFS volumes (M)"]
     p6a --> p9["9 Platform for apps (M–L)"]
     p7["7 Protocols out of the core (L)"] --> p9
@@ -76,7 +81,8 @@ flowchart LR
 ```
 
 - **Security before features.** Phases 6 and 7 come before new platform features, and before tuning that is not measuring a new boundary.
-- **Spikes in parallel at the start:** S36 (the helper) and S37 (HTTP ingress as a driver app) share no code, and FB1 (the node's OS layer on FreeBSD) needs neither.
+- **First, what needs no helper and no driver** (added 2026-11-11, from a review of the code against the goals): CH1 (the channel's memfd sealed, a fault an app can cause in the node today), PS4 (the seccomp allow-list, the widest gap an app has), PS3a (the node not dumpable), FB1 (the node's OS layer on FreeBSD, so PS1 lands on one interface rather than more Linux gates) and DA0 (what the core parses from outside, which S37's driver profile is designed from).
+- **Spikes in parallel after those:** S36's rest (the helper) and S37 (HTTP ingress as a driver app) share no code.
 - **The helper before the FreeBSD runner and ZFS**, since jails, a uid per app and datasets all need it, and one helper does all three.
 - **Driver apps do not wait for the helper:** a driver runs under the node's user until PS2 gives it one of its own.
 - **Disaster recovery in parallel** with Phases 6 and 7: it touches replication, failover and the transport, which they do not. Its model (S38) comes first, under V1. Shipping volumes (DR6) waits for ZFS volumes.
@@ -96,7 +102,8 @@ Exit: on Linux and FreeBSD, every app's instances run under a user of their own,
 Confirmed by S36 (2026-11-11, `spikes/s36/README.md`), with the changes it found:
 - **The helper** (`bulkhead-priv`) is started as root by the service manager (systemd, rc.d). It starts the node under the node's user with a seqpacket socket to it, and does nothing the node does not ask for. Its requests: `Spawn` (`bulkhead-runner` under the app's user, in its cgroup and namespaces or its jail and `rctl` rules, with the descriptors the node passes), `Signal` (`SIGTERM`, `SIGKILL` or `SIGCONT` to an instance it started), `Bind` (a port below 1024, the socket passed back), later the ZFS operations (S35) and an app's network rules (S40). It reports each instance's exit with its status (`Exited`), before its own cleanup. When the node's socket closes it kills every instance and exits.
 - **Its checks** come from configuration it reads itself, not from the node: the range of user ids, the programs directory, the limits' ceilings, the ports, the ZFS parent dataset. A node it serves cannot ask for a user outside the range, a program outside the directory, or a dataset outside the parent.
-- **Its code** is small and synchronous: no tokio, `libc` only, a tagged binary format with a fuzzed parser, a crate of its own (S36's prototype: about 1,000 lines with both systems).
+- **Its code** is small and synchronous: no tokio, `libc` only, a tagged binary format with a fuzzed parser, a crate of its own (S36's prototype: about 1,000 lines with both systems). `libc` only makes it the most `unsafe` code in the project, running as root, so (2026-11-11): every `unsafe` block sits in one module of system calls with safe functions over it, the rest of the crate denies `unsafe_code`, and the wire format's parser is a crate of its own that forbids it. PS1 decides whether `rustix`, already in the workspace, replaces `libc` where it has the call (mounts, `pivot_root`, credentials), for fewer blocks against one more dependency in root code.
+- **Its own fence:** after it has started the node, the helper keeps only the capabilities its requests need (to change ids, mount, enter cgroups, chown, kill, bind low ports), sets `no_new_privs`, and on Linux runs under a seccomp allow-list of its own; on FreeBSD it cannot enter capability mode (it makes jails) and stays a root process with its checks. The systemd unit adds what costs nothing (`ProtectSystem`, `ProtectHome`, `PrivateTmp`, `RestrictAddressFamilies`, a `CapabilityBoundingSet`), for the helper and so for the node it starts.
 - **A user per app**, not per instance: an app's instances share volumes and `priv/` files. Users from a configured range (`[priv] uids = "60000-60999"`). The helper binds each uid to the first app that uses it and keeps that binding in its own state, so a compromised node cannot start code under another app's uid (S36, finding 3); the node's deploy store only mirrors it.
 - **Fences by default:** on Linux a cgroup per instance and new mount, PID, network, IPC and UTS namespaces with a minimal root (`pivot_root` onto read-only binds of the system's libraries and the program, the app's directory read-write, a private `/tmp`): about 1.8 ms more per start on the Pi; per message nothing beyond the cgroup's 0.7 to 1.0 µs on a blocking round trip, which `[native] cgroup` costs today (S36). On FreeBSD a jail per instance with `rctl` rules on the jail. A profile may turn the network namespace off (S40).
 - **Ending an instance:** on Linux the node writes the instance's `cgroup.kill` (chowned to the node by the helper), which needs no capability and ends everything the app forked; on FreeBSD the helper removes the jail on `Signal(SIGKILL)`. A pidfd or process descriptor cannot signal across the uid (S36, finding 1).
@@ -104,14 +111,17 @@ Confirmed by S36 (2026-11-11, `spikes/s36/README.md`), with the changes it found
 
 Items:
 
+- [ ] **CH1 The channel's memfd sealed** (S; first). The memfd holding an instance's two rings is made without seals (`bulkhead-native`'s `channel.rs`, `Channel::create`), and the app holds it read-write: neither the seccomp filter nor Landlock refuses `ftruncate` on an inherited descriptor, and a mapping read past the file's end raises `SIGBUS` in the reader, here the node. Found by reading the code on 2026-11-11, not reproduced. Make it with `ALLOW_SEALING` and add `F_SEAL_SHRINK`, `F_SEAL_GROW` and `F_SEAL_SEAL` once sized, as `sealed()` does for published snapshots (not `F_SEAL_WRITE`: both sides write). A test truncates the memfd from an app and checks that it fails and the node runs on; FB1 does the same for FreeBSD's object. T1b's fuzz target does not reach this, since it writes positions, not the file's size. Areas: `bulkhead-native` (`channel`), tests, SECURITY.md.
 - [ ] **S36 The privileged helper: what is left** (S; on the Ubuntu VM). Done on the Pi and the FreeBSD VM (2026-11-11; `spikes/s36/README.md`, decisions above). Left: the same run on x86-64 Linux (the Ubuntu 26.04 VM, Linux 7.x), and the README's tables with it. Areas: spikes.
-- [ ] **PS1 The helper** (L; after S36). The `bulkhead-priv` crate on S36's API and fences; the node starts instances through it when node config sets `[priv]`, under the real `bulkhead-runner` (Landlock and seccomp on top of the helper's fences, which S36 did not combine); the uid-to-app binding in the helper's own state; the systemd unit and an rc.d script; `native_cost` and `cluster_throughput` rerun under it (S36 measured blocking round trips only: a cgroup added 0.7 to 1.0 µs on the Pi, as `[native] cgroup` does today); OPERATIONS.md (privileges, the new process), SECURITY.md (a boundary between node and helper, its fuzz target). Areas: new crate, node, runner, docs.
+- [ ] **PS1 The helper** (L; after S36 and FB1). The `bulkhead-priv` crate on S36's API and fences, with its `unsafe` kept to one module and its own fence as above; the node starts instances through it when node config sets `[priv]`, under the real `bulkhead-runner` (Landlock and seccomp on top of the helper's fences, which S36 did not combine); the uid-to-app binding in the helper's own state; the systemd unit and an rc.d script; `native_cost` and `cluster_throughput` rerun under it (S36 measured blocking round trips only: a cgroup added 0.7 to 1.0 µs on the Pi, as `[native] cgroup` does today); OPERATIONS.md (privileges, the new process), SECURITY.md (a boundary between node and helper, its fuzz target). Areas: new crate, node, runner, docs.
 - [ ] **PS2 A user per app** (M; after PS1). Volumes, `priv/` files and `data_dir/compiled/<app>` owned or readable by the app's user only; everything else under `data_dir` the node's alone (0700). The node cannot write into an app's 0700 directory (S36), so the files it installs for an app (`priv/`, the program) go through the helper, or are the node's with the app's group, which only the helper can set. A driver app (Phase 7) gets a user as an app does. Areas: deploy store, runner, helper.
-- [ ] **PS3 The node fenced** (S; after PS1). The node marks itself not dumpable (`prctl(PR_SET_DUMPABLE)`, FreeBSD `procctl(PROC_TRACE_CTL)`), sets `no_new_privs`, and holds no capabilities: ports below 1024 come bound from the helper, so `CAP_NET_BIND_SERVICE` goes. Areas: node, helper, OPERATIONS.md.
-- [ ] **PS4 A seccomp allow-list** (M). The runner's filter allows a list per profile (an app; each driver profile, Phase 7) and refuses the rest, in place of today's 13 refused calls with everything else allowed (`runner/seccomp.rs`); PB5's allow-list (`paddock-b/spikes/pb5`) is the starting point. A refused call kills the process with its reason in the exit (`crashed: syscall <name>`), so a missing entry shows up in tests rather than as an odd `EPERM`. Measured: no change to a request's cost. FreeBSD's counterpart is capability mode (FB2). Areas: runner, SECURITY.md.
+- [ ] **PS3a The node not dumpable** (S; now). The node marks itself not dumpable (`prctl(PR_SET_DUMPABLE)`, FreeBSD `procctl(PROC_TRACE_CTL)`) and sets `no_new_privs` at start; today only the runner and the app do. Neither needs the helper. Areas: node, OPERATIONS.md.
+- [ ] **PS3b The node without capabilities** (S; after PS1). Ports below 1024 come bound from the helper, so `CAP_NET_BIND_SERVICE` goes and the node holds none. Areas: node, helper, OPERATIONS.md.
+- [ ] **PS4 A seccomp allow-list** (M; now, before PS1: it needs no helper). The kernel's system calls are an app's widest way out, and today's filter leaves all but 13 open (`unshare`, `bpf`, `keyctl`, `perf_event_open`, `mount` and `ftruncate` among them). With it, Landlock's scopes where the kernel has them (ABI 6: signals and abstract Unix sockets limited to the app's own domain), in place of filter rules on signal calls by pid. The runner's filter allows a list per profile (an app; each driver profile, Phase 7) and refuses the rest, in place of today's 13 refused calls with everything else allowed (`runner/seccomp.rs`); PB5's allow-list (`paddock-b/spikes/pb5`) is the starting point. A refused call kills the process with its reason in the exit (`crashed: syscall <name>`), so a missing entry shows up in tests rather than as an odd `EPERM`. Measured: no change to a request's cost. FreeBSD's counterpart is capability mode (FB2). Areas: runner, SECURITY.md.
 - [ ] **PS5 A misbehaviour policy** (M). Counted per instance: `access-denied` answers, messaging ACL refusals, frames the node refuses (malformed, over a limit), and requests per second. Past a threshold (node config's `[limits]` defaults and ceilings, a lower one in the manifest), the node kills the instance (`crashed: policy(<reason>)`) with an audit record; an app killed that way `quarantine_after` times within a period is marked `quarantined` and not restarted until `bulkhead start`. Metrics in OBSERVABILITY.md, the reasons in MANIFEST.md. Areas: host services, instance, supervisor, node.
 - [ ] **PS6 CPU limits** (S). `limits.cpu` in the manifest (a share of one core), capped by node config: the cgroup's `cpu.max` on Linux, `rctl`'s `pcpu` on FreeBSD. Closes "no CPU limit" in SECURITY.md. Areas: manifest, runner or helper, host.
 - [ ] **PS7 An instance's processes end with it** (S). Today the node kills only the instance's own process (`native/port.rs`, `kill`), so a process the app forked outlives it, and under another uid the node could not reach it (S36). On an instance's exit or kill, every process it started ends too: `cgroup.kill` on its cgroup on Linux (S36: the node may write it, chowned by the helper), or a signal to its process group without a cgroup; on FreeBSD the jail's removal (S36), or without a jail the runner as reaper (`procctl(PROC_REAP_ACQUIRE)`, then `PROC_REAP_KILL`). A test forks a child that ignores `SIGTERM`. Areas: host (`native/`), runner, helper.
+- [ ] **CR2 `unsafe` kept where it is** (S). `#![forbid(unsafe_code)]` in each crate that has none today (`bulkhead-bundle`, `bulkhead-sdk`, `bulkhead-sdk-macros`, `bulkhead-modbus`, `bulkhead-modbus-client`, `bulkhead-soak`, the fixtures but `bulkhead-fixture-native`), and `undocumented_unsafe_blocks` raised from `warn` to `deny`. Production code has about 35 blocks, nearly all in `bulkhead-native`'s `channel` and `runner/watchdog`; the watchdog's `kill` and `waitpid` move to `rustix`'s. The rings' copies read memory the app can change while they run: bounds hold whatever it writes, and the node decodes from its own copy, which the module's docs should say next to the copy. Areas: every crate's `lib.rs`, `Cargo.toml`, `bulkhead-native`.
 - [ ] **T1b The ring reader's fuzz target** (S). A fuzz target for the node's reader of the ring an app writes (`fuzz/`): positions and lengths an app can write, against `Ring::read`'s checks and the port's frame parsing. Areas: fuzz.
 
 ### 6b: FreeBSD
@@ -125,7 +135,7 @@ What is Linux-only today: the runner (Landlock, seccomp, `prctl`), memfd seals f
 
 Items:
 
-- [ ] **FB1 The node's OS layer on FreeBSD** (M). One interface with a module per system (`native/os`): rings and snapshots in `SHM_ANON` objects (a published snapshot passed with `cap_rights_limit` to read and map only), `procctl(PROC_PDEATHSIG_CTL)` for the parent-death signal, the listener's idle timeout from FreeBSD's `TCP_INFO`, `rctl` for memory and processes where Linux uses a cgroup. The rings' waits stay on pipes, so PB2's umtx finding does not apply. Areas: host (`native/`), `bulkhead-native` (`channel`).
+- [ ] **FB1 The node's OS layer on FreeBSD** (M; before PS1, so the helper is added to one interface). One interface with a module per system (`native/os`): rings and snapshots in `SHM_ANON` objects (a published snapshot passed with `cap_rights_limit` to read and map only; the channel's object sealed against resizing or passed without `CAP_FTRUNCATE`, as CH1 does on Linux), `procctl(PROC_PDEATHSIG_CTL)` for the parent-death signal, the listener's idle timeout from FreeBSD's `TCP_INFO`, `rctl` for memory and processes where Linux uses a cgroup. The rings' waits stay on pipes, so PB2's umtx finding does not apply. Areas: host (`native/`), `bulkhead-native` (`channel`).
 - [ ] **FB2 The runner on FreeBSD** (L; with PS1). The helper puts each instance in its jail (S36: a nullfs view of a shared root per instance, `rctl` rules on the jail added before the child attaches, the jail made non-persistent after). Two fixes S36 found: mount the app's directory at a fixed path inside the jail, since a mount point at its host path shows every app's directory name in the shared root; and give each instance a writable `/tmp` of its own (the shared root is read-only). `rctl`'s limits driven to their ends in a test; the runner takes its descriptors and enters capability mode (`cap_enter`) before the app's code runs, with rights limited per descriptor. Capability mode refuses opening by absolute path, so `bulkhead_sdk::files` gains opens relative to a volume's directory descriptor on both systems (`BULKHEAD_PREOPENS`' paths stay for Linux). The network fence matches Linux's: only sockets the node passed; checked against what capability mode allows. Areas: runner, SDK, helper.
 - [ ] **FB3 Tests and CI on FreeBSD** (M). The Linux gates reviewed: most become "a system with a runner"; CI gains a FreeBSD job (a FreeBSD VM on GitHub's runners) running `scripts/check.sh test`, and drops macOS from the matrix. Areas: tests, CI.
 - [ ] **FB4 A FreeBSD machine for benchmarks and soaks** (S; hardware). The VM shares the 16-core machine's cores and is for function checks only. First-class needs an idle bare-metal FreeBSD machine (amd64; whether FreeBSD runs well enough on a Raspberry Pi 5 to be the aarch64 one, to be checked) for BASELINE.md and the hour-long soaks.
@@ -135,24 +145,36 @@ Items:
 
 Decided with the user on 2026-11-10, reversing DESIGN.md's earlier rule ("terminate I/O and protocols in the host"). That rule came from components' costs: an instance per HTTP request kept about 15% of native throughput (S15). A native process does not pay them. A protocol that parses input from outside the node now runs in a driver app: a process of its own, under its own user and sandbox profile, holding only the descriptors and secrets its job needs, supervised and restarted by the node as any instance is.
 
-The node keeps mailboxes and routing, supervision, keyvalue and replication, logging, failover and the cluster transport (whose peers are authenticated before any frame is parsed), deploys and policy, and the admin API.
+The node keeps mailboxes and routing, supervision, keyvalue and replication, logging, failover and the cluster transport (whose peers are authenticated before any frame is parsed), deploys and policy, and the admin API. That is a small core with its drivers outside it, not a microkernel: storage, replication and the transport share the node's address space, by the non-goal above. What of it still reads bytes from outside is DA0's to list.
 
 Proposed, for S37 to confirm:
 - **A driver app** is a native program the operator configures in node config (`[drivers.<name>]`), not one a bundle's manifest can make itself. Its profile adds narrow rights: listening sockets passed to it with `accept` allowed on them only; certificate and key files; a datasource's credentials.
 - **Its messages** go through the node as any app's do, stamped with its own app name, so messaging ACLs apply to it: a compromised ingress driver can send what its ACL allows and nothing else.
 - **Listening sockets stay the node's** (bound by the helper for low ports), so a driver's restart or upgrade does not close the port; connections in flight in a crashed driver are lost.
 
-Exit: the node links no HTTP server and holds no ingress TLS key; HTTP ingress runs as a driver app, with its node tests (`http.rs`, `board.rs`, the scada HMI) and the scada soak passing; SQL, egress and Modbus each decided by DA6 and either moved or kept in the node with the reason in DESIGN.md.
+Exit: the node parses no ingress client's bytes and holds no ingress TLS key; every parser of outside input left in the node is listed in SECURITY.md with the reason it stays (DA0); the node's dependency tree is checked for what has left (CR1); HTTP ingress runs as a driver app, with its node tests (`http.rs`, `board.rs`, the scada HMI) and the scada soak passing; SQL, egress and Modbus each decided by DA6 and either moved or kept in the node with the reason in DESIGN.md.
 
 Items:
 
-- [ ] **S37 HTTP ingress as a driver app** (M; spike). Today's ingress (`crates/bulkhead-host/src/http.rs`: hyper, rustls, routes, envelopes) as a native program given a listening socket, each request a call to the owning app through the node. Measured on both machines, idle, against the in-node ingress on native apps (its last figures, 85,000 to 99,000 requests a second at 32 connections, are from components, 2026-10-16, so it is measured again first): requests per second, p50 and p99 at 1, 32 and 256 connections, HTTP and HTTPS, CPU per request. Also measured, not assumed: a driver calling an app over a direct ring (PB8: 1.6 µs against 8.1 through the node) for the request path only. Decides: the driver profile, and whether requests go through the node (the default for apps since PB8) or directly. Areas: spikes.
+- [ ] **DA0 What the core parses from outside** (S; now, before S37; docs only). A table in SECURITY.md of every input the node reads from outside itself, who controls it, the code that parses it, and whether it stays, with the reason, or moves, with its item. Known today, beyond the protocols Phase 7 names:
+  - the cluster transport's QUIC and TLS handshake (quinn, rustls), which runs before a peer is authenticated;
+  - the remote admin API (`node/daemon/remote.rs`: hyper over rustls) and the admin Unix socket (hyper);
+  - the metrics endpoint (hyper, no authentication);
+  - app listeners' accepts and the UDP relay (addresses only);
+  - DNS answers for egress and sockets (the system's resolver);
+  - bundles an operator uploads (zip and signature parsing; whether anything is parsed before the signature is checked);
+  - the serial heartbeat's frames;
+  - the `Extension` trait: operator code built into the node. Proposed: it goes once DA5 has moved Modbus, its one user beside an example, and driver apps take its place.
+
+  Proposed for the admin API and metrics: the Unix socket stays (the operator is trusted), and the remote admin API's TLS and the metrics endpoint move to a driver that forwards to the socket. The transport's handshake stays, as an accepted risk written down. This item decides each, and S37's driver profile is designed against the result. Areas: SECURITY.md, DESIGN.md.
+- [ ] **S37 HTTP ingress as a driver app** (M; spike; after DA0). Today's ingress (`crates/bulkhead-host/src/http.rs`: hyper, rustls, routes, envelopes) as a native program given a listening socket, each request a call to the owning app through the node. Measured on both machines, idle, against the in-node ingress on native apps (its last figures, 85,000 to 99,000 requests a second at 32 connections, are from components, 2026-10-16, so it is measured again first): requests per second, p50 and p99 at 1, 32 and 256 connections, HTTP and HTTPS, CPU per request. Bodies of 1 KiB, 64 KiB and 1 MiB each way as well: a ring holds 64 KiB, so a larger body crosses in pieces with a wake-up each time the ring fills, and is copied four times between the driver and the app; if that is what a large request costs, a body passed as a sealed memfd named in the frame is measured against it ("Zero-copy large messages" under Parked). Requests go through the node, by the goals' order: a driver calling an app over a direct ring (PB8: 1.6 µs against 8.1 through the node) skips the messaging ACL, the stamped sender and the node's power to revoke, so it is measured for the record only, and becomes an opt-in profile only if the path through the node misses a target set before the run. Decides: the driver profile; the frames a driver needs beyond an app's (accepting on a passed listening socket, calling the app a route names); the target for a request through the node. Areas: spikes.
 - [ ] **DA1 Driver apps** (M; after S37). `[drivers.<name>]` in node config: the bundle, the profile (sockets, files, secrets, the seccomp or Capsicum profile), supervision and restart as an app, metrics and probes as an app; SECURITY.md gains a boundary per driver. Areas: node config, manifest, host, runner.
 - [ ] **DA2 The HTTP ingress driver** (L; after DA1). `http.rs` out of the node into a driver program (`bulkhead-ingress`); routes, limits, timeouts, TLS and certificate reload, the standby's redirect and forward (`partner_url`, `standby = "forward"`), and blue-green weights kept; the `http` and `tls` features no longer pull hyper's server and the ingress TLS into the node. With it, the open ingress items: `bulkhead status` listing routes, HTTP/2, client certificates (mTLS), OCSP stapling. Areas: host, new crate, node, docs.
 - [ ] **DA3 SQL as a driver** (M). `tokio-postgres` and `deadpool-postgres` in a driver per datasource; the credentials only there; apps name the datasource as now, and the node passes the caller's identity so the connection cap per app holds. Areas: services (`sql`), new driver.
 - [ ] **DA4 HTTP egress as a driver** (M). The policy stays in the core and the parsing leaves it: the node resolves and checks each destination (allow list, address guard) and passes the connected socket to the egress driver, which runs TLS and HTTP. With it, the open egress items: HTTP/2, an outbound proxy (`CONNECT`), client certificates, a deny list of private ranges per CIDR, a cap on response bodies, fewer task hand-offs per request. Areas: services (`http_egress`), new driver.
 - [ ] **DA5 Modbus as a driver** (M). `bulkhead-modbus`'s polling and server in a driver, updates into buckets and casts as now, devices reached on sockets the node passes. Measured with `modbus_load` against the in-node figures (BASELINE.md, 2026-10-16). With it, deadbands, scaling and data types beyond raw registers. Areas: `bulkhead-modbus`, new driver.
-- [ ] **DA6 What else leaves** (S; review after DA2). The UDP relay, the remote admin API's TLS, the `Extension` trait (host code built into the node: kept for operator code that must run in the core, or replaced by driver apps), listeners' accept. Each kept or moved, with its reason in DESIGN.md, and a moved one becomes an item here. Areas: docs.
+- [ ] **DA6 What else leaves** (S; review after DA2). DA0's table read again with DA2's measured costs: each entry it left open (the remote admin API's TLS and the metrics endpoint as a driver, the `Extension` trait, the UDP relay) kept or moved, with its reason in DESIGN.md, and a moved one becomes an item here. Areas: docs.
+- [ ] **CR1 Crates along trust boundaries** (M; with DA2, then each driver). `bulkhead-host` is one crate of about 56,000 lines with HTTP, SQL and egress behind cargo features, so nothing but review keeps a protocol stack out of the node. As each driver moves, its code leaves `bulkhead-host` for the driver's crate, and `scripts/check.sh` gains a check that the node's dependency tree (`cargo tree -p bulkhead`) holds none of what left (hyper's server, the ingress TLS, `tokio-postgres`, the egress client, `tokio-modbus`). `bulkhead-native` is split the same way when the helper's crate lands: the protocol and channel (shared by the node, apps and drivers) apart from the runner (the sandbox). Areas: `bulkhead-host`, `bulkhead-native`, new crates, scripts.
 
 ## Phase 8: disaster recovery
 
@@ -275,7 +297,7 @@ Questions for later, each a spike with a time-box when scheduled.
 - **DNP3 and ICCP drivers.** The mature DNP3 implementations in Rust found so far are source-available with commercial terms; no permissively licensed ICCP stack in Rust is known.
 - **Redis or etcd bridge** as a driver, for sites that already run one. Not the platform's shared buckets.
 - **Capability tokens for messaging** (seL4-style endpoint handles), after messaging ACLs.
-- **Zero-copy large messages** (node-owned blobs passed by handle), only if measurements show copies matter (F4, 2026-10-16: they did not for batches of small points).
+- **Zero-copy large messages** (node-owned blobs passed by handle), only if measurements show copies matter (F4, 2026-10-16: they did not for batches of small points; S37 measures HTTP bodies up to 1 MiB).
 - **Handing a connection to another instance** (`gen_tcp:controlling_process`).
 - **Persistent timers** (cron, the EJB timer service) that survive restarts.
 - **A finer timer:** an OS thread with a deadline heap for `send_after`, about 55 µs late against tokio's 1 to 2 ms (BASELINE.md, 2026-10-24). Only if an app needs sub-millisecond timers.
@@ -295,7 +317,7 @@ Questions for later, each a spike with a time-box when scheduled.
 
 ## Code areas
 
-An area is a set of modules with a narrow interface to the rest: modules in crates with `pub(crate)` and a small `pub` surface, rather than a crate each. New crates (the helper, drivers) are added only where a separate process or a separate trust level needs one.
+An area is a set of modules with a narrow interface to the rest: modules in crates with `pub(crate)` and a small `pub` surface, rather than a crate each. New crates (the helper, drivers) are added only where a separate process or a separate trust level needs one; CR1 moves what leaves the node into them and checks the node's dependencies.
 
 | Area | Where | Interface to the rest |
 | --- | --- | --- |
@@ -324,7 +346,8 @@ Crates meant for publishing (all `publish = false` while the project is private)
 | Name | `bulkhead`: crates `bulkhead-*`, capability keys `bulkhead:*`, CLI `bulkhead` |
 | License | MIT OR Apache-2.0, no copyleft in the dependency graph |
 | Platforms | Linux and FreeBSD, first-class, x86-64 and aarch64; not macOS or Windows (2026-11-10) |
-| Instance | A native process per instance, long-lived; Rust apps on `bulkhead-sdk` or `bulkhead-native` (2026-10-31, 2026-11-07) |
+| Priorities | Security, then compartmentalization, then performance; a path around the node's checks is an opt-in, never a default (2026-11-11) |
+| Instance | A native process per instance, long-lived, never passivated; Rust apps on `bulkhead-sdk` or `bulkhead-native` (2026-10-31, 2026-11-07, 2026-11-11) |
 | App contract | `bulkhead_native::protocol`: a node accepts its version and the one before; frames change only by adding (2026-11-07) |
 | Messaging between apps | Through the node, which owns mailboxes, ordering, links, monitors and sender identity (2026-11-01, kept by PB8) |
 | Supervision | Flat: the node supervises the instances it starts; apps start no apps (2026-11-10) |
@@ -360,7 +383,7 @@ Each spike's README is its record. Spikes S1 to S29 ran on Paddock's WebAssembly
 | S8 | Guest versus native speed | 1.0x to 2.4x for compute, about 2 µs per call ([spikes/s8](../spikes/s8/README.md)) |
 | S9 | Debugging guests | Parked (Investigations) |
 | S10 | New `info` cases and old guests | Done; `host-event` reserved ([spikes/s10](../spikes/s10/README.md)) |
-| S11 | Passivation | Works, off by default; 100,000 instances on 1,000 Store slots, wakes in about 64 to 101 µs; apps opt in since E7 ([spikes/s11](../spikes/s11/README.md)) |
+| S11 | Passivation | Works, off by default; 100,000 instances on 1,000 Store slots, wakes in about 64 to 101 µs; apps opted in since E7; removed 2026-11-11, since instances are long-lived processes ([spikes/s11](../spikes/s11/README.md)) |
 | S12 | TLA+ model of remote links and monitors | Four ways for the nodes to disagree, each fixed by a rule (done in C6); with them no violation found: full queues and liveness exhaustive, closes and crashes up to about 840 and 890 million states ([spikes/s12](../spikes/s12/README.md)) |
 | S13 | Host-owned TCP listeners and guest streams | Guest streams at native throughput with an instance per connection ([spikes/s13](../spikes/s13/README.md)) |
 | S14 | Storage in the guest versus host services | About 140 ns per host import; keyvalue reads 1.2 µs over native ([spikes/s14](../spikes/s14/README.md)) |

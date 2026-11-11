@@ -176,10 +176,6 @@ fn health(&mut self, _ctx: &mut Ctx) -> Result<(), String> {
 
 The check is a call through the mailbox, so an instance too busy to answer within the interval fails it too.
 
-## Idle instances
-
-An app with many instances that are mostly idle (one per device or per user) can let them give up their memory: with `instances.passivate_after_ms`, an instance with nothing to do for that long is passivated (`save_snapshot`, then its process ends; its pid, mailbox, links, monitors, names, timers, watches and groups stay), and the next message wakes it with `load_snapshot`. It needs the snapshot callbacks (below). A wake starts a new process, a few milliseconds, so passivate instances idle for minutes, not seconds.
-
 ## Many small updates
 
 A cast costs about the same whatever it carries, so an app that sends many small updates (points, events, rows) to the same instance should batch them. Between two instances on one node, one cast per point moved about 310,000 to 350,000 points per second; batches of 100 moved 0.94 to 1.5 million (1 and 4 workers), and four producer and consumer pairs on 4 workers moved 3.7 million (`batch_cost`, [BASELINE.md](BASELINE.md)). Past about 100 items the work on the items themselves dominates, so larger batches gain little.
@@ -356,7 +352,7 @@ fn main() -> std::process::ExitCode {
 }
 ```
 
-`cargo build --release --bin my-app` builds the program, bundled with `native.program = "executable"` (the default). The SDK's calls go over the protocol: each is a request to the node (about 5 µs), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...`; each snapshot load is in a new process (an upgrade starts the new version's process beside the old until it has loaded, and passivation ends the process until a message wakes it); a watch notice carries the key's value (`watch::Change::current` reads it); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite (`BULKHEAD_CONFORMANCE_NATIVE=1`) runs a reference app on a node's protocol.
+`cargo build --release --bin my-app` builds the program, bundled with `native.program = "executable"` (the default). The SDK's calls go over the protocol: each is a request to the node (about 5 µs), so read many keys with `get_many` or a scan; `kv::Bucket::open` checks nothing, and an unlisted bucket's error comes with its first operation; a panic ends the instance as `crashed: panic: ...`; each snapshot load is in a new process (an upgrade starts the new version's process beside the old until it has loaded); a watch notice carries the key's value (`watch::Change::current` reads it); and `memory_max` without a node cgroup is the process's data limit, so going over it aborts the app. The conformance suite (`BULKHEAD_CONFORMANCE_NATIVE=1`) runs a reference app on a node's protocol.
 
 Two shapes, chosen by `native.program`:
 
@@ -387,7 +383,7 @@ Two shapes, chosen by `native.program`:
   `Ctx` has `call`, `cast`, `reply`, `link`, `monitor`, `register`, `whereis`, `send_after`, `exit` and the rest; `bulkhead_native::app::log` logs from any thread. What the program prints goes to the node's log. It finds the bundle's `priv/` files and its volumes where `BULKHEAD_PREOPENS` says (`bulkhead_native::preopens::path("/data/orders.json")`, or `bulkhead_sdk::files::path` on the SDK), with `bulkhead:files` declared. Its stdin is empty, and a panic in a callback crashes the instance with its message.
 - **`"library"`** (default): an existing rustbridge plugin (`.so`), unchanged. Calls and casts reach its `handle_request` with the envelope's schema id as the type tag, in JSON; the reply carries the same schema id, and an error the schema id `rustbridge.error`. It cannot call other apps, since rustbridge's plugin interface has no call into the host.
 
-Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent in requests to the node), and an idle process that misses a ping is killed; both end as `timeout`. `memory_max` is enforced by the node (a cgroup, or `RLIMIT_DATA`). An executable may upgrade in `snapshot` mode, be passivated and move with its state, through its `save_snapshot` and `load_snapshot` (on `bulkhead-native`'s API, `App::save_snapshot` and `App::load_snapshot`); a rustbridge plugin upgrades in `restart` or `blue-green` mode only. Build the program for the platform the node runs on and bundle it as below; [MANIFEST.md](MANIFEST.md#native-process-apps) has the details.
+Limits: `callback_deadline_ms` bounds each callback's wall time (less time spent in requests to the node), and an idle process that misses a ping is killed; both end as `timeout`. `memory_max` is enforced by the node (a cgroup, or `RLIMIT_DATA`). An executable may upgrade in `snapshot` mode and move with its state, through its `save_snapshot` and `load_snapshot` (on `bulkhead-native`'s API, `App::save_snapshot` and `App::load_snapshot`); a rustbridge plugin upgrades in `restart` or `blue-green` mode only. Build the program for the platform the node runs on and bundle it as below; [MANIFEST.md](MANIFEST.md#native-process-apps) has the details.
 
 ## Bundles
 

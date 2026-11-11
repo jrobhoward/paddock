@@ -1,5 +1,5 @@
 //! The counter fixture as in-process test apps (ROADMAP Z9d), in its three
-//! versions, for upgrade and passivation tests: `bulkhead-fixture-counter`'s
+//! versions, for upgrade tests: `bulkhead-fixture-counter`'s
 //! crate docs list its commands, and its replies are kept.
 //!
 //! - [`V1`] keeps a count; its snapshot is the count in decimal.
