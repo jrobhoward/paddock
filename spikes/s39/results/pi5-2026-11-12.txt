@@ -1,0 +1,202 @@
+# Linux 7.0.0-1023-raspi aarch64, 4 cpus, 2026-11-12T16:32:07-06:00
+# load at start: 0.35 0.36 0.22
+r0 m0   t=1 get  busy=   0us     986308 ops/s  p50    0.81 us  p99     1.46 us  cpu/op node  1.01 app  1.01 echo  0.00 total  2.03 us
+r0 m1   t=1 get  busy=   0us     982975 ops/s  p50    0.83 us  p99     1.39 us  cpu/op node  1.02 app  1.02 echo  0.00 total  2.03 us
+r0 m2   t=1 get  busy=   0us     603366 ops/s  p50    1.41 us  p99     2.20 us  cpu/op node  1.66 app  3.32 echo  0.00 total  4.97 us
+r0 m2r  t=1 get  busy=   0us     602381 ops/s  p50    1.57 us  p99     2.09 us  cpu/op node  1.66 app  3.32 echo  0.00 total  4.98 us
+r0 m3   t=1 get  busy=   0us     492897 ops/s  p50    1.83 us  p99     2.69 us  cpu/op node  2.03 app  4.06 echo  0.00 total  6.09 us
+r0 m1   t=2 get  busy=   0us    1898834 ops/s  p50    0.85 us  p99     1.44 us  cpu/op node  0.53 app  1.05 echo  0.00 total  1.58 us
+r0 m2   t=2 get  busy=   0us    1102736 ops/s  p50    1.69 us  p99     2.50 us  cpu/op node  0.91 app  2.71 echo  0.00 total  3.62 us
+r0 m2r  t=2 get  busy=   0us    1110419 ops/s  p50    1.85 us  p99     2.44 us  cpu/op node  0.90 app  2.70 echo  0.00 total  3.60 us
+r0 m3   t=2 get  busy=   0us     923595 ops/s  p50    2.15 us  p99     2.83 us  cpu/op node  1.08 app  3.24 echo  0.00 total  4.32 us
+r0 m1   t=4 get  busy=   0us    2069540 ops/s  p50    1.24 us  p99     2.48 us  cpu/op node  0.48 app  1.17 echo  0.00 total  1.65 us
+r0 m2   t=4 get  busy=   0us    1158211 ops/s  p50    3.13 us  p99     6.35 us  cpu/op node  0.81 app  2.63 echo  0.00 total  3.44 us
+r0 m2r  t=4 get  busy=   0us    1184545 ops/s  p50    2.96 us  p99     5.20 us  cpu/op node  0.84 app  2.39 echo  0.00 total  3.23 us
+r0 m3   t=4 get  busy=   0us    1048613 ops/s  p50    3.54 us  p99     5.94 us  cpu/op node  0.54 app  3.19 echo  0.00 total  3.73 us
+r0 m1   t=8 get  busy=   0us    1878962 ops/s  p50    3.65 us  p99     7.22 us  cpu/op node  0.40 app  1.62 echo  0.00 total  2.02 us
+r0 m2   t=8 get  busy=   0us     993381 ops/s  p50    7.30 us  p99    14.15 us  cpu/op node  0.39 app  3.51 echo  0.00 total  3.91 us
+r0 m2r  t=8 get  busy=   0us    1165204 ops/s  p50    6.46 us  p99    11.15 us  cpu/op node  0.86 app  2.46 echo  0.00 total  3.32 us
+r0 m3   t=8 get  busy=   0us    1286741 ops/s  p50    5.72 us  p99     9.89 us  cpu/op node  0.35 app  2.73 echo  0.00 total  3.08 us
+r0 m0   t=1 cast busy=   0us    3533524 ops/s  p50    0.22 us  p99     0.33 us  cpu/op node  0.28 app  0.28 echo  0.00 total  0.57 us
+r0 m1   t=1 cast busy=   0us    4396708 ops/s  p50    0.17 us  p99     0.32 us  cpu/op node  0.23 app  0.23 echo  0.00 total  0.46 us
+r0 m2   t=1 cast busy=   0us    4157984 ops/s  p50    0.17 us  p99     0.28 us  cpu/op node  0.24 app  0.24 echo  0.00 total  0.48 us
+r0 m2r  t=1 cast busy=   0us    4173748 ops/s  p50    0.17 us  p99     0.28 us  cpu/op node  0.24 app  0.24 echo  0.00 total  0.48 us
+r0 m3   t=1 cast busy=   0us    1787461 ops/s  p50    0.44 us  p99     1.35 us  cpu/op node  0.56 app  1.12 echo  0.00 total  1.68 us
+r0 m1   t=2 cast busy=   0us    8766756 ops/s  p50    0.15 us  p99     0.32 us  cpu/op node  0.11 app  0.22 echo  0.00 total  0.34 us
+r0 m2   t=2 cast busy=   0us    4762284 ops/s  p50    0.37 us  p99     0.50 us  cpu/op node  0.21 app  0.42 echo  0.00 total  0.63 us
+r0 m2r  t=2 cast busy=   0us    4680889 ops/s  p50    0.37 us  p99     0.52 us  cpu/op node  0.21 app  0.43 echo  0.00 total  0.64 us
+r0 m3   t=2 cast busy=   0us    2603613 ops/s  p50    0.46 us  p99     1.81 us  cpu/op node  0.38 app  0.99 echo  0.00 total  1.38 us
+r0 m1   t=4 cast busy=   0us    3185012 ops/s  p50    0.09 us  p99     0.17 us  cpu/op node  0.26 app  0.86 echo  0.00 total  1.12 us
+r0 m2   t=4 cast busy=   0us    4073044 ops/s  p50    0.33 us  p99     8.61 us  cpu/op node  0.25 app  0.64 echo  0.00 total  0.89 us
+r0 m2r  t=4 cast busy=   0us    4200868 ops/s  p50    0.35 us  p99     6.74 us  cpu/op node  0.24 app  0.59 echo  0.00 total  0.82 us
+r0 m3   t=4 cast busy=   0us    2574832 ops/s  p50    0.43 us  p99     8.13 us  cpu/op node  0.16 app  1.07 echo  0.00 total  1.22 us
+r0 m1   t=8 cast busy=   0us    6398959 ops/s  p50    0.09 us  p99     0.20 us  cpu/op node  0.14 app  0.45 echo  0.00 total  0.59 us
+r0 m2   t=8 cast busy=   0us    3724989 ops/s  p50    0.39 us  p99    36.63 us  cpu/op node  0.13 app  0.92 echo  0.00 total  1.05 us
+r0 m2r  t=8 cast busy=   0us    3796423 ops/s  p50    0.35 us  p99    43.67 us  cpu/op node  0.26 app  0.78 echo  0.00 total  1.04 us
+r0 m3   t=8 cast busy=   0us    2538237 ops/s  p50    0.43 us  p99    38.35 us  cpu/op node  0.16 app  1.13 echo  0.00 total  1.28 us
+r0 m0   t=1 call busy=   0us     495103 ops/s  p50    1.76 us  p99     2.65 us  cpu/op node  2.02 app  2.02 echo  2.00 total  6.04 us
+r0 m1   t=1 call busy=   0us     494025 ops/s  p50    1.76 us  p99     2.67 us  cpu/op node  2.03 app  2.02 echo  2.00 total  6.05 us
+r0 m2   t=1 call busy=   0us     341700 ops/s  p50    2.74 us  p99     5.89 us  cpu/op node  2.73 app  5.85 echo  2.50 total 11.08 us
+r0 m2r  t=1 call busy=   0us     303490 ops/s  p50    2.74 us  p99     5.85 us  cpu/op node  2.72 app  6.59 echo  2.50 total 11.81 us
+r0 m3   t=1 call busy=   0us     285238 ops/s  p50    3.31 us  p99     5.92 us  cpu/op node  3.32 app  7.01 echo  3.00 total 13.33 us
+r0 m1   t=2 call busy=   0us     764775 ops/s  p50    2.17 us  p99     6.20 us  cpu/op node  1.12 app  2.61 echo  1.00 total  4.73 us
+r0 m2   t=2 call busy=   0us     335595 ops/s  p50    5.92 us  p99     6.85 us  cpu/op node  1.62 app  8.94 echo  1.25 total 11.81 us
+r0 m2r  t=2 call busy=   0us     330324 ops/s  p50    5.91 us  p99     7.61 us  cpu/op node  1.60 app  7.48 echo  3.00 total 12.08 us
+r0 m3   t=2 call busy=   0us     475712 ops/s  p50    4.24 us  p99     4.87 us  cpu/op node  2.10 app  4.21 echo  2.25 total  8.56 us
+r0 m1   t=4 call busy=   0us     534091 ops/s  p50    7.43 us  p99     8.98 us  cpu/op node  1.09 app  5.62 echo  0.75 total  7.46 us
+r0 m2   t=4 call busy=   0us     405238 ops/s  p50    7.63 us  p99    16.46 us  cpu/op node  1.15 app  7.73 echo  1.00 total  9.88 us
+r0 m2r  t=4 call busy=   0us     563026 ops/s  p50    6.94 us  p99     9.44 us  cpu/op node  1.00 app  5.28 echo  0.75 total  7.02 us
+r0 m3   t=4 call busy=   0us     376526 ops/s  p50   10.61 us  p99    13.33 us  cpu/op node  1.25 app  8.07 echo  1.25 total 10.57 us
+r0 m1   t=8 call busy=   0us     966264 ops/s  p50    8.44 us  p99    11.87 us  cpu/op node  0.65 app  2.67 echo  0.75 total  4.07 us
+r0 m2   t=8 call busy=   0us     474597 ops/s  p50   16.61 us  p99    22.59 us  cpu/op node  0.85 app  6.88 echo  0.69 total  8.41 us
+r0 m2r  t=8 call busy=   0us     655759 ops/s  p50   10.96 us  p99    19.44 us  cpu/op node  0.74 app  4.80 echo  0.50 total  6.04 us
+r0 m3   t=8 call busy=   0us     469448 ops/s  p50   16.30 us  p99    23.57 us  cpu/op node  0.85 app  6.92 echo  0.62 total  8.40 us
+r1 m0   t=1 get  busy=   0us    1000199 ops/s  p50    0.81 us  p99     1.39 us  cpu/op node  1.00 app  1.00 echo  0.00 total  2.00 us
+r1 m1   t=1 get  busy=   0us     977723 ops/s  p50    0.81 us  p99     1.46 us  cpu/op node  1.02 app  1.02 echo  0.00 total  2.04 us
+r1 m2   t=1 get  busy=   0us     608601 ops/s  p50    1.41 us  p99     2.13 us  cpu/op node  1.64 app  3.29 echo  0.00 total  4.93 us
+r1 m2r  t=1 get  busy=   0us     596222 ops/s  p50    1.80 us  p99     2.02 us  cpu/op node  1.68 app  3.35 echo  0.00 total  5.03 us
+r1 m3   t=1 get  busy=   0us     486998 ops/s  p50    2.09 us  p99     2.67 us  cpu/op node  2.05 app  4.11 echo  0.00 total  6.16 us
+r1 m1   t=2 get  busy=   0us    1905440 ops/s  p50    0.83 us  p99     1.46 us  cpu/op node  0.53 app  1.05 echo  0.00 total  1.57 us
+r1 m2   t=2 get  busy=   0us    1105527 ops/s  p50    1.78 us  p99     2.48 us  cpu/op node  0.90 app  2.71 echo  0.00 total  3.62 us
+r1 m2r  t=2 get  busy=   0us    1091225 ops/s  p50    1.85 us  p99     2.52 us  cpu/op node  0.92 app  2.74 echo  0.00 total  3.66 us
+r1 m3   t=2 get  busy=   0us     947199 ops/s  p50    2.13 us  p99     2.81 us  cpu/op node  1.06 app  3.15 echo  0.00 total  4.20 us
+r1 m1   t=4 get  busy=   0us    1335952 ops/s  p50    3.46 us  p99     5.24 us  cpu/op node  0.50 app  2.33 echo  0.00 total  2.83 us
+r1 m2   t=4 get  busy=   0us     904232 ops/s  p50    4.22 us  p99     6.55 us  cpu/op node  1.11 app  3.11 echo  0.00 total  4.22 us
+r1 m2r  t=4 get  busy=   0us    1278462 ops/s  p50    2.94 us  p99     5.37 us  cpu/op node  0.78 app  2.33 echo  0.00 total  3.11 us
+r1 m3   t=4 get  busy=   0us     607901 ops/s  p50    6.59 us  p99     7.32 us  cpu/op node  0.73 app  5.85 echo  0.00 total  6.58 us
+r1 m1   t=8 get  busy=   0us    2152196 ops/s  p50    3.61 us  p99     4.98 us  cpu/op node  0.46 app  1.23 echo  0.00 total  1.70 us
+r1 m2   t=8 get  busy=   0us    1198060 ops/s  p50    6.44 us  p99    11.78 us  cpu/op node  0.34 app  2.99 echo  0.00 total  3.33 us
+r1 m2r  t=8 get  busy=   0us    1101200 ops/s  p50    6.24 us  p99    12.28 us  cpu/op node  0.35 app  3.24 echo  0.00 total  3.58 us
+r1 m3   t=8 get  busy=   0us    1058879 ops/s  p50    7.48 us  p99    12.11 us  cpu/op node  0.47 app  3.28 echo  0.00 total  3.75 us
+r1 m0   t=1 cast busy=   0us    4392452 ops/s  p50    0.17 us  p99     0.30 us  cpu/op node  0.23 app  0.23 echo  0.00 total  0.46 us
+r1 m1   t=1 cast busy=   0us    5520636 ops/s  p50    0.13 us  p99     0.22 us  cpu/op node  0.18 app  0.18 echo  0.00 total  0.36 us
+r1 m2   t=1 cast busy=   0us    4179659 ops/s  p50    0.17 us  p99     0.28 us  cpu/op node  0.24 app  0.24 echo  0.00 total  0.48 us
+r1 m2r  t=1 cast busy=   0us    4879339 ops/s  p50    0.15 us  p99     0.26 us  cpu/op node  0.21 app  0.21 echo  0.00 total  0.41 us
+r1 m3   t=1 cast busy=   0us    1774282 ops/s  p50    0.44 us  p99     1.37 us  cpu/op node  0.56 app  1.12 echo  0.00 total  1.69 us
+r1 m1   t=2 cast busy=   0us    9211700 ops/s  p50    0.15 us  p99     0.28 us  cpu/op node  0.11 app  0.22 echo  0.00 total  0.33 us
+r1 m2   t=2 cast busy=   0us    4481545 ops/s  p50    0.39 us  p99     0.59 us  cpu/op node  0.22 app  0.45 echo  0.00 total  0.67 us
+r1 m2r  t=2 cast busy=   0us    4572079 ops/s  p50    0.39 us  p99     0.52 us  cpu/op node  0.22 app  0.44 echo  0.00 total  0.66 us
+r1 m3   t=2 cast busy=   0us    2530832 ops/s  p50    0.48 us  p99     1.87 us  cpu/op node  0.39 app  1.03 echo  0.00 total  1.42 us
+r1 m1   t=4 cast busy=   0us   11839460 ops/s  p50    0.11 us  p99     0.22 us  cpu/op node  0.08 app  0.18 echo  0.00 total  0.27 us
+r1 m2   t=4 cast busy=   0us    4037486 ops/s  p50    0.33 us  p99     8.80 us  cpu/op node  0.25 app  0.66 echo  0.00 total  0.91 us
+r1 m2r  t=4 cast busy=   0us    4038883 ops/s  p50    0.37 us  p99     7.28 us  cpu/op node  0.25 app  0.64 echo  0.00 total  0.89 us
+r1 m3   t=4 cast busy=   0us    2535191 ops/s  p50    0.45 us  p99     7.22 us  cpu/op node  0.26 app  1.09 echo  0.00 total  1.35 us
+r1 m1   t=8 cast busy=   0us   14172257 ops/s  p50    0.09 us  p99     0.18 us  cpu/op node  0.07 app  0.19 echo  0.00 total  0.26 us
+r1 m2   t=8 cast busy=   0us    3945188 ops/s  p50    0.35 us  p99    38.76 us  cpu/op node  0.25 app  0.72 echo  0.00 total  0.97 us
+r1 m2r  t=8 cast busy=   0us    4005860 ops/s  p50    0.35 us  p99    36.35 us  cpu/op node  0.25 app  0.70 echo  0.00 total  0.95 us
+r1 m3   t=8 cast busy=   0us    2492957 ops/s  p50    0.44 us  p99    45.91 us  cpu/op node  0.15 app  1.21 echo  0.00 total  1.37 us
+r1 m0   t=1 call busy=   0us     506513 ops/s  p50    1.74 us  p99     2.63 us  cpu/op node  1.98 app  1.98 echo  2.00 total  5.95 us
+r1 m1   t=1 call busy=   0us     493935 ops/s  p50    1.78 us  p99     2.69 us  cpu/op node  2.03 app  2.02 echo  2.00 total  6.05 us
+r1 m2   t=1 call busy=   0us     309297 ops/s  p50    2.74 us  p99     5.83 us  cpu/op node  2.73 app  6.47 echo  2.50 total 11.70 us
+r1 m2r  t=1 call busy=   0us     374674 ops/s  p50    2.70 us  p99     3.22 us  cpu/op node  2.67 app  5.34 echo  2.50 total 10.51 us
+r1 m3   t=1 call busy=   0us     277362 ops/s  p50    3.30 us  p99     6.59 us  cpu/op node  3.30 app  7.21 echo  3.00 total 13.51 us
+r1 m1   t=2 call busy=   0us     877629 ops/s  p50    2.15 us  p99     6.18 us  cpu/op node  1.06 app  2.28 echo  1.00 total  4.34 us
+r1 m2   t=2 call busy=   0us     436964 ops/s  p50    4.09 us  p99     6.82 us  cpu/op node  1.66 app  5.95 echo  1.50 total  9.11 us
+r1 m2r  t=2 call busy=   0us     331807 ops/s  p50    5.85 us  p99     7.11 us  cpu/op node  1.64 app  8.09 echo  1.25 total 10.99 us
+r1 m3   t=2 call busy=   0us     312219 ops/s  p50    6.37 us  p99     7.24 us  cpu/op node  1.76 app  9.61 echo  1.50 total 12.87 us
+r1 m1   t=4 call busy=   0us     543684 ops/s  p50    7.02 us  p99     9.00 us  cpu/op node  1.08 app  5.52 echo  0.62 total  7.22 us
+r1 m2   t=4 call busy=   0us     364805 ops/s  p50    9.26 us  p99    16.93 us  cpu/op node  1.25 app  8.46 echo  1.12 total 10.83 us
+r1 m2r  t=4 call busy=   0us     563131 ops/s  p50    7.17 us  p99     9.70 us  cpu/op node  1.01 app  5.29 echo  0.75 total  7.05 us
+r1 m3   t=4 call busy=   0us     366643 ops/s  p50   10.74 us  p99    13.85 us  cpu/op node  1.27 app  8.24 echo  1.25 total 10.75 us
+r1 m1   t=8 call busy=   0us     956848 ops/s  p50    8.50 us  p99    12.98 us  cpu/op node  0.60 app  2.43 echo  1.06 total  4.09 us
+r1 m2   t=8 call busy=   0us     821324 ops/s  p50    9.43 us  p99    15.11 us  cpu/op node  0.73 app  3.66 echo  0.44 total  4.83 us
+r1 m2r  t=8 call busy=   0us     803557 ops/s  p50    9.02 us  p99    13.57 us  cpu/op node  0.73 app  3.71 echo  0.50 total  4.94 us
+r1 m3   t=8 call busy=   0us     248580 ops/s  p50   32.41 us  p99    43.48 us  cpu/op node  1.12 app 14.02 echo  0.94 total 16.08 us
+# busy pass, load: 1.61 0.65 0.32
+r0 m1   t=1 get  busy=1000us     866550 ops/s  p50    0.89 us  p99     3.94 us  cpu/op node  1.17 app  1.16 echo  0.00 total  2.33 us
+r0 m2   t=1 get  busy=1000us     655961 ops/s  p50    1.41 us  p99     4.94 us  cpu/op node  1.54 app  1.53 echo  0.00 total  3.06 us
+r0 m2r  t=1 get  busy=1000us     564536 ops/s  p50    1.78 us  p99     4.44 us  cpu/op node  1.78 app  3.35 echo  0.00 total  5.13 us
+r0 m3   t=1 get  busy=1000us        532 ops/s  p50 2011.78 us  p99  2013.99 us  cpu/op node 47.63 app 34.82 echo  0.00 total 82.45 us
+r0 m1   t=2 get  busy=1000us    1408625 ops/s  p50    1.26 us  p99     4.89 us  cpu/op node  0.71 app  1.42 echo  0.00 total  2.13 us
+r0 m2   t=2 get  busy=1000us    1312026 ops/s  p50    1.35 us  p99     4.65 us  cpu/op node  0.77 app  1.51 echo  0.00 total  2.27 us
+r0 m2r  t=2 get  busy=1000us     684500 ops/s  p50    2.72 us  p99     5.61 us  cpu/op node  1.47 app  3.08 echo  0.00 total  4.54 us
+r0 m3   t=2 get  busy=1000us       1044 ops/s  p50 2011.84 us  p99  2013.39 us  cpu/op node 24.07 app 29.78 echo  0.00 total 53.86 us
+r0 m1   t=4 get  busy=1000us     904358 ops/s  p50    4.13 us  p99    11.09 us  cpu/op node  0.66 app  2.62 echo  0.00 total  3.28 us
+r0 m2   t=4 get  busy=1000us     910225 ops/s  p50    3.89 us  p99     7.26 us  cpu/op node  1.10 app  1.65 echo  0.00 total  2.75 us
+r0 m2r  t=4 get  busy=1000us     729094 ops/s  p50    5.41 us  p99     9.87 us  cpu/op node  0.47 app  3.64 echo  0.00 total  4.11 us
+r0 m3   t=4 get  busy=1000us       2578 ops/s  p50 2009.52 us  p99  2014.39 us  cpu/op node 10.25 app 20.95 echo  0.00 total 31.20 us
+r0 m1   t=8 get  busy=1000us    1236692 ops/s  p50    4.89 us  p99    13.39 us  cpu/op node  0.44 app  1.63 echo  0.00 total  2.07 us
+r0 m2   t=8 get  busy=1000us    1087607 ops/s  p50    6.76 us  p99    10.65 us  cpu/op node  0.92 app  1.71 echo  0.00 total  2.63 us
+r0 m2r  t=8 get  busy=1000us     901974 ops/s  p50    7.46 us  p99    14.59 us  cpu/op node  0.35 app  2.82 echo  0.00 total  3.17 us
+r0 m3   t=8 get  busy=1000us       6474 ops/s  p50 1017.35 us  p99  2026.49 us  cpu/op node  5.19 app 18.26 echo  0.00 total 23.45 us
+r0 m1   t=1 cast busy=1000us    3454697 ops/s  p50    0.22 us  p99     0.33 us  cpu/op node  0.30 app  0.51 echo  0.00 total  0.81 us
+r0 m2   t=1 cast busy=1000us    3274239 ops/s  p50    0.24 us  p99     0.35 us  cpu/op node  0.32 app  0.41 echo  0.00 total  0.73 us
+r0 m2r  t=1 cast busy=1000us    3235780 ops/s  p50    0.24 us  p99     0.35 us  cpu/op node  0.32 app  0.67 echo  0.00 total  0.98 us
+r0 m3   t=1 cast busy=1000us     848789 ops/s  p50    0.13 us  p99     0.35 us  cpu/op node  0.22 app  0.44 echo  0.00 total  0.66 us
+r0 m1   t=2 cast busy=1000us   10860888 ops/s  p50    0.13 us  p99     0.22 us  cpu/op node  0.10 app  0.19 echo  0.00 total  0.29 us
+r0 m2   t=2 cast busy=1000us    3268836 ops/s  p50    0.48 us  p99     0.89 us  cpu/op node  0.31 app  0.56 echo  0.00 total  0.87 us
+r0 m2r  t=2 cast busy=1000us    1424079 ops/s  p50    0.39 us  p99     0.63 us  cpu/op node  0.26 app  0.44 echo  0.00 total  0.71 us
+r0 m3   t=2 cast busy=1000us    1508412 ops/s  p50    0.35 us  p99     0.69 us  cpu/op node  0.19 app  0.62 echo  0.00 total  0.81 us
+r0 m1   t=4 cast busy=1000us    5766418 ops/s  p50    0.11 us  p99     0.17 us  cpu/op node  0.05 app  0.19 echo  0.00 total  0.24 us
+r0 m2   t=4 cast busy=1000us    4681538 ops/s  p50    0.35 us  p99     0.50 us  cpu/op node  0.22 app  0.39 echo  0.00 total  0.61 us
+r0 m2r  t=4 cast busy=1000us    3652591 ops/s  p50    0.37 us  p99     2.57 us  cpu/op node  0.24 app  0.33 echo  0.00 total  0.57 us
+r0 m3   t=4 cast busy=1000us    1863552 ops/s  p50    0.45 us  p99     4.85 us  cpu/op node  0.26 app  0.96 echo  0.00 total  1.22 us
+r0 m1   t=8 cast busy=1000us   10315134 ops/s  p50    0.11 us  p99     0.26 us  cpu/op node  0.08 app  0.20 echo  0.00 total  0.28 us
+r0 m2   t=8 cast busy=1000us    3065971 ops/s  p50    0.41 us  p99    51.70 us  cpu/op node  0.08 app  0.91 echo  0.00 total  0.99 us
+r0 m2r  t=8 cast busy=1000us    4480545 ops/s  p50    0.37 us  p99     0.57 us  cpu/op node  0.21 app  0.42 echo  0.00 total  0.63 us
+r0 m3   t=8 cast busy=1000us    1847062 ops/s  p50    0.46 us  p99    33.09 us  cpu/op node  0.19 app  1.20 echo  0.00 total  1.39 us
+r0 m1   t=1 call busy=1000us     160822 ops/s  p50    5.72 us  p99    16.04 us  cpu/op node  3.41 app  6.21 echo  0.00 total  9.62 us
+r0 m2   t=1 call busy=1000us     192725 ops/s  p50    5.37 us  p99    14.20 us  cpu/op node  3.11 app  5.21 echo  0.00 total  8.31 us
+r0 m2r  t=1 call busy=1000us     172679 ops/s  p50    5.39 us  p99    14.74 us  cpu/op node  3.15 app 11.68 echo  0.00 total 14.83 us
+r0 m3   t=1 call busy=1000us        503 ops/s  p50 2012.32 us  p99  2014.15 us  cpu/op node 55.62 app 37.34 echo 20.00 total 112.96 us
+r0 m1   t=2 call busy=1000us     289046 ops/s  p50    6.39 us  p99    14.28 us  cpu/op node  1.94 app  7.08 echo  0.00 total  9.02 us
+r0 m2   t=2 call busy=1000us     317862 ops/s  p50    6.00 us  p99    13.50 us  cpu/op node  1.73 app  6.33 echo  0.00 total  8.06 us
+r0 m2r  t=2 call busy=1000us     307085 ops/s  p50    5.82 us  p99    12.85 us  cpu/op node  1.81 app  6.42 echo  0.00 total  8.22 us
+r0 m3   t=2 call busy=1000us       1028 ops/s  p50 2012.51 us  p99  2016.67 us  cpu/op node 27.96 app 32.19 echo 12.50 total 72.65 us
+r0 m1   t=4 call busy=1000us     538492 ops/s  p50    7.02 us  p99    15.19 us  cpu/op node  1.12 app  3.70 echo  0.00 total  4.81 us
+r0 m2   t=4 call busy=1000us     661229 ops/s  p50    5.69 us  p99    10.59 us  cpu/op node  1.52 app  2.45 echo  0.00 total  3.98 us
+r0 m2r  t=4 call busy=1000us     453873 ops/s  p50    6.68 us  p99    15.59 us  cpu/op node  1.39 app  4.62 echo  0.00 total  6.01 us
+r0 m3   t=4 call busy=1000us       2345 ops/s  p50 2013.06 us  p99  2019.01 us  cpu/op node 12.92 app 21.47 echo 10.00 total 44.40 us
+r0 m1   t=8 call busy=1000us     441600 ops/s  p50   17.76 us  p99    33.11 us  cpu/op node  1.05 app  5.06 echo  0.00 total  6.11 us
+r0 m2   t=8 call busy=1000us     716955 ops/s  p50   10.89 us  p99    17.57 us  cpu/op node  0.80 app  2.69 echo  0.00 total  3.49 us
+r0 m2r  t=8 call busy=1000us     316489 ops/s  p50   23.95 us  p99    36.65 us  cpu/op node  0.85 app  7.70 echo  0.62 total  9.18 us
+r0 m3   t=8 call busy=1000us       6581 ops/s  p50 1018.81 us  p99  2027.65 us  cpu/op node  4.79 app 18.55 echo  3.12 total 26.46 us
+r1 m1   t=1 get  busy=1000us     662548 ops/s  p50    1.28 us  p99     4.68 us  cpu/op node  1.52 app  1.51 echo  0.00 total  3.04 us
+r1 m2   t=1 get  busy=1000us     890184 ops/s  p50    0.91 us  p99     3.57 us  cpu/op node  1.14 app  1.13 echo  0.00 total  2.28 us
+r1 m2r  t=1 get  busy=1000us     524240 ops/s  p50    1.89 us  p99     5.15 us  cpu/op node  1.91 app  3.84 echo  0.00 total  5.75 us
+r1 m3   t=1 get  busy=1000us        529 ops/s  p50 2011.69 us  p99  2013.86 us  cpu/op node 47.66 app 35.11 echo  0.00 total 82.77 us
+r1 m1   t=2 get  busy=1000us    1366821 ops/s  p50    1.26 us  p99     5.02 us  cpu/op node  0.74 app  1.31 echo  0.00 total  2.05 us
+r1 m2   t=2 get  busy=1000us     968065 ops/s  p50    1.89 us  p99     6.72 us  cpu/op node  1.04 app  2.04 echo  0.00 total  3.08 us
+r1 m2r  t=2 get  busy=1000us     581427 ops/s  p50    3.26 us  p99     8.28 us  cpu/op node  0.84 app  4.30 echo  0.00 total  5.13 us
+r1 m3   t=2 get  busy=1000us       1051 ops/s  p50 2011.89 us  p99  2013.52 us  cpu/op node 24.00 app 29.84 echo  0.00 total 53.84 us
+r1 m1   t=4 get  busy=1000us    1077540 ops/s  p50    3.57 us  p99     5.87 us  cpu/op node  0.93 app  1.22 echo  0.00 total  2.15 us
+r1 m2   t=4 get  busy=1000us     926735 ops/s  p50    4.17 us  p99    10.63 us  cpu/op node  0.56 app  2.66 echo  0.00 total  3.21 us
+r1 m2r  t=4 get  busy=1000us     758873 ops/s  p50    4.70 us  p99    10.28 us  cpu/op node  0.67 app  3.24 echo  0.00 total  3.91 us
+r1 m3   t=4 get  busy=1000us       2578 ops/s  p50 2008.84 us  p99  2014.49 us  cpu/op node 10.29 app 21.10 echo  0.00 total 31.39 us
+r1 m1   t=8 get  busy=1000us    1179337 ops/s  p50    5.20 us  p99    14.35 us  cpu/op node  0.46 app  1.91 echo  0.00 total  2.37 us
+r1 m2   t=8 get  busy=1000us     999893 ops/s  p50    7.33 us  p99    13.93 us  cpu/op node  0.30 app  2.62 echo  0.00 total  2.93 us
+r1 m2r  t=8 get  busy=1000us     675596 ops/s  p50    8.57 us  p99    15.83 us  cpu/op node  0.44 app  3.05 echo  0.00 total  3.50 us
+r1 m3   t=8 get  busy=1000us       6535 ops/s  p50 1017.44 us  p99  2026.39 us  cpu/op node  5.14 app 18.25 echo  0.00 total 23.39 us
+r1 m1   t=1 cast busy=1000us    3512099 ops/s  p50    0.22 us  p99     0.33 us  cpu/op node  0.30 app  0.29 echo  0.00 total  0.59 us
+r1 m2   t=1 cast busy=1000us    3261387 ops/s  p50    0.24 us  p99     0.35 us  cpu/op node  0.33 app  0.61 echo  0.00 total  0.94 us
+r1 m2r  t=1 cast busy=1000us    3247460 ops/s  p50    0.24 us  p99     0.35 us  cpu/op node  0.31 app  0.36 echo  0.00 total  0.68 us
+r1 m3   t=1 cast busy=1000us     859317 ops/s  p50    0.13 us  p99     0.35 us  cpu/op node  0.22 app  0.41 echo  0.00 total  0.62 us
+r1 m1   t=2 cast busy=1000us   10836379 ops/s  p50    0.13 us  p99     0.22 us  cpu/op node  0.10 app  0.19 echo  0.00 total  0.29 us
+r1 m2   t=2 cast busy=1000us    3300047 ops/s  p50    0.48 us  p99     1.05 us  cpu/op node  0.31 app  0.47 echo  0.00 total  0.78 us
+r1 m2r  t=2 cast busy=1000us    1395169 ops/s  p50    0.41 us  p99     0.70 us  cpu/op node  0.28 app  0.32 echo  0.00 total  0.60 us
+r1 m3   t=2 cast busy=1000us    1493279 ops/s  p50    0.32 us  p99     0.61 us  cpu/op node  0.20 app  0.59 echo  0.00 total  0.78 us
+r1 m1   t=4 cast busy=1000us    7756026 ops/s  p50    0.15 us  p99     0.22 us  cpu/op node  0.07 app  0.25 echo  0.00 total  0.33 us
+r1 m2   t=4 cast busy=1000us    3745766 ops/s  p50    0.45 us  p99     0.69 us  cpu/op node  0.27 app  0.54 echo  0.00 total  0.81 us
+r1 m2r  t=4 cast busy=1000us    3459483 ops/s  p50    0.48 us  p99     0.74 us  cpu/op node  0.27 app  0.68 echo  0.00 total  0.95 us
+r1 m3   t=4 cast busy=1000us    1783794 ops/s  p50    0.44 us  p99     6.15 us  cpu/op node  0.26 app  0.97 echo  0.00 total  1.23 us
+r1 m1   t=8 cast busy=1000us    9374449 ops/s  p50    0.09 us  p99     0.19 us  cpu/op node  0.05 app  0.18 echo  0.00 total  0.23 us
+r1 m2   t=8 cast busy=1000us    3146782 ops/s  p50    0.37 us  p99    27.63 us  cpu/op node  0.14 app  0.70 echo  0.00 total  0.84 us
+r1 m2r  t=8 cast busy=1000us    3316428 ops/s  p50    0.26 us  p99    35.98 us  cpu/op node  0.11 app  0.77 echo  0.00 total  0.89 us
+r1 m3   t=8 cast busy=1000us    1966586 ops/s  p50    0.46 us  p99    38.91 us  cpu/op node  0.20 app  1.17 echo  0.00 total  1.37 us
+r1 m1   t=1 call busy=1000us     159299 ops/s  p50    5.72 us  p99    15.57 us  cpu/op node  3.44 app  6.26 echo  0.00 total  9.71 us
+r1 m2   t=1 call busy=1000us     380998 ops/s  p50    1.95 us  p99     7.96 us  cpu/op node  2.40 app  2.87 echo  0.00 total  5.27 us
+r1 m2r  t=1 call busy=1000us     176524 ops/s  p50    5.37 us  p99    13.80 us  cpu/op node  3.10 app 11.33 echo  0.00 total 14.42 us
+r1 m3   t=1 call busy=1000us        501 ops/s  p50 2012.41 us  p99  2014.63 us  cpu/op node 55.41 app 37.04 echo 20.00 total 112.45 us
+r1 m1   t=2 call busy=1000us     303669 ops/s  p50    6.19 us  p99    12.98 us  cpu/op node  1.85 app  6.67 echo  0.00 total  8.53 us
+r1 m2   t=2 call busy=1000us     341039 ops/s  p50    5.63 us  p99    10.85 us  cpu/op node  1.62 app  5.87 echo  0.00 total  7.49 us
+r1 m2r  t=2 call busy=1000us     305659 ops/s  p50    6.02 us  p99    14.76 us  cpu/op node  1.79 app  6.49 echo  0.00 total  8.28 us
+r1 m3   t=2 call busy=1000us       1017 ops/s  p50 2012.49 us  p99  2015.02 us  cpu/op node 27.98 app 32.14 echo 10.00 total 70.12 us
+r1 m1   t=4 call busy=1000us     248302 ops/s  p50   15.65 us  p99    31.41 us  cpu/op node  1.62 app  9.18 echo  0.00 total 10.81 us
+r1 m2   t=4 call busy=1000us     250244 ops/s  p50   15.33 us  p99    28.46 us  cpu/op node  1.52 app  9.18 echo  0.00 total 10.70 us
+r1 m2r  t=4 call busy=1000us     366853 ops/s  p50    9.19 us  p99    16.91 us  cpu/op node  1.15 app  5.37 echo  0.00 total  6.53 us
+r1 m3   t=4 call busy=1000us       2478 ops/s  p50 1015.35 us  p99  2019.99 us  cpu/op node 11.83 app 21.59 echo  7.50 total 40.91 us
+r1 m1   t=8 call busy=1000us     442758 ops/s  p50   17.89 us  p99    27.65 us  cpu/op node  1.02 app  5.09 echo  0.00 total  6.11 us
+r1 m2   t=8 call busy=1000us     408685 ops/s  p50   19.39 us  p99    26.61 us  cpu/op node  0.68 app  6.04 echo  0.00 total  6.72 us
+r1 m2r  t=8 call busy=1000us     347359 ops/s  p50   22.48 us  p99    33.30 us  cpu/op node  0.72 app  7.31 echo  0.00 total  8.03 us
+r1 m3   t=8 call busy=1000us       6608 ops/s  p50 1018.98 us  p99  2027.80 us  cpu/op node  4.60 app 18.52 echo  3.75 total 26.87 us
+# end, load: 1.24 0.73 0.37

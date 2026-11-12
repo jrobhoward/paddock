@@ -1,0 +1,19 @@
+# S39: sends from an app's own threads. Standalone: built from this
+# directory alone on each machine (`cargo build --release`), against the
+# main workspace's `bulkhead-native` by path, so the rings, the spin-then-
+# sleep waits, the doors and the bells are the ones the node uses.
+[package]
+name = "s39"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bulkhead-native = { path = "../../crates/bulkhead-native", default-features = false, features = ["channel"] }
+rustix = { version = "1.1", default-features = false, features = ["std", "fs", "pipe"] }
+libc = "0.2"
+
+[profile.release]
+debug = 1
+
+[workspace]
