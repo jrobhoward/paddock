@@ -6,13 +6,17 @@
 //! stdin and stdout with `bulkhead_native::protocol`'s frames, one callback
 //! at a time, answering the process functions it asks for during a
 //! callback. The runner restricts itself before the program runs
-//! (Landlock, seccomp); the node limits it from outside ([`port`]: a cgroup
-//! or `RLIMIT_DATA`, the parent-death signal), kills it past a callback's
-//! deadline or a missed ping, and maps its end to an exit reason.
+//! (Landlock, seccomp; on FreeBSD nothing yet, ROADMAP FB2); the node
+//! limits it from outside ([`port`]: a cgroup or `RLIMIT_DATA`, the
+//! parent-death signal), kills it past a callback's deadline or a missed
+//! ping, and maps its end to an exit reason. Native apps run on Linux and
+//! FreeBSD; what differs between them is in [`os`].
 
 pub(crate) mod cgroup;
 pub(crate) mod convert;
 pub(crate) mod memory;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) mod os;
 pub(crate) mod port;
 #[cfg(target_os = "linux")]
 pub(crate) mod syscalls;

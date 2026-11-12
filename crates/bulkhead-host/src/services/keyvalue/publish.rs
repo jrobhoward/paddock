@@ -33,7 +33,7 @@ pub(crate) struct Version {
     /// Every write at or below it is in the snapshot.
     pub(crate) revision: u64,
     /// The sealed memfd holding it.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub(crate) memfd: std::os::fd::OwnedFd,
     /// Its size.
     pub(crate) bytes: usize,
@@ -117,7 +117,7 @@ impl KvStore {
     /// publishing starts with the first call.
     pub(crate) fn published(self: &Arc<Self>, name: &str) -> Option<Versions> {
         let every = self.shared(name)?.publish?;
-        if cfg!(not(target_os = "linux")) {
+        if cfg!(not(any(target_os = "linux", target_os = "freebsd"))) {
             return None;
         }
         let rx = {
@@ -261,7 +261,7 @@ fn snapshot(store: &KvStore, handle: &BucketHandle) -> Result<Version, String> {
     seal(&handle.name, revision.unwrap_or(0), &entries)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn seal(name: &str, revision: u64, entries: &[(String, Vec<u8>)]) -> Result<Version, String> {
     let bytes = bulkhead_native::snapshot::build(revision, entries);
     let memfd = bulkhead_native::channel::sealed(&format!("bulkhead-published-{name}"), &bytes)
@@ -273,9 +273,9 @@ fn seal(name: &str, revision: u64, entries: &[(String, Vec<u8>)]) -> Result<Vers
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn seal(_name: &str, _revision: u64, _entries: &[(String, Vec<u8>)]) -> Result<Version, String> {
-    Err("published buckets need Linux".into())
+    Err("published buckets need Linux or FreeBSD".into())
 }
 
 #[cfg(test)]

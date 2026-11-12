@@ -29,8 +29,9 @@
 //! `BULKHEAD_PREOPENS` (where each preopened directory is) and the spin
 //! budget. A read-write volume is a `--write` directory for the runner.
 //!
-//! Native apps run on Linux only (`bulkhead-runner` is Linux only); elsewhere
-//! [`Port::spawn`] refuses and a `Port` never exists.
+//! Native apps run on Linux and FreeBSD, the same code on both (what
+//! differs is in [`crate::native::os`]); elsewhere [`Port::spawn`] refuses
+//! and a `Port` never exists. A cgroup is Linux's alone.
 
 use std::time::Duration;
 
@@ -67,14 +68,25 @@ pub(crate) struct KvCall {
 /// killed.
 const EXIT_GRACE: Duration = Duration::from_secs(1);
 
+/// The limit that holds an instance without a cgroup to `memory_max`.
+/// Linux's `RLIMIT_DATA` counts private writable mappings, so every
+/// allocation. FreeBSD's counts only `brk`, which its malloc does not use,
+/// so there it is `RLIMIT_AS`: the whole address space, mapped libraries
+/// and thread stacks included, a stricter count than memory in use, until
+/// the privileged helper sets `rctl` rules (ROADMAP PS1, FB2).
 #[cfg(target_os = "linux")]
-pub(crate) use linux::ProcessPort;
+const MEMORY_RESOURCE: rustix::process::Resource = rustix::process::Resource::Data;
+#[cfg(target_os = "freebsd")]
+const MEMORY_RESOURCE: rustix::process::Resource = rustix::process::Resource::As;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) use process::ProcessPort;
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub(crate) use elsewhere::ProcessPort;
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod process {
     use std::ffi::CString;
     use std::os::fd::AsFd;
     use std::os::unix::process::ExitStatusExt;
@@ -388,7 +400,7 @@ mod linux {
                     setrlimit(Resource::Core, none)?;
                     if let Some(bytes) = data_limit {
                         setrlimit(
-                            Resource::Data,
+                            super::MEMORY_RESOURCE,
                             Rlimit {
                                 current: Some(bytes),
                                 maximum: Some(bytes),
@@ -476,7 +488,11 @@ mod linux {
         /// Where this process's memory can be read.
         pub(crate) fn memory_source(&self) -> Option<MemorySource> {
             match &self.cgroup {
+                #[cfg(target_os = "linux")]
                 Some(dir) => Some(MemorySource::Cgroup(dir.clone())),
+                // The runtime refuses a cgroup off Linux.
+                #[cfg(not(target_os = "linux"))]
+                Some(_) => None,
                 None => self.child.id().map(MemorySource::Process),
             }
         }
@@ -855,6 +871,7 @@ mod linux {
                         "killed_at_lease_end".into()
                     }
                     (Some(code), _) => format!("exited with status {code}"),
+                    #[cfg(target_os = "linux")]
                     (_, Some(libc::SIGSYS)) => {
                         let ring = self.channel.to_node();
                         let refused = ring.refused_call().load(Ordering::SeqCst);
@@ -893,7 +910,7 @@ mod linux {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 mod elsewhere {
     use std::convert::Infallible;
 
@@ -912,7 +929,7 @@ mod elsewhere {
     pub(crate) struct ProcessPort(Infallible);
 
     impl ProcessPort {
-        /// Native apps run on Linux only.
+        /// Native apps run on Linux and FreeBSD only.
         ///
         /// # Errors
         ///
@@ -925,7 +942,7 @@ mod elsewhere {
             _output: CapturedOutput,
             _lease: Option<tokio::sync::watch::Receiver<RunUntil>>,
         ) -> Result<Self, String> {
-            Err("native apps run on Linux only".into())
+            Err("native apps run on Linux and FreeBSD only".into())
         }
 
         pub(crate) fn send(&mut self, _frame: &ToApp) {

@@ -351,7 +351,6 @@ impl Fixture {
                 outcome(unsafe { rustix::io_uring::io_uring_setup(1, &mut params) })
             }
             #[cfg(target_os = "linux")]
-            #[cfg(target_os = "linux")]
             "memfd" => outcome(rustix::fs::memfd_create(
                 "fixture",
                 rustix::fs::MemfdFlags::CLOEXEC,
@@ -377,6 +376,7 @@ impl Fixture {
                     _ => "ok".into(),
                 }
             }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             "shrink-channel" => match CHANNEL_MEMFD.get() {
                 Some(memfd) => outcome(rustix::fs::ftruncate(memfd, 0)),
                 None => "err:no copy of the channel's memfd".into(),
@@ -529,12 +529,12 @@ impl App for Fixture {
 /// A copy of the channel's memfd, kept as an app that means harm could
 /// (`serve` closes the one it inherits once it is mapped), for
 /// `shrink-channel`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 static CHANNEL_MEMFD: std::sync::OnceLock<std::os::fd::OwnedFd> = std::sync::OnceLock::new();
 
 /// Serve the fixture on stdin and stdout.
 pub(crate) fn main() -> ExitCode {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         // SAFETY: the node put the channel's memfd at this number before
         // exec, and it stays open until `serve` takes it below.
@@ -558,9 +558,21 @@ fn dumpable() -> String {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// FreeBSD: whether other processes may trace it, which also decides its
+/// core dump (`procctl(PROC_TRACE_STATUS)`).
+#[cfg(target_os = "freebsd")]
 fn dumpable() -> String {
-    "err:linux only".into()
+    use rustix::process::{TracingStatus, trace_status};
+    match trace_status(None) {
+        Ok(TracingStatus::NotTraceble) => "no".into(),
+        Ok(_) => "yes".into(),
+        Err(e) => format!("err:{e}"),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn dumpable() -> String {
+    "err:linux and freebsd only".into()
 }
 
 /// `kv OP BUCKET ...`: the keyvalue requests, answered as text (`err:` and

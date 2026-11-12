@@ -42,7 +42,7 @@ async fn version_at(versions: &mut Versions, revision: u64) -> Arc<Version> {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn read(version: &Version, key: &str) -> Option<String> {
     let mapped = bulkhead_native::channel::Mapped::open(&version.memfd).unwrap();
     let snap = bulkhead_native::snapshot::Snapshot::parse(mapped.bytes()).unwrap();
@@ -50,7 +50,7 @@ fn read(version: &Version, key: &str) -> Option<String> {
         .map(|v| String::from_utf8(v.to_vec()).unwrap())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn published____writes____each_in_a_later_snapshot() {
     let store = store(Some(Duration::from_millis(10)));
@@ -68,7 +68,7 @@ async fn published____writes____each_in_a_later_snapshot() {
     assert_eq!(read(&second, "c"), None);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn published____same_bucket_twice____one_publisher() {
     let store = store(Some(Duration::from_millis(10)));

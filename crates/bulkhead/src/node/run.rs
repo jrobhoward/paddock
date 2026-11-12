@@ -99,9 +99,21 @@ fn fence(debuggable: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Linux only so far; FreeBSD's `procctl(PROC_TRACE_CTL)` comes with the
-/// node's OS layer there (ROADMAP FB1).
-#[cfg(not(target_os = "linux"))]
+/// FreeBSD: the same through `procctl`: `PROC_NO_NEW_PRIVS_CTL`, and
+/// `PROC_TRACE_CTL` for no core dump and no ptrace or `/proc` memory from
+/// other processes of the node's user.
+#[cfg(target_os = "freebsd")]
+fn fence(debuggable: bool) -> anyhow::Result<()> {
+    rustix::process::set_no_new_privs(None).context("cannot set no_new_privs")?;
+    if !debuggable {
+        bulkhead_native::freebsd::set_not_traceable(false)
+            .context("cannot mark the node not traceable")?;
+    }
+    Ok(())
+}
+
+/// Elsewhere nothing (Linux and FreeBSD are the targets).
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 #[expect(
     clippy::unnecessary_wraps,
     reason = "the Linux function of the same name can fail"

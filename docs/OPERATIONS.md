@@ -79,7 +79,7 @@ Ctrl-C stops the command running (a follow, a slow call); Ctrl-D or `exit` leave
 
 [`examples/systemd/bulkhead.service`](../examples/systemd/bulkhead.service) runs a node as its own unprivileged user. Privileges:
 
-- The node sets `no_new_privs` on itself at start and, on Linux, marks itself not dumpable: it leaves no core dump, and other processes of its user cannot trace it or read its memory or environment through `/proc`. Node config's `debuggable = true` leaves it dumpable, for a debugger or a core on a development machine.
+- The node sets `no_new_privs` on itself at start and marks itself not dumpable (on FreeBSD, both through `procctl`: `PROC_NO_NEW_PRIVS_CTL` and `PROC_TRACE_CTL`): it leaves no core dump, and other processes of its user cannot trace it or read its memory or environment through `/proc`. Node config's `debuggable = true` leaves it dumpable, for a debugger or a core on a development machine.
 - No root. `CAP_NET_BIND_SERVICE` is the only capability, and only for ingress or listener ports below 1024; leave it out otherwise.
 - `dialout` (or the device's group) for the failover serial line (`[failover] serial`), with `PrivateDevices` off. A device that cannot be opened is logged and retried every second; the path stays silent meanwhile, and `bulkhead failover` shows it (`paths: link heard, serial silent`).
 - `StateDirectory` creates `data_dir` owned by the service user, mode 0750; the node creates what is under it.

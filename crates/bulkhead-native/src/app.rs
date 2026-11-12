@@ -25,7 +25,7 @@
 //! The node runs one callback at a time. The process
 //! functions are on [`Ctx`], valid during a callback; [`log`] works from
 //! any thread at any time. Frames go over the channel the node gave the
-//! process (`crate::channel`, Linux only): two rings in shared memory,
+//! process (`crate::channel`, Linux and FreeBSD): two rings in shared memory,
 //! each waiting side spinning briefly before it sleeps. What the app
 //! prints, on stdout or stderr, becomes log lines; stdin is empty.
 //!
@@ -38,7 +38,7 @@
 //! there).
 
 use std::cell::RefCell;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::OwnedFd;
@@ -46,7 +46,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use crate::channel::{AppEnd, FromNode, ToNode};
 
 use crate::hot::KvOp;
@@ -125,21 +125,21 @@ pub trait App: Sized {
 }
 
 /// The channel to the node, once [`serve`] has opened it.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 static END: OnceLock<AppEnd> = OnceLock::new();
 
 /// One frame at a time to the node, whichever thread sends it.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 static SENDING: Mutex<()> = Mutex::new(());
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 thread_local! {
     /// A hot frame being sent from this thread, kept between frames.
     static HOT_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Send an encoded frame to the node, as [`send`] does.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn send_bytes(frame: &[u8]) {
     use std::io::Write;
 
@@ -153,7 +153,7 @@ fn send_bytes(frame: &[u8]) {
 /// Send one frame to the node. Without a node (before [`serve`]) a log
 /// record goes to stderr and anything else is dropped.
 fn send(frame: &FromApp) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if END.get().is_some() {
         // A hot frame where the layouts cover it (ROADMAP T7), written into
         // this thread's buffer; CBOR otherwise.
@@ -192,29 +192,29 @@ struct Conn {
     next_id: u64,
     metrics: Vec<MetricUpdate>,
     /// Published buckets' snapshots, by bucket (ROADMAP T4).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     published: HashMap<String, Published>,
     /// Published buckets this instance wrote, with the bucket's revision
     /// after its last write: its reads go to the node until a snapshot
     /// reaches that revision, so it reads its own writes.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     written: HashMap<String, u64>,
     /// Bucket handles the node gave (ROADMAP T7), by bucket name.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     handles: HashMap<String, u32>,
     /// The last frame read from the node, in `inbuf[..in_len]`; kept
     /// between frames so reading one allocates nothing.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     inbuf: Vec<u8>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     in_len: usize,
     /// A hot frame being written, kept between frames.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     out: Vec<u8>,
 }
 
 /// A published bucket's snapshot, mapped.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 struct Published {
     mapped: crate::channel::Mapped,
     revision: u64,
@@ -239,7 +239,7 @@ fn with_conn<R>(f: impl FnOnce(&mut Conn) -> R) -> R {
 /// Tell the channel whether the app waits for its next callback, so a
 /// callback the node hinted idle is followed by sleep, not a spin.
 fn between_callbacks(on: bool) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Some(end) = END.get() {
         end.set_between(on);
     }
@@ -249,19 +249,19 @@ fn between_callbacks(on: bool) {
 fn next_frame() -> ToApp {
     match next() {
         Next::Frame(frame) => frame,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         Next::Hot => protocol_error("a hot frame where none was asked for"),
     }
 }
 
 /// What [`next`] read.
-// Read only from a node's channel, on Linux: elsewhere `next` has none.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// Read only from a node's channel, on Linux and FreeBSD: elsewhere `next` has none.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 enum Next {
     /// A CBOR frame.
     Frame(ToApp),
     /// A hot frame, left in the connection's `inbuf[..in_len]`.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     Hot,
 }
 
@@ -269,7 +269,7 @@ enum Next {
 /// way.
 fn next() -> Next {
     with_conn(|_| ());
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Some(end) = END.get() {
         loop {
             match with_conn(|conn| read_frame(end, conn)) {
@@ -309,7 +309,7 @@ fn next() -> Next {
 /// Read one frame's body into `conn.inbuf[..conn.in_len]`, growing the
 /// buffer only past the longest frame so far; `false` at the end of the
 /// channel.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn read_frame(end: &AppEnd, conn: &mut Conn) -> Result<bool, protocol::FrameError> {
     use std::io::Read;
 
@@ -339,7 +339,7 @@ fn read_frame(end: &AppEnd, conn: &mut Conn) -> Result<bool, protocol::FrameErro
 /// Map a published bucket's new snapshot in place of the one before. One
 /// that does not map leaves the bucket read from the node: slower, never
 /// stale.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn adopt(bucket: String, revision: u64, fd: FdRef) {
     let mapped = take_fd(fd)
         .and_then(|fd| crate::channel::Mapped::open(&fd))
@@ -866,7 +866,7 @@ impl Ctx {
 
 /// The largest frame buffer kept between frames; a larger one is
 /// released once a smaller frame follows.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 const KEPT_BUFFER: usize = 1 << 20;
 
 /// One keyvalue request.
@@ -895,7 +895,7 @@ fn kv_op(
     key: &str,
     value: &[u8],
 ) -> Result<KvAnswer, KvError> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         if let Some(answer) = published_key_read(bucket, op, key) {
             return Ok(answer);
@@ -910,7 +910,7 @@ fn kv_op(
         }
         result
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     kv_cold(ctx, cold_request(bucket, op, key, value))
 }
 
@@ -931,7 +931,7 @@ fn cold_request(bucket: &str, op: KvOp, key: &str, value: &[u8]) -> KvRequest {
 
 /// The bucket's handle, asked of the node the first time; a bucket that
 /// does not open is asked again next time (its error is the operation's).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn handle(ctx: &mut Ctx, bucket: &str) -> Result<u32, KvError> {
     if let Some(h) = with_conn(|conn| conn.handles.get(bucket).copied()) {
         return Ok(h);
@@ -948,7 +948,7 @@ fn handle(ctx: &mut Ctx, bucket: &str) -> Result<u32, KvError> {
 
 /// One hot keyvalue request and its answer: the frame written into the
 /// connection's buffer, the answer read from it, a value copied out once.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn hot_request(
     ctx: &mut Ctx,
     bucket: &str,
@@ -1008,17 +1008,17 @@ fn hot_request(
 
 /// A keyvalue request sent as CBOR.
 fn kv_cold(ctx: &mut Ctx, request: KvRequest) -> Result<KvAnswer, KvError> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Some(answer) = published_read(&request) {
         return Ok(answer);
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let wrote = written_bucket(&request);
     let result = match ctx.request(Request::Kv(request)) {
         Answer::Kv(result) => result,
         other => unexpected(&other),
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let (Ok(_), Some(bucket)) = (&result, wrote) {
         note_write(ctx, bucket);
     }
@@ -1027,7 +1027,7 @@ fn kv_cold(ctx: &mut Ctx, request: KvRequest) -> Result<KvAnswer, KvError> {
 
 /// The answer to a read (`get`, `get_many`, `exists`) of a published
 /// bucket, from its snapshot, unless this instance wrote past it.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn published_read(request: &KvRequest) -> Option<KvAnswer> {
     match request {
         KvRequest::Get { bucket, key } => published_key_read(bucket, KvOp::Get, key),
@@ -1045,7 +1045,7 @@ fn published_read(request: &KvRequest) -> Option<KvAnswer> {
 
 /// A `get` or `exists` of a published bucket, from its snapshot, unless
 /// this instance wrote past it.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn published_key_read(bucket: &str, op: KvOp, key: &str) -> Option<KvAnswer> {
     match op {
         KvOp::Get => with_snapshot(bucket, |snap| {
@@ -1060,7 +1060,7 @@ fn published_key_read(bucket: &str, op: KvOp, key: &str) -> Option<KvAnswer> {
 
 /// `f` on the snapshot `bucket` is read from, if it is published and this
 /// instance did not write past it.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn with_snapshot(
     bucket: &str,
     f: impl FnOnce(&crate::snapshot::Snapshot<'_>) -> KvAnswer,
@@ -1080,7 +1080,7 @@ fn with_snapshot(
 }
 
 /// The published bucket a write goes to, if it goes to one.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn written_bucket(request: &KvRequest) -> Option<String> {
     let bucket = match request {
         KvRequest::Set { bucket, .. }
@@ -1098,7 +1098,7 @@ fn written_bucket(request: &KvRequest) -> Option<String> {
 /// This instance wrote `bucket`: its reads go to the node until a
 /// snapshot holds the bucket's revision now (which covers the write). A
 /// failed ask leaves them there.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn note_write(ctx: &mut Ctx, bucket: String) {
     let after = match ctx.request(Request::Kv(KvRequest::Revision {
         bucket: bucket.clone(),
@@ -1117,7 +1117,7 @@ fn note_write(ctx: &mut Ctx, bucket: String) {
 /// The [`KvError`] the node answers.
 #[doc(hidden)]
 pub fn get_on_handle_for_tests(handle: u32, key: &str) -> Result<Option<Vec<u8>>, KvError> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         const NAME: &str = "\0handle under test";
         with_conn(|conn| conn.handles.insert(NAME.to_string(), handle));
@@ -1128,7 +1128,7 @@ pub fn get_on_handle_for_tests(handle: u32, key: &str) -> Result<Option<Vec<u8>>
             other => unexpected_kv(&other),
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         let _ = (handle, key);
         Err(KvError::Other("linux only".into()))
@@ -1140,9 +1140,9 @@ pub fn get_on_handle_for_tests(handle: u32, key: &str) -> Result<Option<Vec<u8>>
 #[doc(hidden)]
 #[must_use]
 pub fn published_revision(bucket: &str) -> Option<u64> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     return with_conn(|conn| conn.published.get(bucket).map(|p| p.revision));
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         let _ = bucket;
         None
@@ -1483,7 +1483,7 @@ fn guarded<R>(f: impl FnOnce() -> R) -> R {
 /// The node passed no such descriptor, the app runs without a node, or
 /// on a system without native apps.
 pub fn take_fd(fd: FdRef) -> io::Result<OwnedFd> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Some(end) = END.get() {
         return end.take_fd(fd.0);
     }
@@ -1498,23 +1498,23 @@ pub fn take_fd(fd: FdRef) -> io::Result<OwnedFd> {
 /// there would: for tests of the node's checks only.
 #[doc(hidden)]
 pub fn break_channel_for_tests() {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Some(end) = END.get() {
         end.break_for_tests();
     }
 }
 
 /// Open the channel the node handed this process.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn open_channel() -> Result<(), String> {
     let end = AppEnd::inherited().map_err(|e| e.to_string())?;
     END.set(end).map_err(|_| "served twice".to_string())
 }
 
-/// Native apps run on Linux only.
-#[cfg(not(target_os = "linux"))]
+/// Native apps run on Linux and FreeBSD only.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn open_channel() -> Result<(), String> {
-    Err("native apps run on Linux only".into())
+    Err("native apps run on Linux and FreeBSD only".into())
 }
 
 /// The `SIGSYS` handler: the seccomp filter refused a system call
@@ -1575,9 +1575,14 @@ pub fn serve<A: App>() -> ExitCode {
     // spike S30) and other processes of the node's user could trace the
     // app.
     #[cfg(target_os = "linux")]
-    if let Err(e) =
-        rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
-    {
+    let dumpable =
+        rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);
+    // FreeBSD's runner set it to survive the exec; set again for an app
+    // started some other way.
+    #[cfg(target_os = "freebsd")]
+    let dumpable = crate::freebsd::set_not_traceable(false);
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if let Err(e) = dumpable {
         eprintln!("bulkhead-native: not dumpable: {e}");
     }
     if let Err(e) = open_channel() {
@@ -1591,17 +1596,17 @@ pub fn serve<A: App>() -> ExitCode {
         *cell.borrow_mut() = Some(Conn {
             next_id: 0,
             metrics: Vec::new(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             published: HashMap::new(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             written: HashMap::new(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             handles: HashMap::new(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             inbuf: Vec::new(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             in_len: 0,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             out: Vec::new(),
         });
     });

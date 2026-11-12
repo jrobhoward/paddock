@@ -135,7 +135,7 @@ In a bundle, the `appserver` section holds every section below except three that
 | Section | Fields | Enforced |
 | --- | --- | --- |
 | `app` | name, version (semver), description, authors, license, repository | yes |
-| `kind` | `native-process`, the default and the only value run (a rustbridge `.so` or an executable, run out of process through `bulkhead-runner`) | yes, on Linux |
+| `kind` | `native-process`, the default and the only value run (a rustbridge `.so` or an executable, run out of process through `bulkhead-runner`) | yes, on Linux and FreeBSD (no sandbox on FreeBSD yet, ROADMAP FB2) |
 | `program` | path, sha256 | yes |
 | `api` | message types: name, content type, request/response schema, call or cast | documentation only |
 | `dependencies` | other apps required (name + version range), start order; like OTP `applications` and WildFly module deps | yes |

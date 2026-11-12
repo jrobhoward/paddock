@@ -34,6 +34,7 @@ fn parse____writes_beside_reads____kept_apart() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn writable_access____a_volume____no_execute_or_devices() {
     use landlock::AccessFs;
@@ -67,6 +68,7 @@ fn parse____bad_arguments____refused(#[case] s: &str) {
     assert!(found.is_err(), "{found:?}");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn readable____program_directory_and_reads____included() {
     let a = args("--library /b/lib.so --read /data").unwrap();
@@ -78,6 +80,7 @@ fn readable____program_directory_and_reads____included() {
     assert!(!found.iter().any(|p| p == &PathBuf::from("/b/lib.so")));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn rules____signals_and_tracing____listed() {
     let found = super::seccomp::rules(&[1234]).unwrap();
@@ -97,6 +100,7 @@ fn rules____signals_and_tracing____listed() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn rules____arguments_decide____one_rule_each_and_one_per_namespace_flag() {
     let found = super::seccomp::rules(&[1234]).unwrap();
@@ -106,6 +110,7 @@ fn rules____arguments_decide____one_rule_each_and_one_per_namespace_flag() {
     assert_eq!(found[&libc::SYS_ioctl].len(), 1);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn allowed____what_an_app_needs____listed_and_what_leaves_its_fence_not() {
     let found = super::seccomp::allowed();
@@ -135,6 +140,7 @@ fn allowed____what_an_app_needs____listed_and_what_leaves_its_fence_not() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn allowed____every_call_the_rules_refuse____listed() {
     let allowed = super::seccomp::allowed();
@@ -148,6 +154,7 @@ fn allowed____every_call_the_rules_refuse____listed() {
     assert!(allowed.contains(&libc::SYS_clone3));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn interpreter____this_test_binary____dynamic_loader() {
     let me = std::env::current_exe().unwrap();
@@ -158,6 +165,7 @@ fn interpreter____this_test_binary____dynamic_loader() {
     assert!(name.contains("ld-linux"), "{name}");
 }
 
+#[cfg(target_os = "linux")]
 #[rstest::rstest]
 #[case(b"#!/bin/sh\n".to_vec())]
 #[case(b"\x7fELF\x01\x01".to_vec())]

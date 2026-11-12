@@ -17,5 +17,8 @@ serde_json = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true, features = ["io_uring", "fs"] }
 
+[target.'cfg(target_os = "freebsd")'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
 [lints]
 workspace = true

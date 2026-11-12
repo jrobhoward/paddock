@@ -8,6 +8,24 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Native apps on FreeBSD (ROADMAP FB1): the node starts them through
+  `bulkhead-runner` over the same rings and descriptor socket as on Linux,
+  with published buckets' snapshots, the lease watchdog (a kqueue
+  `NOTE_EXIT` where Linux uses a pidfd), the parent-death signal, listeners
+  and their idle timeout. What differs between the systems is in
+  `bulkhead-host`'s `native::os`. FreeBSD's `TCP_INFO` has no time since
+  data was last sent, so a listener sees sending there as `tcpi_snd_nxt`
+  moving between its reads. The runner has no sandbox on FreeBSD yet
+  (ROADMAP FB2): it refuses to start an app unless node config sets
+  `[native] landlock_optional`, and then runs it unfenced. `memory_max`
+  there is `RLIMIT_AS`, since FreeBSD's `RLIMIT_DATA` does not count
+  `mmap`; `[native] cgroup` is refused. The node, the runner and
+  `bulkhead_native::app` mark themselves not traceable with
+  `procctl(PROC_TRACE_CTL)`, the runner's lasting across the exec, and the
+  node sets `PROC_NO_NEW_PRIVS_CTL`. Bundles carry no FreeBSD program yet
+  (ROADMAP FB6). Checked on FreeBSD 15.0: the native conformance suite and
+  the listener tests.
+
 - Credit for waited casts between nodes (ROADMAP I11 to I13): once a
   native app's `cast_timeout` to an instance on another node is queued,
   that node reserves room in the target's mailbox for the sender, and the

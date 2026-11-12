@@ -194,10 +194,16 @@ pub fn native_sdk() -> &'static PathBuf {
     })
 }
 
+/// Whether native apps run without the runner's sandbox here: on
+/// FreeBSD, which has none until ROADMAP FB2, so the runner refuses to
+/// start an app unless the node allows it (`landlock_optional`).
+pub const NO_SANDBOX: bool = cfg!(target_os = "freebsd");
+
 /// Native config with the test-built `bulkhead-runner`.
 pub fn native_config() -> bulkhead_host::NativeConfig {
     let mut native = bulkhead_host::NativeConfig::default();
     native.runner = Some(native_fixtures().0.clone());
+    native.landlock_optional = NO_SANDBOX;
     native
 }
 

@@ -2,8 +2,8 @@
 //! connection fixture's line protocol built as a native program, whose pool
 //! of instances each hold many connections.
 
-// Native apps run on Linux only.
-#![cfg(target_os = "linux")]
+// Native apps run on Linux and FreeBSD only.
+#![cfg(any(target_os = "linux", target_os = "freebsd"))]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -97,6 +97,7 @@ async fn serve(
 ) -> Served {
     let mut native = NativeConfig::default();
     native.runner = Some(common::native_fixtures().0.clone());
+    native.landlock_optional = common::NO_SANDBOX;
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 16,
         native,

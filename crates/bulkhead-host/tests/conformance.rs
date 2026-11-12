@@ -5,7 +5,7 @@
 //! and covers the node's side of every frame.
 //!
 //! `BULKHEAD_CONFORMANCE_NATIVE=1` runs it against the Rust reference app
-//! built as a native program (Linux), through `bulkhead-runner`: every
+//! built as a native program (Linux and FreeBSD), through `bulkhead-runner`: every
 //! case, snapshots and upgrades included, on the SDK and the real channel.
 //! The cases that need a process to hold memory return early in-process.
 //!
@@ -106,21 +106,22 @@ fn shared() -> &'static (Runtime, LoadedApp) {
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn native_config() -> bulkhead_host::NativeConfig {
     let mut config = bulkhead_host::NativeConfig::default();
     if native() {
         config.runner = Some(common::native_fixtures().0.clone());
+        config.landlock_optional = common::NO_SANDBOX;
     }
     config
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn native_config() -> bulkhead_host::NativeConfig {
     bulkhead_host::NativeConfig::default()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn native_app(rt: &Runtime) -> LoadedApp {
     rt.load_native(bulkhead_host::NativeCode {
         path: common::native_conformance().clone(),
@@ -128,9 +129,9 @@ fn native_app(rt: &Runtime) -> LoadedApp {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn native_app(_rt: &Runtime) -> LoadedApp {
-    panic!("native apps run on Linux only")
+    panic!("native apps run on Linux and FreeBSD only")
 }
 
 /// Room for a language runtime's own heap, under the default pool.

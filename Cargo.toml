@@ -138,8 +138,8 @@ rstest = "0.28"
 # the rings' memory and pipes, the serial tty; each crate adds the features it
 # uses.
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
-# `TCP_INFO`, which rustix does not read: a native listener's idle
-# timeout (bulkhead-host, Linux).
+# `TCP_INFO` and `sysctl`, which rustix does not read: a native listener's idle
+# timeout and process memory on FreeBSD (bulkhead-host, Linux and FreeBSD).
 libc = "0.2"
 tempfile = "3"
 wat = "1.259"

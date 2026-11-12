@@ -4,17 +4,20 @@
 //! child once the latest deadline has passed, and exits as the child did,
 //! so the node sees one process with the app's exit.
 //!
-//! The parent restricts itself too: Landlock with no access at all, and
-//! the app's seccomp filter with signals allowed to the child as well as
-//! itself. It keeps only the lease pipe and stderr open; the child's
-//! death signal is `SIGKILL`, so killing the runner, as the node does,
-//! kills the app.
+//! On Linux the parent restricts itself too: Landlock with no access at
+//! all, and the app's seccomp filter with signals allowed to the child as
+//! well as itself (FreeBSD's fence is ROADMAP FB2). It keeps only the
+//! lease pipe and stderr open; the child's death signal is `SIGKILL`, so
+//! killing the runner, as the node does, kills the app. It learns of the
+//! child's exit from a pidfd on Linux and a kqueue's `NOTE_EXIT` on
+//! FreeBSD, either polled beside the lease pipe.
 
 use std::os::fd::{AsFd, BorrowedFd, FromRawFd, OwnedFd};
 
+#[cfg(target_os = "linux")]
 use landlock::{ABI, Access, AccessFs, AccessNet, Ruleset, RulesetAttr};
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
-use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open};
+use rustix::process::{Pid, Signal};
 
 use crate::lease::{KILLED_EXIT, LEASE_FD, NO_DEADLINE, last_deadline, now_ns};
 
@@ -64,9 +67,10 @@ pub fn fork() -> Result<(), String> {
 
 /// Watch `child` until it exits; its exit status for the runner's.
 fn watch(child: Pid) -> Result<i32, String> {
-    // Closing first: the pidfd takes the lowest free descriptor.
+    // Closing first: the exit watch takes the lowest free descriptor.
     close_all_but_lease();
-    let pidfd = pidfd_open(child, PidfdFlags::empty()).map_err(|e| format!("pidfd: {e}"))?;
+    let exited = exit_watch(child)?;
+    #[cfg(target_os = "linux")]
     restrict(child)?;
     // SAFETY: the node put the lease pipe's read end at this descriptor,
     // and this process owns it from here on.
@@ -100,7 +104,7 @@ fn watch(child: Pid) -> Result<i32, String> {
                 tv_nsec: i64::try_from(left % 1_000_000_000).unwrap_or(0),
             }
         });
-        let mut fds = vec![PollFd::new(&pidfd, PollFlags::IN)];
+        let mut fds = vec![PollFd::new(&exited, PollFlags::IN)];
         if !node_gone {
             fds.push(PollFd::new(&lease, PollFlags::IN));
         }
@@ -180,13 +184,52 @@ fn close_all_but_lease() {
     }
     let first = u32::try_from(LEASE_FD + 1).unwrap_or(u32::MAX);
     // SAFETY: `close_range` takes no pointers.
-    unsafe { libc::syscall(libc::SYS_close_range, first, u32::MAX, 0u32) };
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::syscall(libc::SYS_close_range, first, u32::MAX, 0u32)
+    };
+    // SAFETY: as above.
+    #[cfg(target_os = "freebsd")]
+    unsafe {
+        libc::close_range(first, u32::MAX, 0)
+    };
+}
+
+/// A descriptor that polls readable once `child` has exited: its pidfd.
+#[cfg(target_os = "linux")]
+fn exit_watch(child: Pid) -> Result<OwnedFd, String> {
+    rustix::process::pidfd_open(child, rustix::process::PidfdFlags::empty())
+        .map_err(|e| format!("pidfd: {e}"))
+}
+
+/// A descriptor that polls readable once `child` has exited: a kqueue
+/// watching it for `NOTE_EXIT`. The child cannot have been reaped yet
+/// (only this process reaps it), so a child that already exited is still
+/// found and reported at once.
+#[cfg(target_os = "freebsd")]
+fn exit_watch(child: Pid) -> Result<OwnedFd, String> {
+    use rustix::event::kqueue::{Event, EventFilter, EventFlags, ProcessEvents, kevent, kqueue};
+
+    let kq = kqueue().map_err(|e| format!("kqueue: {e}"))?;
+    let watch = [Event::new(
+        EventFilter::Proc {
+            pid: child,
+            flags: ProcessEvents::EXIT,
+        },
+        EventFlags::ADD | EventFlags::ONESHOT,
+        std::ptr::null_mut(),
+    )];
+    let mut none: Vec<Event> = Vec::new();
+    // SAFETY: the event's user data is null and never dereferenced.
+    unsafe { kevent(&kq, &watch, &mut none, None) }.map_err(|e| format!("kevent: {e}"))?;
+    Ok(kq)
 }
 
 /// Landlock with nothing allowed, then the seccomp filter with signals to
 /// `child` as well. Not Landlock's signal scope: the child restricts
 /// itself in a domain of its own, outside this one, which the scope would
 /// keep this process from signalling.
+#[cfg(target_os = "linux")]
 fn restrict(child: Pid) -> Result<(), String> {
     let abi = ABI::V6;
     Ruleset::default()

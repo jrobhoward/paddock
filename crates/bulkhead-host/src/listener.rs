@@ -9,7 +9,8 @@
 //! readable. The listener keeps its own copy of each socket: it counts the
 //! connection until the app closes it or the instance exits, shuts it
 //! down when the listener stops, and closes it once the kernel's
-//! `TCP_INFO` shows no data either way for the idle timeout. A crash
+//! `TCP_INFO` shows no data either way for the idle timeout
+//! (`native::os::TcpQuiet`). A crash
 //! closes every connection its instance held. The app's upgrades are its
 //! own; the listener sends new connections to whichever instances run.
 //!
@@ -26,6 +27,8 @@ use tokio::sync::{Semaphore, watch};
 
 use crate::apps::AppHandle;
 use crate::error::HostError;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use crate::native::os::TcpQuiet as Quiet;
 use crate::runtime::RuntimeInner;
 
 /// One listener's configuration.
@@ -161,9 +164,9 @@ pub(crate) fn listen_native(
     spec: ListenerSpec,
     app: AppHandle,
 ) -> Result<Listener, HostError> {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(any(target_os = "linux", target_os = "freebsd")) {
         return Err(HostError::Listen(format!(
-            "{}: native apps run on Linux only",
+            "{}: native apps run on Linux and FreeBSD only",
             spec.name
         )));
     }
@@ -276,8 +279,9 @@ async fn watch_passed(
 /// Resolve once the kernel has seen no data either way on `stream` for
 /// `limit`.
 async fn quiet_for(stream: &std::net::TcpStream, limit: Duration) {
+    let mut clock = Quiet::new();
     loop {
-        let quiet = match quiet(stream) {
+        let quiet = match clock.quiet(stream) {
             Ok(quiet) => quiet,
             Err(e) => {
                 tracing::debug!(error = %e, "TCP_INFO unread; the connection counts as active");
@@ -291,39 +295,18 @@ async fn quiet_for(stream: &std::net::TcpStream, limit: Duration) {
     }
 }
 
-/// How long since `stream` last sent or received data, from `TCP_INFO`.
-#[cfg(target_os = "linux")]
-fn quiet(stream: &std::net::TcpStream) -> std::io::Result<Duration> {
-    use std::mem::{MaybeUninit, size_of};
-    use std::os::fd::AsRawFd;
+/// Native listeners run on Linux and FreeBSD only ([`listen_native`]).
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+struct Quiet;
 
-    let mut info = MaybeUninit::<libc::tcp_info>::zeroed();
-    let mut len =
-        libc::socklen_t::try_from(size_of::<libc::tcp_info>()).map_err(std::io::Error::other)?;
-    // SAFETY: the descriptor is open for the call (`stream` is borrowed),
-    // and the kernel writes at most `len` bytes into `info`, which is that
-    // large.
-    let r = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::IPPROTO_TCP,
-            libc::TCP_INFO,
-            info.as_mut_ptr().cast(),
-            &raw mut len,
-        )
-    };
-    if r != 0 {
-        return Err(std::io::Error::last_os_error());
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+impl Quiet {
+    fn new() -> Self {
+        Self
     }
-    // SAFETY: zeroed, then partly written by the kernel; every field is an
-    // integer, for which any bytes are a value.
-    let info = unsafe { info.assume_init() };
-    let ms = info.tcpi_last_data_recv.min(info.tcpi_last_data_sent);
-    Ok(Duration::from_millis(u64::from(ms)))
-}
 
-/// Native listeners run on Linux only ([`listen_native`]).
-#[cfg(not(target_os = "linux"))]
-fn quiet(_stream: &std::net::TcpStream) -> std::io::Result<Duration> {
-    Ok(Duration::ZERO)
+    #[expect(clippy::unused_self, reason = "the same call as on Linux and FreeBSD")]
+    fn quiet(&mut self, _stream: &std::net::TcpStream) -> std::io::Result<Duration> {
+        Ok(Duration::ZERO)
+    }
 }

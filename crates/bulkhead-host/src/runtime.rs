@@ -186,6 +186,13 @@ impl Runtime {
             )));
         }
         if let Some(root) = &config.native.cgroup {
+            if !cfg!(target_os = "linux") {
+                return Err(HostError::NativeCgroup(format!(
+                    "{}: cgroups are Linux's; on FreeBSD memory_max is RLIMIT_DATA \
+                     until the privileged helper sets rctl rules (ROADMAP PS1)",
+                    root.display()
+                )));
+            }
             crate::native::cgroup::prepare(root)
                 .map_err(|e| HostError::NativeCgroup(format!("{}: {e}", root.display())))?;
         }

@@ -12,12 +12,13 @@ publish = false
 [features]
 default = ["runner"]
 # `bulkhead_native::channel`: the shared-memory rings between a node and
-# an app (Linux).
-channel = ["dep:rustix", "rustix/fs", "rustix/mm", "rustix/thread", "rustix/pipe", "rustix/net", "rustix/time"]
+# an app (Linux and FreeBSD).
+channel = ["dep:libc", "dep:rustix", "rustix/fs", "rustix/mm", "rustix/thread", "rustix/pipe", "rustix/net", "rustix/time"]
 # `bulkhead_native::app`: a native app as an executable (Unix; it serves
-# a node on Linux only).
+# a node on Linux and FreeBSD).
 app = ["channel", "dep:rustix", "rustix/stdio", "dep:libc"]
-# `bulkhead-runner`, the launcher a node runs native apps through (Linux).
+# `bulkhead-runner`, the launcher a node runs native apps through (Linux;
+# on FreeBSD without a sandbox until ROADMAP FB2).
 runner = [
     "app",
     "dep:landlock",
@@ -40,10 +41,15 @@ rustix = { workspace = true, optional = true }
 rustbridge-consumer = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
-# The runner's sandbox, which is Linux only (`runner` is compiled out elsewhere).
+# The runner's sandbox, which is Linux only.
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = { version = "0.4.7", optional = true }
 seccompiler = { version = "0.5", optional = true }
+libc = { version = "0.2", optional = true }
+
+# FreeBSD: `_umtx_op` for the channel's one wait on shared memory, which
+# rustix does not wrap; the runner's watchdog and the app's signals.
+[target.'cfg(target_os = "freebsd")'.dependencies]
 libc = { version = "0.2", optional = true }
 
 [dev-dependencies]

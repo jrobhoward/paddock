@@ -31,9 +31,18 @@
 //! seccomp stay in force across the exec; not being dumpable does not
 //! (`execve` resets it for a readable program), so [`crate::app::serve`]
 //! sets it again.
+//!
+//! On FreeBSD, steps 2 and 3 have no equivalent yet: Capsicum and a jail
+//! per instance are ROADMAP FB2. Until then the runner refuses to start
+//! an app there unless the node passed `--landlock best-effort` (node
+//! config `[native] landlock_optional`), which then runs it with no fence
+//! but the node's uid and its limits. Step 1 is
+//! `procctl(PROC_TRACE_CTL_DISABLE_EXEC)`, which lasts across the exec.
 
 pub mod library;
+#[cfg(target_os = "linux")]
 pub mod sandbox;
+#[cfg(target_os = "linux")]
 pub mod seccomp;
 pub mod watchdog;
 
@@ -133,10 +142,16 @@ pub fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Err(e) =
-        rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
-    {
+    if let Err(e) = not_dumpable() {
         eprintln!("bulkhead-runner: not dumpable: {e}");
+        return ExitCode::from(2);
+    }
+    #[cfg(target_os = "freebsd")]
+    if args.landlock_required {
+        eprintln!(
+            "bulkhead-runner: no sandbox on FreeBSD yet (ROADMAP FB2); \
+             node config [native] landlock_optional = true runs apps without one"
+        );
         return ExitCode::from(2);
     }
     if args.lease
@@ -145,10 +160,12 @@ pub fn main() -> ExitCode {
         eprintln!("bulkhead-runner: lease: {e}");
         return ExitCode::from(2);
     }
+    #[cfg(target_os = "linux")]
     if let Err(e) = sandbox::restrict(&args) {
         eprintln!("bulkhead-runner: landlock: {e}");
         return ExitCode::from(2);
     }
+    #[cfg(target_os = "linux")]
     if let Err(e) = seccomp::install() {
         eprintln!("bulkhead-runner: seccomp: {e}");
         return ExitCode::from(2);
@@ -174,6 +191,18 @@ pub fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// No core dump, and no ptrace from other processes of the node's user.
+#[cfg(target_os = "linux")]
+fn not_dumpable() -> rustix::io::Result<()> {
+    rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
+}
+
+/// As on Linux, and kept across the exec into the app.
+#[cfg(target_os = "freebsd")]
+fn not_dumpable() -> std::io::Result<()> {
+    crate::freebsd::set_not_traceable(true)
 }
 
 #[cfg(test)]

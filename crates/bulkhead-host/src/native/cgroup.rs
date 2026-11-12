@@ -48,7 +48,7 @@ pub(crate) fn prepare(root: &Path) -> io::Result<()> {
 /// # Errors
 ///
 /// The cgroup cannot be made or limited.
-// Only the Linux `Port::spawn` makes one; native apps run on Linux only.
+// Only made on Linux: the runtime refuses `[native] cgroup` elsewhere.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn create(
     root: &Path,

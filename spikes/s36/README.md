@@ -10,11 +10,12 @@ Spike S36 of `docs/ROADMAP.md` (Phase 6a). It asks whether a small root helper c
 Run 2026-11-11:
 - **Linux:** a Raspberry Pi 5 (aarch64, Ubuntu 26.04, Linux 7.0), idle.
 - **FreeBSD:** a FreeBSD 15.0 VM (amd64, 4 vCPUs) on the 16-core machine. Its times are function checks only: the VM shares the host's cores, and the host had desktop load (about 0.5).
-- **Not yet run:** x86-64 Linux, waiting for the Ubuntu 26.04 VM (below).
+- **x86-64 Linux:** an Ubuntu 26.04 VM (Linux 7.0, 4 vCPUs) on the same 16-core machine, whose load average was 1.3 to 2.3. Function check only, as for the FreeBSD VM.
 
 Results:
 - `results/pi5-linux-2026-11-11.md`;
-- `results/freebsd-vm-2026-11-11.md`.
+- `results/freebsd-vm-2026-11-11.md`;
+- `results/x86-vm-linux-2026-11-11.md`.
 
 The row "a TCP stream the node made" came from a short rerun after both full runs, on the same machines; it is quoted under "Findings".
 
@@ -103,6 +104,18 @@ FreeBSD VM (function check; the host was not idle):
 | uid | 1427 | 1472 | 1747 | 175 | 11.8 |
 | uid+rctl | 1456 | 1508 | 1712 | 182 | 10.6 |
 | uid+jail+rctl | 1271 | 1645 | 10016 | 143 | 10.0 |
+
+Ubuntu 26.04 VM, x86-64 (function check; the host was not idle):
+
+| mode | spawn p50 | spawn p90 | exit notice p50 | round trip p50 | round trip p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| direct | 1060 | 1107 | 187 | 17.5 | 28.2 |
+| uid | 1107 | 1191 | 209 | 19.6 | 30.3 |
+| uid+cgroup | 1276 | 1383 | 259 | 20.6 | 31.6 |
+| uid+cgroup+ns | 2107 | 2367 | 352 | 20.7 | 31.9 |
+| uid+cgroup+ns+root | 2315 | 2834 | 300 | 20.9 | 30.7 |
+
+The x86-64 run agrees with the Pi's in every refusal, probe and node-side row; only its times differ. The fences cost about the same there (0.05 ms for the request, 0.2 ms for the cgroup, 0.8 ms for the namespaces, 0.2 ms for the root), and a round trip in a VM is about twice the Pi's. One difference: `uid` took 2.1 µs longer than `direct` per round trip, where the Pi showed none; with the host loaded and one run, that is not attributed (a rerun on idle bare metal would settle it, PS1's `native_cost` run). The cgroup added 1.0 µs, as on the Pi.
 
 - **Start through the helper.** The request itself adds about 0.1 ms on the Pi (`direct` to `uid`). Each fence adds to that:
   - the cgroup, 0.3 ms;
@@ -201,7 +214,6 @@ When the node died, the helper killed the two instances it left, with their cgro
 
 ## Not done
 
-- **x86-64 Linux:** the same run on the Ubuntu 26.04 VM (Linux 7.x) once it is ready, with `scripts/setup-linux.sh` and `scripts/run.sh` as above.
 - **Combined fences:** Landlock and the seccomp filter on top of the helper. The real `bulkhead-runner` under the helper is PS1's work.
 - **Limits enforced:** `memory.max`, `pids.max` and `rctl`'s rules were set but not driven to their limits. FB2 tests `rctl` by jail.
 - **Capability mode** (FB2), ZFS (S35), and the service units (PS1).

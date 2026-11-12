@@ -119,8 +119,8 @@ the node with its HTTP ingress (`http`), HTTPS and the remote admin API
 
 ## Running a node
 
-A node runs apps on Linux: each is a process started through
-`bulkhead-runner`. The
+A node runs apps on Linux (and FreeBSD, without the runner's sandbox
+there yet): each is a process started through `bulkhead-runner`. The
 CLI runs anywhere, and reaches a node's remote admin API (`[admin]` in node
 config) with `--remote`. A minimal `node.toml`:
 

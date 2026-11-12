@@ -19,11 +19,17 @@
 //! always spin. A pipe, not a futex: a pipe's writer wakes its reader
 //! with the scheduler's sync hint, which favours the writer's warm core
 //! (not measured apart from T1's other fixes). Only an app's thread
-//! waiting for room in the ring to the node sleeps on a futex in the
-//! mapping: rare, and one at a time.
+//! waiting for room in the ring to the node sleeps on a word in the
+//! mapping: rare, and one at a time. That wait is a futex on Linux and
+//! `_umtx_op(UMTX_OP_WAIT_UINT)` on FreeBSD, both shared between
+//! processes; the mapping is writable on both sides, which FreeBSD's
+//! needs (paddock-b spike PB2: a wait on a read-only mapping fails with
+//! `EFAULT`).
 //!
 //! The app inherits:
-//! - [`MEMFD_FD`]: a memfd of [`CHANNEL_BYTES`], the ring to the app at
+//! - [`MEMFD_FD`]: a memfd of [`CHANNEL_BYTES`] (on FreeBSD an anonymous
+//!   shared memory object, which `memfd_create` makes there, sealed as on
+//!   Linux), the ring to the app at
 //!   offset 0 and the ring to the node at [`RING_BYTES`];
 //! - [`BELL_FD`]: the write end of the node's bell pipe, non-blocking;
 //! - [`DOOR_FD`]: the read end of its own door pipe;
@@ -54,7 +60,7 @@
 //!
 //! Positions only grow; a byte at position `p` is at `HEADER + p % RING_CAP`.
 //! A side that finds the other's word set after writing (or reading)
-//! clears it and wakes the other: a futex wake on that word for the app,
+//! clears it and wakes the other: a wake on that word for the app,
 //! a byte on the bell for the node. Neither side trusts the positions the
 //! other writes: [`Ring::read`] and [`Ring::write`] refuse a ring holding
 //! more than [`RING_CAP`] bytes ([`Corrupt`]), every copy stays inside the
@@ -77,7 +83,6 @@ use rustix::net::{
     AddressFamily, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags,
     SendAncillaryBuffer, SendAncillaryMessage, SendFlags, Shutdown, SocketFlags, SocketType,
 };
-use rustix::thread::futex;
 
 /// The words at the start of each ring, a page.
 pub const HEADER: usize = 4096;
@@ -402,7 +407,7 @@ pub fn wake_reader(word: &AtomicU32, door: BorrowedFd<'_>) {
 /// node's `writer_waiting`) says it sleeps.
 pub fn wake_writer(word: &AtomicU32) {
     if take_waiting(word) {
-        let _ = futex::wake(word, futex::Flags::empty(), 1);
+        word_wake(word);
     }
 }
 
@@ -899,7 +904,7 @@ impl AppEnd {
                 || ring.has_room(),
                 || {
                     // Returns at once if the node cleared the word first.
-                    let _ = futex::wait(word, futex::Flags::empty(), 1, None);
+                    word_wait(word, 1);
                     true
                 },
             );
@@ -928,6 +933,55 @@ impl Write for ToNode<'_> {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// Sleep while `word` holds `expected`, shared between processes; it may
+/// return early, so callers check their condition again.
+#[cfg(target_os = "linux")]
+fn word_wait(word: &AtomicU32, expected: u32) {
+    let _ =
+        rustix::thread::futex::wait(word, rustix::thread::futex::Flags::empty(), expected, None);
+}
+
+/// Wake one thread of any process sleeping in [`word_wait`] on `word`.
+#[cfg(target_os = "linux")]
+fn word_wake(word: &AtomicU32) {
+    let _ = rustix::thread::futex::wake(word, rustix::thread::futex::Flags::empty(), 1);
+}
+
+/// Sleep while `word` holds `expected`, shared between processes (not
+/// the `_PRIVATE` operation); it may return early, so callers check their
+/// condition again.
+#[cfg(target_os = "freebsd")]
+fn word_wait(word: &AtomicU32, expected: u32) {
+    // SAFETY: `word` is a live, aligned u32 in a writable mapping for the
+    // whole call (it is borrowed); the kernel only reads it, and the two
+    // null pointers mean no timeout.
+    unsafe {
+        libc::_umtx_op(
+            word.as_ptr().cast(),
+            libc::UMTX_OP_WAIT_UINT,
+            libc::c_ulong::from(expected),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+    }
+}
+
+/// Wake one thread of any process sleeping in [`word_wait`] on `word`.
+#[cfg(target_os = "freebsd")]
+fn word_wake(word: &AtomicU32) {
+    // SAFETY: as for `word_wait`; a wake reads nothing at the address,
+    // which only names the queue.
+    unsafe {
+        libc::_umtx_op(
+            word.as_ptr().cast(),
+            libc::UMTX_OP_WAKE,
+            1,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
     }
 }
 

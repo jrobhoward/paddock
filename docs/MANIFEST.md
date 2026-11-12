@@ -262,7 +262,7 @@ kind = "native-process"
 native = { program = "executable" }
 ```
 
-The bundle carries a release variant for the node's platform (`linux-x86_64`, `linux-aarch64`) ; deploy writes it under `data_dir`, readable and executable by the node's user only. The node runs it through `bulkhead-runner` (node config `[native]`, below). Linux only.
+The bundle carries a release variant for the node's platform (`linux-x86_64`, `linux-aarch64`) ; deploy writes it under `data_dir`, readable and executable by the node's user only. The node runs it through `bulkhead-runner` (node config `[native]`, below), on Linux and FreeBSD. Bundles have Linux variants only so far, so a FreeBSD node cannot yet deploy one (ROADMAP FB6). On FreeBSD the runner has no sandbox yet (ROADMAP FB2) and starts an app only with node config `[native] landlock_optional = true`.
 
 Two shapes, by `native.program`:
 
@@ -281,7 +281,7 @@ How the rest works natively:
 
 - The process's environment holds only `BULKHEAD_PRIV`, the directory of the bundle's `priv/` files, and `BULKHEAD_PREOPENS`, where each preopened directory is (the bundle's `priv/` files and each volume, by guest path), when the manifest declares `bulkhead:files` and the operator grants it. `bulkhead bundle` packs a native app's program as the variant for the machine it runs on, or one per platform with `--program PLATFORM=PATH`, each checked to be an ELF file for its architecture. A node refuses a bundle without its own platform's program (WRITING_APPS.md, "Bundles").
 - Each instance is one process, with a pid, mailbox, links, monitors and supervision, one callback at a time. `limits.callback_deadline_ms` bounds each callback's wall time, less time spent answering the app's requests; past it the process is killed (`timeout`). An idle instance is pinged (`[native]`); no answer kills it (`timeout`). The process exiting is `crashed` with its status or signal, a panic in a callback `crashed` with the panic's message, and going over `memory_max` with a cgroup `crashed: memory_limit`.
-- `memory_max` is the process's cgroup `memory.max` with node config `[native] cgroup`, else its `RLIMIT_DATA` (a failed allocation then aborts it).
+- `memory_max` is the process's cgroup `memory.max` with node config `[native] cgroup` (Linux), else a resource limit, past which an allocation fails and the app aborts: `RLIMIT_DATA` on Linux, and on FreeBSD `RLIMIT_AS`, since its `RLIMIT_DATA` does not count `mmap`. `RLIMIT_AS` counts the whole address space, so mapped libraries and thread stacks count too.
 - `placement` works here too (`singleton`, `hot-standby`, `partner_url`, standby forwarding). A native process can run threads between callbacks, so a singleton's process is killed when the node's lease ends whether or not a callback is running (`crashed: lease_ended`); its restart waits for the lease before the process starts. `bulkhead-runner` enforces the lease too, beside the app: the node sends it each new end of the lease, and a watchdog process kills the app once the last one has passed, so a node process stopped or stalled past its lease does not leave its singleton running (`crashed: killed_at_lease_end`, when the node finds it already ended).
 - An executable may set `upgrade.mode = "snapshot"`, and a singleton moves with its state: the node asks the running process for its state (`save_snapshot`) between callbacks, and starts a new process from it (`load_snapshot` in place of `init`). A snapshot upgrade starts the new version's process beside the old one, which keeps running if the new one refuses the snapshot. A rustbridge plugin takes no snapshot: the mode is refused, and its upgrades are `restart` or `blue-green`.
 - `bulkhead:keyvalue` gives an executable the buckets it lists, on these terms (the grant, read-only shared buckets, quotas, `limits.watches_max`): `Ctx::bucket` for `bulkhead:keyvalue`'s operations and `bulkhead:watch`'s (revisions, compare-and-swap, scans, watches). Each operation is a request to the node, about 5 µs, so reads of many keys go in one `get_many` or scan page. A watch notice arrives as `Info::KvChanged` with the key's value and revision, read when the notice is delivered.
@@ -292,7 +292,7 @@ How the rest works natively:
 - `bulkhead:http-egress`: each request is sent by the node's egress client on the same rules (the `allow` list, `methods`, forbidden headers, `max_concurrent`, the address guard, node config's timeouts, roots and CA file, no redirects), and the whole response comes back, its body up to 16 MiB (a frame).
 - `listeners` (an executable only) bind on the node's addresses, and each accepted connection goes to an instance of the app's pool: the next in turn, or by the peer's IP address with `instances.routing = "hash:<any>"`, so one client's connections share an instance while the pool's size holds. The node passes the stream on the instance's descriptor socket and runs its `handle_connection` (`bulkhead_sdk::connection::Handler`); the instance reads it when the node says it has bytes (`io-ready`), as a `bulkhead:sockets` stream, so one instance serves many connections, one callback at a time. `max_connections` counts a connection until the app closes it or its instance exits, and the idle timeout is the kernel's `TCP_INFO`: no data either way for `idle_timeout_ms` and the node shuts the socket down. A crash closes every connection its instance held, and the listener's `crashed` stays 0 (the app's restarts count it). The app is upgraded as any app; an upgrade closes the connections open on the instances it replaces. The connections do not count against `max_sockets`, and the app needs no `bulkhead:sockets`.
 - An extension the manifest declares under `extensions."<package>"` is granted by the operator by package name; the program calls its functions through the node (`bulkhead_sdk::extension::call`, `Ctx::extension` on the app API) by the extension's names for them (`greet#hello`), with arguments and results in CBOR, and the extension reads the same scope table and checks the same grant.
-- The runner restricts the program before it runs (SECURITY.md, "Native-process apps"): it reads only the system libraries, its own directory, the app's `priv/` files and its volumes, writes only its read-write volumes, executes nothing else, opens no sockets of its own (no `socket`, `connect`, `accept` or `io_uring`), and signals only itself. Linux only.
+- The runner restricts the program before it runs (SECURITY.md, "Native-process apps"): it reads only the system libraries, its own directory, the app's `priv/` files and its volumes, writes only its read-write volumes, executes nothing else, opens no sockets of its own (no `socket`, `connect`, `accept` or `io_uring`), and signals only itself. Linux only: on FreeBSD nothing yet (ROADMAP FB2).
 
 ### Documentation-only and later sections
 
@@ -316,7 +316,7 @@ policy = "/etc/bulkhead/policy.toml"    # without one, only the always-available
 max_instances = 1000                   # default of max_processes
 max_processes = 20000                  # all instances; default max_instances
 log_format = "text"                    # the node's own log on stderr; or "json", one object per line
-debuggable = false                     # true leaves the node dumpable: a debugger of its user may attach, a crash dumps core (Linux)
+debuggable = false                     # true leaves the node dumpable: a debugger of its user may attach, a crash dumps core (Linux; FreeBSD's PROC_TRACE_CTL)
 
 [volumes]
 orders-data = "/srv/bulkhead/orders"    # backs manifest preopens with volume = "orders-data"; give it a filesystem quota
@@ -361,11 +361,11 @@ listen = false                         # whether any app may listen
 
 [native]                               # native-process apps
 runner = "/usr/local/bin/bulkhead-runner"  # unset: bulkhead-runner beside the bulkhead executable
-cgroup = "/sys/fs/cgroup/system.slice/bulkhead.service"  # a delegated cgroup v2 directory (Delegate=yes), the node its only process; unset: memory_max as RLIMIT_DATA
+cgroup = "/sys/fs/cgroup/system.slice/bulkhead.service"  # Linux: a delegated cgroup v2 directory (Delegate=yes), the node its only process; unset: memory_max as RLIMIT_DATA (FreeBSD: RLIMIT_AS; refused there)
 pids_max = 64                          # most processes and threads per native instance, with cgroup
 ping_interval_ms = 10000               # an idle native instance is pinged this often
 ping_timeout_ms = 5000                 # and killed (timeout) without an answer within this
-landlock_optional = false              # run native apps on a kernel without Landlock
+landlock_optional = false              # run native apps on a kernel without Landlock; on FreeBSD, run them with no sandbox at all (none yet, ROADMAP FB2)
 spin_us = 20                           # the node and a native app spin this long waiting for each other, then sleep; 0: always sleep (at most 10000)
 
 [metrics]

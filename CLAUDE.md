@@ -171,14 +171,16 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/bulkhead-native`: native-process apps: `protocol`
   (CBOR frames between a node and a native app), `hot` (the most frequent
   of them in fixed layouts, ROADMAP T7), `channel` (feature
-  `channel`, Linux: the shared-memory rings the frames travel over, and
+  `channel`, Linux and FreeBSD: the shared-memory rings the frames travel over, and
   their spin-then-sleep waits), `app` (feature `app`: an executable's
   App trait and process functions) and `runner` (feature `runner`,
-  default; Linux): `bulkhead-runner`, which restricts itself (Landlock,
-  seccomp, non-dumpable) before loading a rustbridge plugin or executing
+  default; Linux and FreeBSD): `bulkhead-runner`, which restricts itself
+  (Landlock, seccomp, non-dumpable; on FreeBSD only non-dumpable until
+  ROADMAP FB2) before loading a rustbridge plugin or executing
   the program. bulkhead-host depends on it without default features (the
   protocol and the channel). The host side is
-  `crates/bulkhead-host/src/native/` (the port, cgroups, conversions) and
+  `crates/bulkhead-host/src/native/` (the port, cgroups, conversions,
+  and `os`, what differs between Linux and FreeBSD) and
   `src/instance_native.rs` (the lifecycle, a child module of `instance`).
   `src/in_process.rs` (cargo feature `test-apps`, Z9c) runs a test app
   written in Rust inside its instance's task over the same frames, polled
