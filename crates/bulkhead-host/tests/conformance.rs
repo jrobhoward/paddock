@@ -8,6 +8,8 @@
 //! built as a native program (Linux and FreeBSD), through `bulkhead-runner`: every
 //! case, snapshots and upgrades included, on the SDK and the real channel.
 //! The cases that need a process to hold memory return early in-process.
+//! `BULKHEAD_CONFORMANCE_HELPER=1` as well (as root) runs the native mode
+//! under the privileged helper, `bulkhead-priv`.
 //!
 //! Each test is one case; the case names are the rows of WRITING_APPS.md's
 //! table of SDKs.
@@ -106,6 +108,26 @@ fn shared() -> &'static (Runtime, LoadedApp) {
     })
 }
 
+/// With `BULKHEAD_CONFORMANCE_HELPER=1` (and the native mode, as root),
+/// every case runs under the privileged helper (ROADMAP PS1): the app in
+/// its own user, cgroup and namespaces.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn helper() -> Option<&'static common::privhelper::Started> {
+    static STARTED: OnceLock<Option<common::privhelper::Started>> = OnceLock::new();
+    STARTED
+        .get_or_init(|| {
+            let asked = std::env::var_os("BULKHEAD_CONFORMANCE_HELPER").is_some_and(|v| v == "1");
+            (native() && asked).then(|| {
+                assert!(
+                    rustix::process::geteuid().is_root(),
+                    "BULKHEAD_CONFORMANCE_HELPER needs root"
+                );
+                common::privhelper::start(&common::native_fixtures().0)
+            })
+        })
+        .as_ref()
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn native_config() -> bulkhead_host::NativeConfig {
     let mut config = bulkhead_host::NativeConfig::default();
@@ -113,7 +135,16 @@ fn native_config() -> bulkhead_host::NativeConfig {
         config.runner = Some(common::native_fixtures().0.clone());
         config.landlock_optional = common::NO_SANDBOX;
     }
+    if let Some(started) = helper() {
+        config.runner = Some(started.runner.clone());
+        config.helper = Some(started.helper.clone());
+    }
     config
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn helper() -> Option<()> {
+    None
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -123,8 +154,20 @@ fn native_config() -> bulkhead_host::NativeConfig {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn native_app(rt: &Runtime) -> LoadedApp {
+    let path = match helper() {
+        // Where the helper may share it: a bind is shared whole.
+        Some(started) => {
+            let dir = common::privhelper::dir_owned(
+                &started.dir.path().join("prog"),
+                started.node_uid,
+                0o755,
+            );
+            common::privhelper::copy_owned(common::native_conformance(), &dir, started.node_uid)
+        }
+        None => common::native_conformance().clone(),
+    };
     rt.load_native(bulkhead_host::NativeCode {
-        path: common::native_conformance().clone(),
+        path,
         kind: bulkhead_bundle::manifest::NativeProgram::Executable,
     })
 }
@@ -803,14 +846,15 @@ async fn memory_max____allocation_beyond____crashes_with_memory_limit() {
     let big = h.call(text("alloc:256"), LONG).await;
 
     // A native app without a cgroup is held to `memory_max` by
-    // `RLIMIT_DATA`: the failed allocation aborts it (MANIFEST.md).
+    // `RLIMIT_DATA`: the failed allocation aborts it (MANIFEST.md). Under
+    // the helper on Linux its cgroup's limit kills it.
+    let why = if helper().is_some() && cfg!(target_os = "linux") {
+        "memory_limit"
+    } else {
+        "killed by signal 6"
+    };
     assert_eq!(small, "ok");
-    assert_eq!(
-        big,
-        Err(CallError::Exited(ExitReason::Crashed(
-            "killed by signal 6".into()
-        )))
-    );
+    assert_eq!(big, Err(CallError::Exited(ExitReason::Crashed(why.into()))));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

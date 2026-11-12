@@ -161,6 +161,7 @@ impl Node {
             )));
         }
         let creation = store.next_creation()?;
+        let native = native_config(&config)?;
         #[cfg(not(feature = "sql"))]
         if let Some(name) = config.datasources.keys().next() {
             return Err(NodeError::Invalid(format!(
@@ -198,7 +199,7 @@ impl Node {
                 incoming_calls_per_peer: config.cluster.incoming_calls_max,
                 cast_credit: config.cluster.cast_credit,
                 cast_credit_bytes: config.cluster.cast_credit_bytes,
-                native: config.native.runtime(),
+                native,
                 secrets: config
                     .secrets
                     .iter()
@@ -547,4 +548,42 @@ fn runtime_datasource(
     ds.statement_timeout = Duration::from_millis(d.statement_timeout_ms);
     ds.max_result_bytes = d.max_result_bytes.bytes();
     ds
+}
+
+/// The runtime's native settings, with the privileged helper this node
+/// was started by when node config sets `[priv]`.
+fn native_config(config: &NodeConfig) -> Result<bulkhead_host::NativeConfig, NodeError> {
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "freebsd")),
+        expect(unused_mut, reason = "the helper is Linux's and FreeBSD's")
+    )]
+    let mut native = config.native.runtime();
+    let started_by_helper = std::env::var_os(bulkhead_priv_wire::SOCKET_ENV).is_some();
+    match (config.privileges.is_some(), started_by_helper) {
+        (false, false) => {}
+        (true, false) => {
+            return Err(NodeError::Invalid(
+                "node config sets [priv], but this node was not started by bulkhead-priv".into(),
+            ));
+        }
+        (false, true) => {
+            return Err(NodeError::Invalid(format!(
+                "bulkhead-priv started this node ({} is set), but node config has no [priv]",
+                bulkhead_priv_wire::SOCKET_ENV
+            )));
+        }
+        (true, true) => {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            {
+                native.helper = bulkhead_host::PrivHelper::inherited()
+                    .map_err(|e| NodeError::Invalid(format!("the privileged helper: {e}")))?;
+                tracing::info!("native instances start through the privileged helper");
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            return Err(NodeError::Invalid(
+                "the privileged helper runs on Linux and FreeBSD only".into(),
+            ));
+        }
+    }
+    Ok(native)
 }

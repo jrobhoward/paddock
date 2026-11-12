@@ -10,6 +10,14 @@
 //!
 //! Linux only. CPU per call is the node's and the app processes' user and
 //! system time over the run, from `/proc`, divided by the calls.
+//!
+//! Under the privileged helper (ROADMAP PS1): start it as the helper's
+//! node (its configuration's `node` this example, `node_args` the worker
+//! count, `binds` a directory holding copies of `bulkhead-runner` and
+//! `bulkhead-fixture-native` that `BULKHEAD_BENCH_DIR` names, and the
+//! helper's `runner` the copy). The instances are then the helper's
+//! children, not this process's, so the CPU per call counts the node's
+//! time only.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
@@ -26,7 +34,12 @@ const LONG: Duration = Duration::from_secs(30);
 const INSTANCES: usize = 100;
 
 fn release(name: &str) -> PathBuf {
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/release")).join(name)
+    match std::env::var_os("BULKHEAD_BENCH_DIR") {
+        Some(dir) => PathBuf::from(dir).join(name),
+        None => {
+            PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/release")).join(name)
+        }
+    }
 }
 
 fn main() {
@@ -153,6 +166,10 @@ async fn gets(h: &InstanceHandle, bucket: &str) -> f64 {
 async fn run(workers: usize) {
     let mut native = NativeConfig::default();
     native.runner = Some(release("bulkhead-runner"));
+    native.helper = bulkhead_host::PrivHelper::inherited().expect("the helper's socket");
+    if native.helper.is_some() {
+        println!("under the privileged helper: CPU per call is the node's alone");
+    }
     // `NATIVE_SPIN_US`: the node's `[native] spin_us` (T1); unset, 20.
     if let Some(us) = std::env::var("NATIVE_SPIN_US")
         .ok()

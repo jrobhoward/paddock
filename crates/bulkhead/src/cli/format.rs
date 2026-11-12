@@ -158,6 +158,9 @@ pub fn detail(d: &AppDetail) -> String {
         "signer:    {}",
         if d.signer.is_empty() { "-" } else { &d.signer }
     ));
+    if !d.runs_as.is_empty() {
+        out.push(format!("runs as:   {}", d.runs_as));
+    }
     out.push(format!("granted:   {}", list(&d.granted)));
     out.push(format!("denied:    {}", list(&d.denied)));
     for w in &d.warnings {

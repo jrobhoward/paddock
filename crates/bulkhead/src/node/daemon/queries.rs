@@ -175,6 +175,11 @@ impl Node {
                 })
                 .unwrap_or_default(),
             listeners: self.listener_infos(name),
+            runs_as: if self.config.privileges.is_some() {
+                "its own user".into()
+            } else {
+                "the node's user".into()
+            },
         })
     }
 

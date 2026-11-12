@@ -22,6 +22,7 @@ default = ["node", "http", "tls", "sql", "egress", "probes"]
 # no optional capability: no HTTP ingress, no probes, no Modbus.
 node = [
     "dep:bulkhead-host",
+    "dep:bulkhead-priv-wire",
     "dep:tracing",
     "dep:tracing-subscriber",
     "tokio/rt-multi-thread",
@@ -58,6 +59,7 @@ minisign = { workspace = true }
 bulkhead-bundle = { workspace = true }
 bulkhead-host = { workspace = true, optional = true }
 bulkhead-modbus = { workspace = true, optional = true }
+bulkhead-priv-wire = { workspace = true, optional = true }
 rustbridge-bundle = { workspace = true }
 rustyline = { workspace = true }
 semver = { workspace = true }

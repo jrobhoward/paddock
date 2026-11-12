@@ -228,6 +228,8 @@ dependencies = [
  "anyhow",
  "bulkhead-bundle",
  "bulkhead-host",
+ "bulkhead-native",
+ "bulkhead-priv-wire",
  "bytes",
  "ciborium",
  "clap",
@@ -272,6 +274,7 @@ dependencies = [
  "bulkhead-host",
  "bulkhead-modbus",
  "bulkhead-native",
+ "bulkhead-priv-wire",
  "libfuzzer-sys",
  "semver",
  "serde_json",
@@ -289,6 +292,7 @@ dependencies = [
  "base64 0.23.1",
  "bulkhead-bundle",
  "bulkhead-native",
+ "bulkhead-priv-wire",
  "bytes",
  "ciborium",
  "ciborium-ll",
@@ -339,9 +343,14 @@ name = "bulkhead-native"
 version = "0.3.0"
 dependencies = [
  "ciborium",
+ "libc",
  "rustix",
  "serde",
 ]
+
+[[package]]
+name = "bulkhead-priv-wire"
+version = "0.3.0"
 
 [[package]]
 name = "bumpalo"

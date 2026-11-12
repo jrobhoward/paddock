@@ -1,0 +1,25 @@
+[package]
+name = "bulkhead-priv"
+version.workspace = true
+description = "Bulkhead's privileged helper: starts the node unprivileged and each app instance under a user of its own"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+# Root code: synchronous, no async runtime, and nothing beyond the wire
+# format, rustix (safe system calls) and libc (the few rustix lacks: fork,
+# clone3, pdfork, execve, rctl, kqueue on process descriptors).
+[dependencies]
+bulkhead-priv-wire = { workspace = true }
+libc = { workspace = true }
+rustix = { workspace = true, features = ["fs", "net", "pipe", "event", "system", "thread", "param", "mount"] }
+
+[dev-dependencies]
+rstest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

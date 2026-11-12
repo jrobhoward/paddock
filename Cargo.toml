@@ -16,6 +16,8 @@ members = [
     "crates/bulkhead-modbus",
     "crates/bulkhead-modbus-client",
     "crates/bulkhead-native",
+    "crates/bulkhead-priv",
+    "crates/bulkhead-priv-wire",
     "crates/bulkhead-sdk",
     "crates/bulkhead-sdk-macros",
     "crates/bulkhead-soak",
@@ -109,6 +111,7 @@ bulkhead-host = { path = "crates/bulkhead-host", default-features = false }
 bulkhead-modbus = { path = "crates/bulkhead-modbus" }
 bulkhead-modbus-client = { path = "crates/bulkhead-modbus-client" }
 bulkhead-native = { path = "crates/bulkhead-native", default-features = false }
+bulkhead-priv-wire = { path = "crates/bulkhead-priv-wire" }
 bulkhead-sdk = { path = "crates/bulkhead-sdk" }
 bulkhead-sdk-macros = { path = "crates/bulkhead-sdk-macros" }
 # rustbridge's `experiment/wasm` branch adds bundle format 1.2 (manifest

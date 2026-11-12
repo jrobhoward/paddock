@@ -264,6 +264,7 @@ dependencies = [
  "bulkhead-host",
  "bulkhead-modbus",
  "bulkhead-native",
+ "bulkhead-priv-wire",
  "bytes",
  "ciborium",
  "clap",
@@ -391,6 +392,7 @@ dependencies = [
  "bulkhead-bundle",
  "bulkhead-host",
  "bulkhead-native",
+ "bulkhead-priv-wire",
  "bytes",
  "ciborium",
  "ciborium-ll",
@@ -464,6 +466,25 @@ dependencies = [
  "seccompiler",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bulkhead-priv"
+version = "0.3.0"
+dependencies = [
+ "bulkhead-priv-wire",
+ "libc",
+ "rstest",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
+name = "bulkhead-priv-wire"
+version = "0.3.0"
+dependencies = [
+ "proptest",
+ "rstest",
 ]
 
 [[package]]

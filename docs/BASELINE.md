@@ -2861,7 +2861,33 @@ Raspberry Pi 5 (Linux 7.0), idle but for the builds just before:
 - **A start takes 0.6 to 0.7 ms longer** on the Pi (0.5 to 1.0 ms on the 16-core machine): the runner builds and installs three filters where it installed one.
 - **The 16-core machine's casts** read lower with the allow-list (243,000 to 265,000 against 268,000 to 416,000 a second), on a machine that was not idle and with one round of the three far from the others; to be measured again on it idle.
 
+## 2026-11-11: instances under the privileged helper (PS1)
+
+`native_cost 4` started directly, as before, and started by `bulkhead-priv` as its node (the example's header says how), the same release builds of the runner and the fixture copied into one directory, two rounds each in turn. Under the helper each instance runs under its app's user in a cgroup of its own (`memory`, `pids` and `cpu` controllers on), new mount, PID, network, IPC and UTS namespaces and a minimal root; Landlock and the seccomp allow-list apply as before. The instances are the helper's children then, not the benchmark's, so its CPU per call counts the node's time only and is left out.
+
+Raspberry Pi 5 (Linux 7.0), idle (load under 0.3 at each start):
+
+| | directly | under the helper |
+| --- | --- | --- |
+| start, to the first reply (p50, ms) | 4.7, 4.8 | 6.1, 6.1 |
+| call from the host, one at a time (p50, µs) | 17.6, 17.6 | 20.3, 20.3 |
+| call between instances (p50, µs) | 43.3, 43.4 | 47.9, 48.0 |
+| request from a callback, its own pid (µs) | 3.0, 3.0 | 2.9, 2.9 |
+| bucket get from a callback (µs) | 1.3, 1.3 | 1.4, 1.4 |
+| bucket get from a published snapshot (µs) | 0.105, 0.092 | 0.101, 0.092 |
+| casts to one instance (per second) | 441,813, 448,122 | 436,196, 436,405 |
+| 16 calls in flight (calls a second) | 119,674, 118,616 | 106,720, 106,607 |
+| 64 calls in flight (calls a second) | 119,397, 118,682 | 99,824, 100,966 |
+
+- **A start takes about 1.3 ms longer** under the helper: S36 measured 1.8 ms for the helper's request, the cgroup, the namespaces and the root together.
+- **A call from the host costs 2.7 µs more, and one between instances (two calls) 4.6 µs more.** That is more than S36's 0.7 to 1.0 µs for a cgroup on a blocking round trip; not attributed yet (the `cpu` controller, the namespaces, and the instance's cgroup against none are the candidates).
+- **What stays inside the app does not change:** a request to the node, a bucket get and a read from a published snapshot cost the same.
+- **Throughput with calls in flight falls 10% (16) to 15% (64);** casts to one instance by 2%.
+- **Not measured:** the 16-core machine, whose `sudo` needs a password; `cluster_throughput` under the helper.
+
 ## Not measured yet
+
+- Where the 2.7 µs a native call costs more under the privileged helper goes (PS1), and the helper on the 16-core machine.
 
 - Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
 - Why a single native request on the 16-core machine takes one of two times from run to run (a bucket get about 2.2 or about 3.0 µs), and the Pi's does not (T10, T11); thread placement across the Threadripper's dies is a guess, not measured.

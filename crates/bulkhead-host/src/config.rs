@@ -284,6 +284,11 @@ pub struct NativeConfig {
     /// an x86 machine with deep C-states, 7 µs on a Raspberry Pi 5; spike
     /// S32); zero always sleeps.
     pub spin: Duration,
+    /// The privileged helper that starts every instance under its app's
+    /// user (node config `[priv]`, ROADMAP PS1); `None` to start them as
+    /// the node's own children, under the node's user.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub helper: Option<crate::native::helper::PrivHelper>,
 }
 
 impl Default for NativeConfig {
@@ -296,6 +301,8 @@ impl Default for NativeConfig {
             ping_timeout: Duration::from_secs(5),
             landlock_optional: false,
             spin: Duration::from_micros(20),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            helper: None,
         }
     }
 }

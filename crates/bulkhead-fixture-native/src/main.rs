@@ -44,6 +44,7 @@
 //! | `note TEXT`, `notes` | `ok`; the notes so far, joined by commas: the state a snapshot carries, one per line |
 //! | `loaded-from` | the version whose snapshot it started from, or `none` |
 //! | `os-pid` | the process's id |
+//! | `ids` | the process's user and group ids, `UID GID` |
 //! | `fail-save` | `ok`; the next `save_snapshot` fails |
 //!
 //! Init arguments `fail` make `init` fail; a snapshot with the note

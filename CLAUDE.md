@@ -191,6 +191,21 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `BULKHEAD_CONFORMANCE_NATIVE=1` runs the fixture itself). Code that never
   yields cannot be stopped there: deadline, kill, memory and sandbox tests
   use native processes.
+- `crates/bulkhead-priv`: the privileged helper (ROADMAP PS1), a root
+  binary: starts the node under its user and each native instance under
+  its app's, in a cgroup, namespaces and a minimal root (Linux) or a
+  process group with `rctl` rules (FreeBSD). Synchronous, no tokio; all
+  its `unsafe` in `sys` (the crate denies it elsewhere); every check from
+  its own configuration, never the node's. `crates/bulkhead-priv-wire`
+  is the message format it shares with the node (`forbid(unsafe_code)`,
+  fuzzed as `priv_request`); `bulkhead-host`'s `src/native/helper.rs` is
+  the node's side. Its tests that start real processes run as root on
+  the test machines only: build as a user, then run the test binaries
+  with `BULKHEAD_PRIV_TESTS=1` (`tests/priv.rs`) or
+  `BULKHEAD_CONFORMANCE_NATIVE=1 BULKHEAD_CONFORMANCE_HELPER=1`, and
+  `CARGO=/bin/true` so nothing is built as root.
+  `scripts/priv-e2e-systemd.sh` and `scripts/priv-e2e-rcd.sh` run it end
+  to end under systemd and rc.
 - `crates/bulkhead-fixture-native` (an executable on the app API) and
   `crates/bulkhead-fixture-plugin` (a rustbridge `.so`): native test apps,
   built natively into `target/fixtures/native` by the tests that use them.

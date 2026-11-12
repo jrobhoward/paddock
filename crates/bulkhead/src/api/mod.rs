@@ -89,6 +89,11 @@ pub struct AppDetail {
     /// The app's listeners, for a connection handler.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listeners: Vec<ListenerInfo>,
+    /// Whom the app's native instances run as: `"its own user"` through
+    /// the privileged helper (node config `[priv]`), else `"the node's
+    /// user"`. Empty from a node older than this field.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub runs_as: String,
 }
 
 /// One listener of a connection-handler app.

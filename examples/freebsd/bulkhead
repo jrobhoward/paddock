@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Bulkhead under its privileged helper (OPERATIONS.md, "The privileged
+# helper"): rc starts bulkhead-priv as root; it starts the node as the
+# node's user and every app instance under a user of the app's own.
+#
+#   install -m 0555 examples/freebsd/bulkhead /usr/local/etc/rc.d/bulkhead
+#   (and the helper's configuration at /usr/local/etc/bulkhead/priv.conf,
+#   as examples/systemd/priv.conf but with no cgroup)
+#   sysrc bulkhead_enable=YES && service bulkhead start
+#
+# PROVIDE: bulkhead
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=bulkhead
+rcvar=bulkhead_enable
+desc="Bulkhead node, under its privileged helper"
+
+load_rc_config $name
+
+: ${bulkhead_enable:="NO"}
+: ${bulkhead_config:="/usr/local/etc/bulkhead/priv.conf"}
+: ${bulkhead_log:="/var/log/bulkhead.log"}
+
+pidfile="/var/run/${name}.pid"
+procname="/usr/local/sbin/bulkhead-priv"
+command="/usr/sbin/daemon"
+# -p: the helper's own pid, so stop and reload signal it; it passes
+# SIGTERM and SIGHUP to the node, which stops its apps and exits.
+command_args="-f -p ${pidfile} -o ${bulkhead_log} ${procname} ${bulkhead_config}"
+extra_commands="reload"
+sig_reload="HUP"
+sig_stop="TERM"
+
+run_rc_command "$1"

@@ -27,6 +27,8 @@ Restoring a backup: keep the current `creation`, `failover-epoch` and `witness-s
 
 Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back them up with the apps' data.
 
+The privileged helper keeps its own state, apart from the node's, in its configuration's `state` (`/var/lib/bulkhead-priv` by convention, root's, mode 0700): `uids`, which user each app runs as, one `uid app` per line. Back it up with `data_dir`, and never restore it into a helper whose users are bound to other apps since: an app's files belong to its user.
+
 ## Environment
 
 | Variable | Read by | Meaning |
@@ -39,6 +41,8 @@ Volumes (`[volumes]`) are the operator's directories, outside `data_dir`; back t
 | `BULKHEAD_KEY_PASSWORD` | `bulkhead bundle`, `bulkhead keygen` | The signing key's password, instead of a prompt |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | `bulkhead node` | Where HTTP egress reads the system's root certificates, instead of the OS defaults (`[egress] system_roots`) |
 | `RUST_LOG` | `bulkhead node` | Log filter (default `info`), for example `info,bulkhead::lease=debug` |
+| `BULKHEAD_PRIV_FD` | `bulkhead node`, set by `bulkhead-priv` | The descriptor of the privileged helper's socket. Node config's `[priv]` and this variable go together: the node refuses to start with one and not the other |
+| `BULKHEAD_PRIV_TESTS`, `BULKHEAD_CONFORMANCE_HELPER` | `bulkhead-host`'s tests, as root on a test machine | `1` runs the helper's own tests (`tests/priv.rs`), and the conformance suite's native mode under the helper |
 | `BULKHEAD_PRIV`, `BULKHEAD_PREOPENS`, `BULKHEAD_SPIN_US` | a native-process app, set by the node | The directory of the bundle's `priv/` files; where each preopened directory is, one guest path and host directory per line, separated by a tab (with `\\`, `\t` and `\n` escaped), for `bulkhead_sdk::files::path`; and how long the app spins waiting for the node before it sleeps (`[native] spin_us`). A native app's environment holds nothing else |
 
 Secrets may also come from variables the node config names (`[secrets.<name>] env = ...`).
@@ -81,6 +85,7 @@ Ctrl-C stops the command running (a follow, a slow call); Ctrl-D or `exit` leave
 
 - The node sets `no_new_privs` on itself at start and marks itself not dumpable (on FreeBSD, both through `procctl`: `PROC_NO_NEW_PRIVS_CTL` and `PROC_TRACE_CTL`): it leaves no core dump, and other processes of its user cannot trace it or read its memory or environment through `/proc`. Node config's `debuggable = true` leaves it dumpable, for a debugger or a core on a development machine.
 - No root. `CAP_NET_BIND_SERVICE` is the only capability, and only for ingress or listener ports below 1024; leave it out otherwise.
+- Each app under a user of its own takes the privileged helper in place of this unit (below).
 - `dialout` (or the device's group) for the failover serial line (`[failover] serial`), with `PrivateDevices` off. A device that cannot be opened is logged and retried every second; the path stays silent meanwhile, and `bulkhead failover` shows it (`paths: link heard, serial silent`).
 - `StateDirectory` creates `data_dir` owned by the service user, mode 0750; the node creates what is under it.
 - Native-process apps need `bulkhead-runner` beside `bulkhead` (or `[native] runner`), built with `cargo build --release -p bulkhead-native`. For their memory and process limits, give the node a cgroup: `Delegate=yes` in the unit, `ProtectControlGroups` removed, and `[native] cgroup` set to the unit's cgroup (`/sys/fs/cgroup/system.slice/bulkhead.service`); the node must be the only process in it, and moves itself into its `node` child.
@@ -116,3 +121,34 @@ An agent beside each node of the pair holds the address while its node may run s
 - **When the address moves.** It follows `may_run`, so it moves when the singletons do: the old primary releases it when its lease ends, and the new primary takes it when it is promoted, about the time of a takeover (3 to 4 s with the tutorial's timings). Two nodes never hold it while both may run singletons, since the lease rules out two primaries; for a moment they can both hold it while one is releasing, and neighbours follow the last gratuitous ARP.
 - **A lost node.** The watch prints `unreachable` when the agent cannot reach its own node, so the agent releases the address. A node that is gone with its agent (a power cut) releases nothing, and the address moves when the other node takes it.
 - **keepalived instead.** A site that already runs keepalived can have it follow Bulkhead's role. A `vrrp_script` that runs `bulkhead --json failover` and succeeds only when `"may_run": true` appears, with a weight above the gap between the two nodes' priorities, makes the Bulkhead primary the VRRP master. VRRP then runs its own election beside Bulkhead's, so the address can lag a takeover by keepalived's own interval, and during a network cut each side's keepalived decides on its own. The watch agent above does not have these gaps.
+
+## The privileged helper
+
+With the privileged helper, `bulkhead-priv` (ROADMAP PS1), each app runs under a user of its own instead of the node's. The service manager starts the helper as root; the helper starts the node under the node's user and then does only what the node asks: start an instance, signal one, bind a low port (ROADMAP PS3b). Three kinds of processes:
+
+| Process | User | Started by |
+| --- | --- | --- |
+| `bulkhead-priv CONFIG` | root, with the capabilities below only (Linux) | systemd or rc |
+| `bulkhead node` | the node's user, no capabilities | the helper, with its socket at `BULKHEAD_PRIV_FD` |
+| each instance (`bulkhead-runner`, then the app) | its app's user, from the helper's range | the helper, at the node's request |
+
+Set up:
+
+- [`examples/systemd/bulkhead-priv.service`](../examples/systemd/bulkhead-priv.service) (in place of `bulkhead.service`) and [`examples/freebsd/bulkhead`](../examples/freebsd/bulkhead) (rc.d) start the helper; their headers list the install steps. `scripts/priv-e2e-systemd.sh` and `scripts/priv-e2e-rcd.sh` run them end to end, as root on a test machine.
+- The helper's configuration, [`examples/systemd/priv.conf`](../examples/systemd/priv.conf), is root's, mode 0600; the helper refuses a file anyone else may write. It names the node's program, arguments, user and group (as numbers), `bulkhead-runner` (the only program an instance starts as), the range of app users, its state directory, the directories an instance's directories may be under (`binds`: `data_dir` and the volumes' parents), the ceilings on `memory_max` and `pids_max`, the low ports it binds, and on Linux the cgroup systemd delegates to it.
+- Node config sets `[priv]` and leaves `[native] cgroup` unset. On FreeBSD it also sets `[native] landlock_optional = true` until the runner's sandbox exists there (ROADMAP FB2).
+- `bulkhead status APP` shows `runs as: its own user` under the helper, `the node's user` without.
+
+What the helper does for each instance:
+
+- **Its user.** An app gets the lowest free user of the range on its first start and keeps it, across restarts of the helper (`state/uids`); a user never serves a second app. The node names the app; the helper picks the user.
+- **Its directories.** The program's directory and the bundle's `priv/` files are given to the app's group (its user's own number) with group read; a read-write volume's top directory gets the group, `g+rwx` and the set-group-id bit, so what the app makes there is its own. Only what the node's user owns is changed, through descriptors opened without following links. Files the node wrote into a volume before stay the node's.
+- **Linux:** a cgroup per instance under the delegated one (`apps/<app>/i<n>`: `memory.max`, no swap, `pids.max`; the helper itself in `helper`, the node in `node`), whose `cgroup.kill` the node may write to end the instance and all it forked; new mount, PID, network, IPC and UTS namespaces; and a minimal root: read-only `/usr`, the library directories, `/etc/ld.so.cache` and `/etc/localtime`, the runner's directory and the instance's directories at their own paths (a writable one without `exec`), five device files, a private `/tmp` (`tmp_size`) and its own `/proc`. Landlock still limits writes to the read-write volumes, so `/tmp` is not writable under it.
+- **FreeBSD:** a session and process group of its own, `RLIMIT_AS` and the `rctl` rules `memoryuse` and `nthr` on its process (`kern.racct.enable=1`, in `/boot/loader.conf`). Jails are ROADMAP FB2.
+- **Its end.** The helper reports each exit to the node, and whether the memory limit caused it, before it removes the instance's cgroup or rules. When the node exits or its socket closes, the helper kills every instance, waits up to 5 s, and exits with the node's status.
+
+Signals: the helper passes `SIGTERM` and `SIGINT` to the node as `SIGTERM`, and `SIGHUP` as `SIGHUP`; the node stops its apps and exits, then the helper does. systemd's `KillMode=mixed` signals the helper alone.
+
+The helper's own fence on Linux, once the node runs: `no_new_privs`, and only `CAP_CHOWN`, `CAP_DAC_OVERRIDE`, `CAP_DAC_READ_SEARCH`, `CAP_FOWNER`, `CAP_KILL`, `CAP_SETGID`, `CAP_SETUID`, `CAP_NET_BIND_SERVICE` and `CAP_SYS_ADMIN`, in every set and the bounding set. On FreeBSD it sets `no_new_privs` and stays root. The unit's own fences leave out `RestrictNamespaces` (its filter makes `clone3` fail), `ProtectHostname` (an instance sets its own host name), `ProtectControlGroups` and `ProtectKernelTunables` (the helper writes its cgroups) and `RestrictSUIDSGID` (the set-group-id bit above).
+
+Costs, on a Raspberry Pi 5 (BASELINE.md, 2026-11-11): a start takes about 1.3 ms more, a call from the host 2.7 µs more (20.3 against 17.6 µs at p50), calls in flight 10 to 15% fewer a second; requests and bucket reads inside an app cost the same.

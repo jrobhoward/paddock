@@ -54,6 +54,7 @@ tokio-postgres-rustls = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 bulkhead-bundle = { workspace = true }
 bulkhead-native = { workspace = true, features = ["channel"] }
+bulkhead-priv-wire = { workspace = true }
 redb = { workspace = true }
 arc-swap = { workspace = true }
 scc = { workspace = true }
@@ -67,7 +68,7 @@ rustls-native-certs = { workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["param", "pipe"] }
+rustix = { workspace = true, features = ["param", "pipe", "net", "fs"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 libc = { workspace = true }

@@ -453,6 +453,14 @@ pub fn descriptors() -> io::Result<(OwnedFd, OwnedFd)> {
     Ok((node, app))
 }
 
+/// What ends a record on a `SOCK_SEQPACKET` socket. FreeBSD follows
+/// POSIX: a record ends only at a send with `MSG_EOR`, so two sends
+/// without it read as one message there. Linux ends one at every send.
+#[cfg(target_os = "freebsd")]
+const RECORD: SendFlags = SendFlags::EOR;
+#[cfg(not(target_os = "freebsd"))]
+const RECORD: SendFlags = SendFlags::empty();
+
 /// Pass `fd` as `id` on the node's end of a descriptor socket.
 ///
 /// # Errors
@@ -471,7 +479,7 @@ pub fn send_fd(socket: BorrowedFd<'_>, id: u64, fd: BorrowedFd<'_>) -> io::Resul
         socket,
         &[IoSlice::new(&bytes)],
         &mut control,
-        SendFlags::DONTWAIT | SendFlags::NOSIGNAL,
+        SendFlags::DONTWAIT | SendFlags::NOSIGNAL | RECORD,
     )?;
     if sent != bytes.len() {
         return Err(io::Error::other("the descriptor's message was cut short"));

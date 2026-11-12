@@ -6,6 +6,8 @@
 
 pub mod pg;
 pub mod ports;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub mod privhelper;
 
 use std::path::PathBuf;
 use std::process::Command;

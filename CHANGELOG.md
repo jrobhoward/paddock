@@ -8,6 +8,31 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- The privileged helper, `bulkhead-priv` (ROADMAP PS1): with node config
+  `[priv]`, every native instance runs under a user of its app's own.
+  systemd or rc starts the helper as root
+  (`examples/systemd/bulkhead-priv.service`, `examples/freebsd/bulkhead`);
+  it starts the node under the node's user, which then holds no
+  capabilities, and each instance at the node's request. Every check comes
+  from the helper's own configuration (`examples/systemd/priv.conf`): the
+  one program an instance starts as (`bulkhead-runner`), the range of app
+  users, the directories an instance's directories may be under, the
+  ceilings on memory and processes, the ports. The helper picks each app's
+  user and keeps it in its own state. On Linux each instance gets a cgroup
+  (`memory.max`, no swap, `pids.max`), new mount, PID, network, IPC and UTS
+  namespaces and a minimal root, and the node ends it through the cgroup's
+  `cgroup.kill`, which ends what it forked too; on FreeBSD a process group
+  of its own, `RLIMIT_AS` and `rctl` rules on its process. The program's
+  directory, `priv/` files and read-write volumes are given to the app's
+  group. The helper reports each exit, and a memory-limit kill, to the
+  node. `bulkhead status` shows whom an app runs as. Messages go over
+  `bulkhead-priv-wire`, a crate of their own with no `unsafe` (fuzz target
+  `priv_request`). On a Raspberry Pi 5 a start takes about 1.3 ms more and a
+  call from the host 2.7 µs more (BASELINE.md, 2026-11-11). Checked on
+  x86-64 Linux (an Ubuntu 26.04 VM, end to end under systemd), the Pi, and
+  FreeBSD 15.0 (under rc), including the native conformance suite under
+  the helper on all three.
+
 - Native apps on FreeBSD (ROADMAP FB1): the node starts them through
   `bulkhead-runner` over the same rings and descriptor socket as on Linux,
   with published buckets' snapshots, the lease watchdog (a kqueue
@@ -525,6 +550,11 @@ All notable changes are recorded here. The format follows
   `dumpable`.
 
 ### Fixed
+
+- On FreeBSD, messages on the native channel's descriptor socket ended a
+  record only with `MSG_EOR`, which the node did not set: two sent
+  together could read as one there (FB1). Every seqpacket send now ends
+  its record on FreeBSD; Linux ends one at every send.
 
 - Node tests and the soak no longer fail now and then with `Address already
   in use`: the ports they give nodes come from below the kernel's ephemeral

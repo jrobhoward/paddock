@@ -270,6 +270,12 @@ impl Fixture {
             }
             "notes" => self.notes.join(","),
             "loaded-from" => self.loaded_from.clone().unwrap_or_else(|| "none".into()),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            "ids" => format!(
+                "{} {}",
+                rustix::process::getuid().as_raw(),
+                rustix::process::getgid().as_raw()
+            ),
             "os-pid" => std::process::id().to_string(),
             "fail-save" => {
                 self.fail_save = true;

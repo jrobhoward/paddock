@@ -55,11 +55,13 @@ fn detail____failed_app____shows_reason_and_denied() {
         restarts: 3,
         instance_list: vec![],
         listeners: vec![],
+        runs_as: "its own user".into(),
     };
 
     let out = detail(&d);
 
     assert!(out.contains("reason:    crashed: max restart intensity"));
+    assert!(out.contains("runs as:   its own user"));
     assert!(out.contains("denied:    bulkhead:keyvalue"));
     assert!(out.contains("warning:   observability.metrics"));
 }
@@ -137,6 +139,7 @@ fn detail____connection_handler____lists_listeners() {
             refused: 1,
             idle_closed: 5,
         }],
+        runs_as: String::new(),
     };
 
     let out = detail(&d);

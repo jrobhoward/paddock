@@ -87,8 +87,8 @@ pub(crate) use elsewhere::ProcessPort;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod process {
-    use std::ffi::CString;
-    use std::os::fd::AsFd;
+    use std::ffi::{CString, OsString};
+    use std::os::fd::{AsFd, OwnedFd};
     use std::os::unix::process::ExitStatusExt;
     use std::path::PathBuf;
     use std::process::Stdio;
@@ -107,6 +107,7 @@ mod process {
     use crate::config::NativeConfig;
     use crate::failover::RunUntil;
     use crate::message::ExitReason;
+    use crate::native::helper::PrivHelper;
     use crate::native::memory::MemorySource;
     use crate::native::{NativeCode, cgroup};
     use crate::output::CapturedOutput;
@@ -125,7 +126,7 @@ mod process {
     /// A running native instance's process.
     #[derive(Debug)]
     pub(crate) struct ProcessPort {
-        child: Child,
+        proc: Proc,
         channel: Channel,
         /// The bell's read end: a byte when the app woke the node, the end
         /// of file once it exited.
@@ -162,6 +163,9 @@ mod process {
         /// last yield: the worker has nothing else to do (T9).
         worker_idle: bool,
         cgroup: Option<PathBuf>,
+        /// The node made `cgroup` and removes it; the helper's own it
+        /// removes itself.
+        own_cgroup: bool,
         /// For an instance bound to a lease, the task writing its
         /// deadlines to the runner's watchdog ([`bulkhead_native::lease`]),
         /// ended with the port.
@@ -283,6 +287,106 @@ mod process {
         })
     }
 
+    /// The process behind a port: the node's own child, or one the
+    /// privileged helper started under the app's user ([`super::helper`]).
+    #[derive(Debug)]
+    enum Proc {
+        Direct(Child),
+        Helper(HelperProc),
+    }
+
+    /// An instance's process the helper started: its exit comes from the
+    /// helper, and the node ends it through its cgroup (Linux) or the
+    /// helper (S36, finding 1: the node cannot signal another user's
+    /// process).
+    #[derive(Debug)]
+    struct HelperProc {
+        helper: PrivHelper,
+        id: u64,
+        pid: u32,
+        cgroup: Option<PathBuf>,
+        exit: tokio::sync::watch::Receiver<Option<(std::process::ExitStatus, bool)>>,
+    }
+
+    impl HelperProc {
+        fn kill(&self) {
+            if self.exit.borrow().is_some() {
+                return;
+            }
+            // `cgroup.kill` ends everything in the instance's cgroup, with
+            // no capability and no round trip; the helper gave it to the
+            // node.
+            let killed = self
+                .cgroup
+                .as_ref()
+                .is_some_and(|dir| std::fs::write(dir.join("cgroup.kill"), "1").is_ok());
+            if !killed {
+                self.helper.signal(self.id, libc::SIGKILL);
+            }
+        }
+    }
+
+    impl Drop for HelperProc {
+        /// As `kill_on_drop` for the node's own child.
+        fn drop(&mut self) {
+            self.kill();
+        }
+    }
+
+    impl Proc {
+        fn id(&self) -> Option<u32> {
+            match self {
+                Self::Direct(c) => c.id(),
+                Self::Helper(h) => (h.exit.borrow().is_none()).then_some(h.pid),
+            }
+        }
+
+        fn start_kill(&mut self) {
+            match self {
+                Self::Direct(c) => {
+                    let _ = c.start_kill();
+                }
+                Self::Helper(h) => h.kill(),
+            }
+        }
+
+        async fn wait(&mut self) -> Option<std::process::ExitStatus> {
+            match self {
+                Self::Direct(c) => c.wait().await.ok(),
+                Self::Helper(h) => loop {
+                    if let Some((status, _)) = *h.exit.borrow_and_update() {
+                        return Some(status);
+                    }
+                    if h.exit.changed().await.is_err() {
+                        return None;
+                    }
+                },
+            }
+        }
+
+        fn try_wait(&mut self) -> Option<std::process::ExitStatus> {
+            match self {
+                Self::Direct(c) => c.try_wait().ok().flatten(),
+                Self::Helper(h) => h.exit.borrow().map(|(status, _)| status),
+            }
+        }
+
+        /// The helper said its memory limit ended it (its cgroup is gone
+        /// by the time the node could read it).
+        fn memory_limited(&self) -> bool {
+            matches!(self, Self::Helper(h) if h.exit.borrow().is_some_and(|(_, oom)| oom))
+        }
+    }
+
+    /// What the runner gets, either way it starts.
+    struct Launch {
+        args: Vec<OsString>,
+        env: Vec<(&'static str, OsString)>,
+        /// Directories the instance needs: the program's, then its
+        /// preopens, and whether each is writable.
+        dirs: Vec<(PathBuf, bool)>,
+    }
+
     impl ProcessPort {
         /// Start `program` for the instance `name` (its pid, as text).
         /// Called on the runtime the instance's task runs on: the bell and
@@ -291,8 +395,8 @@ mod process {
         /// # Errors
         ///
         /// Why the process could not start: no runner, a channel or a
-        /// cgroup that could not be made.
-        pub(crate) fn spawn(
+        /// cgroup that could not be made, or the helper's refusal.
+        pub(crate) async fn spawn(
             config: &NativeConfig,
             program: &NativeCode,
             spec: &InstanceSpec,
@@ -300,13 +404,23 @@ mod process {
             output: CapturedOutput,
             lease: Option<tokio::sync::watch::Receiver<RunUntil>>,
         ) -> Result<Self, String> {
-            let runner = runner(config);
-            let mut cmd = Command::new(&runner);
-            cmd.arg(match program.kind {
-                NativeProgram::Library => "--library",
-                NativeProgram::Executable => "--executable",
-            })
-            .arg(&program.path);
+            let mut launch = Launch {
+                args: vec![
+                    match program.kind {
+                        NativeProgram::Library => "--library",
+                        NativeProgram::Executable => "--executable",
+                    }
+                    .into(),
+                    program.path.clone().into(),
+                ],
+                env: Vec::new(),
+                dirs: program
+                    .path
+                    .parent()
+                    .map(|d| (d.to_path_buf(), false))
+                    .into_iter()
+                    .collect(),
+            };
             // A manifest's preopens stay in the spec when the operator
             // denies the capability: they count only with the grant.
             let preopens: &[crate::spec::Preopen] =
@@ -316,11 +430,15 @@ mod process {
                     &[]
                 };
             for p in preopens {
-                cmd.arg(if p.writable { "--write" } else { "--read" })
-                    .arg(&p.host);
+                launch
+                    .args
+                    .push(if p.writable { "--write" } else { "--read" }.into());
+                launch.args.push(p.host.clone().into());
+                launch.dirs.push((p.host.clone(), p.writable));
             }
             if config.landlock_optional {
-                cmd.args(["--landlock", "best-effort"]);
+                launch.args.push("--landlock".into());
+                launch.args.push("best-effort".into());
             }
             // A lease's first deadline is in the pipe before the runner
             // starts; the rest follow from a task.
@@ -333,16 +451,14 @@ mod process {
                         .map_err(|e| format!("lease pipe: {e}"))?;
                     rustix::fs::fcntl_setfl(&write, rustix::fs::OFlags::NONBLOCK)
                         .map_err(|e| format!("lease pipe: {e}"))?;
-                    cmd.arg(bulkhead_native::lease::FLAG);
+                    launch.args.push(bulkhead_native::lease::FLAG.into());
                     Some((read, write))
                 }
                 None => None,
             };
-            // The read end goes with the closure below, which `cmd` holds.
             let (lease_read, lease_write) = lease_pipe.unzip();
-            cmd.env_clear();
             if let Some(p) = preopens.iter().find(|p| p.guest == crate::spec::PRIV_PATH) {
-                cmd.env(protocol::PRIV_ENV, &p.host);
+                launch.env.push((protocol::PRIV_ENV, p.host.clone().into()));
             }
             if !preopens.is_empty() {
                 let preopens = bulkhead_native::preopens::encode(
@@ -351,9 +467,14 @@ mod process {
                         .map(|p| (p.guest.as_str(), p.host.as_path())),
                 )
                 .ok_or("a preopened directory's path is not UTF-8")?;
-                cmd.env(bulkhead_native::preopens::ENV, preopens);
+                launch
+                    .env
+                    .push((bulkhead_native::preopens::ENV, preopens.into()));
             }
-            cmd.env(channel::SPIN_ENV, config.spin.as_micros().to_string());
+            launch.env.push((
+                channel::SPIN_ENV,
+                config.spin.as_micros().to_string().into(),
+            ));
             let (channel, memfd) = Channel::create().map_err(|e| format!("channel: {e}"))?;
             let (bell, bell_app) = channel::bell().map_err(|e| format!("channel: {e}"))?;
             let (door_app, door) = channel::door().map_err(|e| format!("channel: {e}"))?;
@@ -361,90 +482,29 @@ mod process {
             let (log, log_app) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)
                 .map_err(|e| format!("log pipe: {e}"))?;
             let log_out = log_app.try_clone().map_err(|e| format!("log pipe: {e}"))?;
-            cmd.stdin(Stdio::null())
-                .stdout(Stdio::from(log_out))
-                .stderr(Stdio::from(log_app))
-                .kill_on_drop(true)
-                .process_group(0);
-            let cgroup = config
-                .cgroup
-                .as_ref()
-                .map(|root| cgroup::create(root, name, spec.memory_max, config.pids_max))
-                .transpose()
-                .map_err(|e| format!("cgroup: {e}"))?;
-            let procs = cgroup
-                .as_ref()
-                .map(|dir| {
-                    CString::new(
-                        dir.join("cgroup.procs")
-                            .into_os_string()
-                            .into_encoded_bytes(),
-                    )
-                })
-                .transpose()
-                .map_err(|e| format!("cgroup: {e}"))?;
-            let data_limit = cgroup.is_none().then_some(spec.memory_max);
-            // SAFETY: between fork and exec the closure only makes system
-            // calls through rustix, which neither allocate nor take locks;
-            // `procs`, the memfd and the bell were made before the fork.
-            unsafe {
-                cmd.pre_exec(move || {
-                    use rustix::process::{
-                        Resource, Rlimit, Signal, set_parent_process_death_signal, setrlimit,
-                    };
-                    set_parent_process_death_signal(Some(Signal::KILL))?;
-                    let none = Rlimit {
-                        current: Some(0),
-                        maximum: Some(0),
-                    };
-                    setrlimit(Resource::Core, none)?;
-                    if let Some(bytes) = data_limit {
-                        setrlimit(
-                            super::MEMORY_RESOURCE,
-                            Rlimit {
-                                current: Some(bytes),
-                                maximum: Some(bytes),
-                            },
-                        )?;
-                    }
-                    // Above the channel's descriptors before they move
-                    // into place, then to its own; the copy closes at exec.
-                    let lease = lease_read
-                        .as_ref()
-                        .map(|fd| {
-                            rustix::io::fcntl_dupfd_cloexec(
-                                fd,
-                                bulkhead_native::lease::LEASE_FD + 1,
-                            )
-                        })
-                        .transpose()?;
-                    if let Some(procs) = &procs {
-                        let fd = rustix::fs::open(
-                            procs.as_c_str(),
-                            rustix::fs::OFlags::WRONLY,
-                            rustix::fs::Mode::empty(),
-                        )?;
-                        rustix::io::write(&fd, b"0")?;
-                    }
-                    channel::install(
-                        memfd.as_fd(),
-                        bell_app.as_fd(),
-                        door_app.as_fd(),
-                        fds_app.as_fd(),
-                    )?;
-                    if let Some(lease) = &lease {
-                        bulkhead_native::lease::install(lease.as_fd())?;
-                    }
-                    Ok(())
-                });
-            }
-            let child = cmd
-                .spawn()
-                .map_err(|e| format!("{}: {e}", runner.display()))?;
-            // `cmd` holds the child's ends (the memfd, the bell's write end,
-            // the log pipe's): dropping it closes the node's copies, so the
-            // bell's end of file means the app has exited.
-            drop(cmd);
+            let ends = AppEnds {
+                stdout: log_out,
+                stderr: log_app,
+                memfd,
+                bell: bell_app,
+                door: door_app,
+                fds: fds_app,
+                lease: lease_read,
+            };
+            // Every end the app gets is moved into the start: once it
+            // returns, the node holds none, so the bell's end of file
+            // means the app has exited.
+            let (proc, cgroup, own_cgroup) = match &config.helper {
+                Some(helper) => {
+                    let started = through_helper(helper, config, spec, launch, ends).await?;
+                    let cgroup = started.cgroup.clone();
+                    (Proc::Helper(started), cgroup, false)
+                }
+                None => {
+                    let (child, cgroup) = directly(config, spec, name, launch, ends)?;
+                    (Proc::Direct(child), cgroup, true)
+                }
+            };
             let lease = lease
                 .zip(lease_write)
                 .map(|(rx, write)| Renewals(tokio::spawn(renew(rx, write))));
@@ -452,7 +512,7 @@ mod process {
             let log = pipe::Receiver::from_owned_fd(log).map_err(|e| format!("log pipe: {e}"))?;
             tokio::spawn(copy_log(log, output));
             Ok(Self {
-                child,
+                proc,
                 channel,
                 bell,
                 door,
@@ -475,6 +535,7 @@ mod process {
                 active: Instant::now(),
                 worker_idle: false,
                 cgroup,
+                own_cgroup,
                 lease,
                 version: protocol::VERSION,
             })
@@ -493,7 +554,7 @@ mod process {
                 // The runtime refuses a cgroup off Linux.
                 #[cfg(not(target_os = "linux"))]
                 Some(_) => None,
-                None => self.child.id().map(MemorySource::Process),
+                None => self.proc.id().map(MemorySource::Process),
             }
         }
 
@@ -835,18 +896,18 @@ mod process {
 
         /// Kill the process now.
         pub(crate) fn kill(&mut self) {
-            let _ = self.child.start_kill();
+            self.proc.start_kill();
         }
 
         /// Why the process ended, once it has: waited for within a grace
         /// period, then killed. Over its cgroup's `memory.max` is
         /// `memory_limit`.
         pub(crate) async fn exit_reason(&mut self) -> ExitReason {
-            let status = match tokio::time::timeout(EXIT_GRACE, self.child.wait()).await {
-                Ok(Ok(status)) => Some(status),
+            let status = match tokio::time::timeout(EXIT_GRACE, self.proc.wait()).await {
+                Ok(Some(status)) => Some(status),
                 _ => {
                     self.kill();
-                    self.child.wait().await.ok()
+                    self.proc.wait().await
                 }
             };
             self.reason(status)
@@ -856,12 +917,14 @@ mod process {
         /// which the runner's watchdog may have enforced while the node
         /// did not run.
         pub(crate) fn exited_reason(&mut self) -> Option<ExitReason> {
-            let status = self.child.try_wait().ok().flatten()?;
+            let status = self.proc.try_wait()?;
             Some(self.reason(Some(status)))
         }
 
         fn reason(&self, status: Option<std::process::ExitStatus>) -> ExitReason {
-            if self.cgroup.as_deref().is_some_and(cgroup::oom_killed) {
+            if self.proc.memory_limited()
+                || (self.own_cgroup && self.cgroup.as_deref().is_some_and(cgroup::oom_killed))
+            {
                 return ExitReason::Crashed("memory_limit".into());
             }
             let killed_exit = i32::from(bulkhead_native::lease::KILLED_EXIT);
@@ -889,17 +952,206 @@ mod process {
         /// Again does nothing more.
         pub(crate) async fn finish(&mut self) {
             self.close();
-            if tokio::time::timeout(EXIT_GRACE, self.child.wait())
+            if tokio::time::timeout(EXIT_GRACE, self.proc.wait())
                 .await
                 .is_err()
             {
                 self.kill();
-                let _ = self.child.wait().await;
+                let _ = self.proc.wait().await;
             }
-            if let Some(dir) = self.cgroup.take() {
+            if let Some(dir) = self.cgroup.take()
+                && self.own_cgroup
+            {
                 cgroup::remove(&dir).await;
             }
         }
+    }
+
+    /// The ends of an instance's descriptors the app gets.
+    struct AppEnds {
+        stdout: OwnedFd,
+        stderr: OwnedFd,
+        memfd: OwnedFd,
+        bell: OwnedFd,
+        door: OwnedFd,
+        fds: OwnedFd,
+        lease: Option<OwnedFd>,
+    }
+
+    /// Start the runner as the node's own child: in a cgroup with
+    /// `[native] cgroup`, else held by `RLIMIT_DATA` (`RLIMIT_AS` on
+    /// FreeBSD).
+    fn directly(
+        config: &NativeConfig,
+        spec: &InstanceSpec,
+        name: &str,
+        launch: Launch,
+        ends: AppEnds,
+    ) -> Result<(Child, Option<PathBuf>), String> {
+        let runner = runner(config);
+        let mut cmd = Command::new(&runner);
+        cmd.args(&launch.args).env_clear();
+        for (k, v) in &launch.env {
+            cmd.env(k, v);
+        }
+        let AppEnds {
+            stdout,
+            stderr,
+            memfd,
+            bell: bell_app,
+            door: door_app,
+            fds: fds_app,
+            lease: lease_read,
+        } = ends;
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .kill_on_drop(true)
+            .process_group(0);
+        let cgroup = config
+            .cgroup
+            .as_ref()
+            .map(|root| cgroup::create(root, name, spec.memory_max, config.pids_max))
+            .transpose()
+            .map_err(|e| format!("cgroup: {e}"))?;
+        let procs = cgroup
+            .as_ref()
+            .map(|dir| {
+                CString::new(
+                    dir.join("cgroup.procs")
+                        .into_os_string()
+                        .into_encoded_bytes(),
+                )
+            })
+            .transpose()
+            .map_err(|e| format!("cgroup: {e}"))?;
+        let data_limit = cgroup.is_none().then_some(spec.memory_max);
+        // SAFETY: between fork and exec the closure only makes system
+        // calls through rustix, which neither allocate nor take locks;
+        // `procs`, the memfd and the bell were made before the fork.
+        unsafe {
+            cmd.pre_exec(move || {
+                use rustix::process::{
+                    Resource, Rlimit, Signal, set_parent_process_death_signal, setrlimit,
+                };
+                set_parent_process_death_signal(Some(Signal::KILL))?;
+                let none = Rlimit {
+                    current: Some(0),
+                    maximum: Some(0),
+                };
+                setrlimit(Resource::Core, none)?;
+                if let Some(bytes) = data_limit {
+                    setrlimit(
+                        super::MEMORY_RESOURCE,
+                        Rlimit {
+                            current: Some(bytes),
+                            maximum: Some(bytes),
+                        },
+                    )?;
+                }
+                // Above the channel's descriptors before they move
+                // into place, then to its own; the copy closes at exec.
+                let lease = lease_read
+                    .as_ref()
+                    .map(|fd| {
+                        rustix::io::fcntl_dupfd_cloexec(fd, bulkhead_native::lease::LEASE_FD + 1)
+                    })
+                    .transpose()?;
+                if let Some(procs) = &procs {
+                    let fd = rustix::fs::open(
+                        procs.as_c_str(),
+                        rustix::fs::OFlags::WRONLY,
+                        rustix::fs::Mode::empty(),
+                    )?;
+                    rustix::io::write(&fd, b"0")?;
+                }
+                channel::install(
+                    memfd.as_fd(),
+                    bell_app.as_fd(),
+                    door_app.as_fd(),
+                    fds_app.as_fd(),
+                )?;
+                if let Some(lease) = &lease {
+                    bulkhead_native::lease::install(lease.as_fd())?;
+                }
+                Ok(())
+            });
+        }
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("{}: {e}", runner.display()))?;
+        // `cmd` holds the child's ends: dropping it closes the node's
+        // copies.
+        drop(cmd);
+        Ok((child, cgroup))
+    }
+
+    /// Ask the privileged helper to start the runner under the app's user,
+    /// in its fences, with `ends` at the numbers the runner expects.
+    async fn through_helper(
+        helper: &PrivHelper,
+        config: &NativeConfig,
+        spec: &InstanceSpec,
+        launch: Launch,
+        ends: AppEnds,
+    ) -> Result<HelperProc, String> {
+        let text = |s: OsString| {
+            s.into_string()
+                .map_err(|s| format!("{} is not UTF-8, as the helper needs", s.display()))
+        };
+        let args = launch
+            .args
+            .into_iter()
+            .map(text)
+            .collect::<Result<_, _>>()?;
+        let env = launch
+            .env
+            .into_iter()
+            .map(|(k, v)| Ok((k.to_string(), text(v)?)))
+            .collect::<Result<_, String>>()?;
+        let binds = launch
+            .dirs
+            .into_iter()
+            .map(|(path, writable)| {
+                Ok(bulkhead_priv_wire::Bind {
+                    path: text(path.into_os_string())?,
+                    writable,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        let mut fds = vec![
+            (ends.stdout, 1),
+            (ends.stderr, 2),
+            (ends.memfd, channel::MEMFD_FD),
+            (ends.bell, channel::BELL_FD),
+            (ends.door, channel::DOOR_FD),
+            (ends.fds, channel::FDS_FD),
+        ];
+        if let Some(lease) = ends.lease {
+            fds.push((lease, bulkhead_native::lease::LEASE_FD));
+        }
+        let (fds, targets): (Vec<OwnedFd>, Vec<u8>) = fds
+            .into_iter()
+            .map(|(fd, n)| (fd, u8::try_from(n).unwrap_or(u8::MAX)))
+            .unzip();
+        let request = bulkhead_priv_wire::Spawn {
+            id: 0,
+            app: spec.app.clone(),
+            memory_max: spec.memory_max,
+            pids_max: config.pids_max,
+            args,
+            env,
+            binds,
+            fds: targets,
+        };
+        let started = helper.spawn(request, fds).await?;
+        Ok(HelperProc {
+            helper: helper.clone(),
+            id: started.id,
+            pid: started.pid,
+            cgroup: started.cgroup,
+            exit: started.exit,
+        })
     }
 
     /// The app's stdout and stderr, as log lines.
@@ -934,7 +1186,7 @@ mod elsewhere {
         /// # Errors
         ///
         /// Always.
-        pub(crate) fn spawn(
+        pub(crate) async fn spawn(
             _config: &NativeConfig,
             _program: &NativeCode,
             _spec: &InstanceSpec,
@@ -1043,7 +1295,7 @@ impl Port {
     /// # Errors
     ///
     /// As [`ProcessPort::spawn`].
-    pub(crate) fn spawn(
+    pub(crate) async fn spawn(
         config: &NativeConfig,
         program: &Program,
         spec: &InstanceSpec,
@@ -1052,9 +1304,9 @@ impl Port {
         lease: Option<tokio::sync::watch::Receiver<RunUntil>>,
     ) -> Result<Self, String> {
         match program {
-            Program::Process(code) => {
-                ProcessPort::spawn(config, code, spec, name, output, lease).map(Port::Process)
-            }
+            Program::Process(code) => ProcessPort::spawn(config, code, spec, name, output, lease)
+                .await
+                .map(Port::Process),
             #[cfg(feature = "test-apps")]
             Program::InProcess(app) => Ok(Port::InProcess(app.start())),
         }

@@ -490,7 +490,7 @@ impl InstanceTask {
         if let Some(stop) = self.await_lease(state.lease.clone()).await {
             return stop;
         }
-        let mut port = match self.native_port(&rt, code, spec) {
+        let mut port = match self.native_port(&rt, code, spec).await {
             Ok(port) => port,
             Err(why) => return ExitReason::Crashed(why),
         };
@@ -506,7 +506,7 @@ impl InstanceTask {
     /// Start `code`'s process for `spec`, its stderr logged as the
     /// instance's. Each process the instance starts gets a cgroup name of
     /// its own: an upgrade starts the new one beside the old.
-    fn native_port(
+    async fn native_port(
         &mut self,
         rt: &RuntimeInner,
         code: &Program,
@@ -530,7 +530,7 @@ impl InstanceTask {
         // An instance bound to a lease is killed at its end by the
         // runner's watchdog too, which runs while the node does not.
         let lease = spec.bound_to_lease.then(|| rt.failover.run_until());
-        Port::spawn(rt.native_config(), code, spec, &name, output, lease)
+        Port::spawn(rt.native_config(), code, spec, &name, output, lease).await
     }
 
     async fn native_run(
@@ -731,7 +731,7 @@ impl InstanceTask {
         };
         state.hand_over(&mut fresh_state);
         let rt = state.ctx.rt.clone();
-        let outcome = match self.native_port(&rt, code, &next) {
+        let outcome = match self.native_port(&rt, code, &next).await {
             Err(why) => Err(UpgradeError::Instantiate(why)),
             Ok(mut fresh) => {
                 let loaded = self

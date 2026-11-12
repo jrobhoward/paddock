@@ -186,6 +186,13 @@ pub struct NodeConfig {
     /// Native-process apps: the runner, the cgroup and the pings.
     #[serde(default)]
     pub native: NativeBinding,
+    /// Start every native instance through the privileged helper,
+    /// `bulkhead-priv`, under a user of its app's own (`[priv]`, ROADMAP
+    /// PS1). The node must then have been started by the helper; without
+    /// `[priv]` it refuses to be. The helper's own configuration holds its
+    /// checks and fences.
+    #[serde(default, rename = "priv")]
+    pub privileges: Option<PrivBinding>,
     /// The admin API over TLS, for operators on other machines.
     #[serde(default)]
     pub admin: Option<AdminBinding>,
@@ -753,6 +760,12 @@ impl SocketsCeiling {
     }
 }
 
+/// `[priv]`: native instances start through the privileged helper.
+/// Nothing to set yet: what the helper allows is in its own configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivBinding {}
+
 /// The longest `[native] spin_us`: past it a waiting side burns a core
 /// for what a wake-up costs many times over.
 const MAX_SPIN_US: u64 = 10_000;
@@ -1033,6 +1046,11 @@ impl NodeConfig {
             return Err(NodeError::Invalid(format!(
                 "node config: native.spin_us must be at most {MAX_SPIN_US}"
             )));
+        }
+        if self.privileges.is_some() && n.cgroup.is_some() {
+            return Err(NodeError::Invalid(
+                "node config: native.cgroup and [priv] together: the helper makes each instance's cgroup".into(),
+            ));
         }
         Ok(())
     }

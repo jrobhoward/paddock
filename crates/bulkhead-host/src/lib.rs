@@ -79,6 +79,8 @@ pub use links::LinkInfo;
 pub use listener::{Listener, ListenerSpec, ListenerStats};
 pub use message::{CallError, Envelope, ExitReason};
 pub use native::NativeCode;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub use native::helper::PrivHelper;
 pub use pid::Pid;
 /// Hash routing's key reader, for the fuzz targets in `fuzz/` only.
 #[cfg(fuzzing)]

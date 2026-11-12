@@ -16,6 +16,8 @@ flowchart TD
     ext["extensions<br/>bulkhead-modbus, greeter service"]
     guests["apps (programs)<br/>bulkhead-sdk, fixtures, examples"]
     napps["native apps<br/>rustbridge plugins, executables<br/>on bulkhead-native's app API"]
+    helper["bulkhead-priv (bin, root)<br/>starts the node and each instance"]
+    wire["bulkhead-priv-wire<br/>node to helper messages"]
     bulkhead --> host
     bulkhead --> bundle
     bulkhead -->|"modbus feature"| ext
@@ -24,6 +26,9 @@ flowchart TD
     ext -->|"Extension trait"| host
     guests -.->|"frames on a channel"| host
     napps -.->|"run by bulkhead-runner"| native
+    host -->|"[priv]"| wire
+    helper --> wire
+    helper -.->|"starts, under each app's user"| napps
 ```
 
 Solid arrows point from a crate to the crates it depends on; dotted arrows are what runs on the host, not Cargo dependencies.
@@ -33,6 +38,8 @@ Solid arrows point from a crate to the crates it depends on; dotted arrows are w
 | `bulkhead` | binary and library | `api` (admin API types, and the client over the Unix socket or TLS), `node` (the daemon, feature `node`), `serial` (the tty layer and frames for the failover serial line), `cli` (commands, bundle building, the shell). |
 | `bulkhead-bundle` | library | The app manifest model and validation, `.rbp` opening and signature checks against operator keys (the program's platform variant), operator policy and the effective grant. |
 | `bulkhead-host` | library | The runtime: process table, instances, links and monitors, supervisors, app sets and pools, host services, the HTTP ingress, listeners, the cluster transport, liveness, membership, failover, replication, moving singletons and release versions. |
+| `bulkhead-priv-wire` | library | The messages between a node and its privileged helper (spawn, signal, bind; spawned, exited, refused) and their bounded parser, with no `unsafe`. |
+| `bulkhead-priv` | `bulkhead-priv` (root) | The privileged helper (ROADMAP PS1): started as root, it starts the node under its user and each native instance under its app's, in a cgroup, namespaces and a minimal root (Linux) or a process group with `rctl` rules (FreeBSD). Synchronous, no async runtime; `unsafe` only in `sys`. `bulkhead-host`'s `native::helper` is the node's side. |
 | `bulkhead-native` | library and `bulkhead-runner` | The frame protocol between a node and a native app, the channel it travels over (shared-memory rings, the pipes that wake each side, the descriptor socket; feature `channel`), published buckets' snapshot format, the app API for native executables (feature `app`), and `bulkhead-runner` (feature `runner`, default), the launcher that sandboxes itself and loads or executes a native app. `bulkhead-host` takes the protocol, the channel and the snapshot format. |
 | `bulkhead-modbus` | library | The Modbus TCP extension; depends on `bulkhead-host` alone. |
 | `bulkhead-modbus-client` | app library | Apps' client for the Modbus extension: calls through the node (`bulkhead_sdk::extension`). |
@@ -52,7 +59,7 @@ Code areas and their interfaces are listed in ROADMAP.md, "Code areas".
 | Orchestration | `apps`, `pool`, `supervisor`, `upgrade`, `spec` | App sets in dependency order, a root supervisor per app, pools with routing and a blue-green second side, snapshot, restart and blue-green upgrades |
 | Services | `services::{config, keyvalue, groups, logging, secrets, metrics, egress, sockets, sql, extension}`, `metrics` | What apps reach, on the `Service` pattern; extensions from other crates |
 | I/O | `http` (`http::tls`), `listener` | The HTTP ingress (a request is a call to a pool) and listeners (connections passed to the app's instances, many each) |
-| Native apps | `native::{port, cgroup, memory, convert, os}`, `in_process` (feature `test-apps`) | An instance's process through `bulkhead-runner`, its limits, memory reporting and the conversions to the protocol's types; `native::os`, what differs between Linux and FreeBSD (a module per system); apps that run in the instance's task for tests |
+| Native apps | `native::{port, cgroup, memory, convert, os, helper}`, `in_process` (feature `test-apps`) | An instance's process through `bulkhead-runner`, its limits, memory reporting and the conversions to the protocol's types; `native::os`, what differs between Linux and FreeBSD (a module per system); `native::helper`, the node's connection to the privileged helper, which starts the process instead under `[priv]`; apps that run in the instance's task for tests |
 | Cluster | `transport::{liveness, membership, wire, quic, memory, lane}`, `failover::{node, witness}`, `replication::{core, log}`, `handover`, `formats` | Frames between nodes, heartbeats and sessions, joining, QUIC with pinned keys, the in-memory mesh for tests, the HA pair and witness, replicated buckets, singletons moved with their state, the pair's version for what is kept |
 | Observability | `probe`, `metrics` | USDT probes on the message path; Prometheus text |
 
@@ -402,7 +409,8 @@ A node runs one tokio multi-threaded runtime, one worker per core by default.
 | blocking pool | on demand | bundle verify, `disk` bucket transactions (redb), secret file reads | per job |
 | Instance task (callback loop) | 1 per instance | `Runtime::spawn` | instance exit |
 | Health check | 1 per instance of an app with `health` | the instance task | instance exit |
-| App process (an OS process, not a node thread) | 1 per native instance | the instance task, through `native::port` | instance exit, or the node's (parent-death signal) |
+| App process (an OS process, not a node thread) | 1 per native instance | the instance task, through `native::port`; under `[priv]` the helper, at the port's request | instance exit, or the node's (parent-death signal; under `[priv]` the helper kills them when the node goes) |
+| The helper's connection (an OS thread with a runtime of its own) | 1 per node, with `[priv]` | `native::helper::PrivHelper` | the node's exit |
 | Native process task: stdout and stderr to log lines | 1 per native instance | `native::port` | process exit |
 | Publishing thread (an OS thread): published buckets' snapshots | 1 per node, from the first native instance that reads a published bucket | `services::keyvalue::publish` | the keyvalue store's drop |
 | Timer | 1 per pending `send_after` | `process` | fires or is cancelled |
