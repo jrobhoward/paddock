@@ -1,0 +1,9 @@
+# S37 split: Linux 6.8.0-146-generic x86_64, 16 CPUs, pool 4; load 5.98
+ingress, a call         conns=1 body=0 tls=false: 11343 req/s, p50 85.8 µs, p99 130.8 µs, 103.1 µs CPU/req (node+instances), errors 0
+driver, answered itself conns=1 body=0 tls=false: 28052 req/s, p50 33.4 µs, p99 63.9 µs, 80.0 µs CPU/req (node+instances), errors 0
+driver, a call          conns=1 body=0 tls=false: 14111 req/s, p50 66.3 µs, p99 125.6 µs, 166.8 µs CPU/req (node+instances), errors 0
+ingress, a call         conns=32 body=0 tls=false: 78668 req/s, p50 331.4 µs, p99 1371.5 µs, 67.1 µs CPU/req (node+instances), errors 0
+driver, answered itself conns=32 body=0 tls=false: 83981 req/s, p50 286.1 µs, p99 1881.7 µs, 64.2 µs CPU/req (node+instances), errors 0
+driver, a call          conns=32 body=0 tls=false: 41164 req/s, p50 767.0 µs, p99 1208.0 µs, 176.5 µs CPU/req (node+instances), errors 0
+driver x8, a call      conns=32 body=0 tls=false: 65823 req/s, p50 474.4 µs, p99 828.3 µs, 155.0 µs CPU/req (node+instances), errors 0
+driver x8, a call      conns=256 body=0 tls=false: 69342 req/s, p50 3714.1 µs, p99 5512.6 µs, 149.8 µs CPU/req (node+instances), errors 0

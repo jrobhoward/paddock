@@ -1,0 +1,9 @@
+# S37: HTTP ingress as a driver app. Standalone: built from this directory
+# alone on each machine (`cargo build --release`), against the main
+# workspace's crates by path.
+[workspace]
+resolver = "3"
+members = ["app", "driver", "bench"]
+
+[profile.release]
+debug = 1

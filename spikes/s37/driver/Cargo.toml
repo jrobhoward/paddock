@@ -1,0 +1,11 @@
+[package]
+name = "s37-driver"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bulkhead-sdk = { path = "../../../crates/bulkhead-sdk", features = ["connection", "http"] }
+httparse = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }

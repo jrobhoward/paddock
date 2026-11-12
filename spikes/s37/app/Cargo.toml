@@ -1,0 +1,8 @@
+[package]
+name = "s37-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bulkhead-sdk = { path = "../../../crates/bulkhead-sdk", features = ["http"] }

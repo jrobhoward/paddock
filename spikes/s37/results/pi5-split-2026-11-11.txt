@@ -1,0 +1,9 @@
+# S37 split: Linux 7.0.0-1020-raspi aarch64, 4 CPUs, pool 4; load 0.26
+ingress, a call         conns=1 body=0 tls=false: 14836 req/s, p50 66.1 µs, p99 97.0 µs, 80.0 µs CPU/req (node+instances), errors 0
+driver, answered itself conns=1 body=0 tls=false: 32226 req/s, p50 27.1 µs, p99 80.8 µs, 71.7 µs CPU/req (node+instances), errors 0
+driver, a call          conns=1 body=0 tls=false: 13586 req/s, p50 72.6 µs, p99 132.1 µs, 171.1 µs CPU/req (node+instances), errors 0
+ingress, a call         conns=32 body=0 tls=false: 53016 req/s, p50 375.9 µs, p99 2489.3 µs, 52.9 µs CPU/req (node+instances), errors 0
+driver, answered itself conns=32 body=0 tls=false: 39178 req/s, p50 644.4 µs, p99 3574.1 µs, 80.6 µs CPU/req (node+instances), errors 0
+driver, a call          conns=32 body=0 tls=false: 20338 req/s, p50 1385.9 µs, p99 4476.8 µs, 151.1 µs CPU/req (node+instances), errors 0
+driver x8, a call      conns=32 body=0 tls=false: 24098 req/s, p50 1118.0 µs, p99 5080.2 µs, 137.4 µs CPU/req (node+instances), errors 0
+driver x8, a call      conns=256 body=0 tls=false: 22800 req/s, p50 10700.1 µs, p99 20178.7 µs, 145.5 µs CPU/req (node+instances), errors 0
