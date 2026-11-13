@@ -17,7 +17,8 @@
 //! pids_max = 4096
 //! ports = 80, 443                                   # ports below 1024 the node may have bound
 //! cgroup = /sys/fs/cgroup/system.slice/bulkhead.service  # Linux: a cgroup delegated to the helper
-//! tmp_size = 16MiB                                  # Linux: each instance's private /tmp
+//! tmp_size = 16MiB                                  # each instance's private /tmp
+//! devfs_ruleset = 4290                              # FreeBSD: the devfs ruleset the helper defines for jails
 //! ```
 
 use std::ops::RangeInclusive;
@@ -52,8 +53,12 @@ pub struct Config {
     /// Linux: the cgroup v2 directory delegated to the helper; required
     /// there.
     pub cgroup: Option<PathBuf>,
-    /// Linux: the size of each instance's private `/tmp`.
+    /// The size of each instance's private `/tmp`.
     pub tmp_size: u64,
+    /// FreeBSD: the number of the devfs ruleset the helper defines at its
+    /// start for its jails' `/dev` (`null`, `zero`, `random`, `urandom`,
+    /// `pvclock`); any ruleset of that number is replaced.
+    pub devfs_ruleset: u16,
 }
 
 impl Config {
@@ -152,6 +157,15 @@ impl Config {
                 Some(v) => size(v).ok_or("tmp_size is not a size")?,
                 None => 16 << 20,
             },
+            devfs_ruleset: match kv.get("devfs_ruleset") {
+                // 0 is no ruleset; 1 to 4 are the system's (devfs.rules).
+                Some(v) => v
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 4)
+                    .ok_or("devfs_ruleset is not a number above 4")?,
+                None => 4290,
+            },
         })
     }
 
@@ -177,7 +191,7 @@ impl Config {
     }
 }
 
-const KEYS: [&str; 13] = [
+const KEYS: [&str; 14] = [
     "node",
     "node_args",
     "node_uid",
@@ -191,6 +205,7 @@ const KEYS: [&str; 13] = [
     "ports",
     "cgroup",
     "tmp_size",
+    "devfs_ruleset",
 ];
 
 fn list(v: &str) -> impl Iterator<Item = &str> {

@@ -200,7 +200,7 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
 - `crates/bulkhead-priv`: the privileged helper (ROADMAP PS1), a root
   binary: starts the node under its user and each native instance under
   its app's, in a cgroup, namespaces and a minimal root (Linux) or a
-  process group with `rctl` rules (FreeBSD). Synchronous, no tokio; all
+  jail with `rctl` rules (FreeBSD). Synchronous, no tokio; all
   its `unsafe` in `sys` (the crate denies it elsewhere); every check from
   its own configuration, never the node's. `crates/bulkhead-priv-wire`
   is the message format it shares with the node (`forbid(unsafe_code)`,

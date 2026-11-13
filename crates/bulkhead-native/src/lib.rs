@@ -14,8 +14,9 @@
 //! - `app` (feature `app`): a native app as an executable, with the
 //!   process functions.
 //! - `runner` (feature `runner`, Linux and FreeBSD): `bulkhead-runner`,
-//!   the launcher that restricts itself (Linux; FreeBSD's fences are
-//!   ROADMAP FB2) and then loads a rustbridge plugin or executes the app.
+//!   the launcher that restricts itself (Landlock and seccomp on Linux,
+//!   Capsicum on FreeBSD) and then loads a rustbridge plugin or executes
+//!   the app.
 
 pub mod driver;
 pub mod hot;

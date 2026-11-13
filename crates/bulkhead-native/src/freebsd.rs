@@ -137,3 +137,79 @@ pub fn limit_rights(fd: std::os::fd::RawFd, list: &[u64]) -> io::Result<()> {
         Err(io::Error::last_os_error())
     }
 }
+
+/// `clock_nanosleep` for an app in capability mode. FreeBSD 15.0 refuses
+/// it there (`ECAPMODE`, and libc returns -1 rather than the error number
+/// POSIX asks for), where `nanosleep` is allowed; Rust's
+/// `std::thread::sleep` uses it on FreeBSD and panics on the refusal (the
+/// FreeBSD VM, 2026-11-12). Defined in the app's executable, this takes
+/// the place of libc's for std and the app's own code: it calls the
+/// system call and, refused, sleeps with `nanosleep`, an absolute time
+/// first made relative with `clock_gettime`. It returns the error number,
+/// as POSIX says.
+///
+/// # Safety
+///
+/// `rqtp` points to a valid `timespec`; `rmtp` is null or points to one.
+#[cfg(feature = "app")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn clock_nanosleep(
+    clock: libc::clockid_t,
+    flags: libc::c_int,
+    rqtp: *const libc::timespec,
+    rmtp: *mut libc::timespec,
+) -> libc::c_int {
+    unsafe extern "C" {
+        fn __sys_clock_nanosleep(
+            clock: libc::clockid_t,
+            flags: libc::c_int,
+            rqtp: *const libc::timespec,
+            rmtp: *mut libc::timespec,
+        ) -> libc::c_int;
+    }
+    let errno = || {
+        io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EINVAL)
+    };
+    // SAFETY: the caller's pointers, passed on as given.
+    if unsafe { __sys_clock_nanosleep(clock, flags, rqtp, rmtp) } == 0 {
+        return 0;
+    }
+    let e = errno();
+    if e != libc::ECAPMODE {
+        return e;
+    }
+    // SAFETY: the caller's `rqtp` is valid.
+    let mut req = unsafe { *rqtp };
+    let mut rem = rmtp;
+    if flags & libc::TIMER_ABSTIME != 0 {
+        // SAFETY: a zeroed `timespec` is valid; an out parameter.
+        let mut now: libc::timespec = unsafe { std::mem::zeroed() };
+        // SAFETY: as above.
+        if unsafe { libc::clock_gettime(clock, &raw mut now) } != 0 {
+            return errno();
+        }
+        let mut sec = req.tv_sec - now.tv_sec;
+        let mut nsec = req.tv_nsec - now.tv_nsec;
+        if nsec < 0 {
+            sec -= 1;
+            nsec += 1_000_000_000;
+        }
+        if sec < 0 {
+            return 0;
+        }
+        req = libc::timespec {
+            tv_sec: sec,
+            tv_nsec: nsec,
+        };
+        // POSIX: no remainder for an absolute sleep.
+        rem = std::ptr::null_mut();
+    }
+    // SAFETY: `req` on the stack; `rem` null or the caller's.
+    if unsafe { libc::nanosleep(&raw const req, rem) } == 0 {
+        0
+    } else {
+        errno()
+    }
+}

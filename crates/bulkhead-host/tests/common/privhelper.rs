@@ -66,6 +66,18 @@ pub struct Started {
 
 impl Drop for Started {
     fn drop(&mut self) {
+        // `SIGTERM` first: the helper ends its instances and removes what
+        // it made for them (on FreeBSD, their jails' mounts).
+        if let Some(pid) = rustix::process::Pid::from_raw(self.child.id() as i32) {
+            let _ = rustix::process::kill_process(pid, rustix::process::Signal::TERM);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         if let Some(cg) = &self.cgroup {

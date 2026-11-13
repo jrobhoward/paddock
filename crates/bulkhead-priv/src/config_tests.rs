@@ -32,6 +32,7 @@ fn parse____a_full_file____every_value() {
     assert_eq!(c.ports, [80, 443]);
     assert_eq!(c.tmp_size, 16 << 20);
     assert!(c.cgroup.is_some());
+    assert_eq!(c.devfs_ruleset, 4290);
 }
 
 #[rstest]
@@ -49,6 +50,7 @@ fn parse____a_full_file____every_value() {
     "binds = /var/../etc",
     "absolute path"
 )]
+#[case("ports = 80, 443", "devfs_ruleset = 4", "above 4")]
 #[case(
     "runner = /usr/local/libexec/bulkhead-runner",
     "runner = bulkhead-runner",

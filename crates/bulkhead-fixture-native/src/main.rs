@@ -22,6 +22,8 @@
 //! | `published BUCKET` | the revision of the published snapshot it reads `BUCKET` from, or `none` |
 //! | `fd ID` | what the descriptor the node passed as `ID` reads (up to 1 KiB), or `err:` |
 //! | `alloc MIB` | `ok` once allocated and touched |
+//! | `forks N MIB` | `made=… alive=… last=PID err=…`: `N` children forked, each touching `MIB` MiB and sleeping a minute, counted 200 ms later |
+//! | `threads N` | `made=… err=…`: `N` threads started, parked for good |
 //! | `hold MIB` | `ok` once allocated, touched and kept |
 //! | `read PATH`, `write PATH`, `connect ADDR`, `exec`, `kill PID`, `io-uring` (set up a ring), `shrink-channel` (truncate the channel's memfd to nothing), `user-namespace` (fork into a new user namespace) | `ok` or `err:` and the OS error |
 //! | `memfd` | nothing: making a memfd is outside the seccomp allow-list, and the instance ends |

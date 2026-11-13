@@ -661,3 +661,12 @@ pub fn kill_all(insts: &[&Instance]) {
 fn cstring(s: &str) -> io::Result<CString> {
     CString::new(s).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in a string"))
 }
+
+/// Nothing is left mounted on Linux: an instance's root is in its own
+/// mount namespace, gone with it.
+pub fn retry_pending(_st: &State) -> Option<std::time::Duration> {
+    None
+}
+
+/// As [`retry_pending`].
+pub fn unmount_all(_st: &State) {}

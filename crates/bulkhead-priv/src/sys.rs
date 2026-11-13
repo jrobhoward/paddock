@@ -3,8 +3,10 @@
 //!
 //! - Starting processes: `fork` and `clone3` (Linux), `pdfork` (FreeBSD),
 //!   `execve` with a prepared argument and environment list, `_exit`.
-//! - FreeBSD: `rctl` rules, a process descriptor's signal (`pdkill`), and
-//!   a kqueue of process descriptors (`EVFILT_PROCDESC`).
+//! - FreeBSD: `rctl` rules, a process descriptor's signal (`pdkill`), a
+//!   kqueue of process descriptors (`EVFILT_PROCDESC`), and jails:
+//!   `nmount`, `unmount`, `getfsstat`, `jail_set`, `jail_attach`,
+//!   `jail_remove`.
 //! - A signal handler that writes the signal's number to a pipe, so the
 //!   helper's one `poll` sees signals too.
 //! - `close_range`, for a child before it executes.
@@ -498,4 +500,224 @@ pub fn drop_to(uid: u32, gid: u32) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Name and value pairs for `nmount` and `jail_set`, each a
+/// NUL-terminated name and a value (a NUL-terminated string, a native
+/// int, or nothing for a flag), with room for the kernel's error message.
+#[cfg(target_os = "freebsd")]
+pub struct Params {
+    bufs: Vec<Vec<u8>>,
+}
+
+#[cfg(target_os = "freebsd")]
+impl Params {
+    /// No parameters.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { bufs: Vec::new() }
+    }
+
+    /// Add `name` with a string value.
+    ///
+    /// # Errors
+    ///
+    /// A NUL inside `name` or `value`.
+    pub fn text(mut self, name: &str, value: &[u8]) -> io::Result<Self> {
+        let nul = |b: &[u8]| {
+            CString::new(b.to_vec())
+                .map(CString::into_bytes_with_nul)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in a parameter"))
+        };
+        self.bufs.push(nul(name.as_bytes())?);
+        self.bufs.push(nul(value)?);
+        Ok(self)
+    }
+
+    /// Add `name` with a native int value.
+    ///
+    /// # Errors
+    ///
+    /// A NUL inside `name`.
+    pub fn int(mut self, name: &str, value: libc::c_int) -> io::Result<Self> {
+        self.bufs.push(
+            CString::new(name)
+                .map(CString::into_bytes_with_nul)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in a parameter"))?,
+        );
+        self.bufs.push(value.to_ne_bytes().to_vec());
+        Ok(self)
+    }
+
+    /// Add `name` as a flag, with no value.
+    ///
+    /// # Errors
+    ///
+    /// A NUL inside `name`.
+    pub fn flag(mut self, name: &str) -> io::Result<Self> {
+        self.bufs.push(
+            CString::new(name)
+                .map(CString::into_bytes_with_nul)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a NUL in a parameter"))?,
+        );
+        self.bufs.push(Vec::new());
+        Ok(self)
+    }
+
+    /// Call `f` with the parameters as an iovec array (the error message
+    /// buffer last); the kernel's message joins its error.
+    fn call(
+        &mut self,
+        what: &str,
+        f: impl FnOnce(*mut libc::iovec, libc::c_uint) -> libc::c_int,
+    ) -> io::Result<libc::c_int> {
+        let mut errmsg = [0u8; 256];
+        let mut name = *b"errmsg\0";
+        let mut iov: Vec<libc::iovec> = self
+            .bufs
+            .iter_mut()
+            .map(|b| libc::iovec {
+                iov_base: b.as_mut_ptr().cast(),
+                iov_len: b.len(),
+            })
+            .collect();
+        iov.push(libc::iovec {
+            iov_base: name.as_mut_ptr().cast(),
+            iov_len: name.len(),
+        });
+        iov.push(libc::iovec {
+            iov_base: errmsg.as_mut_ptr().cast(),
+            iov_len: errmsg.len(),
+        });
+        let n = libc::c_uint::try_from(iov.len()).map_err(io::Error::other)?;
+        let r = f(iov.as_mut_ptr(), n);
+        if r >= 0 {
+            return Ok(r);
+        }
+        let e = io::Error::last_os_error();
+        let len = errmsg.iter().position(|&b| b == 0).unwrap_or(0);
+        let msg = String::from_utf8_lossy(&errmsg[..len]);
+        Err(io::Error::new(
+            e.kind(),
+            if msg.is_empty() {
+                format!("{what}: {e}")
+            } else {
+                format!("{what}: {e}: {msg}")
+            },
+        ))
+    }
+
+    /// Mount with these parameters (`fstype`, `fspath`, ...) and `flags`
+    /// (`MNT_RDONLY`, ...).
+    ///
+    /// # Errors
+    ///
+    /// The kernel refused, with its message.
+    pub fn nmount(mut self, flags: libc::c_int) -> io::Result<()> {
+        // SAFETY: `iov` points into buffers `self` and `call` keep alive
+        // for the call; the kernel writes only into the message buffer.
+        self.call("nmount", |iov, n| unsafe { libc::nmount(iov, n, flags) })
+            .map(drop)
+    }
+
+    /// Create or update a jail with these parameters (`JAIL_CREATE`,
+    /// `JAIL_UPDATE`); its id.
+    ///
+    /// # Errors
+    ///
+    /// The kernel refused, with its message.
+    pub fn jail_set(mut self, flags: libc::c_int) -> io::Result<i32> {
+        // SAFETY: as for `nmount`.
+        self.call("jail_set", |iov, n| unsafe {
+            libc::jail_set(iov, n, flags)
+        })
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+impl Default for Params {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Unmount `path`; `force` with `MNT_FORCE`.
+///
+/// # Errors
+///
+/// The kernel refused (`EBUSY` while a dying jail still holds it).
+#[cfg(target_os = "freebsd")]
+pub fn unmount(path: &CStr, force: bool) -> io::Result<()> {
+    let flags = if force { libc::MNT_FORCE } else { 0 };
+    // SAFETY: a NUL-terminated path.
+    if unsafe { libc::unmount(path.as_ptr(), flags) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// The mount points of every mounted filesystem.
+///
+/// # Errors
+///
+/// The kernel refused.
+#[cfg(target_os = "freebsd")]
+pub fn mount_points() -> io::Result<Vec<std::path::PathBuf>> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: a null buffer asks only for the count.
+    let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+    if n < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Room for mounts made since.
+    let room = usize::try_from(n).unwrap_or(0) + 16;
+    // SAFETY: `statfs` is plain data, valid zeroed.
+    let mut buf: Vec<libc::statfs> = vec![unsafe { std::mem::zeroed() }; room];
+    let bytes = libc::c_long::try_from(room * std::mem::size_of::<libc::statfs>())
+        .map_err(io::Error::other)?;
+    // SAFETY: `buf` holds `bytes` bytes of `statfs`.
+    let got = unsafe { libc::getfsstat(buf.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+    if got < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    buf.truncate(usize::try_from(got).unwrap_or(0));
+    Ok(buf
+        .iter()
+        .map(|s| {
+            // SAFETY: the kernel NUL-terminates `f_mntonname` within it.
+            let name = unsafe { CStr::from_ptr(s.f_mntonname.as_ptr()) };
+            std::path::PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes()))
+        })
+        .collect())
+}
+
+/// Attach this process to jail `jid` (a child, before its user drop).
+///
+/// # Errors
+///
+/// The kernel refused.
+#[cfg(target_os = "freebsd")]
+pub fn jail_attach(jid: i32) -> io::Result<()> {
+    // SAFETY: takes no pointers.
+    if unsafe { libc::jail_attach(jid) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Remove jail `jid`, killing every process in it.
+///
+/// # Errors
+///
+/// The kernel refused (`EINVAL`: no such jail).
+#[cfg(target_os = "freebsd")]
+pub fn jail_remove(jid: i32) -> io::Result<()> {
+    // SAFETY: takes no pointers.
+    if unsafe { libc::jail_remove(jid) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }

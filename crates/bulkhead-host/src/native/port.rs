@@ -60,8 +60,8 @@ const EXIT_GRACE: Duration = Duration::from_secs(1);
 /// Linux's `RLIMIT_DATA` counts private writable mappings, so every
 /// allocation. FreeBSD's counts only `brk`, which its malloc does not use,
 /// so there it is `RLIMIT_AS`: the whole address space, mapped libraries
-/// and thread stacks included, a stricter count than memory in use, until
-/// the privileged helper sets `rctl` rules (ROADMAP PS1, FB2).
+/// and thread stacks included, a stricter count than memory in use; the
+/// privileged helper adds `rctl` rules on the instance's jail.
 #[cfg(target_os = "linux")]
 const MEMORY_RESOURCE: rustix::process::Resource = rustix::process::Resource::Data;
 #[cfg(target_os = "freebsd")]

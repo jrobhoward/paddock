@@ -6,7 +6,9 @@
 //!
 //! On Linux the parent restricts itself too: Landlock with no access at
 //! all, and the app's seccomp filter with signals allowed to the child as
-//! well as itself (FreeBSD's fence is ROADMAP FB2). It keeps only the
+//! well as itself. On FreeBSD it stays outside capability mode, which
+//! would refuse its `kill` of the child by pid (the child enters it before
+//! the app runs, ROADMAP FB2). It keeps only the
 //! lease pipe and stderr open; the child's death signal is `SIGKILL`, so
 //! killing the runner, as the node does, kills the app. It learns of the
 //! child's exit from a pidfd on Linux and a kqueue's `NOTE_EXIT` on

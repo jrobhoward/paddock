@@ -385,6 +385,30 @@ impl Fixture {
                 self.held.push(std::hint::black_box(vec![1u8; mib << 20]));
                 "ok".into()
             }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            "forks" => {
+                let (n, mib) = rest.split_once(' ').unwrap_or((rest, "0"));
+                forks(n.parse().unwrap_or(0), mib.parse().unwrap_or(0))
+            }
+            "threads" => {
+                let n: usize = rest.parse().unwrap_or(0);
+                let mut made = 0;
+                let mut err = "none".to_string();
+                for _ in 0..n {
+                    match std::thread::Builder::new().stack_size(256 << 10).spawn(|| {
+                        loop {
+                            std::thread::park();
+                        }
+                    }) {
+                        Ok(_) => made += 1,
+                        Err(e) => {
+                            err = e.to_string();
+                            break;
+                        }
+                    }
+                }
+                format!("made={made} err={err}")
+            }
             "alloc" => {
                 let mib: usize = rest.parse().unwrap_or(0);
                 let v = vec![1u8; mib << 20];
@@ -851,4 +875,51 @@ fn extension(ctx: &mut Ctx, package: &str, rest: &str) -> String {
         },
         Err(e) => format!("err:{e:?}"),
     }
+}
+
+/// `forks N MIB`: fork `n` children, each touching `mib` MiB and then
+/// sleeping a minute (no exec: capability mode refuses it); after 200 ms,
+/// how many were made, how many still live, the last one's pid
+/// and the first refusal.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn forks(n: usize, mib: usize) -> String {
+    let mut pids = Vec::new();
+    let mut err = "none".to_string();
+    for _ in 0..n {
+        // SAFETY: the child makes only async-signal-safe calls (`malloc`
+        // aside, which FreeBSD's and glibc's allow after `fork`) and exits.
+        match unsafe { libc::fork() } {
+            // SAFETY: in the child: its own heap and libc calls, then exit.
+            0 => unsafe {
+                if mib > 0 {
+                    let p = libc::malloc(mib << 20);
+                    if p.is_null() {
+                        libc::_exit(3);
+                    }
+                    libc::memset(p, 1, mib << 20);
+                }
+                libc::sleep(60);
+                libc::_exit(0)
+            },
+            -1 => {
+                err = std::io::Error::last_os_error().to_string();
+                break;
+            }
+            pid => pids.push(pid),
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let alive = pids
+        .iter()
+        .filter(|&&pid| {
+            let mut status = 0;
+            // SAFETY: an out parameter on the stack; this process's child.
+            unsafe { libc::waitpid(pid, &raw mut status, libc::WNOHANG) == 0 }
+        })
+        .count();
+    format!(
+        "made={} alive={alive} last={} err={err}",
+        pids.len(),
+        pids.last().copied().unwrap_or(0)
+    )
 }

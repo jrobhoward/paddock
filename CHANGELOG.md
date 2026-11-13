@@ -8,6 +8,18 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Under the privileged helper on FreeBSD each native instance runs in a
+  jail of its own (ROADMAP FB2): a root on a small tmpfs with read-only
+  views of the system libraries, the runner's directory and the instance's
+  directories, a devfs with the helper's ruleset (`devfs_ruleset`, new key,
+  default 4290) and a private `/tmp` (`tmp_size`, now on FreeBSD too); no
+  network addresses; `rctl` rules on the jail (`vmemoryuse`, `memoryuse`,
+  `maxproc`, `nthr`) in place of the per-process ones. A kill removes the
+  jail, which ends what the app forked.
+- Native apps on FreeBSD can sleep: `bulkhead_native` gives the app a
+  `clock_nanosleep` that falls back to `nanosleep` where FreeBSD 15.0
+  refuses it in capability mode, which made `std::thread::sleep` panic.
+
 - Native apps on FreeBSD run in Capsicum capability mode (ROADMAP FB2,
   first half): `bulkhead-runner` limits each inherited descriptor's rights,
   opens each preopen as a directory descriptor (`BULKHEAD_PREOPEN_FDS`),

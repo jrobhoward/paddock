@@ -353,6 +353,7 @@ version = "0.3.0"
 dependencies = [
  "bulkhead-native",
  "ciborium",
+ "libc",
  "rustix",
  "serde_json",
 ]

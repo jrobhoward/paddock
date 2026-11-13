@@ -142,7 +142,14 @@ impl Helper {
                 PollFd::new(signals, PollFlags::IN),
             ];
             fds.extend(exit_fds.iter().map(|fd| PollFd::new(fd, PollFlags::IN)));
-            if let Err(e) = rustix::event::poll(&mut fds, None)
+            // Roots a dying jail still held (FreeBSD) are retried soon.
+            let retry = platform::retry_pending(&self.st).and_then(|d| {
+                Some(rustix::event::Timespec {
+                    tv_sec: 0,
+                    tv_nsec: i64::try_from(d.as_nanos()).ok()?,
+                })
+            });
+            if let Err(e) = rustix::event::poll(&mut fds, retry.as_ref())
                 && e != rustix::io::Errno::INTR
             {
                 eprintln!("bulkhead-priv: poll: {e}");
@@ -177,6 +184,7 @@ impl Helper {
             }
         }
         self.drain();
+        platform::unmount_all(&self.st);
         match node_status.or_else(|| node.and_then(platform::wait_node)) {
             Some((Some(code), _)) => code,
             Some((_, Some(signal))) => 128 + signal,

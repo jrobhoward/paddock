@@ -552,3 +552,19 @@ async fn executable____priv_files____readable_at_bulkhead_priv() {
     assert_eq!(found, "ok");
     assert!(missing.starts_with("err:"), "{missing}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn executable____forks_and_sleeps____served_on() {
+    let rt = runtime(|_| {});
+    let app = executable(&rt);
+    let instance = start(&rt, &app).await;
+
+    // `forks` sleeps 200 ms with `std::thread::sleep`, which on
+    // FreeBSD is `clock_nanosleep`, refused in capability mode but for
+    // `bulkhead_native`'s own.
+    let forked = ask(&instance, "forks 1 0").await;
+    let after = ask(&instance, "echo still here").await;
+
+    assert!(forked.starts_with("made=1 alive=1 "), "{forked}");
+    assert_eq!(after, "still here");
+}

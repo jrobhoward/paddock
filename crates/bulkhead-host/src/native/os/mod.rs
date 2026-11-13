@@ -15,8 +15,8 @@
 //! shared memory object on FreeBSD, with the same seals), the
 //! parent-death signal (`prctl` or `procctl`), `RLIMIT_DATA`. What stays
 //! Linux's alone: cgroups (`native::cgroup`; FreeBSD's `rctl` needs root,
-//! so it comes with the helper, ROADMAP PS1 and FB2), the seccomp filter's
-//! refused calls (`native::syscalls`), and the runner's sandbox.
+//! so it comes with the helper's jails), and the seccomp filter's refused
+//! calls (`native::syscalls`).
 
 #[cfg(target_os = "freebsd")]
 mod freebsd;
