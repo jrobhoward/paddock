@@ -370,6 +370,35 @@ fn handle(hub: &Arc<Hub>, states: &mut SenderStates, request: Request) -> Handle
                 )
             }))
         }
+        Request::CallApp {
+            app,
+            msg,
+            timeout_ms,
+        } => {
+            let hub = hub.clone();
+            Handled::Later(Box::pin(async move {
+                let ctx = &hub.ctx;
+                let msg = convert::host_envelope(msg);
+                let result = match ctx.rt.route_app(&app, &msg) {
+                    Some(target) => {
+                        delivery::call(
+                            &ctx.rt,
+                            Origin::Local(&ctx.me),
+                            target.pid(),
+                            msg,
+                            Duration::from_millis(timeout_ms.into()),
+                        )
+                        .await
+                    }
+                    None => Err(CallError::Noproc),
+                };
+                Answer::Called(
+                    result
+                        .map(convert::envelope)
+                        .map_err(|e| convert::call_error(&e)),
+                )
+            }))
+        }
         // A watch's notices go to the instance's mailbox and count against
         // its `watches_max`: watches are the callback thread's.
         Request::Kv(KvRequest::Watch { .. } | KvRequest::Unwatch(_)) => {

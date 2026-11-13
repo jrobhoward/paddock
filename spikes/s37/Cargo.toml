@@ -3,7 +3,7 @@
 # workspace's crates by path.
 [workspace]
 resolver = "3"
-members = ["app", "driver", "bench"]
+members = ["app", "driver", "driver-da1", "bench"]
 
 [profile.release]
 debug = 1

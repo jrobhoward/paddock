@@ -326,6 +326,14 @@ orders-data = "/srv/bulkhead/orders"    # backs manifest preopens with volume = 
 address = "0.0.0.0:7070"               # binds a manifest listener named "lines"
 acceptors = 4                          # default 4: tasks accepting connections at once
 
+[drivers.ingress]                      # the app named "ingress", deployed as any app, as a driver app (DA1)
+listeners = { https = "0.0.0.0:8443" } # listening sockets the node binds and keeps; the driver accepts on them
+                                       # itself (inherited at descriptors 8..13, named in BULKHEAD_LISTENERS),
+                                       # accept4 allowed on them alone; at most 6
+files = ["/etc/bulkhead/shop.pem", "/etc/bulkhead/shop.key"]  # read-only, each under /driver/ by its name
+calls = ["shop"]                       # the apps it may send to: its messaging ACL's may_call, in place of its manifest's
+routes = true                          # send it the HTTP route table (host event "routes", GUEST_FORMATS.md)
+
 [secrets.db-password]
 file = "/run/secrets/db-password"      # or env = "DB_PASSWORD"; read on every access
 

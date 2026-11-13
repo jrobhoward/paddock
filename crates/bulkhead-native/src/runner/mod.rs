@@ -1,7 +1,7 @@
 //! `bulkhead-runner`: the launcher a node runs every native app through.
 //!
 //! ```text
-//! bulkhead-runner (--library PATH | --executable PATH) [--read DIR]... [--write DIR]... [--landlock required|best-effort] [--lease]
+//! bulkhead-runner (--library PATH | --executable PATH) [--read DIR]... [--write DIR]... [--landlock required|best-effort] [--lease] [--accept-fd N]...
 //! ```
 //!
 //! In order, before any code from the bundle runs:
@@ -83,6 +83,9 @@ pub struct Args {
     pub landlock_required: bool,
     /// Whether a lease bounds the app ([`crate::lease`]): fork a watchdog.
     pub lease: bool,
+    /// Listening sockets a driver app was passed (ROADMAP DA1), by
+    /// descriptor number: `accept4` is allowed on these alone.
+    pub accept_fds: Vec<i32>,
 }
 
 impl Args {
@@ -98,6 +101,7 @@ impl Args {
         let mut write = Vec::new();
         let mut landlock_required = true;
         let mut lease = false;
+        let mut accept_fds = Vec::new();
         while let Some(flag) = it.next() {
             if flag == crate::lease::FLAG {
                 lease = true;
@@ -109,6 +113,13 @@ impl Args {
                 "--executable" => program = Some(Program::Executable(value()?.into())),
                 "--read" => read.push(value()?.into()),
                 "--write" => write.push(value()?.into()),
+                "--accept-fd" => {
+                    let v = value()?;
+                    accept_fds.push(
+                        v.parse()
+                            .map_err(|_| format!("--accept-fd {v}: a descriptor number"))?,
+                    );
+                }
                 "--landlock" => {
                     landlock_required = match value()?.as_str() {
                         "required" => true,
@@ -128,6 +139,7 @@ impl Args {
             write,
             landlock_required,
             lease,
+            accept_fds,
         })
     }
 }
@@ -166,7 +178,7 @@ pub fn main() -> ExitCode {
         return ExitCode::from(2);
     }
     #[cfg(target_os = "linux")]
-    if let Err(e) = seccomp::install() {
+    if let Err(e) = seccomp::install(&args.accept_fds) {
         eprintln!("bulkhead-runner: seccomp: {e}");
         return ExitCode::from(2);
     }
@@ -181,6 +193,7 @@ pub fn main() -> ExitCode {
                 crate::protocol::PRIV_ENV,
                 crate::preopens::ENV,
                 crate::channel::SPIN_ENV,
+                crate::driver::LISTENERS_ENV,
             ] {
                 if let Some(value) = std::env::var_os(var) {
                     cmd.env(var, value);

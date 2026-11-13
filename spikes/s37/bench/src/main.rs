@@ -18,7 +18,10 @@ use std::time::{Duration, Instant};
 
 use bulkhead_bundle::manifest::{AppInfo, AppManifest, AppSpec, NativeProgram, ProgramRef, Provenance};
 use bulkhead_host::http::{HttpIngress, HttpRoute, IngressListen, IngressTls, TlsCertificate};
-use bulkhead_host::{AppDeployment, ListenerSpec, NativeCode, NativeConfig, Runtime, RuntimeConfig};
+use bulkhead_host::{
+    AppDeployment, DriverListener, DriverProfile, ListenerSpec, NativeCode, NativeConfig, Runtime,
+    RuntimeConfig,
+};
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -70,7 +73,39 @@ async fn serve(runner: PathBuf, app: PathBuf, driver: PathBuf, pool: usize, driv
     let mut native = NativeConfig::default();
     native.runner = Some(runner);
     native.landlock_optional = cfg!(target_os = "freebsd");
-    let rt = Runtime::new(RuntimeConfig { max_instances: 256, native, ..RuntimeConfig::default() }).unwrap();
+    // `S37_DRIVER=da1`: DA1's driver, one process with `drivers` worker
+    // threads, on listeners and certificate files node config would give
+    // it (`[drivers.driver]`), calling `echo` by name.
+    let da1 = std::env::var("S37_DRIVER").is_ok_and(|v| v == "da1");
+    let certs = std::env::temp_dir().join(format!("s37-{}", std::process::id()));
+    std::fs::create_dir_all(&certs).unwrap();
+    let made = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    std::fs::write(certs.join("c.pem"), made.cert.pem()).unwrap();
+    std::fs::write(certs.join("k.pem"), made.signing_key.serialize_pem()).unwrap();
+    let da1_http = Arc::new(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let da1_https = Arc::new(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let mut drivers_config = std::collections::BTreeMap::new();
+    if da1 {
+        drivers_config.insert(
+            "driver".to_string(),
+            DriverProfile {
+                listeners: vec![
+                    DriverListener { name: "http".into(), socket: da1_http.clone() },
+                    DriverListener { name: "https".into(), socket: da1_https.clone() },
+                ],
+                files: vec![certs.join("c.pem"), certs.join("k.pem")],
+                calls: vec!["echo".into()],
+                routes: false,
+            },
+        );
+    }
+    let rt = Runtime::new(RuntimeConfig {
+        max_instances: 256,
+        native,
+        drivers: drivers_config,
+        ..RuntimeConfig::default()
+    })
+    .unwrap();
     let app_code = rt.load_native(NativeCode { path: app, kind: NativeProgram::Executable });
     let driver_code = rt.load_native(NativeCode { path: driver, kind: NativeProgram::Executable });
     let limits = json!({
@@ -95,19 +130,35 @@ async fn serve(runner: PathBuf, app: PathBuf, driver: PathBuf, pool: usize, driv
             } }
         }),
     );
-    let drv = manifest(
-        "driver",
-        json!({
-            "kind": "native-process",
-            "native": { "program": "executable" },
-            "instances": { "count": drivers },
-            "limits": limits,
-            "listeners": [
-                { "name": "http", "idle_timeout_ms": 600000 },
-                { "name": "https", "idle_timeout_ms": 600000 }
-            ]
-        }),
-    );
+    let drv = if da1 {
+        manifest(
+            "driver",
+            json!({
+                "kind": "native-process",
+                "native": { "program": "executable" },
+                "instances": { "count": 1 },
+                "lifecycle": { "start_args": {
+                    "threads": drivers,
+                    "spin_us": std::env::var("S37_DRIVER_SPIN_US").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0)
+                } },
+                "limits": limits
+            }),
+        )
+    } else {
+        manifest(
+            "driver",
+            json!({
+                "kind": "native-process",
+                "native": { "program": "executable" },
+                "instances": { "count": drivers },
+                "limits": limits,
+                "listeners": [
+                    { "name": "http", "idle_timeout_ms": 600000 },
+                    { "name": "https", "idle_timeout_ms": 600000 }
+                ]
+            }),
+        )
+    };
     let routes = HttpRoute::from_manifest(&echo);
     let apps = rt
         .start_apps(vec![AppDeployment::new(echo, app_code), AppDeployment::new(drv, driver_code)])
@@ -115,11 +166,6 @@ async fn serve(runner: PathBuf, app: PathBuf, driver: PathBuf, pool: usize, driv
         .unwrap();
     let ingress = HttpIngress::new(apps.clone());
     ingress.set_routes("echo", routes).unwrap();
-    let certs = std::env::temp_dir().join(format!("s37-{}", std::process::id()));
-    std::fs::create_dir_all(&certs).unwrap();
-    let made = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-    std::fs::write(certs.join("c.pem"), made.cert.pem()).unwrap();
-    std::fs::write(certs.join("k.pem"), made.signing_key.serialize_pem()).unwrap();
     let tls = IngressTls::load(vec![TlsCertificate {
         cert: certs.join("c.pem"),
         key: certs.join("k.pem"),
@@ -135,6 +181,17 @@ async fn serve(runner: PathBuf, app: PathBuf, driver: PathBuf, pool: usize, driv
     };
     let in_http = ingress.listen(big(None)).await.unwrap();
     let in_https = ingress.listen(big(Some(tls))).await.unwrap();
+    if da1 {
+        println!(
+            "ready pid={} ingress-http={in_http} ingress-https={in_https} driver-http={} driver-https={}",
+            std::process::id(),
+            da1_http.local_addr().unwrap(),
+            da1_https.local_addr().unwrap()
+        );
+        std::future::pending::<()>().await;
+        drop((rt, apps, ingress));
+        return;
+    }
     let handle = apps.app("driver").unwrap();
     let listen = |name: &str| {
         let mut s = ListenerSpec::new(name, any);

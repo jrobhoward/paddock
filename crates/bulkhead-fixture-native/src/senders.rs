@@ -12,7 +12,10 @@
 //!
 //! `CMD` is `self`; `selfs N` and `gets B N` (the nanoseconds `N`
 //! requests for its own pid, or `N` gets of key `t` in bucket `B`, took);
-//! `cast PID TEXT`; `call PID TEXT`; `calls PID,PID,.. N`
+//! `cast PID TEXT`; `call PID TEXT`; `call-app APP KEY CMD`;
+//! `calls-app APP N` (`N` calls to the app started together, keys `0` to
+//! `N-1`, each `echo I`, checked against its id: `OK/N`);
+//! `calls PID,PID,.. N`
 //! (`N` calls of `echo I` started together, each answer checked against
 //! its id: `OK/N`); `kv get B K`, `kv set B K V`, `kv incr B K N`,
 //! `kv watch B K`; `metric register NAME` (a counter's id), `metric add
@@ -25,7 +28,7 @@ use bulkhead_native::app::Ctx;
 use bulkhead_native::protocol::{KvAnswer, KvRequest, MetricKind, Request};
 use bulkhead_native::sender::Sender;
 
-use crate::fixture::{parse_pid, pid_text, text};
+use crate::fixture::{keyed, parse_pid, pid_text, text};
 
 /// The fixture's senders, by number; a dropped one leaves its place.
 #[derive(Debug, Default)]
@@ -135,6 +138,29 @@ fn run(s: &mut Sender, cmd: &str) -> String {
             Ok(reply) => String::from_utf8_lossy(&reply.body).into_owned(),
             Err(e) => format!("err:{e:?}"),
         },
+        "call-app" => match s.call_app(arg(1), keyed(arg(2), &rest_from(3)), 5_000) {
+            Ok(reply) => String::from_utf8_lossy(&reply.body).into_owned(),
+            Err(e) => format!("err:{e:?}"),
+        },
+        "calls-app" => {
+            let n: usize = arg(2).parse().unwrap_or(0);
+            let mut expected = HashMap::new();
+            for i in 0..n {
+                let id =
+                    s.start_call_app(arg(1), keyed(&i.to_string(), &format!("echo {i}")), 5_000);
+                expected.insert(id, i.to_string());
+            }
+            let mut ok = 0;
+            while let Some((id, result)) = s.next_answer() {
+                if let Ok(reply) = result
+                    && expected.remove(&id).as_deref()
+                        == Some(&*String::from_utf8_lossy(&reply.body))
+                {
+                    ok += 1;
+                }
+            }
+            format!("{ok}/{n}")
+        }
         "calls" => {
             let targets: Vec<_> = arg(1).split(',').map(pid).collect();
             let n: usize = arg(2).parse().unwrap_or(0);

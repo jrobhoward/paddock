@@ -258,7 +258,46 @@ pub struct RuntimeConfig {
     pub cast_credit_bytes: u64,
     /// Native-process apps.
     pub native: NativeConfig,
+    /// Driver apps (node config `[drivers.<app>]`, ROADMAP DA1): the
+    /// profile each app of that name gets beyond its manifest.
+    pub drivers: BTreeMap<String, DriverProfile>,
 }
+
+/// What node config gives a driver app beyond its manifest (ROADMAP DA1).
+/// A manifest cannot ask for any of it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DriverProfile {
+    /// Listening sockets the node bound for it and keeps, so its restart
+    /// or upgrade keeps the port; each of its processes gets them
+    /// inherited (`bulkhead_native::driver`), with `accept4` allowed on
+    /// them alone. At most `bulkhead_native::driver::MAX_LISTENERS`.
+    pub listeners: Vec<DriverListener>,
+    /// Files it may read (certificates and keys), each under `/driver/`
+    /// by its file name.
+    pub files: Vec<PathBuf>,
+    /// The apps it may send to: its messaging ACL's `may_call`, in place
+    /// of its manifest's.
+    pub calls: Vec<String>,
+    /// Send it the HTTP route table as the host event `routes`.
+    pub routes: bool,
+}
+
+/// A listening socket of a driver app's, by name.
+#[derive(Debug, Clone)]
+pub struct DriverListener {
+    /// The name the driver finds it by.
+    pub name: String,
+    /// The socket, bound by the node.
+    pub socket: std::sync::Arc<std::net::TcpListener>,
+}
+
+impl PartialEq for DriverListener {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && std::sync::Arc::ptr_eq(&self.socket, &other.socket)
+    }
+}
+
+impl Eq for DriverListener {}
 
 /// How a node runs native-process apps.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,6 +426,7 @@ impl Default for RuntimeConfig {
             cast_credit: 64,
             cast_credit_bytes: 1 << 20,
             native: NativeConfig::default(),
+            drivers: BTreeMap::new(),
         }
     }
 }

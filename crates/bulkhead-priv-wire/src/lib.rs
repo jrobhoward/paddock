@@ -24,7 +24,7 @@ pub const MAX_ENV: usize = 16;
 /// The most directories a spawn binds into the instance's root.
 pub const MAX_BINDS: usize = 32;
 /// The most descriptors a spawn passes.
-pub const MAX_FDS: usize = 10;
+pub const MAX_FDS: usize = 14;
 /// The environment variable a node started by the helper finds the
 /// helper's socket in (a descriptor number).
 pub const SOCKET_ENV: &str = "BULKHEAD_PRIV_FD";
@@ -32,9 +32,14 @@ pub const SOCKET_ENV: &str = "BULKHEAD_PRIV_FD";
 pub const MAX_APP_NAME: usize = 64;
 /// The environment variables a spawn may set: the ones
 /// `bulkhead-runner` and the app read (`bulkhead_native`'s `PRIV_ENV`,
-/// `preopens::ENV` and `channel::SPIN_ENV`). The helper refuses any other,
-/// such as `LD_PRELOAD`.
-pub const RUNNER_ENV: [&str; 3] = ["BULKHEAD_PRIV", "BULKHEAD_PREOPENS", "BULKHEAD_SPIN_US"];
+/// `preopens::ENV`, `channel::SPIN_ENV` and `driver::LISTENERS_ENV`). The
+/// helper refuses any other, such as `LD_PRELOAD`.
+pub const RUNNER_ENV: [&str; 4] = [
+    "BULKHEAD_PRIV",
+    "BULKHEAD_PREOPENS",
+    "BULKHEAD_SPIN_US",
+    "BULKHEAD_LISTENERS",
+];
 /// Descriptor numbers a spawn may place descriptors at: stdout, stderr
 /// and 3 to this. The helper gives the instance `/dev/null` as stdin.
 pub const MAX_FD_TARGET: u8 = 15;

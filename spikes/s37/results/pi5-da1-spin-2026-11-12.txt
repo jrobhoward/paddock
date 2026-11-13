@@ -1,0 +1,29 @@
+# DA1's driver, idle spin before poll (init argument spin_us) at 0, 20 and 50 us; Raspberry Pi 5, nice 10, one 10 s run per row, 2026-11-12
+# spin 0 us, load 0.41
+ingress plain conns=1 body=0 tls=false: 14426 req/s, p50 67.7 µs, p99 94.7 µs, 82.7 µs CPU/req (node+instances), errors 0
+driver plain conns=1 body=0 tls=false: 10144 req/s, p50 96.9 µs, p99 133.6 µs, 165.7 µs CPU/req (node+instances), errors 0
+ingress tls conns=1 body=0 tls=true: 13264 req/s, p50 74.4 µs, p99 98.8 µs, 83.8 µs CPU/req (node+instances), errors 0
+driver tls conns=1 body=0 tls=true: 9123 req/s, p50 108.7 µs, p99 139.8 µs, 172.9 µs CPU/req (node+instances), errors 0
+ingress plain conns=32 body=0 tls=false: 50416 req/s, p50 428.2 µs, p99 2600.7 µs, 55.2 µs CPU/req (node+instances), errors 0
+driver plain conns=32 body=0 tls=false: 44213 req/s, p50 597.3 µs, p99 2547.8 µs, 65.8 µs CPU/req (node+instances), errors 0
+ingress tls conns=32 body=0 tls=true: 44486 req/s, p50 507.2 µs, p99 2818.6 µs, 60.6 µs CPU/req (node+instances), errors 0
+driver tls conns=32 body=0 tls=true: 41178 req/s, p50 604.9 µs, p99 3014.2 µs, 70.4 µs CPU/req (node+instances), errors 0
+# spin 20 us, load 0.48
+ingress plain conns=1 body=0 tls=false: 15712 req/s, p50 62.8 µs, p99 83.3 µs, 76.6 µs CPU/req (node+instances), errors 0
+driver plain conns=1 body=0 tls=false: 11149 req/s, p50 88.7 µs, p99 121.8 µs, 174.0 µs CPU/req (node+instances), errors 0
+ingress tls conns=1 body=0 tls=true: 13602 req/s, p50 72.1 µs, p99 106.9 µs, 83.2 µs CPU/req (node+instances), errors 0
+driver tls conns=1 body=0 tls=true: 9882 req/s, p50 99.9 µs, p99 136.3 µs, 182.9 µs CPU/req (node+instances), errors 0
+ingress plain conns=32 body=0 tls=false: 52649 req/s, p50 407.2 µs, p99 2480.4 µs, 52.9 µs CPU/req (node+instances), errors 0
+driver plain conns=32 body=0 tls=false: 47701 req/s, p50 515.5 µs, p99 2504.8 µs, 58.9 µs CPU/req (node+instances), errors 0
+ingress tls conns=32 body=0 tls=true: 46765 req/s, p50 491.3 µs, p99 2731.8 µs, 56.9 µs CPU/req (node+instances), errors 0
+driver tls conns=32 body=0 tls=true: 37127 req/s, p50 747.6 µs, p99 2817.5 µs, 77.1 µs CPU/req (node+instances), errors 0
+# spin 50 us, load 0.47
+ingress plain conns=1 body=0 tls=false: 15474 req/s, p50 63.2 µs, p99 91.7 µs, 76.2 µs CPU/req (node+instances), errors 0
+driver plain conns=1 body=0 tls=false: 11342 req/s, p50 87.2 µs, p99 119.5 µs, 174.1 µs CPU/req (node+instances), errors 0
+ingress tls conns=1 body=0 tls=true: 13076 req/s, p50 74.4 µs, p99 113.6 µs, 85.3 µs CPU/req (node+instances), errors 0
+driver tls conns=1 body=0 tls=true: 10418 req/s, p50 95.0 µs, p99 130.1 µs, 180.4 µs CPU/req (node+instances), errors 0
+ingress plain conns=32 body=0 tls=false: 52504 req/s, p50 396.3 µs, p99 2602.9 µs, 52.1 µs CPU/req (node+instances), errors 0
+driver plain conns=32 body=0 tls=false: 50789 req/s, p50 406.9 µs, p99 2937.8 µs, 57.2 µs CPU/req (node+instances), errors 0
+ingress tls conns=32 body=0 tls=true: 47619 req/s, p50 411.4 µs, p99 2761.9 µs, 55.7 µs CPU/req (node+instances), errors 0
+driver tls conns=32 body=0 tls=true: 43972 req/s, p50 516.6 µs, p99 3007.5 µs, 65.7 µs CPU/req (node+instances), errors 0
+

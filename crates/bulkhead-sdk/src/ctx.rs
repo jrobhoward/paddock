@@ -98,6 +98,28 @@ impl Ctx {
             .map_err(Into::into)
     }
 
+    /// Call the app called `app` on this node: the node picks the instance
+    /// by the app's `instances.routing` (a hash of the message's routing
+    /// key, or round robin), as its HTTP ingress does. Messaging ACLs apply
+    /// as for [`Ctx::call`].
+    ///
+    /// # Errors
+    ///
+    /// The [`CallError`] if there is no reply: [`CallError::Noproc`] when
+    /// the app does not run on this node.
+    pub fn call_app(
+        &mut self,
+        app: &str,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<Envelope, CallError> {
+        let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
+        Node::current()
+            .call_app(app, msg.into(), ms)
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
     /// Answer a call that returned [`Reply::Later`](crate::Reply::Later).
     /// A second answer to the same call is dropped.
     pub fn reply(&mut self, call: CallRef, msg: Envelope) {

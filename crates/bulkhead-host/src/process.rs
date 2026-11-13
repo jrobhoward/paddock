@@ -159,6 +159,20 @@ impl InstanceState {
         Ok(delivery::call(&self.ctx.rt, Origin::Local(&self.ctx.me), to, msg, timeout).await)
     }
 
+    /// Call the app called `app` on this node, the instance its routing
+    /// picks for `msg` (ROADMAP DA1); `noproc` when it does not run here.
+    pub(crate) async fn call_app(
+        &mut self,
+        app: &str,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<Result<Envelope, CallError>, String> {
+        let Some(target) = self.ctx.rt.route_app(app, &msg) else {
+            return Ok(Err(CallError::Noproc));
+        };
+        self.call_to(target.pid(), msg, timeout).await
+    }
+
     /// Reply to the call `call_ref`; nothing for an unknown reference (a
     /// duplicate reply, or the caller gave up).
     pub(crate) fn reply_to(&mut self, call_ref: u64, msg: Envelope) {

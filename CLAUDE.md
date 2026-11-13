@@ -174,7 +174,8 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   `channel`, Linux and FreeBSD: the shared-memory rings the frames travel over, and
   their spin-then-sleep waits), `app` (feature `app`: an executable's
   App trait and process functions), `sender` (feature `app`: a thread's
-  sender channel, ROADMAP AP1) and `runner` (feature `runner`,
+  sender channel, ROADMAP AP1), `driver` (a driver app's inherited
+  listening sockets, ROADMAP DA1) and `runner` (feature `runner`,
   default; Linux and FreeBSD): `bulkhead-runner`, which restricts itself
   (Landlock, seccomp, non-dumpable; on FreeBSD only non-dumpable until
   ROADMAP FB2) before loading a rustbridge plugin or executing

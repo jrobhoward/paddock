@@ -83,7 +83,7 @@ fn readable____program_directory_and_reads____included() {
 #[cfg(target_os = "linux")]
 #[test]
 fn rules____signals_and_tracing____listed() {
-    let found = super::seccomp::rules(&[1234]).unwrap();
+    let found = super::seccomp::rules(&[1234], &[]).unwrap();
 
     assert_eq!(found[&libc::SYS_kill].len(), 1);
     assert!(found[&libc::SYS_ptrace].is_empty());
@@ -102,8 +102,36 @@ fn rules____signals_and_tracing____listed() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn rules____listening_sockets_passed____accept4_refused_unless_one_of_them() {
+    let found = super::seccomp::rules(&[1234], &[8, 9]).unwrap();
+
+    assert_eq!(found[&libc::SYS_accept4].len(), 1);
+    assert!(found[&libc::SYS_accept].is_empty());
+    assert!(found[&libc::SYS_socket].is_empty());
+}
+
+#[test]
+fn parse____accept_fds____kept() {
+    let args = Args::parse(
+        [
+            "--executable",
+            "/a/app",
+            "--accept-fd",
+            "8",
+            "--accept-fd",
+            "9",
+        ]
+        .map(String::from),
+    )
+    .unwrap();
+
+    assert_eq!(args.accept_fds, vec![8, 9]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn rules____arguments_decide____one_rule_each_and_one_per_namespace_flag() {
-    let found = super::seccomp::rules(&[1234]).unwrap();
+    let found = super::seccomp::rules(&[1234], &[]).unwrap();
 
     assert_eq!(found[&libc::SYS_clone].len(), 8);
     assert_eq!(found[&libc::SYS_socketpair].len(), 1);
@@ -145,7 +173,7 @@ fn allowed____what_an_app_needs____listed_and_what_leaves_its_fence_not() {
 fn allowed____every_call_the_rules_refuse____listed() {
     let allowed = super::seccomp::allowed();
 
-    let rules = super::seccomp::rules(&[1234]).unwrap();
+    let rules = super::seccomp::rules(&[1234], &[]).unwrap();
 
     // Otherwise the allow-list's trap, the stricter answer, would win.
     for call in rules.keys() {

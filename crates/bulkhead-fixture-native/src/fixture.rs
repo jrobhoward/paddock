@@ -34,6 +34,16 @@ pub(crate) fn text(s: impl Into<String>) -> Envelope {
     Envelope::new("text/plain", s.into().into_bytes())
 }
 
+/// A call body a pool routed by `hash:key` hashes, carrying `cmd`.
+pub(crate) fn keyed(key: &str, cmd: &str) -> Envelope {
+    Envelope::new(
+        "application/json",
+        serde_json::json!({ "key": key, "cmd": cmd })
+            .to_string()
+            .into_bytes(),
+    )
+}
+
 pub(crate) fn pid_text(p: Pid) -> String {
     format!("{}.{}.{}", p.node, p.id, p.incarnation)
 }
@@ -254,6 +264,13 @@ impl Fixture {
                 ctx.cast(pid(), text(tail));
                 "ok".into()
             }
+            "call-app" => {
+                let (key, cmd) = tail.split_once(' ').unwrap_or((tail, ""));
+                match ctx.call_app(first, keyed(key, cmd), 5_000) {
+                    Ok(reply) => String::from_utf8_lossy(&reply.body).into_owned(),
+                    Err(e) => format!("err:{e:?}"),
+                }
+            }
             "after" => ctx
                 .send_after(first.parse().unwrap_or(0), text(tail))
                 .to_string(),
@@ -401,6 +418,28 @@ impl Fixture {
                 Err(_) => "err:no priv".into(),
             },
             "dumpable" => dumpable(),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            "listeners" => driver_listeners()
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            "accept" => match driver_listeners().iter().find(|(name, _)| name == rest) {
+                Some((_, fd)) => accept_and_greet(std::os::fd::AsFd::as_fd(fd)),
+                None => "err:no such listener".into(),
+            },
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            "accept-fd" => {
+                let n: i32 = rest.parse().unwrap_or(-1);
+                // SAFETY: only a borrow for one call; a number that is not
+                // open fails with EBADF, as the test may intend.
+                let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(n) };
+                match rustix::net::accept(fd) {
+                    Ok(_) => "ok".into(),
+                    Err(e) => format!("err:{}", std::io::Error::from(e)),
+                }
+            }
             "kv" => kv(ctx, rest),
             "group" => group(ctx, first, tail),
             "config" => match ctx.config(first) {
@@ -490,7 +529,16 @@ impl App for Fixture {
     }
 
     fn handle_call(&mut self, ctx: &mut Ctx, call: CallRef, msg: Envelope) -> Option<Envelope> {
-        let command = String::from_utf8_lossy(&msg.body).into_owned();
+        // `{"key": ..., "cmd": ...}` from `call-app`: a body a pool can
+        // hash, carrying a command.
+        let command = if msg.content_type == "application/json" {
+            serde_json::from_slice::<serde_json::Value>(&msg.body)
+                .ok()
+                .and_then(|v| v["cmd"].as_str().map(str::to_string))
+                .unwrap_or_default()
+        } else {
+            String::from_utf8_lossy(&msg.body).into_owned()
+        };
         self.run(ctx, call, &command).map(text)
     }
 
@@ -516,7 +564,7 @@ impl App for Fixture {
             Info::Timer { reference, msg } => {
                 format!("timer {reference} {}", String::from_utf8_lossy(&msg.body))
             }
-            Info::HostEvent { name, msg } if name == "io-ready" => {
+            Info::HostEvent { name, msg } if name == "io-ready" || name == "routes" => {
                 format!("event {name} {}", String::from_utf8_lossy(&msg.body))
             }
             Info::HostEvent { name, .. } => format!("event {name}"),
@@ -556,6 +604,29 @@ pub(crate) fn main() -> ExitCode {
         }
     }
     app::serve::<Fixture>()
+}
+
+/// The listening sockets the node passed this driver (ROADMAP DA1), taken
+/// once.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn driver_listeners() -> &'static [(String, std::os::fd::OwnedFd)] {
+    static LISTENERS: std::sync::OnceLock<Vec<(String, std::os::fd::OwnedFd)>> =
+        std::sync::OnceLock::new();
+    LISTENERS.get_or_init(bulkhead_native::driver::listeners)
+}
+
+/// Accept one connection on `listener` (by its own descriptor: the filter
+/// allows `accept4` on that number alone), write `hello` and close it:
+/// the peer's address, or `err:`.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn accept_and_greet(listener: std::os::fd::BorrowedFd<'_>) -> String {
+    match rustix::net::acceptfrom_with(listener, rustix::net::SocketFlags::CLOEXEC) {
+        Ok((conn, peer)) => {
+            let _ = rustix::io::write(&conn, b"hello\n");
+            format!("{peer:?}")
+        }
+        Err(e) => format!("err:{}", std::io::Error::from(e)),
+    }
 }
 
 /// Whether the kernel would dump this process's core: `yes` or `no`.

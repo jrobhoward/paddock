@@ -1431,6 +1431,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "s37-driver-da1"
+version = "0.0.0"
+dependencies = [
+ "bulkhead-native",
+ "bulkhead-sdk",
+ "httparse",
+ "libc",
+ "rustls",
+ "serde_json",
+]
+
+[[package]]
 name = "saa"
 version = "5.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

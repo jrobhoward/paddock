@@ -100,12 +100,12 @@ pub fn resolve(preopens: &[Preopen], guest: &str) -> Option<PathBuf> {
         .iter()
         .filter_map(|p| {
             let below = guest.strip_prefix(p.guest.as_str())?;
-            let below = if below.is_empty() {
-                ""
-            } else {
-                below.strip_prefix('/')?
-            };
-            Some((p.guest.len(), p.host.join(below)))
+            // The preopen itself: its own path, which may be a file (a
+            // driver's, ROADMAP DA1), not joined with "" into `path/`.
+            if below.is_empty() {
+                return Some((p.guest.len(), p.host.clone()));
+            }
+            Some((p.guest.len(), p.host.join(below.strip_prefix('/')?)))
         })
         .max_by_key(|(len, _)| *len)
         .map(|(_, host)| host)

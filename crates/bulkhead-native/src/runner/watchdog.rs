@@ -240,5 +240,5 @@ fn restrict(child: Pid) -> Result<(), String> {
         .map_err(|e| format!("landlock: {e}"))?;
     let me = u32::try_from(rustix::process::getpid().as_raw_nonzero().get()).unwrap_or(0);
     let child = u32::try_from(child.as_raw_nonzero().get()).unwrap_or(0);
-    super::seccomp::install_for(&[me, child])
+    super::seccomp::install_for(&[me, child], &[])
 }

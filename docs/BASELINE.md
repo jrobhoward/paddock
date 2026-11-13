@@ -2909,6 +2909,29 @@ Raspberry Pi 5 (Linux 7.0), idle (load under 0.3 at each start):
 - **Descriptors:** each sender holds two of the node's (its bell and door). Under the shell's soft limit of 1,024, opening the 800 failed partway with `Too many open files` answered to the app; the node ran on (OPERATIONS.md, "Running as a service").
 - **Not measured:** the 16-core machine (two VMs were running); `cluster_throughput`; a sender's call and calls in flight against a callback's.
 
+## 2026-11-12: a driver app through the node (DA1)
+
+S37's harness (`spikes/s37`, `scripts/run.sh` with `DRIVER=s37-driver-da1 S37_DRIVER=da1`) with DA1's driver in place of S37's connection handler: one process with 4 worker threads, each with a sender channel, accepting on the listening sockets its profile gives it, parsing HTTP/1.1 (and TLS from its profile's files) itself, and calling the echo app (a pool of 4) by name with calls in flight. The same echo pool behind the node's own ingress, the rows alternating the two paths; 4 node workers, 4 client workers, keep-alive connections, 10 s a run. Raspberry Pi 5 (Linux 7.0), nice 10, load 0.46 at the start (round 2 began at 5.2, the first round's own load). Results: `spikes/s37/results/pi5-da1-2026-11-12.txt`.
+
+Requests a second, p50 µs and CPU µs a request (the node and its instances), the two rounds:
+
+| | the node's ingress | DA1's driver | driver / node |
+| --- | --- | --- | --- |
+| GET, 1 connection | 14,854, 15,010; p50 66; CPU 79–80 | 10,144, 10,087; p50 97–98; CPU 165–166 | 0.67–0.68× the requests, p50 +46–48%, 2.1× the CPU |
+| GET, 32 | 53,066, 53,161; CPU 52–53 | 45,468, 46,074; CPU 65 | 0.86–0.87×, 1.2–1.3× |
+| GET, 256 | 52,523, 52,155; CPU 56 | 42,290, 41,148; CPU 74–76 | 0.79–0.81×, 1.3–1.4× |
+| HTTPS GET, 1 | 13,020, 12,996; p50 76; CPU 85–87 | 9,290, 9,154; p50 106–108; CPU 172–173 | 0.70–0.71×, p50 +39–42%, 2.0× |
+| HTTPS GET, 32 | 46,788, 47,119; CPU 57–58 | 41,330, 40,216; CPU 71–73 | 0.85–0.88×, 1.2–1.3× |
+| HTTPS GET, 256 | 46,495, 46,519; CPU 61 | 37,628, 37,056; CPU 81–82 | 0.80–0.81×, 1.3× |
+| POST 1 KiB, 32 | 40,984, 41,462; CPU 67–68 | 33,342, 40,706; CPU 72–87 | 0.81–0.98×, 1.1–1.3× |
+| POST 64 KiB, 32 | 2,047, 2,060; CPU 1,445–1,459 | 1,179, 1,198; CPU 2,678–2,828 | 0.58×, 1.9× |
+| POST 1 MiB, 32 | 106, 113; CPU 28,569–30,555 | 66, 73; CPU 46,974–53,886 | 0.62–0.65×, 1.6–1.8× |
+
+- **S37's target under load is met:** at 32 connections the driver serves 85 to 88% of the node's own requests a second (the target is two thirds) at 1.2 to 1.3 times its CPU (the target is 1.5), HTTP and HTTPS. S37's prototype, a connection handler with one blocking call per instance, served 39 to 52% at 2.4 to 3.1 times.
+- **One connection is not:** p50 39 to 48% above the node's (the target is 20%), 30 µs a request. S37's prototype was as fast as the node there (58 to 73 µs on the Pi), its instance woken through the spinning ring rather than from `poll`. With the driver polling without waiting for 20 or 50 µs before it sleeps (one run each, `spikes/s37/results/pi5-da1-spin-2026-11-12.txt`), the gap is 28 to 41%; the rest is taken to be two or three wake-ups of a sleeping thread on the way (S32: about 7 µs each on the Pi), not measured apart (ROADMAP DA1b).
+- **Large bodies cost both paths more** and the driver more still (64 KiB at 32 connections: 58% of the requests at 1.9 times the CPU), as S37 found; PF1 is that item.
+- **Not measured:** the 16-core machine (two VMs were running); FreeBSD (function checks only).
+
 ## Not measured yet
 
 - Where the 2.7 µs a native call costs more under the privileged helper goes (PS1), and the helper on the 16-core machine.

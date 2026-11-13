@@ -346,11 +346,58 @@ mod process {
             if let Some(p) = preopens.iter().find(|p| p.guest == crate::spec::PRIV_PATH) {
                 launch.env.push((protocol::PRIV_ENV, p.host.clone().into()));
             }
-            if !preopens.is_empty() {
+            // A driver app's profile (ROADMAP DA1): its listening sockets,
+            // `accept4` allowed on them alone, and its files, read-only
+            // under /driver.
+            let driver = spec.driver.as_ref();
+            let mut listener_fds = Vec::new();
+            let mut driver_files = Vec::new();
+            if let Some(d) = driver {
+                for (l, fd) in d
+                    .listeners
+                    .iter()
+                    .zip(bulkhead_native::driver::FIRST_LISTENER_FD..)
+                {
+                    launch.args.push("--accept-fd".into());
+                    launch.args.push(fd.to_string().into());
+                    let socket = l
+                        .socket
+                        .try_clone()
+                        .map_err(|e| format!("driver listener {}: {e}", l.name))?;
+                    listener_fds.push(OwnedFd::from(socket));
+                }
+                if !d.listeners.is_empty() {
+                    launch.env.push((
+                        bulkhead_native::driver::LISTENERS_ENV,
+                        bulkhead_native::driver::encode(
+                            d.listeners.iter().map(|l| l.name.as_str()),
+                        )
+                        .into(),
+                    ));
+                }
+                for file in &d.files {
+                    let name = file.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                        format!("driver file {} has no UTF-8 name", file.display())
+                    })?;
+                    launch.args.push("--read".into());
+                    launch.args.push(file.clone().into());
+                    // Under the helper the file's directory is bound into
+                    // the instance's root; Landlock narrows it to the file.
+                    if let Some(dir) = file.parent() {
+                        launch.dirs.push((dir.to_path_buf(), false));
+                    }
+                    driver_files.push((
+                        format!("{}/{name}", bulkhead_native::driver::FILES_PATH),
+                        file.clone(),
+                    ));
+                }
+            }
+            if !preopens.is_empty() || !driver_files.is_empty() {
                 let preopens = bulkhead_native::preopens::encode(
                     preopens
                         .iter()
-                        .map(|p| (p.guest.as_str(), p.host.as_path())),
+                        .map(|p| (p.guest.as_str(), p.host.as_path()))
+                        .chain(driver_files.iter().map(|(g, h)| (g.as_str(), h.as_path()))),
                 )
                 .ok_or("a preopened directory's path is not UTF-8")?;
                 launch
@@ -376,6 +423,7 @@ mod process {
                 door: door_app,
                 fds: fds_app,
                 lease: lease_read,
+                listeners: listener_fds,
             };
             // Every end the app gets is moved into the start: once it
             // returns, the node holds none, so the bell's end of file
@@ -577,6 +625,45 @@ mod process {
         door: OwnedFd,
         fds: OwnedFd,
         lease: Option<OwnedFd>,
+        /// A driver's listening sockets, for descriptors 8 and up.
+        listeners: Vec<OwnedFd>,
+    }
+
+    /// Copies of a driver's listening sockets above every descriptor a
+    /// child places, made in the child between fork and exec before
+    /// anything moves into place: system calls only, no allocation. The
+    /// copies close at exec.
+    fn copy_listeners(
+        listeners: &[OwnedFd],
+    ) -> std::io::Result<[Option<OwnedFd>; bulkhead_native::driver::MAX_LISTENERS]> {
+        const ABOVE: std::os::fd::RawFd = 16;
+        let mut copies: [Option<OwnedFd>; bulkhead_native::driver::MAX_LISTENERS] =
+            Default::default();
+        for (copy, fd) in copies.iter_mut().zip(listeners) {
+            *copy = Some(rustix::io::fcntl_dupfd_cloexec(fd, ABOVE)?);
+        }
+        Ok(copies)
+    }
+
+    /// Put [`copy_listeners`]' copies at descriptors 8 and up, open across
+    /// exec, once the channel's and the lease's are in place.
+    fn install_listeners(
+        copies: &[Option<OwnedFd>; bulkhead_native::driver::MAX_LISTENERS],
+    ) -> std::io::Result<()> {
+        for (copy, to) in copies
+            .iter()
+            .zip(bulkhead_native::driver::FIRST_LISTENER_FD..)
+        {
+            let Some(copy) = copy else { break };
+            // SAFETY: `to` is a descriptor number this child owns from here
+            // on; whatever it held is replaced, as `dup2` does, and the
+            // `OwnedFd` is forgotten, so nothing closes it before exec.
+            let mut target = unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(to) };
+            let done = rustix::io::dup2(copy, &mut target);
+            std::mem::forget(target);
+            done?;
+        }
+        Ok(())
     }
 
     /// Start the runner as the node's own child: in a cgroup with
@@ -603,6 +690,7 @@ mod process {
             door: door_app,
             fds: fds_app,
             lease: lease_read,
+            listeners,
         } = ends;
         cmd.stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
@@ -650,6 +738,10 @@ mod process {
                         },
                     )?;
                 }
+                // A driver's listeners copied above every target first:
+                // their numbers in the node may be any, 3 to 13 included,
+                // which the channel's and the lease's would overwrite.
+                let listeners = copy_listeners(&listeners)?;
                 // Above the channel's descriptors before they move
                 // into place, then to its own; the copy closes at exec.
                 let lease = lease_read
@@ -675,6 +767,7 @@ mod process {
                 if let Some(lease) = &lease {
                     bulkhead_native::lease::install(lease.as_fd())?;
                 }
+                install_listeners(&listeners)?;
                 Ok(())
             });
         }
@@ -730,6 +823,13 @@ mod process {
         ];
         if let Some(lease) = ends.lease {
             fds.push((lease, bulkhead_native::lease::LEASE_FD));
+        }
+        for (socket, n) in ends
+            .listeners
+            .into_iter()
+            .zip(bulkhead_native::driver::FIRST_LISTENER_FD..)
+        {
+            fds.push((socket, n));
         }
         let (fds, targets): (Vec<OwnedFd>, Vec<u8>) = fds
             .into_iter()

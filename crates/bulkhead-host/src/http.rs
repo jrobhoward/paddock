@@ -345,16 +345,23 @@ impl HttpIngress {
         } else {
             table.insert(app.to_string(), routes);
         }
+        let json = routes_json(&table);
+        drop(table);
+        self.inner.apps.runtime().set_http_routes(json);
         Ok(())
     }
 
     /// Withdraw `app`'s routes.
     pub fn remove_routes(&self, app: &str) {
-        self.inner
+        let mut table = self
+            .inner
             .routes
             .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(app);
+            .unwrap_or_else(PoisonError::into_inner);
+        table.remove(app);
+        let json = routes_json(&table);
+        drop(table);
+        self.inner.apps.runtime().set_http_routes(json);
     }
 
     /// `app`'s routes.
@@ -509,6 +516,28 @@ fn redirect(base: &str, uri: &hyper::Uri) -> Reply {
     );
     r.headers_mut().insert(LOCATION, location);
     r
+}
+
+/// The route table as driver apps get it (host event `routes`, ROADMAP
+/// DA1; `GUEST_FORMATS.md`, "Routes"): every route with its app, in app
+/// order.
+fn routes_json(table: &BTreeMap<String, Vec<HttpRoute>>) -> String {
+    let routes: Vec<serde_json::Value> = table
+        .iter()
+        .flat_map(|(app, rs)| {
+            rs.iter().map(move |r| {
+                serde_json::json!({
+                    "app": app,
+                    "host": r.host,
+                    "path_prefix": r.path_prefix,
+                    "hash_header": r.hash_header,
+                    "max_body": r.max_body,
+                    "timeout_ms": u64::try_from(r.timeout.as_millis()).unwrap_or(u64::MAX),
+                })
+            })
+        })
+        .collect();
+    serde_json::json!({ "routes": routes }).to_string()
 }
 
 /// The best route for a request: longest prefix, and a route naming the

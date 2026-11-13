@@ -161,6 +161,29 @@ impl Sender {
             .map_err(Into::into)
     }
 
+    /// Call the app called `app` on this node, as [`Ctx::call_app`].
+    ///
+    /// # Errors
+    ///
+    /// The [`CallError`] if there is no reply.
+    pub fn call_app(
+        &mut self,
+        app: &str,
+        msg: Envelope,
+        timeout: Duration,
+    ) -> Result<Envelope, CallError> {
+        self.0
+            .call_app(app, msg.into(), ms(timeout))
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    /// [`Sender::start_call`] to the app called `app`, routed as
+    /// [`Ctx::call_app`] routes.
+    pub fn start_call_app(&mut self, app: &str, msg: Envelope, timeout: Duration) -> u64 {
+        self.0.start_call_app(app, msg.into(), ms(timeout))
+    }
+
     /// Start a call and return its id without waiting; take its reply with
     /// [`Sender::next_answer`]. Up to 64 calls in flight on one sender go
     /// at once; more wait their turn.

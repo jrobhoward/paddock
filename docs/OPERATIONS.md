@@ -43,7 +43,8 @@ The privileged helper keeps its own state, apart from the node's, in its configu
 | `RUST_LOG` | `bulkhead node` | Log filter (default `info`), for example `info,bulkhead::lease=debug` |
 | `BULKHEAD_PRIV_FD` | `bulkhead node`, set by `bulkhead-priv` | The descriptor of the privileged helper's socket. Node config's `[priv]` and this variable go together: the node refuses to start with one and not the other |
 | `BULKHEAD_PRIV_TESTS`, `BULKHEAD_CONFORMANCE_HELPER` | `bulkhead-host`'s tests, as root on a test machine | `1` runs the helper's own tests (`tests/priv.rs`), and the conformance suite's native mode under the helper |
-| `BULKHEAD_PRIV`, `BULKHEAD_PREOPENS`, `BULKHEAD_SPIN_US` | a native-process app, set by the node | The directory of the bundle's `priv/` files; where each preopened directory is, one guest path and host directory per line, separated by a tab (with `\\`, `\t` and `\n` escaped), for `bulkhead_sdk::files::path`; and how long the app spins waiting for the node before it sleeps (`[native] spin_us`). A native app's environment holds nothing else |
+| `BULKHEAD_PRIV`, `BULKHEAD_PREOPENS`, `BULKHEAD_SPIN_US` | a native-process app, set by the node | The directory of the bundle's `priv/` files; where each preopened directory is, one guest path and host directory per line, separated by a tab (with `\\`, `\t` and `\n` escaped), for `bulkhead_sdk::files::path`; and how long the app spins waiting for the node before it sleeps (`[native] spin_us`). A native app's environment holds nothing else, but for a driver app's `BULKHEAD_LISTENERS` |
+| `BULKHEAD_LISTENERS` | a driver app, set by the node | Its listening sockets (`[drivers.<app>] listeners`), `name=fd` pairs joined by commas (`https=8,http=9`), for `bulkhead_native::driver::listeners` |
 
 Secrets may also come from variables the node config names (`[secrets.<name>] env = ...`).
 

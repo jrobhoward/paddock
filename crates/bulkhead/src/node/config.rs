@@ -91,6 +91,15 @@
 //! # lease_ms = 3000             # as on the pair
 //! # margin_ms = 500
 //!
+//! # A driver app (ROADMAP DA1): the app named "ingress", deployed as any
+//! # app, gets listening sockets the node binds and keeps (it accepts on
+//! # them itself), files it may read, and the apps it may call.
+//! [drivers.ingress]
+//! listeners = { https = "0.0.0.0:8443" }
+//! files = ["/etc/bulkhead/shop.pem", "/etc/bulkhead/shop.key"]
+//! calls = ["shop"]
+//! routes = true
+//!
 //! # Host objects per instance: the value for apps that set none, and the
 //! # most a manifest may ask for.
 //! [limits]
@@ -169,6 +178,9 @@ pub struct NodeConfig {
     /// Addresses for the listeners apps declare, by listener name.
     #[serde(default)]
     pub listeners: BTreeMap<String, ListenerBinding>,
+    /// Driver apps' profiles, by app name (ROADMAP DA1).
+    #[serde(default)]
+    pub drivers: BTreeMap<String, DriverBinding>,
     /// HTTP ingress addresses, by a name of the operator's choosing. Every
     /// address serves every app's routes.
     #[serde(default)]
@@ -627,6 +639,30 @@ fn default_margin_ms() -> u64 {
     500
 }
 
+/// The most listening sockets one driver gets: descriptors 8 to 13 in its
+/// process (`bulkhead_native::driver::MAX_LISTENERS`).
+pub const MAX_DRIVER_LISTENERS: usize = 6;
+
+/// `[drivers.<app>]`: what the app of that name gets beyond its manifest,
+/// as a driver app (ROADMAP DA1).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriverBinding {
+    /// Listening sockets the node binds and keeps, by the name the driver
+    /// finds each by; the driver accepts on them itself.
+    #[serde(default)]
+    pub listeners: BTreeMap<String, std::net::SocketAddr>,
+    /// Files it may read, by absolute path: its certificates and keys.
+    #[serde(default)]
+    pub files: Vec<PathBuf>,
+    /// The apps it may send to (its messaging ACL's `may_call`).
+    #[serde(default)]
+    pub calls: Vec<String>,
+    /// Send it the HTTP route table (host event `routes`).
+    #[serde(default)]
+    pub routes: bool,
+}
+
 /// Where a listener an app declares listens on this node.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1064,6 +1100,35 @@ impl NodeConfig {
         Ok(())
     }
 
+    fn check_drivers(&self) -> Result<(), NodeError> {
+        use bulkhead_bundle::manifest::is_valid_name;
+        for (app, d) in &self.drivers {
+            let invalid = |m: String| {
+                Err(NodeError::Invalid(format!(
+                    "node config: drivers.{app}: {m}"
+                )))
+            };
+            if !is_valid_name(app) {
+                return invalid("not an app name".into());
+            }
+            if d.listeners.len() > MAX_DRIVER_LISTENERS {
+                return invalid(format!("at most {MAX_DRIVER_LISTENERS} listeners"));
+            }
+            if let Some(name) = d.listeners.keys().find(|n| !is_valid_name(n)) {
+                return invalid(format!(
+                    "listener '{name}' is not a name (as app names are)"
+                ));
+            }
+            if let Some(f) = d.files.iter().find(|f| !f.is_absolute()) {
+                return invalid(format!("file {} is not an absolute path", f.display()));
+            }
+            if let Some(c) = d.calls.iter().find(|c| !is_valid_name(c)) {
+                return invalid(format!("calls: '{c}' is not an app name"));
+            }
+        }
+        Ok(())
+    }
+
     fn check_sockets(&self) -> Result<(), NodeError> {
         let Some(s) = &self.sockets else {
             return Ok(());
@@ -1152,6 +1217,7 @@ impl NodeConfig {
         config.check_egress()?;
         config.check_sockets()?;
         config.check_native()?;
+        config.check_drivers()?;
         for (name, binding) in &config.http {
             let invalid =
                 |m: String| Err(NodeError::Invalid(format!("node config: http.{name}.{m}")));

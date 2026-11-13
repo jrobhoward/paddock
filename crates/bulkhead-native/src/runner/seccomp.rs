@@ -27,7 +27,8 @@
 //! | `kill`, `tgkill`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` | the target is not this process (a negative or zero pid is a group); for the lease watchdog, nor its child |
 //! | `tkill`, `pidfd_send_signal`, `pidfd_getfd` | always |
 //! | `ptrace`, `process_vm_readv`, `process_vm_writev` | always |
-//! | `socket`, `connect`, `accept`, `accept4` | always: an app's sockets come from the node, connected (ROADMAP Z8e); `connect` would move a passed socket elsewhere and `accept` take connections the node does not count |
+//! | `socket`, `connect`, `accept` | always: an app's sockets come from the node, connected (ROADMAP Z8e); `connect` would move a passed socket elsewhere and `accept` take connections the node does not count |
+//! | `accept4` | unless its descriptor is a listening socket a driver app was passed (`--accept-fd`, ROADMAP DA1); for any other app, always |
 //! | `io_uring_setup`, `io_uring_enter`, `io_uring_register` | always: its operations would bypass these filters (its socket operation makes sockets without `socket`) |
 //! | `clone` | with a flag that makes a namespace: a user namespace gives an app capabilities over what it then makes, and the kernel code behind them |
 //! | `socketpair` | for any family but `AF_UNIX` |
@@ -289,7 +290,10 @@ fn dword(v: impl Into<i64>) -> u64 {
 /// # Errors
 ///
 /// A seccompiler error (none for valid input).
-pub fn rules(pids: &[u32]) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompiler::Error> {
+pub fn rules(
+    pids: &[u32],
+    accept_fds: &[i32],
+) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompiler::Error> {
     let other = || {
         pids.iter()
             .map(|pid| condition(0, SeccompCmpOp::Ne, u64::from(*pid)))
@@ -316,13 +320,25 @@ pub fn rules(pids: &[u32]) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompile
         libc::SYS_socket,
         libc::SYS_connect,
         libc::SYS_accept,
-        libc::SYS_accept4,
         libc::SYS_io_uring_setup,
         libc::SYS_io_uring_enter,
         libc::SYS_io_uring_register,
     ] {
         rules.insert(call, Vec::new());
     }
+    // `accept4` only on the listening sockets a driver app was passed
+    // (ROADMAP DA1): refused unless its descriptor is one of them; with
+    // none, always.
+    let accept4 = if accept_fds.is_empty() {
+        Vec::new()
+    } else {
+        let not_passed = accept_fds
+            .iter()
+            .map(|fd| condition(0, SeccompCmpOp::Ne, u64::from(fd.unsigned_abs())))
+            .collect::<Result<Vec<_>, _>>()?;
+        vec![SeccompRule::new(not_passed)?]
+    };
+    rules.insert(libc::SYS_accept4, accept4);
     // One rule per namespace flag: a rule's conditions are joined by
     // "and", the rules of a call by "or".
     let namespaces = NAMESPACE_FLAGS
@@ -357,7 +373,7 @@ pub fn rules(pids: &[u32]) -> Result<BTreeMap<i64, Vec<SeccompRule>>, seccompile
 
 /// The three filters, in the order they are installed (the module's
 /// docs number them by what they do).
-fn programs(pids: &[u32]) -> Result<Vec<BpfProgram>, String> {
+fn programs(pids: &[u32], accept_fds: &[i32]) -> Result<Vec<BpfProgram>, String> {
     let arch = TargetArch::try_from(std::env::consts::ARCH).map_err(|e| e.to_string())?;
     let compile = |rules, mismatch, matched| -> Result<BpfProgram, String> {
         SeccompFilter::new(rules, mismatch, matched, arch)
@@ -377,7 +393,7 @@ fn programs(pids: &[u32]) -> Result<Vec<BpfProgram>, String> {
     Ok(vec![
         compile(clone3, SeccompAction::Allow, enosys)?,
         compile(
-            rules(pids).map_err(|e| e.to_string())?,
+            rules(pids, accept_fds).map_err(|e| e.to_string())?,
             SeccompAction::Allow,
             eperm,
         )?,
@@ -392,8 +408,8 @@ fn programs(pids: &[u32]) -> Result<Vec<BpfProgram>, String> {
 /// # Errors
 ///
 /// A filter could not be built or installed.
-pub fn install() -> Result<(), String> {
-    install_for(&[std::process::id()])
+pub fn install(accept_fds: &[i32]) -> Result<(), String> {
+    install_for(&[std::process::id()], accept_fds)
 }
 
 /// [`install`], with signals allowed to the processes `pids` (the lease
@@ -402,8 +418,8 @@ pub fn install() -> Result<(), String> {
 /// # Errors
 ///
 /// A filter could not be built or installed.
-pub fn install_for(pids: &[u32]) -> Result<(), String> {
-    for program in programs(pids)? {
+pub fn install_for(pids: &[u32], accept_fds: &[i32]) -> Result<(), String> {
+    for program in programs(pids, accept_fds)? {
         seccompiler::apply_filter_all_threads(&program).map_err(|e| e.to_string())?;
     }
     Ok(())

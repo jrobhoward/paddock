@@ -15,10 +15,10 @@ ciborium = { workspace = true }
 serde_json = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { workspace = true, features = ["io_uring", "fs"] }
+rustix = { workspace = true, features = ["io_uring", "fs", "net"] }
 
 [target.'cfg(target_os = "freebsd")'.dependencies]
-rustix = { workspace = true, features = ["fs"] }
+rustix = { workspace = true, features = ["fs", "net"] }
 
 [lints]
 workspace = true

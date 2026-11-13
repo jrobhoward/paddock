@@ -116,6 +116,7 @@ The host tells an instance about events with `handle-info`'s `host-event(name, e
 | `failover-role` | `text/plain`: `primary`, `standby` or `down` | After `init` and on every change of the node's role in an HA pair; only to apps with `placement.mode = "hot-standby"`. |
 | `kv-changed` | `application/json`, below | A key a watch covers changed (`bulkhead:watch`). Changes made while a notice waits are folded into it: one notice per key, carrying the latest revision when it was taken. |
 | `io-ready` | `application/json`, below | A pollable handed to `bulkhead:io/ready.notify` became ready. |
+| `routes` | `application/json`, below | After `init` and whenever the node's HTTP route table changes (a deploy, an upgrade, a stop); only to a driver app whose node config asks for it (`[drivers.<app>] routes = true`, ROADMAP DA1). |
 
 The JSON objects' keys come in any order.
 
@@ -130,6 +131,12 @@ The JSON objects' keys come in any order.
 ```
 
 `tag` is the unsigned 64-bit tag passed to `notify`.
+
+```json routes
+{"routes": [{"app": "shop", "host": null, "path_prefix": "/shop", "hash_header": "x-customer", "max_body": 1048576, "timeout_ms": 30000}]}
+```
+
+`routes` is the whole table, every app's routes, ordered by app: the routes a node's own ingress serves, so a driver serving HTTP routes and limits requests as the ingress does and calls the app by name (`call_app`). `host` and `hash_header` are `null` when unset; `max_body` is bytes and `timeout_ms` milliseconds.
 
 ## Modbus updates
 

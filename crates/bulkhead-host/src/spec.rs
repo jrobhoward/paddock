@@ -73,6 +73,9 @@ pub struct InstanceSpec {
     /// Which apps this instance may send to and accept from (the
     /// manifest's `messaging_acl`; [`crate::acl`]).
     pub acl: Acl,
+    /// The profile of a driver app (node config `[drivers.<app>]`,
+    /// ROADMAP DA1), set by the runtime when the instance starts.
+    pub driver: Option<crate::config::DriverProfile>,
 }
 
 /// A host directory visible to the guest.
@@ -157,6 +160,7 @@ impl InstanceSpec {
                     may_call: a.may_call.clone(),
                 })
                 .unwrap_or_default(),
+            driver: None,
             health: spec.health.as_ref().map(|h| HealthCheck {
                 interval: Duration::from_millis(h.interval_ms),
                 failure_threshold: h.failure_threshold,

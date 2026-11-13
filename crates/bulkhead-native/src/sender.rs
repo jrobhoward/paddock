@@ -154,6 +154,45 @@ impl Sender {
         }
     }
 
+    /// Call the app called `app` on this node, as
+    /// [`Ctx::call_app`](crate::app::Ctx::call_app) does.
+    ///
+    /// # Errors
+    ///
+    /// The [`CallError`] if there is no reply.
+    pub fn call_app(
+        &mut self,
+        app: impl Into<String>,
+        msg: Envelope,
+        timeout_ms: u32,
+    ) -> Result<Envelope, CallError> {
+        match self.request(Request::CallApp {
+            app: app.into(),
+            msg,
+            timeout_ms,
+        }) {
+            Answer::Called(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
+    /// Start a call to the app called `app` without waiting for its
+    /// reply: its id, for [`Sender::next_answer`].
+    pub fn start_call_app(
+        &mut self,
+        app: impl Into<String>,
+        msg: Envelope,
+        timeout_ms: u32,
+    ) -> u64 {
+        let id = self.send_request(Request::CallApp {
+            app: app.into(),
+            msg,
+            timeout_ms,
+        });
+        self.started.insert(id, None);
+        id
+    }
+
     /// Start a call without waiting for its reply: its id, for
     /// [`Sender::next_answer`].
     pub fn start_call(&mut self, to: Pid, msg: Envelope, timeout_ms: u32) -> u64 {

@@ -8,6 +8,24 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Driver apps (ROADMAP DA1): node config `[drivers.<app>]` gives the app
+  of that name, deployed as any app, listening sockets the node binds and
+  keeps (`listeners`, at most 6; a restart or upgrade keeps the port),
+  files it may read under `/driver/` (`files`), the apps it may send to
+  (`calls`, its messaging ACL's `may_call`) and the HTTP route table as the
+  host event `routes` (`routes = true`). The driver accepts on its sockets
+  itself (`bulkhead_native::driver::listeners`, inherited at descriptors 8
+  and up, named in `BULKHEAD_LISTENERS`); its seccomp filter allows
+  `accept4` on those descriptors alone (`bulkhead-runner --accept-fd`).
+  The privileged helper passes up to 14 descriptors and the
+  `BULKHEAD_LISTENERS` variable.
+- Calls to an app by name (`Ctx::call_app`; on a sender, `call_app` and
+  `start_call_app`): the node picks the instance by the app's
+  `instances.routing`, as its HTTP ingress does, and checks messaging ACLs
+  as for a call to a pid; `noproc` when the app does not run on this node.
+  Protocol version 14 (`Request::CallApp`); a node accepts apps on 13 and
+  14.
+
 - Sender channels (ROADMAP AP1, spike S39): a native app's own threads
   ask the node at any time, not only the callback thread during a
   callback. `ctx.sender()` (`bulkhead_sdk::sender`, `bulkhead_native::sender`)

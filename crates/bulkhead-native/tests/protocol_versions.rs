@@ -124,6 +124,7 @@ fn request_name(r: &Request) -> &'static str {
         Request::Http(_) => "Http",
         Request::Extension { .. } => "Extension",
         Request::OpenSender => "OpenSender",
+        Request::CallApp { .. } => "CallApp",
     }
 }
 
@@ -207,6 +208,7 @@ const NAMES: &[(&str, &[&str])] = &[
             "Http",
             "Extension",
             "OpenSender",
+            "CallApp",
         ],
     ),
     (
@@ -402,6 +404,11 @@ fn requests() -> Vec<Request> {
             args: Bytes(vec![0x81, 0x61, b'a']),
         },
         Request::OpenSender,
+        Request::CallApp {
+            app: "shop".into(),
+            msg: env(),
+            timeout_ms: 500,
+        },
     ]
 }
 

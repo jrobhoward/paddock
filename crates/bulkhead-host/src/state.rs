@@ -62,6 +62,9 @@ pub struct InstanceState {
     pub(crate) host_objects: HostObjects,
     /// Whether to announce the node's failover role.
     announce_role: bool,
+    /// Whether to announce the HTTP route table: a driver app whose
+    /// profile asks for it (ROADMAP DA1).
+    announce_routes: bool,
     /// The node's failover lease, for an instance bound to it
     /// ([`InstanceSpec::bound_to_lease`]).
     pub(crate) lease: Option<watch::Receiver<RunUntil>>,
@@ -98,6 +101,7 @@ impl InstanceState {
             timers: Timers::default(),
             host_objects,
             announce_role: spec.announce_role,
+            announce_routes: spec.driver.as_ref().is_some_and(|d| d.routes),
             lease,
             services,
         })
@@ -126,6 +130,14 @@ impl InstanceState {
             events.push((
                 "failover-role".to_string(),
                 Envelope::new("text/plain", role),
+            ));
+        }
+        if self.announce_routes
+            && let Some(routes) = self.ctx.rt.http_routes()
+        {
+            events.push((
+                "routes".to_string(),
+                Envelope::new("application/json", routes),
             ));
         }
         events

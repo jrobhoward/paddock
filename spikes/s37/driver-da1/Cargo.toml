@@ -1,0 +1,13 @@
+[package]
+name = "s37-driver-da1"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bulkhead-sdk = { path = "../../../crates/bulkhead-sdk", features = ["http"] }
+bulkhead-native = { path = "../../../crates/bulkhead-native", default-features = false, features = ["app"] }
+httparse = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+libc = "0.2"
+serde_json = "1"

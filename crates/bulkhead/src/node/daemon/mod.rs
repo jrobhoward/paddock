@@ -201,6 +201,7 @@ impl Node {
                 cast_credit: config.cluster.cast_credit,
                 cast_credit_bytes: config.cluster.cast_credit_bytes,
                 native,
+                drivers: bind_drivers(&config)?,
                 secrets: config
                     .secrets
                     .iter()
@@ -553,6 +554,43 @@ fn runtime_datasource(
 
 /// The runtime's native settings, with the privileged helper this node
 /// was started by when node config sets `[priv]`.
+/// Bind each driver app's listening sockets (ROADMAP DA1): the node keeps
+/// them for its life, so a driver's restart or upgrade keeps its ports.
+fn bind_drivers(
+    config: &NodeConfig,
+) -> Result<std::collections::BTreeMap<String, bulkhead_host::DriverProfile>, NodeError> {
+    config
+        .drivers
+        .iter()
+        .map(|(app, d)| {
+            let listeners = d
+                .listeners
+                .iter()
+                .map(|(name, address)| {
+                    let socket = std::net::TcpListener::bind(address).map_err(|e| {
+                        NodeError::Invalid(format!(
+                            "node config: drivers.{app}.listeners.{name}: bind {address}: {e}"
+                        ))
+                    })?;
+                    Ok(bulkhead_host::DriverListener {
+                        name: name.clone(),
+                        socket: std::sync::Arc::new(socket),
+                    })
+                })
+                .collect::<Result<_, NodeError>>()?;
+            Ok((
+                app.clone(),
+                bulkhead_host::DriverProfile {
+                    listeners,
+                    files: d.files.clone(),
+                    calls: d.calls.clone(),
+                    routes: d.routes,
+                },
+            ))
+        })
+        .collect()
+}
+
 fn native_config(config: &NodeConfig) -> Result<bulkhead_host::NativeConfig, NodeError> {
     #[cfg_attr(
         not(any(target_os = "linux", target_os = "freebsd")),

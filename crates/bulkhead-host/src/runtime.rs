@@ -47,6 +47,9 @@ pub(crate) struct RuntimeInner {
     pub(crate) metrics: Metrics,
     /// This node's failover role, for `hot-standby` instances.
     failover_role: RwLock<Option<String>>,
+    /// The HTTP route table as JSON, for driver apps whose profile asks
+    /// for it (ROADMAP DA1); `None` before an ingress sets one.
+    http_routes: RwLock<Option<String>>,
     pub(crate) extensions: Vec<Arc<dyn Extension>>,
     transport: std::sync::OnceLock<Arc<dyn Transport>>,
     pub(crate) pending_calls: PendingCalls,
@@ -87,6 +90,14 @@ impl RuntimeInner {
             .clone()
     }
 
+    /// The HTTP route table as JSON, once an ingress has set one.
+    pub(crate) fn http_routes(&self) -> Option<String> {
+        self.http_routes
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// The node's host-object limits.
     pub(crate) fn host_objects(&self) -> HostObjects {
         self.config.host_objects
@@ -100,6 +111,17 @@ impl RuntimeInner {
     /// The transport to other nodes, once set.
     pub(crate) fn transport(&self) -> Option<&Arc<dyn Transport>> {
         self.transport.get()
+    }
+
+    /// `spec` with the driver profile node config gives its app, if any
+    /// (ROADMAP DA1): its listeners and files, and its messaging ACL's
+    /// `may_call` from the profile's `calls`.
+    pub(crate) fn with_driver(&self, mut spec: InstanceSpec) -> InstanceSpec {
+        if let Some(profile) = self.config.drivers.get(&spec.app) {
+            spec.acl.may_call.clone_from(&profile.calls);
+            spec.driver = Some(profile.clone());
+        }
+        spec
     }
 
     /// The instance of the running app called `name` that `msg` routes to
@@ -219,6 +241,7 @@ impl Runtime {
             services,
             metrics: Metrics::default(),
             failover_role: RwLock::default(),
+            http_routes: RwLock::default(),
             extensions,
             transport: std::sync::OnceLock::new(),
             pending_calls: PendingCalls::default(),
@@ -592,6 +615,21 @@ impl Runtime {
         self.inner.table.all()
     }
 
+    /// Keep the HTTP route table (JSON, `GUEST_FORMATS.md`'s "Routes") and
+    /// announce it to the driver apps whose profile asks for it (host event
+    /// `routes`, ROADMAP DA1).
+    #[cfg_attr(not(feature = "http"), allow(dead_code))]
+    pub(crate) fn set_http_routes(&self, json: String) {
+        *self
+            .inner
+            .http_routes
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(json);
+        for instance in self.instances() {
+            instance.announce();
+        }
+    }
+
     /// Set this node's failover role (`primary`, `standby`, `down`) and tell
     /// every `hot-standby` instance ([`InstanceSpec::announce_role`]).
     pub fn set_failover_role(&self, role: Option<&str>) {
@@ -624,6 +662,7 @@ impl Runtime {
         id: u64,
         incarnation: u32,
     ) -> Result<InstanceHandle, HostError> {
+        let spec = self.inner.with_driver(spec);
         if let Some(p) = spec.preopens.iter().find(|p| !p.host.is_dir()) {
             return Err(HostError::Preopen(format!(
                 "{} (for {}) is not a directory",

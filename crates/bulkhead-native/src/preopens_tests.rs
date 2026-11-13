@@ -74,6 +74,16 @@ fn resolve____guest_path____host_file_under_longest_prefix(
     assert_eq!(host, expected.map(PathBuf::from));
 }
 
+#[test]
+fn resolve____a_file_preopened_by_its_own_path____that_file_without_a_trailing_slash() {
+    let preopens = preopens(&[("/driver/shop.pem", "/etc/bulkhead/shop.pem")]);
+
+    let host = resolve(&preopens, "/driver/shop.pem");
+
+    assert_eq!(host, Some(PathBuf::from("/etc/bulkhead/shop.pem")));
+    assert!(!host.unwrap().as_os_str().to_string_lossy().ends_with('/'));
+}
+
 proptest! {
     #[test]
     fn encode_then_decode____any_paths____round_trip(

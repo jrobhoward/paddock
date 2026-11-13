@@ -519,6 +519,30 @@ impl Ctx {
         }
     }
 
+    /// Call the app called `app` on this node, the instance its
+    /// `instances.routing` picks for `msg` (a hash of the message's routing
+    /// key, or round robin), and wait up to `timeout_ms` for the reply.
+    ///
+    /// # Errors
+    ///
+    /// The [`CallError`] if there is no reply: `noproc` when the app does
+    /// not run on this node.
+    pub fn call_app(
+        &mut self,
+        app: impl Into<String>,
+        msg: Envelope,
+        timeout_ms: u32,
+    ) -> Result<Envelope, CallError> {
+        match self.request(Request::CallApp {
+            app: app.into(),
+            msg,
+            timeout_ms,
+        }) {
+            Answer::Called(result) => result,
+            other => unexpected(&other),
+        }
+    }
+
     /// Reply to a call taken with no reply.
     pub fn reply(&mut self, call_ref: CallRef, msg: Envelope) {
         self.request(Request::Reply { call_ref, msg });

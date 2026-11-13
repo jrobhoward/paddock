@@ -32,7 +32,9 @@
 //! [`Request::CastWait`] and [`Answer::CastFailed`] (ROADMAP I7), which a
 //! node writes only to an app at 12. Version 13 added
 //! [`Request::OpenSender`]: a channel of its own for one of the app's
-//! threads (ROADMAP AP1, spike S39).
+//! threads (ROADMAP AP1, spike S39). Version 14 added
+//! [`Request::CallApp`]: a call to an app by name, the node picking its
+//! instance as its HTTP ingress does (ROADMAP DA1).
 //!
 //! A sender channel carries the same frames as the app's own channel, from
 //! one thread at any time, not only during a callback: `Request`s (only
@@ -52,7 +54,7 @@ use std::io::{self, Read, Write};
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 13;
+pub const VERSION: u16 = 14;
 
 /// The oldest version a node accepts from an app: the one before
 /// [`VERSION`], so an app survives one node upgrade without a rebuild
@@ -566,13 +568,28 @@ pub enum Request {
     /// door and the write end of its bell on the descriptor socket before
     /// the answer, as for a published snapshot. On a sender channel the
     /// app may ask for [`Request::SelfPid`], [`Request::Cast`],
-    /// [`Request::CastWait`], [`Request::Call`], [`Request::Kv`] (not
+    /// [`Request::CastWait`], [`Request::Call`], [`Request::CallApp`],
+    /// [`Request::Kv`] (not
     /// watches), [`Request::KvOpen`], [`Request::MetricRegister`] and
     /// another [`Request::OpenSender`], and send `Metrics` updates and hot
     /// keyvalue frames; anything else ends the instance. Up to the app's
     /// `senders_max` channels at once; one closes when the app closes its
     /// ring or its end of the bell.
     OpenSender,
+    /// Call the app called `app` on this node: the node picks the
+    /// instance by the app's `instances.routing` (a hash of the message's
+    /// routing key, or round robin), as its HTTP ingress does, and checks
+    /// the messaging ACLs as for [`Request::Call`]: [`Answer::Called`],
+    /// `noproc` when the app does not run here. Allowed on a sender
+    /// channel too.
+    CallApp {
+        /// The app's name.
+        app: String,
+        /// The message.
+        msg: Envelope,
+        /// How long to wait for the reply.
+        timeout_ms: u32,
+    },
 }
 
 /// A sender channel the node made: descriptors passed on the descriptor

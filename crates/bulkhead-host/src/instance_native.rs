@@ -323,6 +323,24 @@ async fn answer(
                     .map_err(|e| convert::call_error(&e)),
             )
         }
+        Request::CallApp {
+            app,
+            msg,
+            timeout_ms,
+        } => {
+            let result = state
+                .call_app(
+                    &app,
+                    convert::host_envelope(msg),
+                    Duration::from_millis(timeout_ms.into()),
+                )
+                .await?;
+            Answer::Called(
+                result
+                    .map(convert::envelope)
+                    .map_err(|e| convert::call_error(&e)),
+            )
+        }
         Request::Reply { call_ref, msg } => {
             state.reply_to(call_ref, convert::host_envelope(msg));
             Answer::Unit
@@ -727,6 +745,7 @@ impl InstanceTask {
         next: InstanceSpec,
         from_version: &str,
     ) -> Result<Duration, UpgradeError> {
+        let next = state.ctx.rt.with_driver(next);
         let started = std::time::Instant::now();
         let code = app.native();
         if code.kind() != NativeProgram::Executable {

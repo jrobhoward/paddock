@@ -201,3 +201,26 @@ fn parse_response____documented_example____status_header_and_body() {
     assert_eq!(response.status(), 201);
     assert_eq!(response.headers()["content-type"], "text/plain");
 }
+
+#[test]
+fn routes_json____documented_example____same_table() {
+    let fence = "```json routes\n";
+    let start = FORMATS.find(fence).unwrap() + fence.len();
+    let example: serde_json::Value =
+        serde_json::from_str(&FORMATS[start..start + FORMATS[start..].find("```").unwrap()])
+            .unwrap();
+    let table = BTreeMap::from([(
+        "shop".to_string(),
+        vec![HttpRoute {
+            host: None,
+            path_prefix: "/shop".into(),
+            hash_header: Some("x-customer".into()),
+            max_body: 1_048_576,
+            timeout: Duration::from_secs(30),
+        }],
+    )]);
+
+    let json: serde_json::Value = serde_json::from_str(&routes_json(&table)).unwrap();
+
+    assert_eq!(json, example);
+}
