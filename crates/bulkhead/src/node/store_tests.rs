@@ -201,3 +201,56 @@ fn remove_version____program____removed_with_it() {
 
     assert!(!path.exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn open____a_tree_an_older_node_left____tightened_to_the_nodes_and_its_apps() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mode = |p: &str| {
+        std::fs::metadata(root.join(p))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777
+    };
+    let set = |p: &str, m: u32| {
+        std::fs::set_permissions(root.join(p), std::fs::Permissions::from_mode(m)).unwrap();
+    };
+    for d in [
+        "kv",
+        "bundles/shop",
+        "priv/shop/1.0.0",
+        "compiled/shop/1.0.0",
+    ] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    for f in [
+        "state.json",
+        "kv/data.redb",
+        "bundles/shop/1.0.0.rbp",
+        "priv/shop/1.0.0/cert.pem",
+    ] {
+        std::fs::write(root.join(f), b"x").unwrap();
+        set(f, 0o644);
+    }
+    std::fs::write(root.join("compiled/shop/1.0.0/a.native"), b"x").unwrap();
+    set("compiled/shop/1.0.0/a.native", 0o755);
+    set("priv/shop", 0o750);
+    set("kv", 0o755);
+    set(".", 0o755);
+
+    drop(Store::open(root).unwrap());
+
+    assert_eq!(mode("."), 0o711);
+    assert_eq!(mode("compiled"), 0o711);
+    assert_eq!(mode("priv"), 0o711);
+    assert_eq!(mode("state.json"), 0o600);
+    assert_eq!(mode("kv"), 0o700);
+    assert_eq!(mode("kv/data.redb"), 0o600);
+    assert_eq!(mode("bundles/shop/1.0.0.rbp"), 0o600);
+    assert_eq!(mode("priv/shop"), 0o750);
+    assert_eq!(mode("priv/shop/1.0.0/cert.pem"), 0o640);
+    assert_eq!(mode("compiled/shop/1.0.0/a.native"), 0o750);
+}

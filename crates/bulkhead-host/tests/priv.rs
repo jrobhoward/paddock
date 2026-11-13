@@ -182,6 +182,9 @@ async fn helper____volumes____written_where_writable_read_where_not() {
         preopens: vec![preopen(&rw, "/data", true), preopen(&ro, "/ref", false)],
         ..spec("alpha")
     };
+    // As the node does when it installs an app (ROADMAP PS2): once.
+    rt.share_with_app("alpha", &rw, true).await.unwrap();
+    rt.share_with_app("alpha", &ro, false).await.unwrap();
     let i = rt.spawn(&app, spec).unwrap();
 
     let wrote = ask(&i, "vwrite /data/new.txt").await;
@@ -211,4 +214,88 @@ async fn helper____killed____ends_promptly() {
 
     assert!(pid > 0);
     assert!(reason.is_ok(), "the kill reached the app");
+}
+
+/// A directory the node wrote, shared with `app` as the node shares an
+/// app's `priv/` files, holding `secret.txt`.
+async fn shared_dir(started: &Started, rt: &Runtime, name: &str, app: &str) -> PathBuf {
+    let uid = started.node_uid;
+    let dir = privhelper::dir_owned(&started.dir.path().join(name), uid, 0o700);
+    let file = dir.join("secret.txt");
+    std::fs::write(&file, b"alpha's").unwrap();
+    std::os::unix::fs::chown(&file, Some(uid), None).unwrap();
+    std::fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+    rt.share_with_app(app, &dir, false).await.unwrap();
+    dir
+}
+
+fn reading(app: &str, dir: &std::path::Path) -> InstanceSpec {
+    InstanceSpec {
+        granted: [Capability::Filesystem].into(),
+        preopens: vec![bulkhead_host::Preopen {
+            host: dir.to_path_buf(),
+            guest: "/ref".into(),
+            writable: false,
+        }],
+        ..spec(app)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share____one_apps_files____another_apps_user_reads_nothing() {
+    let Some(started) = helper("share____one_apps_files") else {
+        return;
+    };
+    let rt = runtime(&started);
+    let app = program(&started, &rt);
+    let dir = shared_dir(&started, &rt, "alpha-priv", "alpha").await;
+    let alpha = rt.spawn(&app, reading("alpha", &dir)).unwrap();
+    let beta = rt.spawn(&app, reading("beta", &dir)).unwrap();
+
+    let own = ask(&alpha, "vcat /ref/secret.txt").await;
+    let other = ask(&beta, "vcat /ref/secret.txt").await;
+
+    assert_eq!(own, "alpha's");
+    assert!(other.starts_with("err:"), "{other}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share____then_starts____a_start_shares_nothing_again() {
+    use std::os::unix::fs::MetadataExt;
+    let Some(started) = helper("share____then_starts") else {
+        return;
+    };
+    let rt = runtime(&started);
+    let app = program(&started, &rt);
+    let dir = shared_dir(&started, &rt, "once", "alpha").await;
+    let first = rt.spawn(&app, reading("alpha", &dir)).unwrap();
+    ask(&first, "echo up").await;
+    // Taken back from the app: were a start to share again, it would undo
+    // this.
+    let file = dir.join("secret.txt");
+    std::os::unix::fs::chown(&file, None, Some(0)).unwrap();
+
+    let second = rt.spawn(&app, reading("alpha", &dir)).unwrap();
+    let read = ask(&second, "vcat /ref/secret.txt").await;
+
+    assert_eq!(std::fs::metadata(&file).unwrap().gid(), 0);
+    assert!(read.starts_with("err:"), "{read}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share____a_volume____becomes_the_apps_and_sharing_again_changes_nothing() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let Some(started) = helper("share____a_volume") else {
+        return;
+    };
+    let rt = runtime(&started);
+    let vol = privhelper::dir_owned(&started.dir.path().join("vol"), started.node_uid, 0o755);
+
+    rt.share_with_app("alpha", &vol, true).await.unwrap();
+    rt.share_with_app("alpha", &vol, true).await.unwrap();
+
+    let meta = std::fs::metadata(&vol).unwrap();
+    assert_eq!(meta.uid(), started.first_uid);
+    assert_eq!(meta.gid(), started.first_uid);
+    assert_eq!(meta.permissions().mode() & 0o7777, 0o770);
 }

@@ -137,7 +137,7 @@ async fn driver____restarted____the_port_stays_and_a_waiting_client_is_served() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn not_a_driver____no_listeners() {
+async fn listeners____not_a_driver____none() {
     let n = node("plain");
     let plain = up(&n, "plain");
 

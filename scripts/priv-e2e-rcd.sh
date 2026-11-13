@@ -51,6 +51,16 @@ for i in $(seq 100); do [ -S /var/db/bulkhead/admin.sock ] && break; sleep 0.1; 
 echo "== processes"
 ps -ax -o user= -o pid= -o ppid= -o command= | grep -E "bulkhead" | grep -v -E "grep|ps1-rcd"
 echo "== status"; service bulkhead status
+echo "== what an app's user reaches of the node's (ROADMAP PS2; no app is deployed here)"
+D=/var/db/bulkhead
+for p in $D $D/state.json $D/kv $D/bundles $D/compiled $D/priv; do
+    [ -e "$p" ] && stat -f '%Lp %Su:%Sg %N' "$p"
+done
+as_app() { /usr/sbin/chroot -u 60000 -g 60000 / "$@"; }
+for p in $D/state.json $D/kv $D/bundles $D/creation; do
+    [ -e "$p" ] || continue
+    if as_app test -r "$p"; then echo "READABLE by the app: $p"; else echo "refused to the app: $p"; fi
+done
 echo "== admin as the node's user"
 su -m bulkhead -c "/usr/local/bin/bulkhead --socket /var/db/bulkhead/admin.sock list" || true
 echo "== reload"; service bulkhead reload; sleep 1

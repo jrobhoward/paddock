@@ -30,6 +30,7 @@ fn spawn() -> Spawn {
 #[case(Request::Spawn(spawn()))]
 #[case(Request::Signal { id: 3, signal: 9 })]
 #[case(Request::Bind { address: "[::]:443".into() })]
+#[case(Request::Share { app: "orders".into(), bind: Bind { path: "/var/lib/bulkhead/priv/orders".into(), writable: false } })]
 fn Request____encoded____decodes_the_same(#[case] request: Request) {
     let bytes = request.encode();
 

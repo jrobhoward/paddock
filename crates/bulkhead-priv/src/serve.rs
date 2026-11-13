@@ -256,6 +256,10 @@ impl Helper {
                     Err(e) => (refused(&format!("signal: {e}")), None),
                 }
             }
+            Request::Share { app, bind } => match self.share(&app, &bind) {
+                Ok(reply) => (reply, None),
+                Err(reason) => (Reply::Refused { reason }, None),
+            },
             Request::Bind { address } => {
                 match check::bind_address(&self.config, &address).and_then(|addr| {
                     std::net::TcpListener::bind(addr).map_err(|e| format!("bind {addr}: {e}"))
@@ -267,31 +271,53 @@ impl Helper {
         }
     }
 
+    /// `path` with links resolved, if it is a directory under the
+    /// configuration's binds (checked again once resolved).
+    fn bind_path(&self, path: &str) -> Result<PathBuf, String> {
+        let resolved = std::fs::canonicalize(path).map_err(|e| format!("bind {path}: {e}"))?;
+        if !check::under(&resolved, &self.config.binds) || !resolved.is_dir() {
+            return Err(format!(
+                "bind {path} is not a directory under the helper's binds"
+            ));
+        }
+        Ok(resolved)
+    }
+
+    /// Give a directory the node wrote to its app (ROADMAP PS2), picking
+    /// the app's user first if it has none yet.
+    fn share(&mut self, app: &str, bind: &bulkhead_priv_wire::Bind) -> Result<Reply, String> {
+        if !bulkhead_priv_wire::is_app_name(app) {
+            return Err(format!("{app:?} is not an app name"));
+        }
+        let path = self.bind_path(&bind.path)?;
+        let uid = self.app_user(app)?;
+        share::share(&path, self.config.node_uid, uid, bind.writable)?;
+        Ok(Reply::Done)
+    }
+
+    /// The app's user, picked and saved on its first use.
+    fn app_user(&mut self, app: &str) -> Result<u32, String> {
+        let (uid, new) = self.bindings.assign(app, &self.config.uids)?;
+        if new {
+            self.bindings
+                .save(&self.config.state)
+                .map_err(|e| format!("saving the app's user: {e}"))?;
+            eprintln!("bulkhead-priv: app {app} gets user {uid}");
+        }
+        Ok(uid)
+    }
+
     fn spawn(&mut self, s: &Spawn, fds: Vec<OwnedFd>) -> Result<Reply, String> {
         check::spawn(&self.config, s, fds.len())?;
         if self.insts.contains_key(&s.id) {
             return Err(format!("instance {} runs already", s.id));
         }
-        let (uid, new) = self.bindings.assign(&s.app, &self.config.uids)?;
-        if new {
-            self.bindings
-                .save(&self.config.state)
-                .map_err(|e| format!("saving the app's user: {e}"))?;
-            eprintln!("bulkhead-priv: app {} gets user {uid}", s.app);
-        }
+        let uid = self.app_user(&s.app)?;
+        // Bound as they are: the node had each shared once, when it wrote
+        // it (`Request::Share`), so a start walks nothing.
         let mut binds: Vec<(PathBuf, bool)> = Vec::new();
         for b in &s.binds {
-            // Checked again once links are resolved.
-            let path =
-                std::fs::canonicalize(&b.path).map_err(|e| format!("bind {}: {e}", b.path))?;
-            if !check::under(&path, &self.config.binds) || !path.is_dir() {
-                return Err(format!(
-                    "bind {} is not a directory under the helper's binds",
-                    b.path
-                ));
-            }
-            share::share(&path, self.config.node_uid, uid, b.writable)?;
-            binds.push((path, b.writable));
+            binds.push((self.bind_path(&b.path)?, b.writable));
         }
         let exec = Exec::new(&self.config.runner.display().to_string(), &s.args, &s.env)
             .map_err(|e| e.to_string())?;

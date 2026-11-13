@@ -143,6 +143,10 @@ impl Node {
         logs: Arc<LogRing>,
         extensions: Vec<Arc<dyn Extension>>,
     ) -> Result<Self, NodeError> {
+        // What the node makes is its own (ROADMAP PS2); what an app reads,
+        // the privileged helper gives to the app's group.
+        #[cfg(unix)]
+        rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
         let store = Store::open(&config.data_dir)?;
         let policy = match &config.policy {
             Some(path) => {

@@ -79,7 +79,23 @@ fn share____a_hard_link_inside____left_alone() {
 }
 
 #[test]
-fn share____writable____top_only_with_set_group_id() {
+fn share____read_only_tree_others_could_read____others_read_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let top = dir.path().join("p");
+    std::fs::create_dir(&top).unwrap();
+    std::fs::write(top.join("cert.pem"), b"x").unwrap();
+    set(&top, 0o755);
+    set(&top.join("cert.pem"), 0o644);
+    let (uid, gid) = me();
+
+    share(&top, uid, gid, false).unwrap();
+
+    assert_eq!(mode(&top) & 0o007, 0);
+    assert_eq!(mode(&top.join("cert.pem")), 0o640);
+}
+
+#[test]
+fn share____writable____top_only_the_apps() {
     let dir = tempfile::tempdir().unwrap();
     let top = dir.path().join("v");
     std::fs::create_dir(&top).unwrap();
@@ -90,7 +106,7 @@ fn share____writable____top_only_with_set_group_id() {
 
     share(&top, uid, gid, true).unwrap();
 
-    assert_eq!(mode(&top), 0o2770);
+    assert_eq!(mode(&top), 0o770);
     assert_eq!(mode(&top.join("old")), 0o600);
 }
 

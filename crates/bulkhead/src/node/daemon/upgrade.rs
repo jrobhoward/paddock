@@ -140,10 +140,7 @@ impl Node {
                 "{name}'s listeners change between versions; remove and deploy it instead"
             )));
         }
-        built
-            .bundle
-            .extract_priv(&self.store.priv_dir(name, &version))
-            .map_err(internal)?;
+        self.install(&built).await?;
         self.store.keep_upload(upload, name, &version)?;
         let info = built.info.clone();
         if built.run.manifest.spec.upgrade.mode == UpgradeMode::BlueGreen && !params.restart {

@@ -85,6 +85,14 @@ echo "uid/gid: $(awk '/^Uid|^Gid/ {print $2}' /proc/$APP/status | tr '\n' ' ')"
 echo "cgroup:  $(cat /proc/$APP/cgroup)"
 echo "pid ns:  $(readlink /proc/$APP/ns/pid) (node: $(readlink /proc/$(pgrep -x bulkhead | head -1)/ns/pid))"
 echo "root:    $(ls /proc/$APP/root/)"
+echo "== what the app's user reaches (ROADMAP PS2)"
+D=/var/lib/bulkhead
+stat -c '%a %U:%G %n' $D $D/state.json $D/kv $D/bundles $D/compiled $D/compiled/board $D/priv
+as_app() { setpriv --reuid=60000 --regid=60000 --clear-groups "$@"; }
+for p in $D/state.json $D/kv $D/bundles/board; do
+    if as_app test -r "$p"; then echo "READABLE by the app: $p"; else echo "refused to the app: $p"; fi
+done
+if as_app test -r $D/compiled/board -a -x $D/compiled/board; then echo "the app reaches its program's directory"; else echo "NOT REACHABLE by the app: its program's directory"; fi
 echo "helper caps: $(grep -E 'CapEff|CapBnd' /proc/$(pgrep -x bulkhead-priv)/status | tr '\n' ' ')"
 echo "node caps:   $(grep -E 'CapEff' /proc/$(pgrep -x bulkhead | head -1)/status)"
 echo "== stop"

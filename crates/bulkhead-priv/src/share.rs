@@ -1,8 +1,10 @@
 //! Letting an app's user reach the directories its instance needs: its
 //! program's directory and `priv/` files, read-only, and its read-write
-//! volumes. The node owns them (ROADMAP PS2 changes that), so the helper
-//! gives each to the app's group, which only the app's user is in, and
-//! adds the group's permission bits.
+//! volumes. The node writes them and keeps owning the read-only ones; the
+//! helper gives each to the app's group, which only the app's user is in,
+//! with the group's permission bits and none for others, once, when the
+//! node has written them (ROADMAP PS2, `Request::Share`), not at each
+//! start.
 //!
 //! The node is not trusted here: a compromised node could put a symbolic
 //! link or a hard link to `/etc/shadow` where a program should be. So the
@@ -15,10 +17,14 @@
 //!   file under it that the node owns gets the app's group and `g+r`
 //!   (`g+x` on directories and where the owner may execute). Hard-linked
 //!   files are left alone.
-//! - A read-write directory (a volume) is shared at its top only: the app's
-//!   group, `g+rwx` and set-group-id, so what the app makes there is its
-//!   own. Nothing below is walked: the app writes there, and a walk as
-//!   root through a place an app controls is how links get followed.
+//! - A read-write directory (a volume) is shared at its top only, and
+//!   becomes the app's: its user and group, `0770`, so what the app makes
+//!   there is its own (the app's group is its user's own number, so no
+//!   set-group-id bit is needed, which the helper could not set anyway
+//!   without `CAP_FSETID`) and the node needs no write.
+//!   Nothing below is walked: the app writes there, and a walk as root
+//!   through a place an app controls is how links get followed. Sharing it
+//!   again, once it is the app's, changes nothing.
 
 use std::os::fd::{AsFd, OwnedFd};
 use std::path::Path;
@@ -37,24 +43,30 @@ const OPEN: OFlags = OFlags::RDONLY
     .union(OFlags::NONBLOCK)
     .union(OFlags::NOCTTY);
 
-/// Share `path` with group `gid`, as described above, where the node is
-/// `node_uid`.
+/// Share `path` with the app whose user and group are `app` (one
+/// number), as described above, where the node is `node_uid`.
 ///
 /// # Errors
 ///
-/// `path` is not a directory the node owns, or a change failed; a walk
-/// past [`MAX_ENTRIES`] or [`MAX_DEPTH`].
-pub fn share(path: &Path, node_uid: u32, gid: u32, writable: bool) -> Result<(), String> {
+/// `path` is not a directory the node owns (or, read-write, the app
+/// already), or a change failed; a walk past [`MAX_ENTRIES`] or
+/// [`MAX_DEPTH`].
+pub fn share(path: &Path, node_uid: u32, app: u32, writable: bool) -> Result<(), String> {
     let fd = open(path, OPEN | OFlags::DIRECTORY, Mode::empty())
         .map_err(|e| format!("{}: {e}", path.display()))?;
     let st = fstat(&fd).map_err(|e| format!("{}: {e}", path.display()))?;
+    // Already given: the app's, not the node's.
+    if writable && app != node_uid && st.st_uid == app && st.st_gid == app {
+        return Ok(());
+    }
     if st.st_uid != node_uid {
         return Err(format!("{} is not the node's", path.display()));
     }
-    let gid = Gid::from_raw(gid);
+    let gid = Gid::from_raw(app);
     if writable {
-        let mode = Mode::from_raw_mode(st.st_mode) | Mode::RWXG | Mode::SGID;
-        fchown(&fd, None, Some(gid)).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mode = Mode::RWXU | Mode::RWXG;
+        fchown(&fd, Some(rustix::fs::Uid::from_raw(app)), Some(gid))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         fchmod(&fd, mode).map_err(|e| format!("{}: {e}", path.display()))?;
         return Ok(());
     }
@@ -105,7 +117,8 @@ fn walk(
     Ok(())
 }
 
-/// Give `fd` to group `gid` with `g+r`, and `g+x` with `exec`.
+/// Give `fd` to group `gid` with `g+r`, and `g+x` with `exec`, and
+/// nothing for others.
 fn grant(fd: &OwnedFd, gid: Gid, exec: bool) -> Result<(), String> {
     let st = fstat(fd).map_err(|e| e.to_string())?;
     let mut mode = Mode::from_raw_mode(st.st_mode) | Mode::RGRP;
@@ -113,8 +126,8 @@ fn grant(fd: &OwnedFd, gid: Gid, exec: bool) -> Result<(), String> {
         mode |= Mode::XGRP;
     }
     // Write for the group never: the app reads its program, it does not
-    // change it.
-    mode.remove(Mode::WGRP);
+    // change it. Others nothing: another app's user is one of them.
+    mode.remove(Mode::WGRP | Mode::RWXO);
     fchown(fd.as_fd(), None, Some(gid)).map_err(|e| e.to_string())?;
     fchmod(fd.as_fd(), mode).map_err(|e| e.to_string())
 }

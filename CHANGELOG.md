@@ -6,6 +6,18 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A user per app's files (ROADMAP PS2): the node runs with umask 077 and
+  tightens `data_dir` at each start (`data_dir`, `compiled/` and `priv/`
+  0711; its own state 0700 and 0600), so an app's user reads none of the
+  node's files or another app's. Under the privileged helper an app's
+  `compiled/<app>` and `priv/<app>` are given to its group once, when the
+  node writes them (deploy, upgrade, node start), through the helper's new
+  `Share` request, not at each instance start, which binds them as they
+  are; a read-write volume's top directory becomes the app's user's, mode
+  0770 (no set-group-id bit any more).
+
 ### Added
 
 - Driver apps (ROADMAP DA1): node config `[drivers.<app>]` gives the app

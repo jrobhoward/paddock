@@ -64,6 +64,9 @@ impl Store {
             std::fs::create_dir_all(root.join(dir))
                 .map_err(|e| NodeError::Internal(format!("{}: {e}", root.join(dir).display())))?;
         }
+        #[cfg(unix)]
+        modes::tighten(root)
+            .map_err(|e| NodeError::Internal(format!("{}: {e}", root.display())))?;
         let path = root.join("node.lock");
         let lock = std::fs::OpenOptions::new()
             .create(true)
@@ -187,7 +190,17 @@ impl Store {
     }
 
     pub(crate) fn priv_dir(&self, app: &str, version: &str) -> PathBuf {
-        self.root.join("priv").join(app).join(version)
+        self.app_privs(app).join(version)
+    }
+
+    /// Where every version of `app` keeps its `priv/` files.
+    pub(crate) fn app_privs(&self, app: &str) -> PathBuf {
+        self.root.join("priv").join(app)
+    }
+
+    /// Where every version of `app` keeps its program.
+    pub(crate) fn app_programs(&self, app: &str) -> PathBuf {
+        self.root.join("compiled").join(app)
     }
 
     /// Where `app`'s `version` keeps its program, named after the
@@ -328,3 +341,72 @@ fn write_durable(root: &Path, name: &str, text: &str) -> Result<(), NodeError> {
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod store_tests;
+
+/// The modes under `data_dir` (ROADMAP PS2): the node's alone, but for
+/// what an app reads, which the privileged helper gives to the app's
+/// group. The node makes everything with umask 077; this tightens a tree
+/// an older node left.
+#[cfg(unix)]
+pub(crate) mod modes {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::path::Path;
+
+    fn set(path: &Path, mode: u32) -> std::io::Result<()> {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    }
+
+    /// `data_dir` and the parents of the apps' directories searchable by
+    /// anyone (an app's user reaches its own by path), listable by the
+    /// node only; the node's own state 0700 and 0600; nothing under the
+    /// apps' directories for other users. Symbolic links, sockets and
+    /// what the node does not own are left alone.
+    pub(crate) fn tighten(root: &Path) -> std::io::Result<()> {
+        set(root, 0o711)?;
+        for dir in ["compiled", "priv"] {
+            set(&root.join(dir), 0o711)?;
+            walk(&root.join(dir), &|_, mode| mode & !0o007, false)?;
+        }
+        for dir in ["bundles", "kv", "tmp"] {
+            walk(
+                &root.join(dir),
+                &|is_dir, _| if is_dir { 0o700 } else { 0o600 },
+                true,
+            )?;
+        }
+        for entry in std::fs::read_dir(root)? {
+            let entry = entry?;
+            let meta = entry.path().symlink_metadata()?;
+            if meta.is_file() && meta.uid() == rustix::process::getuid().as_raw() {
+                set(&entry.path(), 0o600)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Set the mode of `dir`'s contents (and of `dir` itself with `top`)
+    /// to `mode(is_dir, current)`.
+    fn walk(dir: &Path, mode: &dyn Fn(bool, u32) -> u32, top: bool) -> std::io::Result<()> {
+        let me = rustix::process::getuid().as_raw();
+        let meta = dir.symlink_metadata()?;
+        if !meta.is_dir() || meta.uid() != me {
+            return Ok(());
+        }
+        if top {
+            set(dir, mode(true, meta.mode() & 0o7777))?;
+        }
+        for entry in std::fs::read_dir(dir)? {
+            let path = entry?.path();
+            let meta = path.symlink_metadata()?;
+            if meta.uid() != me {
+                continue;
+            }
+            if meta.is_dir() {
+                set(&path, mode(true, meta.mode() & 0o7777))?;
+                walk(&path, mode, false)?;
+            } else if meta.is_file() {
+                set(&path, mode(false, meta.mode() & 0o7777))?;
+            }
+        }
+        Ok(())
+    }
+}

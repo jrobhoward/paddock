@@ -82,12 +82,18 @@ enum Job {
         oneshot::Sender<Result<Spawned, String>>,
     ),
     Signal(u64, i32),
+    Share(
+        String,
+        bulkhead_priv_wire::Bind,
+        oneshot::Sender<Result<(), String>>,
+    ),
 }
 
 /// What the task waits for, in the order the helper answers.
 enum Pending {
     Spawn(oneshot::Sender<Result<Spawned, String>>),
     Signal(u64),
+    Share(oneshot::Sender<Result<(), String>>),
 }
 
 impl PrivHelper {
@@ -187,6 +193,23 @@ impl PrivHelper {
             .unwrap_or_else(|_| Err("the privileged helper has gone".into()))
     }
 
+    /// Ask the helper to give the directory `path`, which the node wrote,
+    /// to `app` (ROADMAP PS2): read-only, to its group, walked; read-write,
+    /// its top to the app's user.
+    pub(crate) async fn share(&self, app: &str, path: &str, writable: bool) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        let bind = bulkhead_priv_wire::Bind {
+            path: path.to_string(),
+            writable,
+        };
+        self.0
+            .jobs
+            .send(Job::Share(app.to_string(), bind, tx))
+            .map_err(|_| "the privileged helper has gone".to_string())?;
+        rx.await
+            .unwrap_or_else(|_| Err("the privileged helper has gone".into()))
+    }
+
     /// Ask the helper to send `signal` to instance `id`; its refusal is
     /// logged.
     pub(crate) fn signal(&self, id: u64, signal: i32) {
@@ -232,14 +255,21 @@ async fn serve(sock: AsyncFd<OwnedFd>, mut jobs: mpsc::UnboundedReceiver<Job>) {
                     Job::Signal(id, signal) => {
                         (Request::Signal { id, signal }.encode(), Vec::new(), Pending::Signal(id))
                     }
+                    Job::Share(app, bind, tx) => {
+                        (Request::Share { app, bind }.encode(), Vec::new(), Pending::Share(tx))
+                    }
                 };
                 match send(&sock, &bytes, &fds).await {
                     Ok(()) => pending.push_back(waiting),
-                    Err(e) => {
-                        if let Pending::Spawn(tx) = waiting {
+                    Err(e) => match waiting {
+                        Pending::Spawn(tx) => {
                             let _ = tx.send(Err(format!("the privileged helper: {e}")));
                         }
-                    }
+                        Pending::Share(tx) => {
+                            let _ = tx.send(Err(format!("the privileged helper: {e}")));
+                        }
+                        Pending::Signal(_) => {}
+                    },
                 }
             }
             ready = sock.readable() => {
@@ -315,6 +345,12 @@ fn deliver(
             let _ = tx.send(Err(format!("the privileged helper refused: {reason}")));
         }
         (Some(Pending::Signal(_)), Reply::Done) => {}
+        (Some(Pending::Share(tx)), Reply::Done) => {
+            let _ = tx.send(Ok(()));
+        }
+        (Some(Pending::Share(tx)), Reply::Refused { reason }) => {
+            let _ = tx.send(Err(format!("the privileged helper refused: {reason}")));
+        }
         (Some(Pending::Signal(id)), Reply::Refused { reason }) => {
             tracing::warn!(id, reason, "the privileged helper refused a signal");
         }
@@ -324,8 +360,14 @@ fn deliver(
                 waited = waiting.is_some(),
                 "an answer from the privileged helper out of order"
             );
-            if let Some(Pending::Spawn(tx)) = waiting {
-                let _ = tx.send(Err("the privileged helper answered out of order".into()));
+            match waiting {
+                Some(Pending::Spawn(tx)) => {
+                    let _ = tx.send(Err("the privileged helper answered out of order".into()));
+                }
+                Some(Pending::Share(tx)) => {
+                    let _ = tx.send(Err("the privileged helper answered out of order".into()));
+                }
+                _ => {}
             }
         }
     }
@@ -338,8 +380,14 @@ fn gone(
 ) {
     tracing::error!("the privileged helper has gone; its instances were killed");
     for p in pending.drain(..) {
-        if let Pending::Spawn(tx) = p {
-            let _ = tx.send(Err("the privileged helper has gone".into()));
+        match p {
+            Pending::Spawn(tx) => {
+                let _ = tx.send(Err("the privileged helper has gone".into()));
+            }
+            Pending::Share(tx) => {
+                let _ = tx.send(Err("the privileged helper has gone".into()));
+            }
+            Pending::Signal(_) => {}
         }
     }
     for (_, tx) in exits.drain() {

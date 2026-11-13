@@ -303,10 +303,7 @@ impl Node {
         let built = self
             .build(&self.store.bundle_path(name, &new.version))
             .await?;
-        built
-            .bundle
-            .extract_priv(&self.store.priv_dir(name, &new.version))
-            .map_err(internal)?;
+        self.install(&built).await?;
         let deployment = built.run;
         // Approved when it was first started.
         self.apps

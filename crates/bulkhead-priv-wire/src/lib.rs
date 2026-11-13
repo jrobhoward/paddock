@@ -112,6 +112,18 @@ pub enum Request {
         /// The address and port, as `ip:port` (`[ip]:port` for IPv6).
         address: String,
     },
+    /// Give a directory the node wrote for an app to that app (ROADMAP
+    /// PS2), once, when the node writes it rather than at each start:
+    /// read-only, its group and group read, walked (a program's directory,
+    /// `priv/` files); read-write, its top directory the app's own (a
+    /// volume). The helper picks the app's user as for [`Request::Spawn`];
+    /// answered [`Reply::Done`] or [`Reply::Refused`].
+    Share {
+        /// The app ([`is_app_name`]).
+        app: String,
+        /// The directory, under one of the helper's bind roots.
+        bind: Bind,
+    },
 }
 
 /// What the helper answers or reports.
@@ -155,6 +167,7 @@ pub enum Reply {
 const T_SPAWN: u8 = 1;
 const T_SIGNAL: u8 = 2;
 const T_BIND: u8 = 3;
+const T_SHARE: u8 = 4;
 const T_SPAWNED: u8 = 0x81;
 const T_DONE: u8 = 0x82;
 const T_BOUND: u8 = 0x83;
@@ -288,6 +301,12 @@ impl Request {
                 w.u8(T_BIND);
                 w.str(address);
             }
+            Self::Share { app, bind } => {
+                w.u8(T_SHARE);
+                w.str(app);
+                w.str(&bind.path);
+                w.u8(u8::from(bind.writable));
+            }
         }
         w.0
     }
@@ -339,6 +358,13 @@ impl Request {
                 signal: r.i32()?,
             },
             T_BIND => Self::Bind { address: r.str()? },
+            T_SHARE => Self::Share {
+                app: r.str()?,
+                bind: Bind {
+                    path: r.str()?,
+                    writable: r.bool()?,
+                },
+            },
             _ => return None,
         };
         r.end()?;

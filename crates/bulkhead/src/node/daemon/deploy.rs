@@ -88,10 +88,7 @@ impl Node {
         let built = self
             .build(&self.store.bundle_path(name, &app.current))
             .await?;
-        built
-            .bundle
-            .extract_priv(&self.store.priv_dir(name, &app.current))
-            .map_err(internal)?;
+        self.install(&built).await?;
         let handle = self.run(name, built.run).await?;
         self.st().info.insert(name.to_string(), built.info);
         if let Some(previous) = &app.previous {
@@ -121,6 +118,37 @@ impl Node {
             self.save_desired()?;
         }
         self.st().restore_errors.remove(name);
+        Ok(())
+    }
+
+    /// Write `built`'s `priv/` files and give what the app reads or writes
+    /// to its user (ROADMAP PS2), once, before it runs rather than at each
+    /// start: with the privileged helper, its program's and `priv/`
+    /// directories (all its versions') to its group, read-only, and its
+    /// volumes to it.
+    pub(super) async fn install(&self, built: &Built) -> Result<(), NodeError> {
+        let (name, version) = (built.name(), built.version());
+        let priv_dir = self.store.priv_dir(&name, &version);
+        built.bundle.extract_priv(&priv_dir).map_err(internal)?;
+        let mut dirs = vec![(self.store.app_programs(&name), false)];
+        if priv_dir.is_dir() {
+            dirs.push((self.store.app_privs(&name), false));
+        }
+        let spec = &built.run.spec;
+        if spec
+            .granted
+            .contains(&bulkhead_bundle::manifest::Capability::Filesystem)
+        {
+            for p in spec.preopens.iter().filter(|p| p.host != priv_dir) {
+                dirs.push((p.host.clone(), p.writable));
+            }
+        }
+        for (dir, writable) in dirs {
+            self.rt
+                .share_with_app(&name, &dir, writable)
+                .await
+                .map_err(|e| NodeError::Internal(format!("{name}: {e}")))?;
+        }
         Ok(())
     }
 
@@ -405,10 +433,7 @@ impl Node {
             )));
         }
         check_names(&self.st(), &name, &built.info.names)?;
-        built
-            .bundle
-            .extract_priv(&self.store.priv_dir(&name, &version))
-            .map_err(internal)?;
+        self.install(&built).await?;
         self.store.keep_upload(upload, &name, &version)?;
         let info = built.info.clone();
         if let Err(e) = self.run(&name, built.run).await {

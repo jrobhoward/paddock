@@ -2932,6 +2932,19 @@ Requests a second, p50 µs and CPU µs a request (the node and its instances), t
 - **Large bodies cost both paths more** and the driver more still (64 KiB at 32 connections: 58% of the requests at 1.9 times the CPU), as S37 found; PF1 is that item.
 - **Not measured:** the 16-core machine (two VMs were running); FreeBSD (function checks only).
 
+## 2026-11-12: starts under the helper without a share each time (PS2)
+
+`native_cost 4` as the privileged helper's node, the same release builds of the node, the runner and the fixture under the helper from before PS2 (which gives the program's directory to the app's group at every spawn) and under PS2's (which shares nothing at a spawn), two rounds in turn. Raspberry Pi 5 (Linux 7.0), nice 10, load under 0.5 at each start.
+
+| | before | after |
+| --- | --- | --- |
+| start, to the first reply (p50, ms) | 6.6, 6.6 | 6.6, 6.5 |
+| call from the host, one at a time (p50, µs) | 21.0, 21.2 | 20.6, 20.3 |
+| request from a callback, its own pid (µs) | 3.0, 3.0 | 3.0, 3.0 |
+
+- **No change in start time:** the walk over one small program directory cost too little to see; PS2's gain is whom the files are readable by, not time.
+- **Not measured:** the 16-core machine (its `sudo` needs a password); an app with many `priv/` files, whose walk now happens once per deploy rather than at each start.
+
 ## Not measured yet
 
 - Where the 2.7 µs a native call costs more under the privileged helper goes (PS1), and the helper on the 16-core machine.

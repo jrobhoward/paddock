@@ -615,6 +615,32 @@ impl Runtime {
         self.inner.table.all()
     }
 
+    /// Give `path`, a directory the node wrote for `app`, to that app's
+    /// user (ROADMAP PS2), through the privileged helper: read-only, to its
+    /// group (the program's and `priv/` directories); read-write, the
+    /// directory itself (a volume). Without the helper the app runs as the
+    /// node's user and this does nothing.
+    ///
+    /// # Errors
+    ///
+    /// The helper's refusal, or the helper gone.
+    pub async fn share_with_app(
+        &self,
+        app: &str,
+        path: &std::path::Path,
+        writable: bool,
+    ) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        if let Some(helper) = &self.inner.config.native.helper {
+            let path = path
+                .to_str()
+                .ok_or_else(|| format!("{} is not UTF-8, as the helper needs", path.display()))?;
+            return helper.share(app, path, writable).await;
+        }
+        let _ = (app, path, writable);
+        Ok(())
+    }
+
     /// Keep the HTTP route table (JSON, `GUEST_FORMATS.md`'s "Routes") and
     /// announce it to the driver apps whose profile asks for it (host event
     /// `routes`, ROADMAP DA1).
