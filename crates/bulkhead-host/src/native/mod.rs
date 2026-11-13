@@ -62,3 +62,19 @@ pub struct NativeCode {
     /// A rustbridge plugin or an executable.
     pub kind: NativeProgram,
 }
+
+/// What a descriptor passed to an app is, which on FreeBSD sets the rights
+/// its copy keeps ([`os::for_app`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Passed {
+    /// A published bucket's snapshot: read and mapped read-only.
+    Snapshot,
+    /// A connected stream.
+    Stream,
+    /// A sender channel's shared memory.
+    Memfd,
+    /// A sender channel's door (the app reads it).
+    Door,
+    /// A sender channel's bell (the app writes it).
+    Bell,
+}

@@ -27,7 +27,7 @@
 //! | `memfd` | nothing: making a memfd is outside the seccomp allow-list, and the instance ends |
 //! | `priv FILE` | `ok` if the bundle's `priv/` file reads, else `err:` |
 //! | `udp-bind ADDR`; `udp-send S ADDR TEXT`; `udp-recv S`; `net-watch S TAG` | a UDP socket the node holds (its number); a datagram sent; one received as `FROM TEXT`, or `none`; an `io-ready` notice tagged `TAG` (recorded as `event io-ready {"tag":TAG}`) |
-//! | `tcp-connect ADDR`; `tcp-write S TEXT`; `tcp-close S`; `tcp-close-keep S` | a stream passed by the node and kept (its number); bytes written on it; dropped and closed at the node; closed at the node but kept |
+//! | `tcp-connect ADDR`; `tcp-write S TEXT`; `tcp-close S`; `tcp-close-keep S`; `tcp-probe S [listen]` | a stream passed by the node and kept (its number); bytes written on it; dropped and closed at the node; closed at the node but kept; `nonblock=… listen=…`, setting it non-blocking and making it listen |
 //! | `sql-q DS STMT`, `sql-x DS STMT` | a query's rows (`col=value` cells joined by `,`, rows by `;`) or a statement's count, else `err:` and the error |
 //! | `sql-begin DS`; `sql-tq STMT`, `sql-tx STMT`, `sql-commit`, `sql-rollback` | open a transaction and keep it; then statements in it, and its end |
 //! | `sql-drop` | forget the open transaction as a dropped handle does (`end_transaction_quietly`) |

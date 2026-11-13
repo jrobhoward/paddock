@@ -28,7 +28,6 @@ fn shared() -> &'static (Runtime, LoadedApp) {
         let mut native = NativeConfig::default();
         native.runner = Some(native_fixtures().0.clone());
         // FreeBSD's runner has no sandbox yet (ROADMAP FB2).
-        native.landlock_optional = common::NO_SANDBOX;
         let rt = Runtime::new(RuntimeConfig {
             max_instances: 32,
             native,

@@ -8,6 +8,17 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Native apps on FreeBSD run in Capsicum capability mode (ROADMAP FB2,
+  first half): `bulkhead-runner` limits each inherited descriptor's rights,
+  opens each preopen as a directory descriptor (`BULKHEAD_PREOPEN_FDS`),
+  enters capability mode and executes the program through the run-time
+  linker (`ld-elf.so.1 -f`, `LD_LIBRARY_PATH_FDS`), so the app never runs
+  outside it. Descriptors the node passes later (published snapshots,
+  connected streams, sender channels) are duplicates with limited rights.
+  `[native] landlock_optional` no longer applies there, and the runner
+  refuses a rustbridge plugin on FreeBSD. On KVM virtual machines a clock
+  read becomes a system call there.
+
 - A user per app's files (ROADMAP PS2): the node runs with umask 077 and
   tightens `data_dir` at each start (`data_dir`, `compiled/` and `priv/`
   0711; its own state 0700 and 0600), so an app's user reads none of the
@@ -19,6 +30,11 @@ All notable changes are recorded here. The format follows
   0770 (no set-group-id bit any more).
 
 ### Added
+
+- `bulkhead_sdk::files::{read, write, open, create_dir, remove_file}` and
+  `bulkhead_native::preopens::{open, create_dir, remove_file, Mode}`: files
+  by guest path, opened under the preopen's directory descriptor on FreeBSD
+  and by path on Linux. `files::path` is Linux's only.
 
 - Driver apps (ROADMAP DA1): node config `[drivers.<app>]` gives the app
   of that name, deployed as any app, listening sockets the node binds and

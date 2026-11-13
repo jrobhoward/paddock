@@ -133,7 +133,6 @@ fn native_config() -> bulkhead_host::NativeConfig {
     let mut config = bulkhead_host::NativeConfig::default();
     if native() {
         config.runner = Some(common::native_fixtures().0.clone());
-        config.landlock_optional = common::NO_SANDBOX;
     }
     if let Some(started) = helper() {
         config.runner = Some(started.runner.clone());

@@ -523,7 +523,11 @@ impl InProcessPort {
     }
 
     #[cfg(unix)]
-    pub(crate) fn send_fd(&mut self, _fd: std::os::fd::BorrowedFd<'_>) -> Result<p::FdRef, String> {
+    pub(crate) fn send_fd(
+        &mut self,
+        _fd: std::os::fd::BorrowedFd<'_>,
+        _what: crate::native::Passed,
+    ) -> Result<p::FdRef, String> {
         Err("an in-process app takes no descriptors".into())
     }
 

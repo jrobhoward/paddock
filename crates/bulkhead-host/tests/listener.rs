@@ -97,7 +97,6 @@ async fn serve(
 ) -> Served {
     let mut native = NativeConfig::default();
     native.runner = Some(common::native_fixtures().0.clone());
-    native.landlock_optional = common::NO_SANDBOX;
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 16,
         native,

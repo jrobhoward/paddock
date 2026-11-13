@@ -2,7 +2,7 @@
 //! executable's callbacks and process functions, its failures as exit
 //! reasons, its limits, and a rustbridge plugin.
 
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "freebsd"))]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use bulkhead_bundle::manifest::{Capability, NativeProgram};
 use bulkhead_host::{
-    CallError, Envelope, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, NativeCode,
-    NativeConfig, Pid, Runtime, RuntimeConfig,
+    CallError, ExitReason, InstanceHandle, InstanceSpec, LoadedApp, NativeCode, NativeConfig, Pid,
+    Runtime, RuntimeConfig,
 };
 use common::{LONG, ask, body, native_fixtures, text};
 
@@ -285,10 +285,17 @@ async fn executable____shrinks_its_channel____refused_and_the_node_runs_on() {
     let shrunk = ask(&instance, "shrink-channel").await;
     let after = ask(&instance, "echo still here").await;
 
-    assert!(shrunk.contains("Operation not permitted"), "{shrunk}");
+    // Linux: the memfd's seals; FreeBSD: its rights, too (no `FTRUNCATE`).
+    let refused = if cfg!(target_os = "freebsd") {
+        "Capabilities insufficient"
+    } else {
+        "Operation not permitted"
+    };
+    assert!(shrunk.contains(refused), "{shrunk}");
     assert_eq!(after, "still here");
 }
 
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn executable____call_outside_the_allow_list____crashed_naming_the_call() {
     let rt = runtime(|_| {});
@@ -302,6 +309,7 @@ async fn executable____call_outside_the_allow_list____crashed_naming_the_call() 
     assert_eq!(exit, ExitReason::Crashed("syscall memfd_create".into()));
 }
 
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn executable____user_namespace____refused_and_the_app_runs_on() {
     let rt = runtime(|_| {});
@@ -327,13 +335,27 @@ async fn executable____sandboxed____files_sockets_and_node_signals_refused() {
     let printed = ask(&instance, "print to stderr").await;
     let ring = ask(&instance, "io-uring").await;
 
-    assert!(read.contains("Permission denied"), "{read}");
-    assert!(ring.contains("Operation not permitted"), "{ring}");
-    assert!(connect.contains("Operation not permitted"), "{connect}");
-    assert!(signal.contains("Operation not permitted"), "{signal}");
+    // Linux: Landlock and the seccomp allow-list; FreeBSD: capability
+    // mode (ROADMAP FB2).
+    if cfg!(target_os = "freebsd") {
+        for refused in [&read, &connect, &signal] {
+            assert!(
+                refused.contains("Not permitted in capability mode"),
+                "{refused}"
+            );
+        }
+    } else {
+        assert!(read.contains("Permission denied"), "{read}");
+        assert!(ring.contains("Operation not permitted"), "{ring}");
+        assert!(connect.contains("Operation not permitted"), "{connect}");
+        assert!(signal.contains("Operation not permitted"), "{signal}");
+    }
     assert_eq!(printed, "ok");
 }
 
+/// FreeBSD's runner refuses plugins: they load by path, which capability
+/// mode refuses (ROADMAP FB2).
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn library____json_call____plugin_answers() {
     let rt = runtime(|_| {});
@@ -342,9 +364,9 @@ async fn library____json_call____plugin_answers() {
         kind: NativeProgram::Library,
     });
     let instance = rt.spawn(&app, spec(r#"{"k":1}"#)).unwrap();
-    let json = |schema: &str, body: &str| Envelope {
+    let json = |schema: &str, body: &str| bulkhead_host::Envelope {
         schema: Some(schema.into()),
-        ..Envelope::new("application/json", body)
+        ..bulkhead_host::Envelope::new("application/json", body)
     };
 
     let echo = instance
@@ -373,6 +395,7 @@ async fn runner____missing____instance_crashed_at_start() {
 }
 
 /// This process's own cgroup v2 directory.
+#[cfg(target_os = "linux")]
 fn own_cgroup() -> std::path::PathBuf {
     let line = std::fs::read_to_string("/proc/self/cgroup").unwrap();
     let rel = line.lines().find_map(|l| l.strip_prefix("0::")).unwrap();
@@ -383,6 +406,7 @@ fn own_cgroup() -> std::path::PathBuf {
 /// through `cargo test`, which would share it): build with
 /// `cargo test -p bulkhead-host --test native --no-run`, then
 /// `systemd-run --user --scope -p Delegate=yes <test binary> --ignored cgroup`.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 #[ignore = "needs a delegated cgroup (systemd-run --user --scope -p Delegate=yes)"]
 async fn cgroup____allocates_over_memory_max____memory_limit_and_cgroup_removed() {
@@ -433,7 +457,23 @@ async fn executable____after_the_runner_execs_it____not_dumpable() {
     let app = executable(&rt);
     let instance = start(&rt, &app).await;
 
-    let dumpable = ask(&instance, "dumpable").await;
+    // FreeBSD: asked from outside, since capability mode refuses the app
+    // the query.
+    let dumpable = if cfg!(target_os = "freebsd") {
+        let pid = ask(&instance, "os-pid").await;
+        let out = std::process::Command::new("proccontrol")
+            .args(["-m", "trace", "-q", "-p", &pid])
+            .output()
+            .unwrap();
+        let status = String::from_utf8_lossy(&out.stdout).into_owned();
+        if status.contains("disabled") {
+            "no".to_string()
+        } else {
+            status
+        }
+    } else {
+        ask(&instance, "dumpable").await
+    };
 
     assert_eq!(dumpable, "no");
 }
@@ -477,11 +517,14 @@ async fn executable____volumes____read_write_where_granted_read_only_elsewhere()
     assert_eq!(std::fs::read(rw.path().join("new.txt")).unwrap(), b"x");
     assert_eq!(read_back, "ok");
     assert_eq!(read_only, "ok");
-    assert!(
-        write_read_only.contains("Permission denied"),
-        "{write_read_only}"
-    );
-    assert!(write_priv.contains("Permission denied"), "{write_priv}");
+    // Linux: Landlock; FreeBSD: the preopen descriptor's rights.
+    let refused = if cfg!(target_os = "freebsd") {
+        "Capabilities insufficient"
+    } else {
+        "Permission denied"
+    };
+    assert!(write_read_only.contains(refused), "{write_read_only}");
+    assert!(write_priv.contains(refused), "{write_priv}");
     assert!(escape.starts_with("err:"), "{escape}");
     assert!(outside.starts_with("err:"), "{outside}");
 }

@@ -32,13 +32,17 @@
 //! (`execve` resets it for a readable program), so [`crate::app::serve`]
 //! sets it again.
 //!
-//! On FreeBSD, steps 2 and 3 have no equivalent yet: Capsicum and a jail
-//! per instance are ROADMAP FB2. Until then the runner refuses to start
-//! an app there unless the node passed `--landlock best-effort` (node
-//! config `[native] landlock_optional`), which then runs it with no fence
-//! but the node's uid and its limits. Step 1 is
-//! `procctl(PROC_TRACE_CTL_DISABLE_EXEC)`, which lasts across the exec.
+//! On FreeBSD (ROADMAP FB2) step 1 is
+//! `procctl(PROC_TRACE_CTL_DISABLE_EXEC)`, which lasts across the exec,
+//! and steps 2 and 3 are Capsicum (`capsicum::exec`, FreeBSD only): the runner limits
+//! each inherited descriptor's rights, opens the preopens as descriptors,
+//! enters capability mode and executes the program through the run-time
+//! linker. `--landlock best-effort` changes nothing there, and a
+//! rustbridge plugin is refused (its loading would need paths). The jail
+//! per instance comes with the helper (FB2's second half).
 
+#[cfg(target_os = "freebsd")]
+pub mod capsicum;
 pub mod library;
 #[cfg(target_os = "linux")]
 pub mod sandbox;
@@ -46,6 +50,7 @@ pub mod sandbox;
 pub mod seccomp;
 pub mod watchdog;
 
+#[cfg(not(target_os = "freebsd"))]
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -158,14 +163,6 @@ pub fn main() -> ExitCode {
         eprintln!("bulkhead-runner: not dumpable: {e}");
         return ExitCode::from(2);
     }
-    #[cfg(target_os = "freebsd")]
-    if args.landlock_required {
-        eprintln!(
-            "bulkhead-runner: no sandbox on FreeBSD yet (ROADMAP FB2); \
-             node config [native] landlock_optional = true runs apps without one"
-        );
-        return ExitCode::from(2);
-    }
     if args.lease
         && let Err(e) = watchdog::fork()
     {
@@ -182,26 +179,41 @@ pub fn main() -> ExitCode {
         eprintln!("bulkhead-runner: seccomp: {e}");
         return ExitCode::from(2);
     }
-    match args.program {
-        Program::Library(path) => library::serve(path),
+    match &args.program {
+        // A plugin is loaded by path at `init`, which capability mode
+        // refuses (ROADMAP FB2).
+        #[cfg(target_os = "freebsd")]
+        Program::Library(_) => {
+            eprintln!(
+                "bulkhead-runner: a rustbridge plugin cannot run in capability mode \
+                 on FreeBSD (it is loaded by path); build the app as an executable"
+            );
+            ExitCode::from(2)
+        }
+        #[cfg(not(target_os = "freebsd"))]
+        Program::Library(path) => library::serve(path.clone()),
         Program::Executable(path) => {
             // The environment is the node's choice, already narrowed to
             // what the app may know.
-            let mut cmd = std::process::Command::new(&path);
-            cmd.env_clear();
-            for var in [
+            let env: Vec<(String, String)> = [
                 crate::protocol::PRIV_ENV,
                 crate::preopens::ENV,
                 crate::channel::SPIN_ENV,
                 crate::driver::LISTENERS_ENV,
-            ] {
-                if let Some(value) = std::env::var_os(var) {
-                    cmd.env(var, value);
-                }
+            ]
+            .into_iter()
+            .filter_map(|var| std::env::var(var).ok().map(|v| (var.to_string(), v)))
+            .collect();
+            #[cfg(target_os = "freebsd")]
+            return capsicum::exec(&args, path, env);
+            #[cfg(not(target_os = "freebsd"))]
+            {
+                let mut cmd = std::process::Command::new(path);
+                cmd.env_clear().envs(env);
+                let err = cmd.exec();
+                eprintln!("bulkhead-runner: {}: {err}", path.display());
+                ExitCode::from(2)
             }
-            let err = cmd.exec();
-            eprintln!("bulkhead-runner: {}: {err}", path.display());
-            ExitCode::from(2)
         }
     }
 }

@@ -28,7 +28,6 @@ fn runtime(started: &Started) -> Runtime {
     let mut native = NativeConfig::default();
     native.runner = Some(started.runner.clone());
     native.helper = Some(started.helper.clone());
-    native.landlock_optional = common::NO_SANDBOX;
     Runtime::new(RuntimeConfig {
         max_instances: 16,
         native,

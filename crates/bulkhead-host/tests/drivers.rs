@@ -147,26 +147,36 @@ async fn listeners____not_a_driver____none() {
     plain.kill();
 }
 
-#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn accept____on_a_descriptor_not_passed____refused_for_drivers_and_apps() {
     let n = node("refused");
     let d = up(&n, "drv");
     let plain = up(&n, "plain");
 
-    let driver_elsewhere = ask(&d, "accept-fd 3").await;
+    // FreeBSD: 6, the descriptor socket, open and without `ACCEPT`.
+    let elsewhere = if cfg!(target_os = "freebsd") { 6 } else { 3 };
+    let driver_elsewhere = ask(&d, &format!("accept-fd {elsewhere}")).await;
     let app_on_eight = ask(&plain, "accept-fd 8").await;
 
-    assert!(
-        driver_elsewhere.contains("not permitted"),
-        "{driver_elsewhere}"
-    );
-    assert!(app_on_eight.contains("not permitted"), "{app_on_eight}");
+    // Linux: the seccomp filter; FreeBSD: the descriptor lacks the `ACCEPT`
+    // right, and an app has no descriptor 8 at all.
+    if cfg!(target_os = "freebsd") {
+        assert!(
+            driver_elsewhere.contains("Capabilities insufficient"),
+            "{driver_elsewhere}"
+        );
+        assert!(app_on_eight.starts_with("err:"), "{app_on_eight}");
+    } else {
+        assert!(
+            driver_elsewhere.contains("not permitted"),
+            "{driver_elsewhere}"
+        );
+        assert!(app_on_eight.contains("not permitted"), "{app_on_eight}");
+    }
     d.kill();
     plain.kill();
 }
 
-#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver____its_files____readable_under_driver_and_others_beside_them_not() {
     let n = node("files");
@@ -178,7 +188,13 @@ async fn driver____its_files____readable_under_driver_and_others_beside_them_not
 
     assert_eq!(given, "the driver's certificate");
     assert!(beside.starts_with("err:"), "{beside}");
-    assert_eq!(direct, "ok");
+    // Linux: Landlock allows the file by its path; FreeBSD: capability
+    // mode refuses every path, the driver's own file's included.
+    if cfg!(target_os = "freebsd") {
+        assert!(direct.contains("capability mode"), "{direct}");
+    } else {
+        assert_eq!(direct, "ok");
+    }
     d.kill();
 }
 

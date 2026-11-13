@@ -26,9 +26,6 @@ cat > /usr/local/etc/bulkhead/node.toml <<TOML
 node = 1
 data_dir = "/var/db/bulkhead"
 
-[native]
-landlock_optional = true
-
 [priv]
 TOML
 cat > /usr/local/etc/bulkhead/priv.conf <<CONF

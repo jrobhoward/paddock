@@ -177,9 +177,11 @@ Spikes are a separate workspace under `spikes/` with their own lock file. Each
   sender channel, ROADMAP AP1), `driver` (a driver app's inherited
   listening sockets, ROADMAP DA1) and `runner` (feature `runner`,
   default; Linux and FreeBSD): `bulkhead-runner`, which restricts itself
-  (Landlock, seccomp, non-dumpable; on FreeBSD only non-dumpable until
-  ROADMAP FB2) before loading a rustbridge plugin or executing
-  the program. bulkhead-host depends on it without default features (the
+  (Landlock, seccomp, non-dumpable; on FreeBSD `runner/capsicum.rs`:
+  rights per descriptor, capability mode, then `fexecve` of the run-time
+  linker, executables only) before loading a rustbridge plugin or executing
+  the program. `freebsd::rights` holds the Capsicum rights the runner and
+  the node (`native/os`'s `for_app`, on what it passes later) both apply. bulkhead-host depends on it without default features (the
   protocol and the channel). The host side is
   `crates/bulkhead-host/src/native/` (the port; `link`, the node's end of
   a channel; `sender`, the tasks serving an app's sender channels;

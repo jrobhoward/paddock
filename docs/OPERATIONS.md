@@ -45,7 +45,9 @@ The privileged helper keeps its own state, apart from the node's, in its configu
 | `RUST_LOG` | `bulkhead node` | Log filter (default `info`), for example `info,bulkhead::lease=debug` |
 | `BULKHEAD_PRIV_FD` | `bulkhead node`, set by `bulkhead-priv` | The descriptor of the privileged helper's socket. Node config's `[priv]` and this variable go together: the node refuses to start with one and not the other |
 | `BULKHEAD_PRIV_TESTS`, `BULKHEAD_CONFORMANCE_HELPER` | `bulkhead-host`'s tests, as root on a test machine | `1` runs the helper's own tests (`tests/priv.rs`), and the conformance suite's native mode under the helper |
-| `BULKHEAD_PRIV`, `BULKHEAD_PREOPENS`, `BULKHEAD_SPIN_US` | a native-process app, set by the node | The directory of the bundle's `priv/` files; where each preopened directory is, one guest path and host directory per line, separated by a tab (with `\\`, `\t` and `\n` escaped), for `bulkhead_sdk::files::path`; and how long the app spins waiting for the node before it sleeps (`[native] spin_us`). A native app's environment holds nothing else, but for a driver app's `BULKHEAD_LISTENERS` |
+| `BULKHEAD_PRIV`, `BULKHEAD_PREOPENS`, `BULKHEAD_SPIN_US` | a native-process app, set by the node | The directory of the bundle's `priv/` files; where each preopened directory is, one guest path and host directory per line, separated by a tab (with `\\`, `\t` and `\n` escaped), for `bulkhead_sdk::files`; and how long the app spins waiting for the node before it sleeps (`[native] spin_us`). A native app's environment holds nothing else, but for a driver app's `BULKHEAD_LISTENERS` and, on FreeBSD, `BULKHEAD_PREOPEN_FDS` and `LD_LIBRARY_PATH_FDS` |
+| `BULKHEAD_PREOPEN_FDS` | a native-process app on FreeBSD, set by the runner | The descriptor of each preopen in `BULKHEAD_PREOPENS`' order, joined by commas, which `bulkhead_sdk::files` opens under (capability mode refuses paths) |
+| `LD_LIBRARY_PATH_FDS` | a native-process app on FreeBSD, set by the runner | The library directories' descriptors, for the run-time linker (rtld(1)) |
 | `BULKHEAD_LISTENERS` | a driver app, set by the node | Its listening sockets (`[drivers.<app>] listeners`), `name=fd` pairs joined by commas (`https=8,http=9`), for `bulkhead_native::driver::listeners` |
 
 Secrets may also come from variables the node config names (`[secrets.<name>] env = ...`).
@@ -140,7 +142,7 @@ Set up:
 
 - [`examples/systemd/bulkhead-priv.service`](../examples/systemd/bulkhead-priv.service) (in place of `bulkhead.service`) and [`examples/freebsd/bulkhead`](../examples/freebsd/bulkhead) (rc.d) start the helper; their headers list the install steps. `scripts/priv-e2e-systemd.sh` and `scripts/priv-e2e-rcd.sh` run them end to end, as root on a test machine.
 - The helper's configuration, [`examples/systemd/priv.conf`](../examples/systemd/priv.conf), is root's, mode 0600; the helper refuses a file anyone else may write. It names the node's program, arguments, user and group (as numbers), `bulkhead-runner` (the only program an instance starts as), the range of app users, its state directory, the directories an instance's directories may be under (`binds`: `data_dir` and the volumes' parents), the ceilings on `memory_max` and `pids_max`, the low ports it binds, and on Linux the cgroup systemd delegates to it.
-- Node config sets `[priv]` and leaves `[native] cgroup` unset. On FreeBSD it also sets `[native] landlock_optional = true` until the runner's sandbox exists there (ROADMAP FB2).
+- Node config sets `[priv]` and leaves `[native] cgroup` unset.
 - `bulkhead status APP` shows `runs as: its own user` under the helper, `the node's user` without.
 
 What the helper does for each instance:

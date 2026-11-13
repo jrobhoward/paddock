@@ -320,8 +320,9 @@ pub struct NativeConfig {
     /// How long a ping may go unanswered before the instance is killed
     /// (`timeout`).
     pub ping_timeout: Duration,
-    /// Whether to run native apps on a kernel without Landlock (which the
-    /// runner then cannot restrict to its files): off by default.
+    /// Whether to run native apps on a Linux kernel without Landlock (which
+    /// the runner then cannot restrict to its files): off by default.
+    /// FreeBSD's fence is Capsicum, always present.
     pub landlock_optional: bool,
     /// How long a side of a native instance's channel spins waiting for
     /// the other before it sleeps: the node's instance task and the app's

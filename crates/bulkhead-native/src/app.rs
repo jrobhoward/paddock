@@ -1601,10 +1601,15 @@ pub fn serve<A: App>() -> ExitCode {
     #[cfg(target_os = "linux")]
     let dumpable =
         rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);
-    // FreeBSD's runner set it to survive the exec; set again for an app
-    // started some other way.
+    // FreeBSD's runner set it to survive the exec, then entered capability
+    // mode, which refuses setting it again (ROADMAP FB2); set it for an
+    // app started some other way.
     #[cfg(target_os = "freebsd")]
-    let dumpable = crate::freebsd::set_not_traceable(false);
+    let dumpable = if crate::freebsd::in_capability_mode() {
+        Ok(())
+    } else {
+        crate::freebsd::set_not_traceable(false)
+    };
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Err(e) = dumpable {
         eprintln!("bulkhead-native: not dumpable: {e}");

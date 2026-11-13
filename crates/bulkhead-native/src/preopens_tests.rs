@@ -100,3 +100,20 @@ proptest! {
         prop_assert_eq!(decoded, expected);
     }
 }
+
+#[rstest]
+#[case("/data", Some((0, "")))]
+#[case("/data/orders.db", Some((0, "orders.db")))]
+#[case("/data/logs/today", Some((1, "today")))]
+#[case("/data/../etc/passwd", None)]
+#[case("/other", None)]
+fn locate____guest_path____preopen_index_and_path_below(
+    #[case] guest: &str,
+    #[case] expected: Option<(usize, &str)>,
+) {
+    let preopens = preopens(&[("/data", "/srv/orders"), ("/data/logs", "/srv/logs")]);
+
+    let found = locate(&preopens, guest);
+
+    assert_eq!(found, expected);
+}

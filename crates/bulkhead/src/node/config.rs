@@ -833,7 +833,8 @@ pub struct NativeBinding {
     pub ping_interval_ms: u64,
     /// How long a ping may go unanswered before the instance is killed.
     pub ping_timeout_ms: u64,
-    /// Run native apps on a kernel without Landlock.
+    /// Run native apps on a Linux kernel without Landlock (FreeBSD's fence
+    /// is Capsicum, always present).
     pub landlock_optional: bool,
     /// How long, in microseconds, the node and a native app spin waiting
     /// for each other before they sleep; 0 always sleeps.

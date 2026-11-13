@@ -1,6 +1,34 @@
-//! FreeBSD: `sysctl(kern.proc.pgrp)` and `TCP_INFO`.
+//! FreeBSD: `sysctl(kern.proc.pgrp)`, `TCP_INFO` and Capsicum rights.
 
+use std::io;
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 use std::time::{Duration, Instant};
+
+use bulkhead_native::freebsd::{limit_ioctls, limit_rights, rights};
+
+use crate::native::Passed;
+
+/// A duplicate of `fd` limited to `what`'s rights, to pass to an app in
+/// capability mode: the node's own descriptor keeps its rights.
+///
+/// # Errors
+///
+/// The duplicate or the limit failed.
+pub(crate) fn for_app(fd: BorrowedFd<'_>, what: Passed) -> io::Result<Option<OwnedFd>> {
+    let copy = rustix::io::fcntl_dupfd_cloexec(fd, 0)?;
+    let list = match what {
+        Passed::Snapshot => rights::SNAPSHOT,
+        Passed::Stream => rights::STREAM,
+        Passed::Memfd => rights::MEMFD,
+        Passed::Door => rights::DOOR,
+        Passed::Bell => rights::BELL,
+    };
+    limit_rights(copy.as_raw_fd(), list)?;
+    if what == Passed::Stream {
+        limit_ioctls(copy.as_raw_fd(), rights::STREAM_IOCTLS)?;
+    }
+    Ok(Some(copy))
+}
 
 /// Bytes resident in the process group `pid` leads: the node starts each
 /// instance's runner as a group of its own, so this is the runner (or the

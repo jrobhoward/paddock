@@ -30,6 +30,15 @@ struct Fixture {
     senders: crate::senders::Senders,
 }
 
+/// The bytes of the file at guest path `guest`, opened by descriptor where
+/// the runner passed them (FreeBSD's capability mode), by path elsewhere.
+fn read_guest(guest: &str) -> std::io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    bulkhead_native::preopens::open(guest, bulkhead_native::preopens::Mode::Read)
+        .and_then(|mut f| f.read_to_end(&mut out))?;
+    Ok(out)
+}
+
 pub(crate) fn text(s: impl Into<String>) -> Envelope {
     Envelope::new("text/plain", s.into().into_bytes())
 }
@@ -127,7 +136,11 @@ impl Fixture {
     /// `udp-send S ADDR TEXT`, `udp-recv S` (`FROM TEXT` or `none`),
     /// `net-watch S TAG`; `tcp-connect ADDR` keeps the passed stream (its
     /// socket), `tcp-write S TEXT`, `tcp-close S` drops it and tells the
-    /// node, `tcp-close-keep S` tells the node and keeps it.
+    /// node, `tcp-close-keep S` tells the node and keeps it, `tcp-probe S
+    /// [listen]` sets the stream non-blocking and, asked, makes it listen
+    /// (`nonblock=… listen=…`: what a passed stream's rights allow;
+    /// capability mode itself refuses `connect` and `bind`, and Linux's
+    /// seccomp filter kills an app calling `listen`).
     fn net(&mut self, ctx: &mut Ctx, verb: &str, first: &str, tail: &str) -> String {
         use std::io::Write;
         let socket = || first.parse::<u32>().unwrap_or(u32::MAX);
@@ -159,6 +172,18 @@ impl Fixture {
                     Some(s) => outcome(s.write_all(tail.as_bytes())),
                     None => "err:no stream".into(),
                 };
+            }
+            "tcp-probe" => {
+                let Some(s) = self.streams.get(&socket()) else {
+                    return "err:no stream".into();
+                };
+                let nonblock = outcome(s.set_nonblocking(true));
+                let listen = if tail == "listen" {
+                    outcome(rustix::net::listen(s, 1))
+                } else {
+                    "not asked".into()
+                };
+                return format!("nonblock={nonblock} listen={listen}");
             }
             "tcp-close" => {
                 self.streams.remove(&socket());
@@ -336,7 +361,7 @@ impl Fixture {
                 "ok".into()
             }
             "udp-bind" | "udp-send" | "udp-recv" | "net-watch" | "tcp-connect" | "tcp-write"
-            | "tcp-close" | "tcp-close-keep" => self.net(ctx, verb, first, tail),
+            | "tcp-close" | "tcp-close-keep" | "tcp-probe" => self.net(ctx, verb, first, tail),
             "sql-q" | "sql-x" | "sql-begin" | "sql-tq" | "sql-tx" | "sql-commit"
             | "sql-rollback" | "sql-drop" => self.sql(ctx, verb, first, tail, rest),
             "panic" => panic!("asked to"),
@@ -407,14 +432,18 @@ impl Fixture {
                 Some(memfd) => outcome(rustix::fs::ftruncate(memfd, 0)),
                 None => "err:no copy of the channel's memfd".into(),
             },
-            "vread" => outcome(std::fs::read(bulkhead_native::preopens::path(rest))),
-            "vwrite" => outcome(std::fs::write(bulkhead_native::preopens::path(rest), b"x")),
-            "vcat" => match std::fs::read_to_string(bulkhead_native::preopens::path(rest)) {
+            "vread" => outcome(read_guest(rest)),
+            "vwrite" => outcome(
+                bulkhead_native::preopens::open(rest, bulkhead_native::preopens::Mode::Write)
+                    .and_then(|mut f| std::io::Write::write_all(&mut f, b"x")),
+            ),
+            "vcat" => match read_guest(rest).map(|b| String::from_utf8_lossy(&b).into_owned()) {
                 Ok(contents) => contents,
                 Err(e) => format!("err:{e}"),
             },
             "priv" => match std::env::var(bulkhead_native::protocol::PRIV_ENV) {
-                Ok(dir) => outcome(std::fs::read(std::path::Path::new(&dir).join(rest))),
+                // The bundle's files are the preopen `/priv` too.
+                Ok(_) => outcome(read_guest(&format!("/priv/{rest}"))),
                 Err(_) => "err:no priv".into(),
             },
             "dumpable" => dumpable(),

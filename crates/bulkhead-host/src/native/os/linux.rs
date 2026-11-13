@@ -1,6 +1,21 @@
 //! Linux: `/proc` and `TCP_INFO`.
 
+use std::io;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::time::Duration;
+
+use crate::native::Passed;
+
+/// Linux passes the descriptor itself: the app's seccomp filter and
+/// Landlock bound what it does with it.
+///
+/// # Errors
+///
+/// None on Linux.
+#[allow(clippy::unnecessary_wraps)] // FreeBSD's can fail.
+pub(crate) fn for_app(_fd: BorrowedFd<'_>, _what: Passed) -> io::Result<Option<OwnedFd>> {
+    Ok(None)
+}
 
 /// Bytes resident in `pid` and its direct children: the app, or for an
 /// instance bound to a lease the runner's watchdog and the app under it.

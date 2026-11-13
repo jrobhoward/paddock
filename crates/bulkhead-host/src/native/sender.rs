@@ -47,6 +47,7 @@ use crate::delivery::{self, Origin};
 use crate::instance::InstanceHandle;
 use crate::message::{CallError, ExitReason};
 use crate::metrics::AppStats;
+use crate::native::{Passed, os};
 use crate::output::Tags;
 use crate::probe;
 use crate::runtime::RuntimeInner;
@@ -77,13 +78,16 @@ impl FdPass {
         }
     }
 
-    /// Pass `fd` to the app, for a frame sent after this to name.
+    /// Pass `fd` to the app as `what`, for a frame sent after this to
+    /// name.
     ///
     /// # Errors
     ///
     /// The socket refused it: full (an app that takes no descriptors), or
     /// the app gone.
-    pub(crate) fn send(&self, fd: BorrowedFd<'_>) -> Result<FdRef, String> {
+    pub(crate) fn send(&self, fd: BorrowedFd<'_>, what: Passed) -> Result<FdRef, String> {
+        let copy = os::for_app(fd, what).map_err(|e| format!("limit a descriptor: {e}"))?;
+        let fd = copy.as_ref().map_or(fd, AsFd::as_fd);
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         channel::send_fd(self.fd.as_fd(), id, fd).map_err(|e| format!("pass a descriptor: {e}"))?;
         Ok(FdRef(id))
@@ -188,9 +192,18 @@ impl Hub {
         // The app's ends go now and the node keeps none, so the bell's end
         // of file means the app closed its sender.
         let passed = SenderChannel {
-            memfd: hub.fds.send(memfd.as_fd()).map_err(SenderError::Other)?,
-            door: hub.fds.send(door_app.as_fd()).map_err(SenderError::Other)?,
-            bell: hub.fds.send(bell_app.as_fd()).map_err(SenderError::Other)?,
+            memfd: hub
+                .fds
+                .send(memfd.as_fd(), Passed::Memfd)
+                .map_err(SenderError::Other)?,
+            door: hub
+                .fds
+                .send(door_app.as_fd(), Passed::Door)
+                .map_err(SenderError::Other)?,
+            bell: hub
+                .fds
+                .send(bell_app.as_fd(), Passed::Bell)
+                .map_err(SenderError::Other)?,
         };
         drop((memfd, door_app, bell_app));
         let states = SenderStates::new(

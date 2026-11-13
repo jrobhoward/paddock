@@ -2,8 +2,8 @@
 //! Z9d): logging, stdout capture, config, keyvalue and the filesystem.
 //! Covers Phase 1 exit criterion 8.
 
-// The native fixture runs on Linux only.
-#![cfg(target_os = "linux")]
+// The native fixture runs on Linux and FreeBSD.
+#![cfg(any(target_os = "linux", target_os = "freebsd"))]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]

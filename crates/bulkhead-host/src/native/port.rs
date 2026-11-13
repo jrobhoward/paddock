@@ -27,6 +27,7 @@ use bulkhead_native::protocol::{FromApp, ToApp};
 use crate::config::NativeConfig;
 use crate::failover::RunUntil;
 use crate::message::ExitReason;
+use crate::native::Passed;
 use crate::native::Program;
 use crate::output::CapturedOutput;
 use crate::spec::InstanceSpec;
@@ -91,6 +92,7 @@ mod process {
     use crate::config::NativeConfig;
     use crate::failover::RunUntil;
     use crate::message::ExitReason;
+    use crate::native::Passed;
     use crate::native::helper::PrivHelper;
     use crate::native::link::Link;
     use crate::native::memory::MemorySource;
@@ -516,10 +518,11 @@ mod process {
             &mut self,
             version: &crate::services::keyvalue::publish::Version,
         ) -> Result<bulkhead_native::protocol::FdRef, String> {
-            self.send_fd(version.memfd.as_fd())
+            self.send_fd(version.memfd.as_fd(), Passed::Snapshot)
         }
 
-        /// Pass `fd` to the app, for a frame sent after this one to name.
+        /// Pass `fd` to the app as `what`, for a frame sent after this one
+        /// to name.
         ///
         /// # Errors
         ///
@@ -528,8 +531,9 @@ mod process {
         pub(crate) fn send_fd(
             &mut self,
             fd: std::os::fd::BorrowedFd<'_>,
+            what: Passed,
         ) -> Result<bulkhead_native::protocol::FdRef, String> {
-            self.fds.send(fd)
+            self.fds.send(fd, what)
         }
 
         /// Let the app open sender channels, served as `ctx`'s instance.
@@ -943,6 +947,7 @@ mod elsewhere {
         pub(crate) fn send_fd(
             &mut self,
             _fd: std::os::fd::BorrowedFd<'_>,
+            _what: Passed,
         ) -> Result<bulkhead_native::protocol::FdRef, String> {
             match self.0 {}
         }
@@ -1053,8 +1058,9 @@ impl Port {
     pub(crate) fn send_fd(
         &mut self,
         fd: std::os::fd::BorrowedFd<'_>,
+        what: Passed,
     ) -> Result<bulkhead_native::protocol::FdRef, String> {
-        each!(self, p => p.send_fd(fd))
+        each!(self, p => p.send_fd(fd, what))
     }
 
     /// Let the app open sender channels (ROADMAP AP1), served as `ctx`'s

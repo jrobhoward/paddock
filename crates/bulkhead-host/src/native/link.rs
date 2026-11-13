@@ -187,6 +187,7 @@ impl Link {
 
     /// The system call the app's seccomp filter refused, as it recorded
     /// it in the ring to the node (1 plus its number; 0 for none).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) fn refused_call(&self) -> u32 {
         self.channel.to_node().refused_call().load(Ordering::SeqCst)
     }

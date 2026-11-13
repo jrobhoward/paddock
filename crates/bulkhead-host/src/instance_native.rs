@@ -37,6 +37,7 @@ use crate::health;
 use crate::lifecycle::LifecycleState;
 use crate::listener::Accepted;
 use crate::message::{CallError, ExitReason, Info};
+use crate::native::Passed;
 use crate::native::Program;
 use crate::native::convert;
 use crate::native::port::{Incoming, KvCall, Port};
@@ -391,7 +392,9 @@ fn pass_socket(
     use std::os::fd::AsFd;
     let (mut answer, fd) = reply?;
     if let Some(fd) = fd {
-        let passed = port.send_fd(fd.as_fd()).map_err(p::NetError::Other)?;
+        let passed = port
+            .send_fd(fd.as_fd(), Passed::Stream)
+            .map_err(p::NetError::Other)?;
         match &mut answer {
             p::NetAnswer::Stream(s) | p::NetAnswer::Accepted(Some(s)) => s.fd = passed,
             _ => {}
@@ -1346,7 +1349,7 @@ impl InstanceTask {
                 return None;
             }
         };
-        match port.send_fd(fd.as_fd()) {
+        match port.send_fd(fd.as_fd(), Passed::Stream) {
             Ok(passed) => stream.fd = passed,
             Err(why) => {
                 tracing::warn!(%listener, error = %why, "connection not passed");

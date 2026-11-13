@@ -6,6 +6,9 @@
 //!   and metrics when it has no cgroup.
 //! - [`TcpQuiet`]: how long a TCP connection has carried no data, for a
 //!   native listener's idle timeout.
+//! - [`for_app`]: the copy of a descriptor the node passes to an app; on
+//!   FreeBSD a duplicate limited to its kind's Capsicum rights (ROADMAP
+//!   FB2), on Linux the descriptor itself.
 //!
 //! The rest is the same code on both, through rustix: the rings and
 //! published snapshots in sealed memfds (`memfd_create` makes an anonymous
@@ -21,9 +24,9 @@ mod freebsd;
 mod linux;
 
 #[cfg(target_os = "freebsd")]
-pub(crate) use freebsd::{TcpQuiet, process_bytes};
+pub(crate) use freebsd::{TcpQuiet, for_app, process_bytes};
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{TcpQuiet, process_bytes};
+pub(crate) use linux::{TcpQuiet, for_app, process_bytes};
 
 #[cfg(test)]
 #[path = "os_tests.rs"]

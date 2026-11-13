@@ -4,7 +4,7 @@
 //! at the node, which shuts the socket down whether or not the app kept
 //! its copy (ROADMAP Z8e). The fixture executable's socket commands.
 
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "freebsd"))]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -147,5 +147,45 @@ async fn stream____closed_at_the_node____peer_sees_the_end_even_if_kept() {
         "the kept copy was shut down too: {b_end:?}"
     );
     assert!(after.starts_with("err:"), "{after}");
+    h.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stream____passed_to_the_app____used_but_not_moved() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let rt = runtime();
+    let h = up(
+        &rt,
+        spec(
+            "tcp-probe",
+            SocketsScope {
+                connect: vec![rule("127.0.0.1/32", None)],
+                bind: vec![],
+                listen: false,
+                max_sockets: 4,
+            },
+        ),
+    );
+
+    let s = ask(&h, &format!("tcp-connect {address}")).await;
+    let (_peer, _) = listener.accept().await.unwrap();
+    // Linux's seccomp filter kills an app calling `listen`.
+    let listen = if cfg!(target_os = "freebsd") {
+        "listen"
+    } else {
+        ""
+    };
+    let probed = ask(&h, &format!("tcp-probe {s} {listen}")).await;
+
+    // FreeBSD: the node's copy lacks `LISTEN` (Capsicum, ROADMAP FB2).
+    if cfg!(target_os = "freebsd") {
+        assert_eq!(
+            probed,
+            "nonblock=ok listen=err:Capabilities insufficient (os error 93)"
+        );
+    } else {
+        assert_eq!(probed, "nonblock=ok listen=not asked");
+    }
     h.kill();
 }

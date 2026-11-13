@@ -263,7 +263,7 @@ kind = "native-process"
 native = { program = "executable" }
 ```
 
-The bundle carries a release variant for the node's platform (`linux-x86_64`, `linux-aarch64`) ; deploy writes it under `data_dir`, readable and executable by the node's user only. The node runs it through `bulkhead-runner` (node config `[native]`, below), on Linux and FreeBSD. With node config `[priv]` the privileged helper starts it, under a user of the app's own, in a cgroup, namespaces and a minimal root on Linux (OPERATIONS.md, "The privileged helper"); its program and `priv/` files are then readable by that user alone, and the files it makes in a read-write volume are its own. Bundles have Linux variants only so far, so a FreeBSD node cannot yet deploy one (ROADMAP FB6). On FreeBSD the runner has no sandbox yet (ROADMAP FB2) and starts an app only with node config `[native] landlock_optional = true`.
+The bundle carries a release variant for the node's platform (`linux-x86_64`, `linux-aarch64`) ; deploy writes it under `data_dir`, readable and executable by the node's user only. The node runs it through `bulkhead-runner` (node config `[native]`, below), on Linux and FreeBSD. With node config `[priv]` the privileged helper starts it, under a user of the app's own, in a cgroup, namespaces and a minimal root on Linux (OPERATIONS.md, "The privileged helper"); its program and `priv/` files are then readable by that user alone, and the files it makes in a read-write volume are its own. Bundles have Linux variants only so far, so a FreeBSD node cannot yet deploy one (ROADMAP FB6). On FreeBSD the runner fences the app with Capsicum (capability mode, rights per descriptor); executables only, a rustbridge plugin is refused there.
 
 Two shapes, by `native.program`:
 
@@ -374,7 +374,7 @@ cgroup = "/sys/fs/cgroup/system.slice/bulkhead.service"  # Linux: a delegated cg
 pids_max = 64                          # most processes and threads per native instance, with cgroup
 ping_interval_ms = 10000               # an idle native instance is pinged this often
 ping_timeout_ms = 5000                 # and killed (timeout) without an answer within this
-landlock_optional = false              # run native apps on a kernel without Landlock; on FreeBSD, run them with no sandbox at all (none yet, ROADMAP FB2)
+landlock_optional = false              # run native apps on a Linux kernel without Landlock; no effect on FreeBSD (Capsicum)
 spin_us = 20                           # the node and a native app spin this long waiting for each other, then sleep; 0: always sleep (at most 10000)
 
 [priv]                                 # native instances start through the privileged helper, bulkhead-priv, each app under a user of its own (OPERATIONS.md); the node must be started by it. Nothing to set: the helper's own configuration holds its checks. Not with [native] cgroup
