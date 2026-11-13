@@ -30,11 +30,13 @@ pub struct HostObjects {
     pub groups: u32,
     /// Keyvalue watches held (`bulkhead:watch`).
     pub watches: u32,
+    /// Sender channels a native instance holds at once (ROADMAP AP1).
+    pub senders: u32,
 }
 
 impl Default for HostObjects {
-    /// 10,000 of each, the default `mailbox_max`, and 1,000 groups and
-    /// watches.
+    /// 10,000 of each, the default `mailbox_max`, 1,000 groups and
+    /// watches, and 8 sender channels.
     fn default() -> Self {
         Self {
             timers: 10_000,
@@ -43,6 +45,7 @@ impl Default for HostObjects {
             pending_calls: 10_000,
             groups: 1_000,
             watches: 1_000,
+            senders: 8,
         }
     }
 }
@@ -72,6 +75,7 @@ impl HostObjects {
             )?,
             groups: pick("groups_max", requested.groups, self.groups)?,
             watches: pick("watches_max", requested.watches, self.watches)?,
+            senders: pick("senders_max", requested.senders, self.senders)?,
         })
     }
 }
@@ -92,6 +96,8 @@ pub struct HostObjectRequest {
     pub groups: Option<u32>,
     /// `watches_max`.
     pub watches: Option<u32>,
+    /// `senders_max`.
+    pub senders: Option<u32>,
 }
 
 /// A shared keyvalue bucket: named in node configuration, opened by every

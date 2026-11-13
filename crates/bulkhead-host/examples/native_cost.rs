@@ -11,6 +11,9 @@
 //! Linux only. CPU per call is the node's and the app processes' user and
 //! system time over the run, from `/proc`, divided by the calls.
 //!
+//! `NATIVE_COST_SENDERS=N` has every instance hold `N` idle sender
+//! channels (ROADMAP AP1) through the run.
+//!
 //! Under the privileged helper (ROADMAP PS1): start it as the helper's
 //! node (its configuration's `node` this example, `node_args` the worker
 //! count, `binds` a directory holding copies of `bulkhead-runner` and
@@ -148,6 +151,69 @@ async fn bucket_gets(pool: &[InstanceHandle]) {
     );
 }
 
+/// Requests for the instance's own pid from a callback.
+async fn callback_requests(h: &InstanceHandle) {
+    let mut per = Vec::new();
+    for _ in 0..5 {
+        let ns: f64 = ask(h, "selfs 20000").await.parse().unwrap();
+        per.push(ns / 20_000.0);
+    }
+    per.sort_by(f64::total_cmp);
+    println!(
+        "request from a callback (its own pid): {:.1} µs (median of 5 runs of 20,000)",
+        per[2] / 1e3
+    );
+}
+
+/// Idle sender channels held by every instance for the whole run
+/// (`NATIVE_COST_SENDERS`, ROADMAP AP1): what watching more rings costs
+/// the node, if anything.
+async fn open_idle_senders(pool: &[InstanceHandle]) {
+    let idle: usize = std::env::var("NATIVE_COST_SENDERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if idle == 0 {
+        return;
+    }
+    for (i, h) in pool.iter().enumerate() {
+        // The first instance keeps a place for the sender its rows time.
+        for _ in 0..if i == 0 { idle.saturating_sub(1) } else { idle } {
+            let n = ask(h, "sender open").await;
+            assert!(!n.starts_with("err:"), "sender open: {n}");
+        }
+    }
+    println!("{idle} idle sender channels per instance");
+}
+
+/// A request and a bucket get from a thread of the app's own, through a
+/// sender channel (ROADMAP AP1), against the callback's above.
+async fn sender_requests(h: &InstanceHandle) {
+    let sender = ask(h, "sender open").await;
+    for (what, command) in [
+        (
+            "request from a sender thread (its own pid)",
+            format!("sender {sender} selfs 20000"),
+        ),
+        (
+            "bucket get from a sender thread (16 B, memory bucket)",
+            format!("sender {sender} gets data 20000"),
+        ),
+    ] {
+        let mut per = Vec::new();
+        for _ in 0..5 {
+            let ns: f64 = ask(h, &command).await.parse().unwrap();
+            per.push(ns / 20_000.0);
+        }
+        per.sort_by(f64::total_cmp);
+        println!(
+            "{what}: {:.1} µs (median of 5 runs of 20,000)",
+            per[2] / 1e3
+        );
+    }
+    ask(h, &format!("sender drop {sender}")).await;
+}
+
 /// Nanoseconds per get of key `t` from `bucket` in a callback: the
 /// median of 5 runs of 20,000.
 async fn gets(h: &InstanceHandle, bucket: &str) -> f64 {
@@ -210,6 +276,7 @@ async fn run(workers: usize) {
         pool.push(h);
     }
     println!("start, to the first reply: {}", percentiles(starts));
+    open_idle_senders(&pool).await;
 
     let mut rng = Lcg(7);
     let mut one = Vec::new();
@@ -239,18 +306,9 @@ async fn run(workers: usize) {
         percentiles(relay)
     );
 
-    let mut per = Vec::new();
-    for _ in 0..5 {
-        let ns: f64 = ask(&pool[0], "selfs 20000").await.parse().unwrap();
-        per.push(ns / 20_000.0);
-    }
-    per.sort_by(f64::total_cmp);
-    println!(
-        "request from a callback (its own pid): {:.1} µs (median of 5 runs of 20,000)",
-        per[2] / 1e3
-    );
-
+    callback_requests(&pool[0]).await;
     bucket_gets(&pool).await;
+    sender_requests(&pool[0]).await;
 
     let casts = 50_000;
     let t = Instant::now();

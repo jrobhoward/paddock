@@ -242,6 +242,7 @@ fn AppSpec____memory_max_above_4_gib____accepted() {
 #[case(json!({ "limits": { "pending_calls_max": 0 } }), "limits.pending_calls_max")]
 #[case(json!({ "limits": { "groups_max": 0 } }), "limits.groups_max")]
 #[case(json!({ "limits": { "watches_max": 0 } }), "limits.watches_max")]
+#[case(json!({ "limits": { "senders_max": 0 } }), "limits.senders_max")]
 #[case(json!({ "capabilities": { "bulkhead:keyvalue": { "shared": { "Points": "ro" } } } }), "capabilities.bulkhead:keyvalue.shared.Points")]
 #[case(json!({ "capabilities": { "bulkhead:keyvalue": { "buckets": { "p": {} }, "shared": { "p": "rw" } } } }), "capabilities.bulkhead:keyvalue.shared.p")]
 #[case(json!({ "capabilities": { "bulkhead:groups": { "join": ["Bad Name"] } } }), "capabilities.bulkhead:groups.join[0]")]

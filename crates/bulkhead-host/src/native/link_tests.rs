@@ -1,4 +1,4 @@
-//! Linux and FreeBSD only: the port is.
+//! Linux and FreeBSD only: the link is.
 #![cfg(any(target_os = "linux", target_os = "freebsd"))]
 #![allow(non_snake_case)]
 #![allow(clippy::unwrap_used)]
@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use rstest::rstest;
 
-use super::process::{hinted_idle, too_new, turn};
+use super::{hinted_idle, too_new, turn};
 
 #[test]
 fn turn____nothing_between____one_count_apart() {

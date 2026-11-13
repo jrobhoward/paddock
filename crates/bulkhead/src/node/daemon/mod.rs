@@ -194,6 +194,7 @@ impl Node {
                     pending_calls: config.limits.pending_calls_max,
                     groups: config.limits.groups_max,
                     watches: config.limits.watches_max,
+                    senders: config.limits.senders_max,
                 },
                 log_records_per_sec: config.limits.log_records_per_sec,
                 incoming_calls_per_peer: config.cluster.incoming_calls_max,

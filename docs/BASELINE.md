@@ -2885,6 +2885,30 @@ Raspberry Pi 5 (Linux 7.0), idle (load under 0.3 at each start):
 - **Throughput with calls in flight falls 10% (16) to 15% (64);** casts to one instance by 2%.
 - **Not measured:** the 16-core machine, whose `sudo` needs a password; `cluster_throughput` under the helper.
 
+## 2026-11-12: sender channels (AP1)
+
+`native_cost 4` from commit 1792262 (before) and with AP1 (after): the port's ring code moved into `native::link`, sender channels served by a node task each, and two new rows, a request and a bucket get from a thread of the app's own through a sender (the fixture's `sender N selfs` and `sender N gets`, its callback thread waiting meanwhile). "8 idle senders" runs the after build with `NATIVE_COST_SENDERS=8`: every one of the 100 instances holds 8 sender channels it does not use, 800 in all (the first instance 7, plus the one its rows time). Raspberry Pi 5 (Linux 7.0), nice 10, each run started at load under 0.5, two rounds each; `ulimit -n 65536` for the idle senders (below).
+
+| | before | after | after, 8 idle senders |
+| --- | --- | --- | --- |
+| start, to the first reply (p50, ms) | 4.8, 4.7 | 4.8, 4.8 | 4.8, 4.8 |
+| call from the host, one at a time (p50, µs) | 17.2, 17.6 | 17.7, 17.9 | 17.5, 17.6 |
+| call between instances (p50, µs) | 42.9, 43.7 | 44.3, 44.4 | 44.0, 44.4 |
+| request from a callback, its own pid (µs) | 3.0, 2.9 | 3.0, 2.9 | 2.9, 2.9 |
+| request from a sender thread, its own pid (µs) | | 2.9, 2.9 | 2.9, 2.9 |
+| bucket get from a callback (µs) | 1.4, 1.4 | 1.4, 1.4 | 1.4, 1.4 |
+| bucket get from a sender thread (µs) | | 1.3, 1.3 | 1.3, 1.3 |
+| casts to one instance (per second) | 417,307, 425,028 | 419,712, 418,474 | 423,137, 419,432 |
+| 16 calls in flight (calls a second; µs of CPU per call) | 120,917; 29.3, 119,171; 30.0 | 117,282; 30.5, 114,816; 31.2 | 116,761; 30.3, 118,466; 30.1 |
+| 64 calls in flight (calls a second; µs of CPU per call) | 120,931; 30.6, 121,036; 30.9 | 118,126; 31.3, 116,787; 31.3 | 119,541; 30.7, 120,923; 30.6 |
+
+- **A sender costs what a callback's request costs:** 2.9 µs for a request and 1.3 µs for a bucket get, against 2.9 to 3.0 and 1.4 from the callback thread (S39's harness: 0.8 µs either way, without the node's services behind it).
+- **The first build missed that** (3.7 to 3.9 µs and 2.2 to 2.3, one round each): the sender's task waited as the instance's task waits between callbacks, yielding each turn of its spin. Waiting as it does inside a callback, watching the rings within the poll while its worker has nothing else to do (T9), took the difference away.
+- **Idle senders cost nothing measured:** 800 open and unused left every row where it was. A sender's task sleeps on its bell until its thread writes.
+- **Calls in flight read 2 to 5% lower after** (114,816 to 118,126 against 119,171 to 121,036 a second), and 1 to 2% more CPU per call; the "8 idle senders" rounds of the same build read 116,761 to 120,923. The before rounds ran an hour earlier in the same conditions; the path of a call between instances did not change beyond one more case in a callback's match and the descriptor socket behind an `Arc`.
+- **Descriptors:** each sender holds two of the node's (its bell and door). Under the shell's soft limit of 1,024, opening the 800 failed partway with `Too many open files` answered to the app; the node ran on (OPERATIONS.md, "Running as a service").
+- **Not measured:** the 16-core machine (two VMs were running); `cluster_throughput`; a sender's call and calls in flight against a callback's.
+
 ## Not measured yet
 
 - Where the 2.7 µs a native call costs more under the privileged helper goes (PS1), and the helper on the 16-core machine.

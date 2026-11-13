@@ -100,6 +100,7 @@
 //! pending_calls_max = 10000
 //! groups_max = 1000
 //! watches_max = 1000
+//! senders_max = 8
 //! ```
 
 use std::collections::BTreeMap;
@@ -246,6 +247,9 @@ pub struct NodeLimits {
     /// Keyvalue watches held.
     #[serde(default = "default_groups")]
     pub watches_max: u32,
+    /// Sender channels a native instance holds at once (ROADMAP AP1).
+    #[serde(default = "default_senders")]
+    pub senders_max: u32,
     /// Log records per second per app, `bulkhead:logging` records and captured
     /// stdout and stderr lines together. An app's `rate_limit_per_sec` can
     /// only lower it; 0 for no ceiling.
@@ -262,6 +266,7 @@ impl Default for NodeLimits {
             pending_calls_max: default_host_objects(),
             groups_max: default_groups(),
             watches_max: default_groups(),
+            senders_max: default_senders(),
             log_records_per_sec: default_log_records(),
         }
     }
@@ -273,6 +278,10 @@ fn default_log_records() -> u32 {
 
 fn default_groups() -> u32 {
     1_000
+}
+
+fn default_senders() -> u32 {
+    8
 }
 
 fn default_host_objects() -> u32 {
@@ -1233,6 +1242,7 @@ impl NodeConfig {
             ("pending_calls_max", limits.pending_calls_max),
             ("groups_max", limits.groups_max),
             ("watches_max", limits.watches_max),
+            ("senders_max", limits.senders_max),
         ] {
             if value == 0 {
                 return Err(NodeError::Invalid(format!(

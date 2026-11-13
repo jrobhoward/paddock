@@ -91,6 +91,8 @@ pub mod metrics;
 pub mod net;
 #[cfg(feature = "secrets")]
 pub mod secrets;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub mod sender;
 pub mod snapshot;
 #[cfg(feature = "sql")]
 pub mod sql;

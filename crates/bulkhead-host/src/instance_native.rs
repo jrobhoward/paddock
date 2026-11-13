@@ -508,7 +508,7 @@ impl InstanceTask {
     /// its own: an upgrade starts the new one beside the old.
     async fn native_port(
         &mut self,
-        rt: &RuntimeInner,
+        rt: &Arc<RuntimeInner>,
         code: &Program,
         spec: &InstanceSpec,
     ) -> Result<Port, String> {
@@ -521,7 +521,7 @@ impl InstanceTask {
             rt.services.logging.clone(),
             spec.services.logging.rate_limit,
         );
-        let output = CapturedOutput::new(tags, "stderr", rate);
+        let output = CapturedOutput::new(tags.clone(), "stderr", rate);
         self.native_spawns += 1;
         let mut name = format!("{}-{}-{}", self.pid.node, self.pid.id, self.pid.incarnation);
         if self.native_spawns > 1 {
@@ -530,7 +530,24 @@ impl InstanceTask {
         // An instance bound to a lease is killed at its end by the
         // runner's watchdog too, which runs while the node does not.
         let lease = spec.bound_to_lease.then(|| rt.failover.run_until());
-        Port::spawn(rt.native_config(), code, spec, &name, output, lease).await
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "freebsd")),
+            allow(unused_mut)
+        )]
+        let mut port = Port::spawn(rt.native_config(), code, spec, &name, output, lease).await?;
+        // The app's threads may open sender channels (ROADMAP AP1), which
+        // end with this process.
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        port.attach_senders(crate::native::sender::SenderContext {
+            rt: rt.clone(),
+            me: self.me.clone(),
+            tags,
+            stats: self.stats.clone(),
+            spec: spec.clone(),
+            host_objects: rt.host_objects().grant(&spec.host_objects)?,
+            spin: rt.native_config().spin,
+        });
+        Ok(port)
     }
 
     async fn native_run(
@@ -880,6 +897,13 @@ impl InstanceTask {
                 Ok(Step::Incoming(incoming)) => incoming,
             };
             match next {
+                Some(Incoming::Frame(FromApp::Request {
+                    id,
+                    request: Request::OpenSender,
+                })) => {
+                    let answer = Answer::Sender(port.open_sender());
+                    port.send(&ToApp::Answer { id, answer });
+                }
                 #[cfg(unix)]
                 Some(Incoming::Frame(FromApp::Request {
                     id,

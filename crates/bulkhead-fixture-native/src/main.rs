@@ -40,6 +40,7 @@
 //! | `ext PACKAGE FUNCTION JSON` | an extension call with the JSON arguments in CBOR: its result as JSON, or `err:` and the error |
 //! | `metric register KIND NAME` | the id (`counter`, `gauge` or `histogram`) |
 //! | `metric add ID N`, `metric set ID N`, `metric observe ID N` | `queued`: sent with the callback's result |
+//! | `sender ...` | sender channels used from threads of the fixture's own (`src/senders.rs` lists them) |
 //!
 //! | `note TEXT`, `notes` | `ok`; the notes so far, joined by commas: the state a snapshot carries, one per line |
 //! | `loaded-from` | the version whose snapshot it started from, or `none` |
@@ -57,6 +58,8 @@ use std::process::ExitCode;
 
 #[cfg(unix)]
 mod fixture;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod senders;
 
 #[cfg(unix)]
 fn main() -> ExitCode {

@@ -168,6 +168,7 @@ impl InstanceSpec {
                 pending_calls: spec.limits.pending_calls_max,
                 groups: spec.limits.groups_max,
                 watches: spec.limits.watches_max,
+                senders: spec.limits.senders_max,
             },
         }
     }

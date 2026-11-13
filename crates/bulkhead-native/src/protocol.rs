@@ -30,7 +30,15 @@
 //! version 12 [`Request::Extension`], a call to a function of an
 //! extension the node runs (ROADMAP Z8h), and hot layouts for
 //! [`Request::CastWait`] and [`Answer::CastFailed`] (ROADMAP I7), which a
-//! node writes only to an app at 12.
+//! node writes only to an app at 12. Version 13 added
+//! [`Request::OpenSender`]: a channel of its own for one of the app's
+//! threads (ROADMAP AP1, spike S39).
+//!
+//! A sender channel carries the same frames as the app's own channel, from
+//! one thread at any time, not only during a callback: `Request`s (only
+//! those [`Request::OpenSender`] lists) and the `Metrics` updates, each
+//! request answered by an `Answer` with its id. Several may be in flight
+//! at once, answered as they complete.
 //!
 //! A node accepts apps on [`VERSION`] and on [`MIN_VERSION`], the one
 //! before, and sends an app only frames its version has
@@ -44,7 +52,7 @@ use std::io::{self, Read, Write};
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this crate speaks.
-pub const VERSION: u16 = 12;
+pub const VERSION: u16 = 13;
 
 /// The oldest version a node accepts from an app: the one before
 /// [`VERSION`], so an app survives one node upgrade without a rebuild
@@ -553,6 +561,45 @@ pub enum Request {
         /// parameters, in order.
         args: Bytes,
     },
+    /// A sender channel for one of the app's threads (ROADMAP AP1):
+    /// [`Answer::Sender`]. The node passes its memfd, the read end of its
+    /// door and the write end of its bell on the descriptor socket before
+    /// the answer, as for a published snapshot. On a sender channel the
+    /// app may ask for [`Request::SelfPid`], [`Request::Cast`],
+    /// [`Request::CastWait`], [`Request::Call`], [`Request::Kv`] (not
+    /// watches), [`Request::KvOpen`], [`Request::MetricRegister`] and
+    /// another [`Request::OpenSender`], and send `Metrics` updates and hot
+    /// keyvalue frames; anything else ends the instance. Up to the app's
+    /// `senders_max` channels at once; one closes when the app closes its
+    /// ring or its end of the bell.
+    OpenSender,
+}
+
+/// A sender channel the node made: descriptors passed on the descriptor
+/// socket before the answer that names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SenderChannel {
+    /// The memfd of `channel::CHANNEL_BYTES`: the ring to the app,
+    /// then the ring to the node, as the app's own channel.
+    pub memfd: FdRef,
+    /// The read end of the channel's door, which the node writes a byte
+    /// to when it wakes the thread.
+    pub door: FdRef,
+    /// The write end of the channel's bell, which the thread writes a byte
+    /// to when it wakes the node.
+    pub bell: FdRef,
+}
+
+/// Why no sender channel was made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SenderError {
+    /// The app holds `senders_max` channels already.
+    LimitReached,
+    /// The instance runs without a channel of its own to share (an
+    /// in-process test app).
+    Unsupported,
+    /// The channel could not be made or passed.
+    Other(String),
 }
 
 /// Why an extension call was not made: the extension's own errors (a
@@ -1185,6 +1232,8 @@ pub enum Answer {
     Http(Result<HttpResponse, HttpError>),
     /// An extension function's result, in CBOR.
     Extension(Result<Bytes, ExtensionError>),
+    /// A sender channel, its descriptors passed before this answer.
+    Sender(Result<SenderChannel, SenderError>),
 }
 
 /// A frame that could not be read.

@@ -25,8 +25,8 @@ use bulkhead_native::protocol::{
     self, Answer, Bytes, CallError, CastError, ConfigError, Envelope, ExitReason, ExtensionError,
     FdRef, FromApp, GroupsAnswer, GroupsRequest, HttpRequest, HttpResponse, Info, KvAnswer,
     KvError, KvRequest, Level, MIN_VERSION, MetricError, MetricKind, MetricUpdate, NetAnswer,
-    NetRequest, NetStream, Pid, RegisterError, Request, SecretError, SqlAnswer, SqlRequest,
-    SqlRows, SqlValue, ToApp, VERSION,
+    NetRequest, NetStream, Pid, RegisterError, Request, SecretError, SenderChannel, SqlAnswer,
+    SqlRequest, SqlRows, SqlValue, ToApp, VERSION,
 };
 
 fn file(version: u16) -> PathBuf {
@@ -123,6 +123,7 @@ fn request_name(r: &Request) -> &'static str {
         Request::Net(_) => "Net",
         Request::Http(_) => "Http",
         Request::Extension { .. } => "Extension",
+        Request::OpenSender => "OpenSender",
     }
 }
 
@@ -146,6 +147,7 @@ fn answer_name(a: &Answer) -> &'static str {
         Answer::Net(_) => "Net",
         Answer::Http(_) => "Http",
         Answer::Extension(_) => "Extension",
+        Answer::Sender(_) => "Sender",
     }
 }
 
@@ -204,6 +206,7 @@ const NAMES: &[(&str, &[&str])] = &[
             "Net",
             "Http",
             "Extension",
+            "OpenSender",
         ],
     ),
     (
@@ -227,6 +230,7 @@ const NAMES: &[(&str, &[&str])] = &[
             "Net",
             "Http",
             "Extension",
+            "Sender",
         ],
     ),
 ];
@@ -397,6 +401,7 @@ fn requests() -> Vec<Request> {
             function: "greet#hello".into(),
             args: Bytes(vec![0x81, 0x61, b'a']),
         },
+        Request::OpenSender,
     ]
 }
 
@@ -427,6 +432,11 @@ fn answers() -> Vec<Answer> {
             body: Bytes(vec![0, 255]),
         })),
         Answer::Extension(Err(ExtensionError::NoSuchFunction("greet#x".into()))),
+        Answer::Sender(Ok(SenderChannel {
+            memfd: FdRef(3),
+            door: FdRef(4),
+            bell: FdRef(5),
+        })),
     ]
 }
 

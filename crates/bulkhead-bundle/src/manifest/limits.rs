@@ -63,6 +63,11 @@ pub struct Limits {
     /// uses the node's value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub watches_max: Option<u32>,
+    /// Most sender channels one native instance holds at once, one for
+    /// each of its threads that asks the node outside the callbacks
+    /// (ROADMAP AP1). Unset uses the node's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub senders_max: Option<u32>,
 }
 
 impl Default for Limits {
@@ -82,6 +87,7 @@ impl Default for Limits {
             pending_calls_max: None,
             groups_max: None,
             watches_max: None,
+            senders_max: None,
         }
     }
 }
@@ -116,6 +122,7 @@ impl Limits {
             ("pending_calls_max", self.pending_calls_max.map(u64::from)),
             ("groups_max", self.groups_max.map(u64::from)),
             ("watches_max", self.watches_max.map(u64::from)),
+            ("senders_max", self.senders_max.map(u64::from)),
         ] {
             if value == Some(0) {
                 v.error_at(field, "must be greater than zero");

@@ -8,6 +8,24 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Sender channels (ROADMAP AP1, spike S39): a native app's own threads
+  ask the node at any time, not only the callback thread during a
+  callback. `ctx.sender()` (`bulkhead_sdk::sender`, `bulkhead_native::sender`)
+  opens a channel of its own for one thread (`Send`, not `Sync`;
+  `try_clone` opens another); through it the thread casts, calls (several
+  in flight with `start_call` and `next_answer`), uses buckets (not
+  watches) and records metrics, as the instance: its pid, its messaging
+  ACLs, its grants. The node serves each sender with a task of its own,
+  never behind the callback that is running. Up to `limits.senders_max`
+  per instance (node config `[limits] senders_max`, default 8); dropping a
+  sender frees its place, and a process's senders end with it. A request
+  a sender may not make ends the instance. Protocol version 13
+  (`Request::OpenSender`, `Answer::Sender`); a node still accepts apps on
+  12. On a Raspberry Pi 5 a request from a sender costs what one from a
+  callback does (2.9 µs, a bucket get 1.3 µs), and 800 idle senders cost
+  nothing measured (BASELINE.md, 2026-11-12). Each sender holds two of the
+  node's descriptors (OPERATIONS.md).
+
 - The privileged helper, `bulkhead-priv` (ROADMAP PS1): with node config
   `[priv]`, every native instance runs under a user of its app's own.
   systemd or rc starts the helper as root

@@ -279,6 +279,45 @@ pub(crate) struct States {
     pub(crate) extensions: extension::ExtensionStates,
 }
 
+/// The services a native app's sender channel uses (ROADMAP AP1), held by
+/// that channel's task: keyvalue and metrics state of its own, made from
+/// the instance's spec and grants as [`States`] are, so it opens buckets
+/// and registers metric names into tables of its own (the same buckets,
+/// and the same series by name).
+pub(crate) struct SenderStates {
+    pub(crate) keyvalue: keyvalue::Instance,
+    pub(crate) metrics: metrics::Instance,
+}
+
+impl SenderStates {
+    pub(crate) fn new(
+        shared: &Shared,
+        spec: &InstanceSpec,
+        handle: &InstanceHandle,
+        host_objects: HostObjects,
+        metrics: &crate::metrics::Metrics,
+    ) -> Self {
+        let info = |capability: Capability| InstanceInfo {
+            granted: spec.granted.contains(&capability),
+            handle,
+            host_objects,
+            metrics,
+        };
+        Self {
+            keyvalue: keyvalue::KeyValue::instance(
+                &shared.keyvalue,
+                &spec.services.keyvalue,
+                &info(keyvalue::KeyValue::CAPABILITY),
+            ),
+            metrics: metrics::MetricsService::instance(
+                &shared.metrics,
+                &spec.services.metrics,
+                &info(metrics::MetricsService::CAPABILITY),
+            ),
+        }
+    }
+}
+
 impl States {
     /// Every service's announcements, in registry order.
     pub(crate) fn announce(&self, tags: &Tags) -> Vec<(String, Envelope)> {

@@ -16,10 +16,14 @@ pub(crate) mod cgroup;
 pub(crate) mod convert;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub mod helper;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) mod link;
 pub(crate) mod memory;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod os;
 pub(crate) mod port;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) mod sender;
 #[cfg(target_os = "linux")]
 pub(crate) mod syscalls;
 

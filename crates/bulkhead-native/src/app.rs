@@ -371,7 +371,7 @@ fn adopt(bucket: String, revision: u64, fd: FdRef) {
 /// Ask the node and wait for its answer. Anything else from the node here
 /// breaks the protocol, and the end of stdin means the node has gone: the
 /// process exits either way.
-fn request(request: Request) -> Answer {
+pub(crate) fn request(request: Request) -> Answer {
     let id = with_conn(|conn| {
         conn.next_id += 1;
         conn.next_id
@@ -1449,13 +1449,13 @@ fn unexpected(answer: &Answer) -> ! {
     protocol_error(&format!("unexpected answer {answer:?}"))
 }
 
-fn protocol_error(what: &str) -> ! {
+pub(crate) fn protocol_error(what: &str) -> ! {
     eprintln!("bulkhead-native: protocol error: {what}");
     std::process::exit(3)
 }
 
 /// The node closed the channel: it stopped this instance.
-fn gone() -> ! {
+pub(crate) fn gone() -> ! {
     std::process::exit(0)
 }
 

@@ -136,6 +136,7 @@ The app's root supervisor, with OTP semantics.
 | `links_max` | node's `[limits]` (10000) | Most links the instance holds when it links with a new instance; past it, the instance crashes with `link_limit`. Links other instances make to it are charged to them. |
 | `groups_max` | node's `[limits]` (1000) | Most process groups the instance is in (`bulkhead:groups`). One more `join` returns `limit-reached`. |
 | `watches_max` | node's `[limits]` (1000) | Most keyvalue watches the instance holds (`bulkhead:watch`). One more `watch` returns `limit-reached`. |
+| `senders_max` | node's `[limits]` (8) | Most sender channels a native instance holds at once, one for each of its threads that asks the node outside the callbacks (`Ctx::sender`). One more returns `limit-reached`; a dropped sender frees its place. Each is two 68 KiB rings shared by the node and the app, and two of the node's descriptors (OPERATIONS.md, "Running as a service"). |
 | `pending_calls_max` | node's `[limits]` (10000) | Most calls answered `noreply` and not yet replied to. One more crashes the instance with `pending_call_limit`, and its waiting callers get `exited`. |
 | `storage_quota`, `open_files`, `outbound_connections` | none | *Not enforced.* |
 
@@ -439,6 +440,7 @@ links_max = 10000
 pending_calls_max = 10000
 groups_max = 1000
 watches_max = 1000
+senders_max = 8                        # sender channels per native instance
 log_records_per_sec = 1000             # per app, logging records and stdout/stderr lines together; 0: none
 
 [buckets.points]                       # a shared keyvalue bucket, opened by apps that list it

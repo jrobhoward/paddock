@@ -26,6 +26,7 @@ Two words have more than one meaning:
 - **Singleton:** an app with `placement.mode = "singleton"`.
 - **Extension:** a host service from a crate outside `bulkhead-host` (`bulkhead-modbus`, the greeter example), linked into a node binary. Apps call its functions through the node (`Extension::call`).
 - **Hot standby:** an app with `placement.mode = "hot-standby"`: an instance on both nodes of an HA pair, each told its role (`failover-role` host event), for an app that keeps a warm copy and takes over itself.
+- **Sender (sender channel):** a channel of its own through which one of a native app's threads asks the node at any time, not only the callback thread during a callback (`Ctx::sender`, ROADMAP AP1). Up to `limits.senders_max` per instance. [DESIGN.md](DESIGN.md), "App model"; [WRITING_APPS.md](WRITING_APPS.md).
 - **Published bucket:** a shared bucket with `publish_ms` set: the node passes each change's snapshot to the native instances that read it, which answer reads from it without asking the node (MANIFEST.md, DESIGN.md "Shared buckets and watches").
 - **Priv files:** files bundled with an app (`bulkhead bundle --priv`), read-only, in the directory `BULKHEAD_PRIV` names (`bulkhead_sdk::files::path("/priv/...")`).
 

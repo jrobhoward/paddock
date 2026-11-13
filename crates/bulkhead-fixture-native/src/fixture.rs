@@ -25,17 +25,20 @@ struct Fixture {
     tx: Option<u32>,
     /// Streams `tcp-connect` made, by the node's socket number.
     streams: std::collections::BTreeMap<u32, std::net::TcpStream>,
+    /// Sender channels `sender open` made (ROADMAP AP1).
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    senders: crate::senders::Senders,
 }
 
-fn text(s: impl Into<String>) -> Envelope {
+pub(crate) fn text(s: impl Into<String>) -> Envelope {
     Envelope::new("text/plain", s.into().into_bytes())
 }
 
-fn pid_text(p: Pid) -> String {
+pub(crate) fn pid_text(p: Pid) -> String {
     format!("{}.{}.{}", p.node, p.id, p.incarnation)
 }
 
-fn parse_pid(s: &str) -> Option<Pid> {
+pub(crate) fn parse_pid(s: &str) -> Option<Pid> {
     let mut it = s.split('.');
     Some(Pid {
         node: it.next()?.parse().ok()?,
@@ -418,6 +421,8 @@ impl Fixture {
             },
             "ext" => extension(ctx, first, tail),
             "metric" => metric(ctx, first, tail),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            "sender" => self.senders.command(ctx, rest),
             "kill" => {
                 let target: i32 = rest.parse().unwrap_or(0);
                 // SAFETY: `kill` takes no pointers; any pid and signal 0

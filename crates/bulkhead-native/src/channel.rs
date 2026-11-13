@@ -727,8 +727,8 @@ pub struct AppEnd {
     channel: Channel,
     bell: OwnedFd,
     door: OwnedFd,
-    /// The app's end of the descriptor socket.
-    fds: OwnedFd,
+    /// The app's end of the descriptor socket; a sender channel has none.
+    fds: Option<OwnedFd>,
     /// Descriptors received before the one asked for, by id.
     untaken: Mutex<HashMap<u64, OwnedFd>>,
     spin: Spin,
@@ -782,11 +782,32 @@ impl AppEnd {
             channel,
             bell,
             door,
-            fds,
+            fds: Some(fds),
             untaken: Mutex::new(HashMap::new()),
             spin,
             between: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// The app's end of a sender channel (ROADMAP AP1) the node passed:
+    /// its memfd, its bell's write end and its door's read end. It has no
+    /// descriptor socket: descriptors come on the app's own channel's.
+    ///
+    /// # Errors
+    ///
+    /// The memfd is not a channel, or a descriptor flag could not be set.
+    pub fn sender(memfd: OwnedFd, bell: OwnedFd, door: OwnedFd, spin: Spin) -> io::Result<Self> {
+        let channel = Channel::open(memfd.as_fd())?;
+        rustix::fs::fcntl_setfl(&bell, rustix::fs::OFlags::NONBLOCK)?;
+        Ok(Self {
+            channel,
+            bell,
+            door,
+            fds: None,
+            untaken: Mutex::new(HashMap::new()),
+            spin,
+            between: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     /// The descriptor the node passed as `id`, which a frame named: the
@@ -804,7 +825,13 @@ impl AppEnd {
             return Ok(fd);
         }
         loop {
-            match recv_fd(self.fds.as_fd())? {
+            let Some(fds) = &self.fds else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "a sender channel passes no descriptors",
+                ));
+            };
+            match recv_fd(fds.as_fd())? {
                 None => {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
