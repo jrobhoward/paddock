@@ -107,6 +107,14 @@ pub const SPIN_ENV: &str = "BULKHEAD_SPIN_US";
 /// The spin budget without one configured: it must outlast a wake-up,
 /// about 20 µs on an x86 machine with deep C-states (S32).
 pub const DEFAULT_SPIN: Duration = Duration::from_micros(20);
+/// The environment variable holding a sender channel's spin budget in
+/// microseconds (`[native] sender_spin_us`).
+pub const SENDER_SPIN_ENV: &str = "BULKHEAD_SENDER_SPIN_US";
+/// How long a thread waiting for an answer on a sender channel spins
+/// without a budget configured: longer than an instance channel's, which
+/// took a single client through a driver app about 15% off each request
+/// on a Raspberry Pi 5 (ROADMAP DA1b).
+pub const DEFAULT_SENDER_SPIN: Duration = Duration::from_micros(50);
 
 const HEAD: usize = 0;
 const TAIL: usize = 64;
@@ -663,11 +671,22 @@ impl Spin {
     /// The budget [`SPIN_ENV`] gives, or [`DEFAULT_SPIN`].
     #[must_use]
     pub fn from_env() -> Self {
+        Self::env_or(SPIN_ENV, DEFAULT_SPIN)
+    }
+
+    /// A sender channel's budget: what [`SENDER_SPIN_ENV`] gives, or
+    /// [`DEFAULT_SENDER_SPIN`].
+    #[must_use]
+    pub fn sender_from_env() -> Self {
+        Self::env_or(SENDER_SPIN_ENV, DEFAULT_SENDER_SPIN)
+    }
+
+    fn env_or(var: &str, default: Duration) -> Self {
         Self(
-            std::env::var(SPIN_ENV)
+            std::env::var(var)
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .map_or(DEFAULT_SPIN, Duration::from_micros),
+                .map_or(default, Duration::from_micros),
         )
     }
 

@@ -60,7 +60,7 @@ impl Sender {
         let memfd = take_fd(passed.memfd).map_err(other)?;
         let door = take_fd(passed.door).map_err(other)?;
         let bell = take_fd(passed.bell).map_err(other)?;
-        let end = AppEnd::sender(memfd, bell, door, Spin::from_env()).map_err(other)?;
+        let end = AppEnd::sender(memfd, bell, door, Spin::sender_from_env()).map_err(other)?;
         Ok(Self {
             end,
             next_id: 0,

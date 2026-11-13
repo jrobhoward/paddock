@@ -2945,11 +2945,43 @@ Requests a second, p50 µs and CPU µs a request (the node and its instances), t
 - **No change in start time:** the walk over one small program directory cost too little to see; PS2's gain is whom the files are readable by, not time.
 - **Not measured:** the 16-core machine (its `sudo` needs a password); an app with many `priv/` files, whose walk now happens once per deploy rather than at each start.
 
+## 2026-11-13: one client through a driver (DA1b)
+
+S37's harness with DA1's driver (`DRIVER=s37-driver-da1 S37_DRIVER=da1`, as on 2026-11-12), each run two rounds of the whole matrix, with the spin of the two waits a single client pays changed apart: the driver thread's wait for its answer on its sender channel (the app side) and the node's task waiting for that channel's next request (the node side). The app side reads `[native] sender_spin_us` (new; `BULKHEAD_SENDER_SPIN_US` in the app); the node side was given 50 µs for the runs below by a temporary setting, not committed. Raspberry Pi 5 (Linux 7.0), nice 10, load under 1 at each start; the 16-core machine, nothing else running but two kernel workers stuck in an uninterruptible wait that held its load near 2 at no CPU (load under 3 at each start). Results: `spikes/s37/results/{pi5,x86}-da1b-*2026-11-13.txt`.
+
+Raspberry Pi 5, the driver against the node's own ingress in the same run (p50 µs; requests a second as a share of the node's):
+
+| spin, app side / node side (µs) | GET, 1 connection | HTTPS GET, 1 | POST 1 KiB, 1 | GET, 32 | HTTPS GET, 32 | GET, 256 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 20 / 20 (before) | 97–98 (node 65) | 107 (node 74–75) | 106 (node 77) | 88–91% | 88% | 80–83% |
+| 50 / 20 (now) | 83–84 (node 70) | 94–95 (node 77) | 91–92 (node 80) | 93–97% | 92–93% | 84–86% |
+| 20 / 50 | 67–69 (node 63–64) | 103–110 (node 74) | 94–100 (node 77–78) | 77–80% | 84–87% | 77–81% |
+| 50 / 50 | 63–64 (node 67) | 73 (node 77) | 73–74 (node 78) | 78–82% | 84–85% | 77–80% |
+
+CPU a request through the driver, one GET connection: 166 µs before, 161–163 now, 146–149 at 50 / 50; at 32 connections 61–62, 64–67, 67–68 and 68–69.
+
+The 16-core machine, one connection (p50 µs, CPU µs a request):
+
+| spin, app side / node side (µs) | GET | HTTPS GET | POST 1 KiB |
+| --- | --- | --- | --- |
+| 20 / 20 (before) | 102–118, CPU 162–174 (node 94) | 110–123 (node 107) | 117–124 (node 112) |
+| 50 / 20 (now) | 90–94, CPU 173–178 (node 97) | 105 (node 109) | 111–118 (node 117) |
+| 50 / 50 | 74–75, CPU 198–199 (node 94) | 88–110 (node 107) | 87–94 (node 112) |
+
+At 32 and 256 connections the driver serves 142 to 176% of the node's own requests a second there in every setting, at 62 to 81 µs of CPU a request (DA1's first run on that machine, not made on 2026-11-12): with four node workers the node's own ingress is the slower path there, which this run did not look into.
+
+- **Both waits slept:** at 20 µs the driver's thread fell asleep before its answer (through the node, the echo instance and back) and the node's task before the driver's next request (a client's round trip later). Each side at 50 µs takes about half of the gap away.
+- **The node side's spin costs under load:** on the Pi's four cores, 50 µs on the node side took 10 to 20% of the driver's requests at 32 connections (GET 77–82% of the node's against 88–91%), whatever the app side did. The node's task spins by yielding to tokio, so for the whole spin its worker keeps polling it while frames for others wait. The app side alone cost nothing under load, and gained a little (fewer sleeps).
+- **Chosen: 50 / 20.** One client's p50 through the driver is 19 to 23% above the node's own on the Pi in the same run (14–15% for POST), from 39 to 48%, and at or below it on the 16-core machine, with no throughput lost anywhere and no more CPU. S37's target for one connection (20%) is met but for HTTPS on the Pi, 2 to 3 points over.
+- **Tried and dropped:** a sender's app side that sleeps at once for its next 8 waits after a wait outlasted its spin. It recovered nothing on the Pi at 32 connections (64–82%, both sides at 50), which is what showed the cost was the node side's, and lost one client's gain on the 16-core machine in one round of two (p50 102 µs).
+- **`native_cost` and `cluster_throughput`** (run with each setting; neither has sender channels in its calls) moved within their run-to-run spread: on the Pi calls in flight within 2% and sequential calls within 11%, a request from a sender thread 2.9 µs throughout; on the 16-core machine within its usual 10 to 15%.
+- **Not measured:** FreeBSD (function checks only); a node side that spins only while its worker has nothing else to do (below, "Not measured yet").
+
 ## Not measured yet
 
 - Where the 2.7 µs a native call costs more under the privileged helper goes (PS1), and the helper on the 16-core machine.
 
-- Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1).
+- Spinning that adapts to the machine: less, or none, while the node's cores are busy, where on the Pi it costs throughput (T1). A sender channel's node side at 50 µs would take another 15% off one client through a driver, and cost 10 to 20% of a loaded driver's requests on the Pi (DA1b); a spin that stops when a yield shows other native instances running would also stop for the called instance's own spin, which shares the worker with one client's request.
 - Why a single native request on the 16-core machine takes one of two times from run to run (a bucket get about 2.2 or about 3.0 µs), and the Pi's does not (T10, T11); thread placement across the Threadripper's dies is a guess, not measured.
 
 - What makes Erlang's TLS distribution twice its plain TCP with 16 and 64 callers between two processes on the 16-core machine (C4), and only there.

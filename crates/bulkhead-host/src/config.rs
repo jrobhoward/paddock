@@ -330,6 +330,13 @@ pub struct NativeConfig {
     /// an x86 machine with deep C-states, 7 µs on a Raspberry Pi 5; spike
     /// S32); zero always sleeps.
     pub spin: Duration,
+    /// How long an app's thread waiting for an answer on a sender
+    /// channel (ROADMAP AP1) spins before it sleeps; the node's task
+    /// serving the channel keeps [`Self::spin`]. Longer than it: one
+    /// client through a driver app waited about 15% less a request on a
+    /// Raspberry Pi 5, and the node's task spinning as long cost a loaded
+    /// driver 10 to 20% of its requests there (ROADMAP DA1b).
+    pub sender_spin: Duration,
     /// The privileged helper that starts every instance under its app's
     /// user (node config `[priv]`, ROADMAP PS1); `None` to start them as
     /// the node's own children, under the node's user.
@@ -347,6 +354,7 @@ impl Default for NativeConfig {
             ping_timeout: Duration::from_secs(5),
             landlock_optional: false,
             spin: Duration::from_micros(20),
+            sender_spin: Duration::from_micros(50),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             helper: None,
         }

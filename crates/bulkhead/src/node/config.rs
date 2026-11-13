@@ -839,6 +839,10 @@ pub struct NativeBinding {
     /// How long, in microseconds, the node and a native app spin waiting
     /// for each other before they sleep; 0 always sleeps.
     pub spin_us: u64,
+    /// How long an app's thread waiting for an answer on a sender
+    /// channel spins before it sleeps; the node's task serving the
+    /// channel keeps `spin_us`.
+    pub sender_spin_us: u64,
 }
 
 impl Default for NativeBinding {
@@ -852,6 +856,7 @@ impl Default for NativeBinding {
             ping_timeout_ms: 5_000,
             landlock_optional: false,
             spin_us: u64::try_from(host.spin.as_micros()).unwrap_or(20),
+            sender_spin_us: u64::try_from(host.sender_spin.as_micros()).unwrap_or(50),
         }
     }
 }
@@ -868,6 +873,7 @@ impl NativeBinding {
         native.ping_timeout = std::time::Duration::from_millis(self.ping_timeout_ms);
         native.landlock_optional = self.landlock_optional;
         native.spin = std::time::Duration::from_micros(self.spin_us);
+        native.sender_spin = std::time::Duration::from_micros(self.sender_spin_us);
         native
     }
 }
@@ -1088,10 +1094,12 @@ impl NodeConfig {
                 )));
             }
         }
-        if n.spin_us > MAX_SPIN_US {
-            return Err(NodeError::Invalid(format!(
-                "node config: native.spin_us must be at most {MAX_SPIN_US}"
-            )));
+        for (name, value) in [("spin_us", n.spin_us), ("sender_spin_us", n.sender_spin_us)] {
+            if value > MAX_SPIN_US {
+                return Err(NodeError::Invalid(format!(
+                    "node config: native.{name} must be at most {MAX_SPIN_US}"
+                )));
+            }
         }
         if self.privileges.is_some() && n.cgroup.is_some() {
             return Err(NodeError::Invalid(

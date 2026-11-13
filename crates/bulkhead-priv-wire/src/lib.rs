@@ -32,12 +32,14 @@ pub const SOCKET_ENV: &str = "BULKHEAD_PRIV_FD";
 pub const MAX_APP_NAME: usize = 64;
 /// The environment variables a spawn may set: the ones
 /// `bulkhead-runner` and the app read (`bulkhead_native`'s `PRIV_ENV`,
-/// `preopens::ENV`, `channel::SPIN_ENV` and `driver::LISTENERS_ENV`). The
-/// helper refuses any other, such as `LD_PRELOAD`.
-pub const RUNNER_ENV: [&str; 4] = [
+/// `preopens::ENV`, `channel::SPIN_ENV`, `channel::SENDER_SPIN_ENV` and
+/// `driver::LISTENERS_ENV`). The helper refuses any other, such as
+/// `LD_PRELOAD`.
+pub const RUNNER_ENV: [&str; 5] = [
     "BULKHEAD_PRIV",
     "BULKHEAD_PREOPENS",
     "BULKHEAD_SPIN_US",
+    "BULKHEAD_SENDER_SPIN_US",
     "BULKHEAD_LISTENERS",
 ];
 /// Descriptor numbers a spawn may place descriptors at: stdout, stderr

@@ -333,7 +333,14 @@ then halved the Pi's calls in flight; waits for an answer within a
 callback always spin (T1b, BASELINE.md, 2026-11-05). Each side of a native
 instance's channel spins for `[native] spin_us` (default 20 µs) before it
 sleeps: a blocking round trip between processes costs two wake-ups of a
-sleeping thread whatever carries the bytes (S30, S32). The app spins with
+sleeping thread whatever carries the bytes (S30, S32). An app thread
+waiting for an answer on a sender channel spins for `[native]
+sender_spin_us` (default 50 µs) instead; the node's task serving the
+channel keeps `spin_us`. On the Pi the node's task spinning 50 µs for a
+driver's next request cost 10 to 20% of a loaded driver's requests: it
+yields to the runtime's other tasks for the whole spin (DA1b,
+BASELINE.md, 2026-11-13). Rerun S37's harness with DA1's driver, as well
+as `native_cost` and `cluster_throughput`, before changing either. The app spins with
 `sched_yield`, not a pause instruction, which starves the other side when
 busy processes outnumber cores (S32); a wait on the ring's cache line
 (`MWAITX`, `WFE`) collapses the same way, and up to 2 µs of one before

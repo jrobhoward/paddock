@@ -307,6 +307,18 @@ fn spin____from_env_without_the_variable____default() {
 }
 
 #[test]
+fn spin____a_sender_without_the_variable____its_own_longer_default() {
+    let spin = if std::env::var_os(SENDER_SPIN_ENV).is_none() {
+        Spin::sender_from_env().0
+    } else {
+        DEFAULT_SENDER_SPIN
+    };
+
+    assert_eq!(spin, DEFAULT_SENDER_SPIN);
+    assert!(DEFAULT_SENDER_SPIN > DEFAULT_SPIN);
+}
+
+#[test]
 fn mapped____sealed_memfd____reads_its_bytes() {
     let fd = sealed("test", b"a snapshot").unwrap();
 

@@ -229,6 +229,18 @@ async fn gets(h: &InstanceHandle, bucket: &str) -> f64 {
     per[2]
 }
 
+/// `NATIVE_SPIN_US`: the node's `[native] spin_us` (T1); unset, 20.
+/// `NATIVE_SENDER_SPIN_US`: `[native] sender_spin_us` (DA1b); unset, 50.
+fn spins(native: &mut NativeConfig) {
+    let us = |var: &str| std::env::var(var).ok().and_then(|v| v.parse().ok());
+    if let Some(us) = us("NATIVE_SPIN_US") {
+        native.spin = Duration::from_micros(us);
+    }
+    if let Some(us) = us("NATIVE_SENDER_SPIN_US") {
+        native.sender_spin = Duration::from_micros(us);
+    }
+}
+
 async fn run(workers: usize) {
     let mut native = NativeConfig::default();
     native.runner = Some(release("bulkhead-runner"));
@@ -236,13 +248,7 @@ async fn run(workers: usize) {
     if native.helper.is_some() {
         println!("under the privileged helper: CPU per call is the node's alone");
     }
-    // `NATIVE_SPIN_US`: the node's `[native] spin_us` (T1); unset, 20.
-    if let Some(us) = std::env::var("NATIVE_SPIN_US")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        native.spin = Duration::from_micros(us);
-    }
+    spins(&mut native);
     let rt = Runtime::new(RuntimeConfig {
         max_instances: 256,
         native,

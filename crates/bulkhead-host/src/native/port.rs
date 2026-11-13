@@ -410,6 +410,10 @@ mod process {
                 channel::SPIN_ENV,
                 config.spin.as_micros().to_string().into(),
             ));
+            launch.env.push((
+                channel::SENDER_SPIN_ENV,
+                config.sender_spin.as_micros().to_string().into(),
+            ));
             let (channel, memfd) = Channel::create().map_err(|e| format!("channel: {e}"))?;
             let (bell, bell_app) = channel::bell().map_err(|e| format!("channel: {e}"))?;
             let (door_app, door) = channel::door().map_err(|e| format!("channel: {e}"))?;

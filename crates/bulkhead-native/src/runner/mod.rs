@@ -199,6 +199,7 @@ pub fn main() -> ExitCode {
                 crate::protocol::PRIV_ENV,
                 crate::preopens::ENV,
                 crate::channel::SPIN_ENV,
+                crate::channel::SENDER_SPIN_ENV,
                 crate::driver::LISTENERS_ENV,
             ]
             .into_iter()

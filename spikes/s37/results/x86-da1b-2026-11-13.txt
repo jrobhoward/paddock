@@ -1,0 +1,387 @@
+### native_cost 4, round 1, spin_us 20, sender_spin_us 20 (load 2.43 1.98 1.01, 04:23)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 5.3ms, p99 23.8ms
+call from the host, one at a time: p50 18.2µs, p99 46.2µs
+call between instances (through the host): p50 43.7µs, p99 98.3µs
+request from a callback (its own pid): 3.8 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 2.6 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.078 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 4.5 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 2.9 µs (median of 5 runs of 20,000)
+casts to one instance: 295957 handled per second
+16 calls in flight: 289821 calls/s, 7.78 cores, 26.8 µs of CPU per call
+64 calls in flight: 367003 calls/s, 10.07 cores, 27.4 µs of CPU per call
+### native_cost 4, round 1, spin_us 0, sender_spin_us 20 (load 2.97 2.18 1.11, 04:23)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 4.4ms, p99 21.0ms
+call from the host, one at a time: p50 30.9µs, p99 50.9µs
+call between instances (through the host): p50 85.6µs, p99 125.1µs
+request from a callback (its own pid): 23.0 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 11.8 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.131 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 4.2 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 2.9 µs (median of 5 runs of 20,000)
+casts to one instance: 81716 handled per second
+16 calls in flight: 254808 calls/s, 6.63 cores, 26.0 µs of CPU per call
+64 calls in flight: 285631 calls/s, 7.12 cores, 24.9 µs of CPU per call
+### native_cost 4, round 1, spin_us 20, sender_spin_us 50 (load 2.84 2.20 1.14, 04:24)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 5.3ms, p99 24.0ms
+call from the host, one at a time: p50 19.1µs, p99 51.2µs
+call between instances (through the host): p50 53.4µs, p99 116.4µs
+request from a callback (its own pid): 3.8 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 2.6 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.078 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 3.9 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 2.1 µs (median of 5 runs of 20,000)
+casts to one instance: 252487 handled per second
+16 calls in flight: 270564 calls/s, 7.63 cores, 28.2 µs of CPU per call
+64 calls in flight: 339343 calls/s, 9.48 cores, 27.9 µs of CPU per call
+### native_cost 4, round 1, spin_us 0, sender_spin_us 50 (load 2.98 2.41 1.26, 04:24)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 5.3ms, p99 22.8ms
+call from the host, one at a time: p50 14.7µs, p99 33.3µs
+call between instances (through the host): p50 49.8µs, p99 85.5µs
+request from a callback (its own pid): 12.6 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 13.5 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.078 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 4.0 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 2.9 µs (median of 5 runs of 20,000)
+casts to one instance: 76776 handled per second
+16 calls in flight: 248574 calls/s, 6.51 cores, 26.2 µs of CPU per call
+64 calls in flight: 280519 calls/s, 6.98 cores, 24.9 µs of CPU per call
+### native_cost 4, round 2, spin_us 20, sender_spin_us 20 (load 2.82 2.41 1.28, 04:25)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 5.3ms, p99 23.1ms
+call from the host, one at a time: p50 18.9µs, p99 52.3µs
+call between instances (through the host): p50 50.5µs, p99 116.7µs
+request from a callback (its own pid): 3.5 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 2.2 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.078 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 4.3 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 3.0 µs (median of 5 runs of 20,000)
+casts to one instance: 322244 handled per second
+16 calls in flight: 268218 calls/s, 7.60 cores, 28.3 µs of CPU per call
+64 calls in flight: 335447 calls/s, 9.59 cores, 28.6 µs of CPU per call
+### native_cost 4, round 2, spin_us 0, sender_spin_us 20 (load 2.79 2.45 1.33, 04:25)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 4.6ms, p99 20.7ms
+call from the host, one at a time: p50 31.2µs, p99 50.7µs
+call between instances (through the host): p50 92.9µs, p99 123.8µs
+request from a callback (its own pid): 28.0 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 25.0 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.132 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 4.3 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 2.5 µs (median of 5 runs of 20,000)
+casts to one instance: 85244 handled per second
+16 calls in flight: 254807 calls/s, 6.62 cores, 26.0 µs of CPU per call
+64 calls in flight: 282206 calls/s, 6.90 cores, 24.5 µs of CPU per call
+### native_cost 4, round 2, spin_us 20, sender_spin_us 50 (load 2.99 2.56 1.40, 04:25)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 5.3ms, p99 21.5ms
+call from the host, one at a time: p50 19.8µs, p99 52.1µs
+call between instances (through the host): p50 49.8µs, p99 118.2µs
+request from a callback (its own pid): 4.4 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 3.0 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.079 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 4.3 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 2.9 µs (median of 5 runs of 20,000)
+casts to one instance: 257796 handled per second
+16 calls in flight: 267010 calls/s, 7.63 cores, 28.6 µs of CPU per call
+64 calls in flight: 329965 calls/s, 9.47 cores, 28.7 µs of CPU per call
+### native_cost 4, round 2, spin_us 0, sender_spin_us 50 (load 2.80 2.55 1.41, 04:26)
+tokio workers: 4; 100 native instances
+
+start, to the first reply: p50 4.8ms, p99 23.3ms
+call from the host, one at a time: p50 27.7µs, p99 45.7µs
+call between instances (through the host): p50 93.8µs, p99 130.5µs
+request from a callback (its own pid): 25.2 µs (median of 5 runs of 20,000)
+bucket get from a callback (16 B, memory bucket): 25.5 µs (median of 5 runs of 20,000)
+bucket get from a published snapshot (16 B, T4): 0.149 µs (median of 5 runs of 20,000)
+request from a sender thread (its own pid): 4.2 µs (median of 5 runs of 20,000)
+bucket get from a sender thread (16 B, memory bucket): 2.9 µs (median of 5 runs of 20,000)
+casts to one instance: 52425 handled per second
+16 calls in flight: 277739 calls/s, 6.88 cores, 24.8 µs of CPU per call
+64 calls in flight: 304034 calls/s, 7.19 cores, 23.6 µs of CPU per call
+### cluster_throughput 4, round 1, spin_us 20, sender_spin_us 20 (load 2.96 2.59 1.45, 04:26)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 178717/s, p50 4.9 us, p99 9.3 us
+two nodes: sequential calls 7196/s, p50 138.0 us, p99 185.7 us
+16 callers: one node 351343 calls/s, two nodes 47037 calls/s
+64 callers: one node 422680 calls/s, two nodes 47682 calls/s
+one node: casts 1005845 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 170654 handled/s (355595 of 400000 handled, 44405 refused when sent)
+1 KiB bodies, 16 callers: one node 299698 calls/s (293 MiB/s each way), two nodes 39543 calls/s (39 MiB/s each way)
+64 KiB bodies, 16 callers: one node 50631 calls/s (3164 MiB/s each way), two nodes 4558 calls/s (285 MiB/s each way)
+one node, from an instance: sequential calls 112912/s, p50 9.0 us, p99 13.5 us
+two nodes, from an instance: sequential calls 6583/s, p50 151.8 us, p99 187.7 us
+from instances, 16 callers: one node 226937 calls/s, two nodes 41162 calls/s
+one node, from instances: casts 615066 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 107314 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 520861 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 458152 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 449733 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 115069 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 112730 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 98787 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### cluster_throughput 4, round 1, spin_us 0, sender_spin_us 20 (load 2.86 3.18 1.84, 04:28)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 47738/s, p50 21.9 us, p99 25.5 us
+two nodes: sequential calls 6533/s, p50 146.3 us, p99 203.3 us
+16 callers: one node 266278 calls/s, two nodes 46182 calls/s
+64 callers: one node 279910 calls/s, two nodes 48644 calls/s
+one node: casts 307605 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 174729 handled/s (394240 of 400000 handled, 5760 refused when sent)
+1 KiB bodies, 16 callers: one node 252810 calls/s (247 MiB/s each way), two nodes 39872 calls/s (39 MiB/s each way)
+64 KiB bodies, 16 callers: one node 45179 calls/s (2824 MiB/s each way), two nodes 4511 calls/s (282 MiB/s each way)
+one node, from an instance: sequential calls 21098/s, p50 46.1 us, p99 57.7 us
+two nodes, from an instance: sequential calls 5635/s, p50 173.2 us, p99 232.3 us
+from instances, 16 callers: one node 144058 calls/s, two nodes 37428 calls/s
+one node, from instances: casts 173870 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 86917 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 166133 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 173254 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 183677 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 85168 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 86507 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 81271 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### cluster_throughput 4, round 1, spin_us 20, sender_spin_us 50 (load 2.98 3.34 2.06, 04:30)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 165762/s, p50 6.1 us, p99 9.7 us
+two nodes: sequential calls 7244/s, p50 136.0 us, p99 185.2 us
+16 callers: one node 310850 calls/s, two nodes 47714 calls/s
+64 callers: one node 530017 calls/s, two nodes 51078 calls/s
+one node: casts 952751 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 158307 handled/s (355324 of 400000 handled, 44676 refused when sent)
+1 KiB bodies, 16 callers: one node 293559 calls/s (287 MiB/s each way), two nodes 39414 calls/s (38 MiB/s each way)
+64 KiB bodies, 16 callers: one node 52850 calls/s (3303 MiB/s each way), two nodes 4761 calls/s (298 MiB/s each way)
+one node, from an instance: sequential calls 114215/s, p50 8.7 us, p99 13.7 us
+two nodes, from an instance: sequential calls 5948/s, p50 164.0 us, p99 220.3 us
+from instances, 16 callers: one node 312101 calls/s, two nodes 40500 calls/s
+one node, from instances: casts 602604 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 126215 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 717922 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 560467 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 523706 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 110614 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 118074 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 97898 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### cluster_throughput 4, round 1, spin_us 0, sender_spin_us 50 (load 2.94 3.86 2.46, 04:32)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 46934/s, p50 21.1 us, p99 25.2 us
+two nodes: sequential calls 6754/s, p50 144.2 us, p99 194.0 us
+16 callers: one node 254909 calls/s, two nodes 45216 calls/s
+64 callers: one node 280009 calls/s, two nodes 48535 calls/s
+one node: casts 322160 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 187564 handled/s (391022 of 400000 handled, 8978 refused when sent)
+1 KiB bodies, 16 callers: one node 245990 calls/s (240 MiB/s each way), two nodes 39801 calls/s (39 MiB/s each way)
+64 KiB bodies, 16 callers: one node 46095 calls/s (2881 MiB/s each way), two nodes 4502 calls/s (281 MiB/s each way)
+one node, from an instance: sequential calls 27518/s, p50 35.4 us, p99 46.1 us
+two nodes, from an instance: sequential calls 5732/s, p50 172.3 us, p99 230.6 us
+from instances, 16 callers: one node 142817 calls/s, two nodes 34757 calls/s
+one node, from instances: casts 163914 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 86727 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 169457 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 162628 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 175361 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 87225 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 86367 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 80841 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### cluster_throughput 4, round 2, spin_us 20, sender_spin_us 20 (load 2.80 3.86 2.64, 04:34)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 292639/s, p50 3.2 us, p99 9.2 us
+two nodes: sequential calls 7222/s, p50 132.7 us, p99 176.4 us
+16 callers: one node 375427 calls/s, two nodes 46514 calls/s
+64 callers: one node 436996 calls/s, two nodes 50383 calls/s
+one node: casts 936748 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 183517 handled/s (327903 of 400000 handled, 72097 refused when sent)
+1 KiB bodies, 16 callers: one node 305932 calls/s (299 MiB/s each way), two nodes 39834 calls/s (39 MiB/s each way)
+64 KiB bodies, 16 callers: one node 51131 calls/s (3196 MiB/s each way), two nodes 4822 calls/s (301 MiB/s each way)
+one node, from an instance: sequential calls 106689/s, p50 8.3 us, p99 13.5 us
+two nodes, from an instance: sequential calls 5840/s, p50 166.6 us, p99 221.4 us
+from instances, 16 callers: one node 327239 calls/s, two nodes 40559 calls/s
+one node, from instances: casts 543808 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 110141 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 569943 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 475476 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 439957 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 119397 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 116880 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 94541 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### cluster_throughput 4, round 2, spin_us 0, sender_spin_us 20 (load 2.78 4.07 2.92, 04:36)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 56863/s, p50 19.1 us, p99 22.9 us
+two nodes: sequential calls 6788/s, p50 144.5 us, p99 188.8 us
+16 callers: one node 261289 calls/s, two nodes 45791 calls/s
+64 callers: one node 278599 calls/s, two nodes 48824 calls/s
+one node: casts 315688 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 174705 handled/s (392753 of 400000 handled, 7247 refused when sent)
+1 KiB bodies, 16 callers: one node 250925 calls/s (245 MiB/s each way), two nodes 40974 calls/s (40 MiB/s each way)
+64 KiB bodies, 16 callers: one node 45358 calls/s (2835 MiB/s each way), two nodes 4441 calls/s (278 MiB/s each way)
+one node, from an instance: sequential calls 29254/s, p50 34.0 us, p99 39.2 us
+two nodes, from an instance: sequential calls 5505/s, p50 181.3 us, p99 236.3 us
+from instances, 16 callers: one node 138670 calls/s, two nodes 35889 calls/s
+one node, from instances: casts 175522 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 85615 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 164509 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 167813 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 170350 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 85313 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 87763 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 80672 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### cluster_throughput 4, round 2, spin_us 20, sender_spin_us 50 (load 2.86 3.90 3.00, 04:38)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 265850/s, p50 3.5 us, p99 7.5 us
+two nodes: sequential calls 7182/s, p50 140.0 us, p99 181.2 us
+16 callers: one node 331987 calls/s, two nodes 48150 calls/s
+64 callers: one node 397325 calls/s, two nodes 48788 calls/s
+one node: casts 819312 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 198925 handled/s (371679 of 400000 handled, 28321 refused when sent)
+1 KiB bodies, 16 callers: one node 308446 calls/s (301 MiB/s each way), two nodes 39878 calls/s (39 MiB/s each way)
+64 KiB bodies, 16 callers: one node 50725 calls/s (3170 MiB/s each way), two nodes 4740 calls/s (296 MiB/s each way)
+one node, from an instance: sequential calls 100052/s, p50 8.7 us, p99 13.9 us
+two nodes, from an instance: sequential calls 6177/s, p50 161.2 us, p99 213.4 us
+from instances, 16 callers: one node 313674 calls/s, two nodes 40618 calls/s
+one node, from instances: casts 769346 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 131035 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 538503 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 446834 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 428514 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 114843 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 118605 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 93522 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### cluster_throughput 4, round 2, spin_us 0, sender_spin_us 50 (load 2.88 4.11 3.23, 04:40)
+cluster_throughput: 4 tokio workers for both nodes, QUIC over loopback, 16 instances per node, native programs, mailboxes of 65536
+one node: sequential calls 46160/s, p50 21.5 us, p99 28.2 us
+two nodes: sequential calls 6899/s, p50 143.3 us, p99 193.7 us
+16 callers: one node 266614 calls/s, two nodes 47170 calls/s
+64 callers: one node 288689 calls/s, two nodes 49084 calls/s
+one node: casts 300073 handled/s (400000 of 400000 handled, 0 refused when sent)
+two nodes: casts 187488 handled/s (389286 of 400000 handled, 10714 refused when sent)
+1 KiB bodies, 16 callers: one node 261139 calls/s (255 MiB/s each way), two nodes 38496 calls/s (38 MiB/s each way)
+64 KiB bodies, 16 callers: one node 46315 calls/s (2895 MiB/s each way), two nodes 4565 calls/s (285 MiB/s each way)
+one node, from an instance: sequential calls 30883/s, p50 31.5 us, p99 46.3 us
+two nodes, from an instance: sequential calls 5502/s, p50 177.1 us, p99 224.5 us
+from instances, 16 callers: one node 140854 calls/s, two nodes 34807 calls/s
+one node, from instances: casts 164562 handled/s (400000 of 400000 handled)
+two nodes, from instances: casts 88165 handled/s (400000 of 400000 handled)
+one node, from instances, cast: 163230 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances,  try: 162267 handled/s (400000 of 400000 handled, 400000 Ok)
+one node, from instances, wait: 160855 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+two nodes, from instances, cast: 85957 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances,  try: 85606 handled/s (400000 of 400000 handled, 400000 Ok)
+two nodes, from instances, wait: 81432 handled/s (400000 of 400000 handled, 400000 Ok; every Ok arrived)
+### S37 DA1, sender_spin_us 20 (load 2.99 4.04 3.33, 04:42)
+# S37 run: Linux 6.8.0-146-generic x86_64, 16 CPUs, pool 4, drivers 4 (s37-driver-da1), 4 node and client workers
+# start load: 2.99 4.04 3.33
+## round 1 (load 2.99)
+GET ingress conns=1 body=0 tls=false: 10497 req/s, p50 88.8 µs, p99 149.4 µs, 104.4 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=false: 8345 req/s, p50 118.4 µs, p99 176.4 µs, 173.6 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=false: 76956 req/s, p50 337.5 µs, p99 1404.8 µs, 69.1 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=false: 120229 req/s, p50 204.1 µs, p99 1079.2 µs, 69.3 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=false: 90375 req/s, p50 1920.1 µs, p99 12169.5 µs, 57.8 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=false: 134882 req/s, p50 1308.2 µs, p99 9062.7 µs, 61.9 µs CPU/req (node+instances), errors 0
+GET ingress conns=1 body=0 tls=true: 9498 req/s, p50 98.9 µs, p99 151.7 µs, 112.7 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=true: 8737 req/s, p50 110.3 µs, p99 177.1 µs, 168.9 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=true: 71208 req/s, p50 393.7 µs, p99 1349.6 µs, 71.9 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=true: 109216 req/s, p50 229.1 µs, p99 1111.7 µs, 73.8 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=true: 80488 req/s, p50 2295.7 µs, p99 11964.9 µs, 65.0 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=true: 131398 req/s, p50 1388.8 µs, p99 8710.5 µs, 64.5 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1024 tls=false: 8712 req/s, p50 114.4 µs, p99 158.7 µs, 135.0 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1024 tls=false: 7977 req/s, p50 124.3 µs, p99 183.7 µs, 180.8 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1024 tls=false: 67118 req/s, p50 328.6 µs, p99 1646.9 µs, 84.5 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1024 tls=false: 105751 req/s, p50 233.2 µs, p99 1295.9 µs, 77.9 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=65536 tls=false: 2823 req/s, p50 356.9 µs, p99 424.1 µs, 412.7 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=65536 tls=false: 2300 req/s, p50 441.2 µs, p99 511.8 µs, 538.3 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=65536 tls=false: 19552 req/s, p50 1061.4 µs, p99 5486.4 µs, 325.1 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=65536 tls=false: 16867 req/s, p50 1511.7 µs, p99 4147.5 µs, 529.6 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1048576 tls=false: 155 req/s, p50 6496.4 µs, p99 7925.3 µs, 7382.3 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1048576 tls=false: 144 req/s, p50 6943.2 µs, p99 8009.8 µs, 8358.8 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1048576 tls=false: 659 req/s, p50 52956.6 µs, p99 122191.7 µs, 8860.7 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1048576 tls=false: 458 req/s, p50 75047.9 µs, p99 100681.3 µs, 17180.6 µs CPU/req (node+instances), errors 0
+## round 2 (load 6.17)
+GET ingress conns=1 body=0 tls=false: 10358 req/s, p50 90.5 µs, p99 146.6 µs, 107.0 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=false: 9518 req/s, p50 102.3 µs, p99 169.3 µs, 162.4 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=false: 78534 req/s, p50 328.0 µs, p99 1391.8 µs, 67.9 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=false: 124934 req/s, p50 204.4 µs, p99 1017.9 µs, 68.8 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=false: 90500 req/s, p50 1920.1 µs, p99 11679.3 µs, 57.9 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=false: 135832 req/s, p50 1226.9 µs, p99 9423.7 µs, 61.8 µs CPU/req (node+instances), errors 0
+GET ingress conns=1 body=0 tls=true: 8424 req/s, p50 117.2 µs, p99 170.7 µs, 119.1 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=true: 7989 req/s, p50 123.2 µs, p99 189.6 µs, 174.6 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=true: 72484 req/s, p50 379.8 µs, p99 1384.8 µs, 71.6 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=true: 106280 req/s, p50 233.8 µs, p99 1197.3 µs, 74.3 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=true: 81590 req/s, p50 2195.0 µs, p99 12443.8 µs, 64.1 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=true: 130532 req/s, p50 1265.4 µs, p99 10795.5 µs, 65.1 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1024 tls=false: 8637 req/s, p50 114.9 µs, p99 161.1 µs, 134.9 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1024 tls=false: 8471 req/s, p50 117.1 µs, p99 174.6 µs, 175.5 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1024 tls=false: 66619 req/s, p50 384.2 µs, p99 1622.3 µs, 83.0 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1024 tls=false: 108710 req/s, p50 229.5 µs, p99 1213.7 µs, 77.1 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=65536 tls=false: 3227 req/s, p50 307.7 µs, p99 370.9 µs, 353.0 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=65536 tls=false: 2772 req/s, p50 361.1 µs, p99 433.2 µs, 437.9 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=65536 tls=false: 21540 req/s, p50 828.9 µs, p99 4996.7 µs, 276.2 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=65536 tls=false: 19433 req/s, p50 1582.4 µs, p99 3184.1 µs, 437.5 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1048576 tls=false: 191 req/s, p50 5179.7 µs, p99 7177.7 µs, 6138.5 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1048576 tls=false: 177 req/s, p50 5484.1 µs, p99 6452.2 µs, 6791.2 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1048576 tls=false: 647 req/s, p50 30352.5 µs, p99 151908.3 µs, 9095.5 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1048576 tls=false: 466 req/s, p50 64698.8 µs, p99 99181.6 µs, 17332.6 µs CPU/req (node+instances), errors 0
+### S37 DA1, sender_spin_us 50 (load 2.80 4.98 4.33, 04:52)
+# S37 run: Linux 6.8.0-146-generic x86_64, 16 CPUs, pool 4, drivers 4 (s37-driver-da1), 4 node and client workers
+# start load: 2.80 4.98 4.33
+## round 1 (load 2.80)
+GET ingress conns=1 body=0 tls=false: 9554 req/s, p50 105.0 µs, p99 155.5 µs, 110.4 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=false: 12439 req/s, p50 75.0 µs, p99 141.3 µs, 199.3 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=false: 77097 req/s, p50 355.0 µs, p99 1319.7 µs, 67.2 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=false: 122708 req/s, p50 201.0 µs, p99 1068.9 µs, 71.3 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=false: 89530 req/s, p50 1949.9 µs, p99 12138.1 µs, 58.5 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=false: 137186 req/s, p50 1292.5 µs, p99 8223.1 µs, 62.7 µs CPU/req (node+instances), errors 0
+GET ingress conns=1 body=0 tls=true: 8798 req/s, p50 110.4 µs, p99 165.9 µs, 118.4 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=true: 8781 req/s, p50 110.4 µs, p99 169.1 µs, 238.9 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=true: 71846 req/s, p50 364.0 µs, p99 1484.1 µs, 73.6 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=true: 110933 req/s, p50 226.5 µs, p99 1194.9 µs, 76.7 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=true: 80474 req/s, p50 2100.9 µs, p99 14018.7 µs, 65.1 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=true: 128300 req/s, p50 1397.3 µs, p99 8756.7 µs, 68.6 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1024 tls=false: 8773 req/s, p50 116.2 µs, p99 162.7 µs, 134.4 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1024 tls=false: 10449 req/s, p50 93.9 µs, p99 161.0 µs, 218.3 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1024 tls=false: 67553 req/s, p50 368.6 µs, p99 1602.0 µs, 81.6 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1024 tls=false: 109866 req/s, p50 221.4 µs, p99 1124.0 µs, 81.4 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=65536 tls=false: 2838 req/s, p50 355.6 µs, p99 415.9 µs, 414.8 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=65536 tls=false: 2569 req/s, p50 385.8 µs, p99 504.3 µs, 562.9 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=65536 tls=false: 19476 req/s, p50 1085.2 µs, p99 5484.7 µs, 322.4 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=65536 tls=false: 17646 req/s, p50 1735.2 µs, p99 4152.4 µs, 538.2 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1048576 tls=false: 135 req/s, p50 7315.5 µs, p99 8642.4 µs, 8365.4 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1048576 tls=false: 150 req/s, p50 6690.9 µs, p99 8146.8 µs, 8194.0 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1048576 tls=false: 659 req/s, p50 49350.5 µs, p99 113712.1 µs, 8841.4 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1048576 tls=false: 467 req/s, p50 60976.1 µs, p99 98470.6 µs, 17511.2 µs CPU/req (node+instances), errors 0
+## round 2 (load 6.57)
+GET ingress conns=1 body=0 tls=false: 10070 req/s, p50 92.4 µs, p99 149.2 µs, 109.8 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=false: 12580 req/s, p50 73.8 µs, p99 138.3 µs, 197.5 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=false: 77261 req/s, p50 345.7 µs, p99 1381.5 µs, 67.8 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=false: 136024 req/s, p50 209.6 µs, p99 924.2 µs, 69.9 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=false: 89691 req/s, p50 1968.5 µs, p99 12204.3 µs, 58.6 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=false: 135025 req/s, p50 1209.9 µs, p99 9438.4 µs, 64.7 µs CPU/req (node+instances), errors 0
+GET ingress conns=1 body=0 tls=true: 9219 req/s, p50 101.4 µs, p99 156.5 µs, 114.8 µs CPU/req (node+instances), errors 0
+GET driver conns=1 body=0 tls=true: 11078 req/s, p50 88.5 µs, p99 157.9 µs, 203.0 µs CPU/req (node+instances), errors 0
+GET ingress conns=32 body=0 tls=true: 72760 req/s, p50 377.5 µs, p99 1353.1 µs, 71.1 µs CPU/req (node+instances), errors 0
+GET driver conns=32 body=0 tls=true: 110050 req/s, p50 228.3 µs, p99 1033.2 µs, 77.5 µs CPU/req (node+instances), errors 0
+GET ingress conns=256 body=0 tls=true: 81984 req/s, p50 2218.8 µs, p99 12964.7 µs, 63.6 µs CPU/req (node+instances), errors 0
+GET driver conns=256 body=0 tls=true: 128620 req/s, p50 1413.7 µs, p99 8334.4 µs, 67.9 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1024 tls=false: 9459 req/s, p50 102.1 µs, p99 150.2 µs, 128.8 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1024 tls=false: 10873 req/s, p50 86.7 µs, p99 160.3 µs, 217.2 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1024 tls=false: 67123 req/s, p50 390.3 µs, p99 1587.5 µs, 80.9 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1024 tls=false: 110482 req/s, p50 233.3 µs, p99 1191.6 µs, 80.6 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=65536 tls=false: 3295 req/s, p50 302.0 µs, p99 355.6 µs, 344.5 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=65536 tls=false: 3666 req/s, p50 262.0 µs, p99 401.3 µs, 420.7 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=65536 tls=false: 21582 req/s, p50 932.8 µs, p99 4891.0 µs, 279.0 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=65536 tls=false: 19541 req/s, p50 1584.2 µs, p99 3870.7 µs, 455.5 µs CPU/req (node+instances), errors 0
+POST ingress conns=1 body=1048576 tls=false: 173 req/s, p50 5377.5 µs, p99 7839.4 µs, 6705.1 µs CPU/req (node+instances), errors 0
+POST driver conns=1 body=1048576 tls=false: 166 req/s, p50 6131.3 µs, p99 6601.2 µs, 7327.3 µs CPU/req (node+instances), errors 0
+POST ingress conns=32 body=1048576 tls=false: 656 req/s, p50 20307.4 µs, p99 164590.7 µs, 8930.0 µs CPU/req (node+instances), errors 0
+POST driver conns=32 body=1048576 tls=false: 454 req/s, p50 66096.9 µs, p99 94125.0 µs, 18199.8 µs CPU/req (node+instances), errors 0
+### done (load 6.20 6.27 5.33, 05:01)

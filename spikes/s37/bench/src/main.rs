@@ -73,6 +73,14 @@ async fn serve(runner: PathBuf, app: PathBuf, driver: PathBuf, pool: usize, driv
     let mut native = NativeConfig::default();
     native.runner = Some(runner);
     native.landlock_optional = cfg!(target_os = "freebsd");
+    // `S37_SPIN_US` and `S37_SENDER_SPIN_US`: `[native] spin_us` and
+    // `sender_spin_us` (DA1b).
+    if let Some(us) = std::env::var("S37_SPIN_US").ok().and_then(|v| v.parse::<u64>().ok()) {
+        native.spin = std::time::Duration::from_micros(us);
+    }
+    if let Some(us) = std::env::var("S37_SENDER_SPIN_US").ok().and_then(|v| v.parse::<u64>().ok()) {
+        native.sender_spin = std::time::Duration::from_micros(us);
+    }
     // `S37_DRIVER=da1`: DA1's driver, one process with `drivers` worker
     // threads, on listeners and certificate files node config would give
     // it (`[drivers.driver]`), calling `echo` by name.

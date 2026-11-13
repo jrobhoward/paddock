@@ -206,6 +206,13 @@ fn node(n: u32, address: SocketAddr, dir: &Path) -> (Runtime, QuicTransport) {
     {
         native.spin = Duration::from_micros(us);
     }
+    // `NATIVE_SENDER_SPIN_US`: `[native] sender_spin_us` (DA1b); unset, 50.
+    if let Some(us) = std::env::var("NATIVE_SENDER_SPIN_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        native.sender_spin = Duration::from_micros(us);
+    }
     let mut config = RuntimeConfig {
         node: n,
         max_instances: 64,

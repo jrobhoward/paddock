@@ -376,6 +376,7 @@ ping_interval_ms = 10000               # an idle native instance is pinged this 
 ping_timeout_ms = 5000                 # and killed (timeout) without an answer within this
 landlock_optional = false              # run native apps on a Linux kernel without Landlock; no effect on FreeBSD (Capsicum)
 spin_us = 20                           # the node and a native app spin this long waiting for each other, then sleep; 0: always sleep (at most 10000)
+sender_spin_us = 50                    # how long an app's thread waits spinning for an answer on a sender channel (its own threads, a driver's requests); at most 10000
 
 [priv]                                 # native instances start through the privileged helper, bulkhead-priv, each app under a user of its own (OPERATIONS.md); the node must be started by it. Nothing to set: the helper's own configuration holds its checks. Not with [native] cgroup
 

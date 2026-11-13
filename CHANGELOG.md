@@ -8,6 +8,15 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- An app thread waiting for its answer on a sender channel spins longer
+  before it sleeps: node config `[native] sender_spin_us` (default 50 µs;
+  the app learns it as `BULKHEAD_SENDER_SPIN_US`), apart from `spin_us`
+  (20 µs), which the node's task serving the channel keeps. One client
+  through a driver app waited about 15% less per request on a Raspberry
+  Pi 5 with nothing lost under load; the node's task spinning 50 µs too
+  would have saved more for one client and cost 10 to 20% of a loaded
+  driver's requests there (ROADMAP DA1b, BASELINE.md, 2026-11-13).
+
 - Under the privileged helper on FreeBSD each native instance runs in a
   jail of its own (ROADMAP FB2): a root on a small tmpfs with read-only
   views of the system libraries, the runner's directory and the instance's
